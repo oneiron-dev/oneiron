@@ -118,6 +118,7 @@ pub(crate) fn bind_task_answer_in_txn(
         frontier: *blake3::hash(&source).as_bytes(),
         source_kind,
         answered_at: input.now,
+        omitted: Vec::new(),
     };
     let encoded = encode(&answer)?;
     let value = rmpv::decode::read_value(&mut encoded.as_slice())

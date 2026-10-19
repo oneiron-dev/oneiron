@@ -13,10 +13,10 @@
 //!
 //! Beside its answer, each door lists the rows that answer names
 //! (`host_door_lists`): an answer's claim, its unit, every source its
-//! decision names as evidence and the principal it was asked for; a
-//! question's principal, units and artifacts. A standing question, its head,
-//! its backfills and its artifact asks live in side tables, which hold no
-//! row.
+//! decision names as evidence, each neighbour it left out and the
+//! principal it was asked for; a question's principal, units and artifacts.
+//! A standing question, its head, its backfills and its artifact asks live
+//! in side tables, which hold no row.
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
@@ -580,11 +580,13 @@ async fn vault_questions_schedule_answer(
 
 /// The rows one answer names: its claim, its unit, every source its
 /// decision names as evidence (the unit and the neighbors it was shown, at
-/// the versions read, and each image or clip's source) and the principal it
-/// was asked for.
+/// the versions read, and each image or clip's source), each neighbor it
+/// left out (one the asker read when the answer landed) and the principal
+/// it was asked for.
 fn answer_rows(answer: &AnswerRecord) -> Vec<EntityId> {
     decision_rows(&answer.decision)
         .chain([answer.claim, answer.unit])
+        .chain(answer.omitted.iter().map(|omitted| omitted.id))
         .collect()
 }
 

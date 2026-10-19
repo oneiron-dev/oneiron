@@ -3,7 +3,7 @@
 use super::super::held::{cut_text, fit_state};
 use super::super::types::{invalid, paired_valid};
 use super::{
-    records::{AnswerRecord, QuestionCriteria},
+    records::{AnswerRecord, OmittedNeighbor, QuestionCriteria, SourceConflict},
     store::encode,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -21,8 +21,11 @@ use crate::{
     ClaimCandidate, EntityId, Error, Result, TimeRange, Vault, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
+use fit::{eligible_sources, fit_neighbors, same_fitted_neighbors, source_in_txn};
 use serde_json::{Value, json};
 use std::collections::HashSet;
+
+mod fit;
 
 const MAX_UNITS: usize = 4096;
 const MAX_NEIGHBORS: usize = 16;
@@ -41,8 +44,11 @@ pub struct GraphContextSource {
 #[derive(Debug, Clone)]
 pub struct GraphUnitContext {
     pub unit: EntityId,
-    /// The unit comes first, followed by at most 16 readable outgoing neighbors.
+    /// The unit comes first, followed by at most 16 readable outgoing
+    /// neighbors one answer can rest on beside it.
     pub sources: Vec<GraphContextSource>,
+    /// The readable neighbors left out, each with why; never a body.
+    pub omitted: Vec<OmittedNeighbor>,
 }
 
 /// The answerer's inference, before the engine fixes the principal and receipt.
@@ -118,7 +124,8 @@ impl GraphUnitContext {
     }
 
     /// [`Self::state`] with the question's criteria beside the sources, as
-    /// `criteria`. The lines are never cut; an empty triple adds nothing.
+    /// `criteria`. The lines are never cut; an empty triple adds nothing. A
+    /// context that left neighbours out says so, as `notice`.
     #[must_use]
     pub fn state_under(
         &self,
@@ -157,9 +164,18 @@ impl GraphUnitContext {
             if !criteria.is_empty() {
                 state["criteria"] = json!(criteria);
             }
+            if !self.omitted.is_empty() {
+                state["notice"] = json!(omission_notice(self.omitted.len()));
+            }
             state
         })
     }
+}
+
+/// What a context that left `omitted` neighbours out tells its answerer
+/// (FIX 1711 omission notice).
+fn omission_notice(omitted: usize) -> String {
+    format!("answered using compatible sources; {omitted} neighbours omitted")
 }
 
 /// A stored body as the served JSON text a reader sees; a body that is not
@@ -412,27 +428,6 @@ fn source_eligible(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId, kind: u8
         )?)
 }
 
-/// Whether the unit's eligible neighbours are still the prepared ones.
-fn same_eligible_neighbors(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    neighbors: Option<Vec<(EntityId, u8, Vec<u8>)>>,
-    context: &GraphUnitContext,
-) -> Result<bool> {
-    let Some(neighbors) = neighbors else {
-        return Ok(false);
-    };
-    let mut eligible = Vec::with_capacity(neighbors.len());
-    for (id, kind, _) in neighbors {
-        if source_eligible(vault, txn, &id, kind)? {
-            eligible.push(id);
-        }
-    }
-    Ok(eligible
-        .into_iter()
-        .eq(context.sources.iter().skip(1).map(|source| source.id)))
-}
-
 fn answer_unit(
     scoped: &crate::claim::ScopedRead<'_>,
     principal: EntityId,
@@ -492,7 +487,7 @@ fn answer_unit(
     // for the writer when authority or source bytes have already changed.
     let neighbors =
         scoped.graph_ask_neighbors(&unit, MAX_NEIGHBORS, MAX_NEIGHBOR_SCAN, MAX_SOURCE_BYTES)?;
-    if !same_eligible_neighbors(vault, &vault.store.env.read_txn()?, neighbors, &context)? {
+    if !same_fitted_neighbors(scoped, &vault.store.env.read_txn()?, neighbors, &context)? {
         return Ok(UnitOutcome::Abstain);
     }
     let current = scoped.get_entities_parts_with_receipt(
@@ -527,6 +522,7 @@ fn answer_unit(
             frontier: context.sources[0].hash,
             source_kind: context.sources[0].entity_type,
             answered_at: now,
+            omitted: context.omitted.clone(),
         };
         let encoded = encode(&answer)?;
         let value = rmpv::decode::read_value(&mut encoded.as_slice())
@@ -538,7 +534,8 @@ fn answer_unit(
             confidence,
         );
         // The answer reads no wider than any source it rests on, the unit's
-        // neighbours included, as a standing backfill's does.
+        // neighbours included, as a standing backfill's does. Gather left
+        // out each neighbour it could not rest on beside the unit.
         let taint = super::standing::constrain_sources(&mut candidate, &rows, principal)?;
         candidate = candidate
             .with_evidence_taint(taint)?
@@ -577,8 +574,10 @@ fn answer_unit(
 }
 
 /// A unit's default context: the unit, then each eligible neighbour `lane`
-/// reads one admitted edge out, inside a graph ask's bounds. `None` when the
-/// neighbourhood is past a bound: the unit abstains.
+/// reads one admitted edge out, inside a graph ask's bounds, that one answer
+/// can rest on beside the unit; the others are named as omitted
+/// ([`fit_neighbors`]). `None` when the neighbourhood is past a bound or a
+/// source changed while it was judged: the unit abstains.
 pub(super) fn unit_context(
     lane: &ScopedRead<'_>,
     unit: EntityId,
@@ -592,17 +591,23 @@ pub(super) fn unit_context(
         return Ok(None);
     };
     let txn = vault.store.env.read_txn()?;
-    let mut sources = vec![source(unit, kind, body)];
-    for (id, kind, body) in neighbors {
-        if source_eligible(vault, &txn, &id, kind)? {
-            sources.push(source(id, kind, body));
-        }
-    }
-    Ok(Some(GraphUnitContext { unit, sources }))
+    let unit_source = source(unit, kind, body);
+    let eligible = eligible_sources(vault, &txn, neighbors)?;
+    let Some((kept, omitted)) = fit_neighbors(lane, &txn, &unit_source, eligible)? else {
+        return Ok(None);
+    };
+    let mut sources = vec![unit_source];
+    sources.extend(kept);
+    Ok(Some(GraphUnitContext {
+        unit,
+        sources,
+        omitted,
+    }))
 }
 
 /// Whether `lane` still reads, in `txn`, exactly the eligible neighbours
-/// `context` was built from.
+/// `context` was built from, and judges them as it did: the same kept and
+/// the same left out, so an omitted ref is still one the asker reads.
 pub(super) fn neighbors_unchanged_in_txn(
     lane: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
@@ -615,7 +620,7 @@ pub(super) fn neighbors_unchanged_in_txn(
         MAX_NEIGHBOR_SCAN,
         MAX_SOURCE_BYTES,
     )?;
-    same_eligible_neighbors(lane.vault(), txn, neighbors, context)
+    same_fitted_neighbors(lane, txn, neighbors, context)
 }
 
 /// Every source of `context` as `lane` reads it in `txn`, at the kind and
@@ -626,31 +631,12 @@ pub(super) fn sources_unchanged_in_txn(
     txn: &heed::RoTxn<'_>,
     context: &GraphUnitContext,
 ) -> Result<Option<Vec<super::standing::Source>>> {
-    let vault = lane.vault();
     let mut rows = Vec::with_capacity(context.sources.len());
     for source in &context.sources {
-        let Some(raw) = lane.graph_ask_raw_in_txn(txn, &source.id)? else {
+        let Some(row) = source_in_txn(lane, txn, source)? else {
             return Ok(None);
         };
-        let kind = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("graph ask source header"))?
-            .entity_type;
-        if kind != source.entity_type
-            || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != source.hash
-            || !source_eligible(vault, txn, &source.id, kind)?
-        {
-            return Ok(None);
-        }
-        let Some(scope) = crate::federation::record_scope::scope_for_blob(
-            &lane.store_read(),
-            txn,
-            source.id,
-            &raw,
-        )?
-        else {
-            return Ok(None);
-        };
-        rows.push(super::standing::Source::of_row(kind, &raw, &scope)?);
+        rows.push(row.map_err(SourceConflict::error)?);
     }
     Ok(Some(rows))
 }
@@ -705,6 +691,7 @@ pub(crate) fn trial_unit_context_in_txn(
     Ok(GraphUnitContext {
         unit: answer.unit,
         sources,
+        omitted: answer.omitted.clone(),
     })
 }
 
