@@ -15,12 +15,17 @@ use std::collections::BTreeMap;
 
 use loro::LoroDoc;
 
+use super::codec::SyncSelector;
+use super::document_admission::{DocumentGrant, admit_selected_in_txn, authorize_in_txn};
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::share_travel::{BornWith, GrantTravel, TravelChoice};
+use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
+use crate::federation::FederationGrantScope;
+use crate::provenance::birth::row_birth_in_txn;
+use crate::provenance::made_by::{MadeBy, MadeByInputRole};
+use crate::share_travel::{BornWith, BornWithField, GrantTravel, TravelChoice};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
@@ -29,6 +34,22 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The window map that carries born-with text beside the row births.
 const ROW_BORN_WITH_MAP: &str = "row_born_with";
+
+/// What a row's carried prompt does with a prompt source the export's grant
+/// does not read, or one no longer live here (FIX 5937; CALLS: FIX 5937
+/// denied prompt source).
+enum DeniedPromptAction {
+    /// That source's text stays home; the row, its other readable prompt
+    /// sources and its other born-with fields still travel.
+    OmitSourceText,
+}
+
+const DENIED_PROMPT_ACTION: DeniedPromptAction = DeniedPromptAction::OmitSourceText;
+
+/// What a carried prompt says, at its end, when a source's text stayed home:
+/// nothing, so the copy does not tell that one did (CALLS: FIX 5937 denied
+/// prompt source).
+const WITHHELD_TEXT_MARKER: Option<&str> = None;
 
 /// The text a copy from another vault carried, by row.
 const CARRIED: SideTable<EntityId, BornWith, Named> =
@@ -63,31 +84,133 @@ fn carried_rows(doc: &LoroDoc) -> Vec<(EntityId, u8)> {
 }
 
 /// Writes into `doc`, beside its births, the born-with text the owner lets
-/// `grant`'s windows carry, for each row `doc` carries: the bound choice's
-/// fields of [`Vault::born_with_text`], none from a row a world `withhold`
-/// keeps off the destination holds. Nothing here reads or writes a birth,
-/// so its masked refs stay masked.
+/// `selector`'s grant's windows carry, for each row `doc` carries: the bound
+/// choice's fields of [`Vault::born_with_text`], none from a row a world
+/// `withhold` keeps off the destination holds, and a prompt only from a
+/// source that grant reads in `scope` ([`readable_births`], FIX 5937).
+/// Nothing here writes a birth, so its masked refs stay masked.
 pub(super) fn carry_born_with(
     vault: &Vault,
     doc: &LoroDoc,
-    grant: &EntityId,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
     withhold: Withhold<'_>,
 ) -> Result<()> {
-    let Some(bound) = vault.federation_grant_travel(grant)? else {
+    let Some(bound) = vault.federation_grant_travel(&selector.grant_id)? else {
         return Ok(());
     };
     let kept = withhold.worlds(vault)?;
+    let rows = carried_rows(doc);
+    // A choice without the prompt sends no prompt text, so no source is read.
+    let births = if bound.travel.born_with.contains(&BornWithField::Prompt) {
+        readable_births(vault, scope, selector, &rows)?
+    } else {
+        rows.iter().map(|_| None).collect()
+    };
     let map = doc.get_map(ROW_BORN_WITH_MAP);
-    for (id, _) in carried_rows(doc) {
-        let text = bound
+    for ((id, _), birth) in rows.into_iter().zip(births) {
+        let made_by = birth.as_ref().map(|birth| &birth.made_by);
+        let mut text = bound
             .travel
-            .project(vault.born_with_text_kept_off(&id, None, &kept)?);
+            .project(vault.born_with_text_kept_off(&id, made_by, &kept)?);
+        if birth.as_ref().is_some_and(|birth| birth.omitted)
+            && let Some(marker) = WITHHELD_TEXT_MARKER
+        {
+            let prompt = text.entry(BornWithField::Prompt).or_default();
+            if !prompt.is_empty() {
+                prompt.push_str("\n\n");
+            }
+            prompt.push_str(marker);
+        }
         if !text.is_empty() {
             map_insert_bytes(&map, &id.to_hex(), &encode(&text)?)?;
         }
     }
     doc.commit();
     Ok(())
+}
+
+/// A carried row's birth as the export reads it, and whether a prompt
+/// source's text stayed home.
+struct ReadableBirth {
+    made_by: MadeBy,
+    omitted: bool,
+}
+
+/// Each of `rows`' births, read in one snapshot, with only the prompt
+/// sources `selector`'s grant reads in `scope`: live here and in the
+/// subgraph the grant selects, judged on the stored rows as a document read
+/// is ([`admit_selected_in_txn`]), not by whether `doc` carries them. Every
+/// other source goes as [`DENIED_PROMPT_ACTION`] says; every other input
+/// stays as stamped, in its order. `None` for a row with no birth. The grant
+/// resolves once, and only when a birth names a prompt.
+fn readable_births(
+    vault: &Vault,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    rows: &[(EntityId, u8)],
+) -> Result<Vec<Option<ReadableBirth>>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut births = Vec::with_capacity(rows.len());
+    for (id, _) in rows {
+        births.push(row_birth_in_txn(&vault.store, &txn, id)?);
+    }
+    let prompted = births
+        .iter()
+        .flatten()
+        .flat_map(|birth| &birth.made_by.inputs)
+        .any(|input| input.role == MadeByInputRole::Prompt);
+    let admission = if prompted {
+        Some(authorize_in_txn(vault, &txn, scope, selector, None)?)
+    } else {
+        None
+    };
+    let mut readable = Vec::with_capacity(births.len());
+    for birth in births {
+        let Some(birth) = birth else {
+            readable.push(None);
+            continue;
+        };
+        let mut made_by = birth.made_by;
+        let mut omitted = false;
+        if let Some(admission) = &admission {
+            for input in std::mem::take(&mut made_by.inputs) {
+                if input.role != MadeByInputRole::Prompt
+                    || prompt_source_readable(vault, &txn, input.row, selector, admission)?
+                {
+                    made_by.inputs.push(input);
+                    continue;
+                }
+                match DENIED_PROMPT_ACTION {
+                    DeniedPromptAction::OmitSourceText => omitted = true,
+                }
+            }
+        }
+        readable.push(Some(ReadableBirth { made_by, omitted }));
+    }
+    Ok(readable)
+}
+
+/// Whether the export `admission` resolved reads prompt source `source`. A
+/// source not live here, or the admission's denial, answers no; any other
+/// error is the export's.
+fn prompt_source_readable(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    selector: &SyncSelector,
+    admission: &DocumentGrant,
+) -> Result<bool> {
+    if !live_entity_row_in_txn(&vault.store, txn, &source)?.is_live() {
+        return Ok(false);
+    }
+    match admit_selected_in_txn(vault, txn, source, selector, admission) {
+        Ok(()) => Ok(true),
+        Err(Error::Sync(SyncError::SyncProtocolError {
+            context: SyncProtocolValidation::DocumentAdmissionDenied,
+        })) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// The text `remote` carries for each row `admitted` holds. A row

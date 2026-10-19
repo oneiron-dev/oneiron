@@ -336,7 +336,7 @@ pub fn filtered_window_doc_for_peer(
     )?;
     // Beside the masked births goes the text the grant's owner lets travel.
     if matches!(reach, BirthReach::OtherVault(_)) {
-        carry_born_with(vault, &out, &selector.grant_id, Withhold::Peer(peer))?;
+        carry_born_with(vault, &out, grant_scope, selector, Withhold::Peer(peer))?;
     }
     Ok(out)
 }
@@ -453,7 +453,7 @@ pub(crate) fn guest_share_envelope_body_listing(
         BirthReach::OtherVault(&withheld),
     )?;
     let stripped = strip_guest_share_metadata(&filtered, key, &withheld)?;
-    carry_born_with(vault, &stripped, &selector.grant_id, Withhold::Unknown)?;
+    carry_born_with(vault, &stripped, grant_scope, selector, Withhold::Unknown)?;
     let update = stripped
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
