@@ -40,8 +40,8 @@ use super::intent::{IntentName, LaunchStand, PlannedLaunch, retained};
 
 const NO_RUNNER: &str = "this host has no pattern runner bound yet; the plan stays frozen under \
      this intent key; ask again once the host binds one";
-const RUNNER_FAILED: &str = "the pattern runner wrote no start for this plan; the plan stays \
-     frozen under this intent key; ask again to run it again";
+const RUNNER_FAILED: &str = "the pattern runner failed on a host fault (see the host log) and \
+     wrote no start; the plan stays frozen under this intent key; ask again to run it again";
 const INCOMPLETE_START: &str = "the pattern runner's start does not brief the leader and every \
      member the plan launches; the plan stays frozen under this intent key; ask again to run it \
      again";
@@ -159,9 +159,12 @@ impl AgentDispatcher<'_> {
     /// Runs a planned team's pattern skill and freezes the start it writes
     /// with the pack it ran on. The exact revision the plan froze is read by
     /// `load` first, and one that moved is kept as the intent's refusal. The
-    /// runner runs with no writer held; a runner that errs, or a start that
-    /// does not brief the whole team, refuses and leaves the intent planned,
-    /// so the next ask runs it again.
+    /// runner runs with no writer held. Its own refusal, an
+    /// [`Error::Refused`] that names what to fund or configure, answers as
+    /// it is; any other error it returns is a host fault, logged and
+    /// answered with a fixed refusal. Either, or a start that does not brief
+    /// the whole team, leaves the intent planned, so the next ask runs it
+    /// again.
     fn start_pattern(
         &self,
         name: &IntentName<'_>,
@@ -188,7 +191,11 @@ impl AgentDispatcher<'_> {
                     error = %error,
                     "a pattern runner wrote no start for a planned team"
                 );
-                invalid(RUNNER_FAILED)
+                if matches!(error, Error::Refused(_)) {
+                    error
+                } else {
+                    invalid(RUNNER_FAILED)
+                }
             })?;
         check_start(&start, plan.plan.shape.width)?;
         self.freeze_pattern_launch(name, start, &pack, at)
