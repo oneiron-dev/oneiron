@@ -60256,7 +60256,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "re-export": 20
      }
     },
@@ -60982,13 +60982,33 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_edit_guard.rs",
+     "purpose": "A thread audience edit stays while its thread's root lives (FIX 5639)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_erase.rs",
+     "purpose": "A privacy erase of a thread audience edit (FIX 5639)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ThreadAudienceHistory"
      ],
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1
      }
     },
@@ -61105,7 +61125,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 36,
       "enum": 2,
       "fn": 6,
       "re-export": 13,
@@ -64261,7 +64281,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 100,
+     "files": 102,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64284,7 +64304,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3967,
+   "source_files": 3969,
    "test_files": 902
   },
   "oneiron-android": {
