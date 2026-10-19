@@ -215,6 +215,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         None,
         &action.conversation.to_hex(),
         Some(action.conversation),
+        None,
     )
     .map_err(|error| error.to_string())?
     .map_err(|stop| stop.to_string())?;

@@ -103,8 +103,9 @@ pub(super) fn pre(
         Entered::Fresh(mark) => mark,
     };
     // The owner's revoke always lands (FIX 5076): a restrictive call, judged
-    // on its caller's own args, keeps them to fall back to.
-    let mut landing = Landing::of(&call.verb, &args);
+    // on its caller's own args (and, for a polymorphic row, what the vault
+    // holds of them, FIX 5137-5139), keeps them to fall back to.
+    let mut landing = Landing::of(vault, &call.verb, &args);
     // A room keeps no ask, so no call there resumes one. A session-only
     // call with no room overlay resumes from the in-memory keep (L13 PR-D).
     let saved = match storage {

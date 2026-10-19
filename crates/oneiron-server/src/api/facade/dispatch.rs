@@ -179,7 +179,10 @@ async fn fetch(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -206,7 +209,10 @@ async fn crawl(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -366,7 +372,10 @@ async fn self_focus_wakes(
             server,
             auth,
             caller,
-            Some(hooks.call().invocation),
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
             facade_door_input(&mut hooks)?,
         )
         .await?,
@@ -590,7 +599,10 @@ async fn self_identity_answer(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         call.surface(),
         facade_door_input(&mut hooks)?,
     )
@@ -860,7 +872,10 @@ async fn vault_people_create(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -888,7 +903,10 @@ async fn vault_entities_look_before_mint(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -915,7 +933,10 @@ async fn vault_identity_mention(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -3601,7 +3622,10 @@ async fn vault_campaign_compliance_install(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -3651,7 +3675,10 @@ async fn vault_campaign_compliance_approve(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -3679,7 +3706,10 @@ async fn vault_campaign_compliance_reject(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -3707,7 +3737,10 @@ async fn vault_campaign_compliance_verify(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -3778,7 +3811,10 @@ async fn vault_campaign_stage_evidence(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4070,7 +4106,10 @@ async fn self_saved_query_evaluate(
             server,
             auth,
             caller,
-            Some(hooks.call().invocation),
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
             facade_door_input(&mut hooks)?,
         )
         .await?,
@@ -4253,7 +4292,10 @@ async fn vault_weave_enqueue(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4280,7 +4322,10 @@ async fn vault_weave_schedules_list(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4307,7 +4352,10 @@ async fn vault_weave_schedules_put(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4334,7 +4382,10 @@ async fn vault_weave_schedules_clear(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4362,7 +4413,10 @@ async fn vault_weave_owner_digest_render(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4389,7 +4443,10 @@ async fn vault_inbox_concerns_review(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4416,7 +4473,10 @@ async fn vault_inbox_lens(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -4443,7 +4503,10 @@ async fn vault_inbox_groups(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -5779,7 +5842,10 @@ async fn vault_packs_sections_propose(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -5806,7 +5872,10 @@ async fn vault_packs_sections_list(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -5833,7 +5902,10 @@ async fn vault_packs_sections_grant(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -5860,7 +5932,10 @@ async fn vault_packs_sections_revoke(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -5887,7 +5962,10 @@ async fn vault_packs_sections_suggest(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -5915,7 +5993,10 @@ async fn vault_packs_sections_suggestions_get(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -5943,7 +6024,10 @@ async fn vault_packs_sections_suggestions_set(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -8054,7 +8138,10 @@ async fn vault_trusted_contacts_concern_propose(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -8087,7 +8174,10 @@ async fn vault_trusted_contacts_concern_deliver(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -10710,7 +10800,10 @@ async fn vault_policy_outbound_decide(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -10738,7 +10831,10 @@ async fn vault_policy_relay_decide(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -11679,7 +11775,10 @@ async fn vault_claims_review(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -11706,7 +11805,10 @@ async fn vault_claims_settle(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -11963,7 +12065,10 @@ async fn vault_lenses_select(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -11999,7 +12104,10 @@ async fn vault_lenses_resolve(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12036,7 +12144,10 @@ async fn vault_lenses_result_set_action(
             server,
             auth,
             caller,
-            Some(hooks.call().invocation),
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
             facade_door_input(&mut hooks)?,
         )
         .await?,
@@ -12286,7 +12397,10 @@ async fn self_use(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12313,7 +12427,10 @@ async fn self_secrets_materialize(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12340,7 +12457,10 @@ async fn self_secrets_renew(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12367,7 +12487,10 @@ async fn self_secrets_teardown(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12394,7 +12517,10 @@ async fn self_secrets_use(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12483,7 +12609,10 @@ async fn host_compact(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12510,7 +12639,10 @@ async fn host_wake(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12537,7 +12669,10 @@ async fn host_budget_hit(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -12803,7 +12938,10 @@ async fn vault_artifacts_live_preview_read(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -15028,7 +15166,10 @@ async fn vault_workflows_dispatch_bound(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -15525,7 +15666,10 @@ async fn vault_artifacts_keep_outline(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -15553,7 +15697,10 @@ async fn vault_artifacts_decline_outline(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -17341,7 +17488,10 @@ async fn ai_reply(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -17572,7 +17722,10 @@ async fn ai_voice_tool(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -18664,7 +18817,10 @@ async fn connector_call(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -19685,7 +19841,10 @@ async fn vault_writes_critical_confirm_pending(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -19713,7 +19872,10 @@ async fn vault_writes_critical_confirm_clear(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -19741,7 +19903,10 @@ async fn vault_writes_critical_confirm_decline(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -19769,7 +19934,10 @@ async fn vault_writes_critical_confirm_receipt(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21193,7 +21361,10 @@ async fn vault_runs_step(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21220,7 +21391,10 @@ async fn vault_runs_checkpoint(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21320,7 +21494,10 @@ async fn vault_consolidation_promote(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21347,7 +21524,10 @@ async fn vault_consolidation_pin(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21374,7 +21554,10 @@ async fn vault_consolidation_frontier(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21401,7 +21584,10 @@ async fn vault_consolidation_accounting(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21428,7 +21614,10 @@ async fn vault_consolidation_evidence(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21751,7 +21940,10 @@ async fn vault_claims_vet(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21778,7 +21970,10 @@ async fn vault_claims_vetting(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21806,7 +22001,10 @@ async fn vault_memory_signal_extraction(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -21835,7 +22033,10 @@ async fn vault_memory_signal_extraction_result(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22295,7 +22496,10 @@ async fn vault_summaries_create(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22366,7 +22570,10 @@ async fn vault_summaries_keep(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22393,7 +22600,10 @@ async fn vault_summaries_edit(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22420,7 +22630,10 @@ async fn vault_summaries_patch(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22447,7 +22660,10 @@ async fn vault_summaries_regenerate(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22497,7 +22713,10 @@ async fn vault_summaries_proposals_merge(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22525,7 +22744,10 @@ async fn vault_summaries_proposals_switch(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -22553,7 +22775,10 @@ async fn vault_summaries_proposals_reject(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23017,7 +23242,10 @@ async fn vault_notes_editor_bind(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23044,7 +23272,10 @@ async fn vault_notes_editor_close(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23240,7 +23471,10 @@ async fn vault_tasks_linear_mapping_edit(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23295,7 +23529,10 @@ async fn self_run_attach(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23322,7 +23559,10 @@ async fn self_folds_describe(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23349,7 +23589,10 @@ async fn self_history(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23376,7 +23619,10 @@ async fn vault_runs_review(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23403,7 +23649,10 @@ async fn vault_runs_settle(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         call.surface(),
         facade_door_input(&mut hooks)?,
     )
@@ -23431,7 +23680,10 @@ async fn vault_runs_settlement(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23458,7 +23710,10 @@ async fn vault_revert_run(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         call.surface(),
         facade_door_input(&mut hooks)?,
     )
@@ -23730,7 +23985,10 @@ async fn self_browser_open(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23758,7 +24016,10 @@ async fn self_browser_observe(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23786,7 +24047,10 @@ async fn self_browser_find(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23814,7 +24078,10 @@ async fn self_browser_click(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23842,7 +24109,10 @@ async fn self_browser_click_at(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23870,7 +24140,10 @@ async fn self_browser_type(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23898,7 +24171,10 @@ async fn self_browser_select(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23926,7 +24202,10 @@ async fn self_browser_wait_for(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23954,7 +24233,10 @@ async fn self_browser_expect(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -23982,7 +24264,10 @@ async fn self_browser_screenshot(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24010,7 +24295,10 @@ async fn self_browser_view(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24038,7 +24326,10 @@ async fn self_browser_crop(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24066,7 +24357,10 @@ async fn self_browser_zoom(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24094,7 +24388,10 @@ async fn self_browser_batch(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24122,7 +24419,10 @@ async fn self_browser_library_find(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24150,7 +24450,10 @@ async fn self_browser_library_propose(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24178,7 +24481,10 @@ async fn self_browser_library_retire(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24206,7 +24512,10 @@ async fn self_browser_library_retired(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24234,7 +24543,10 @@ async fn self_browser_library_run(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24262,7 +24574,10 @@ async fn self_browser_handover(
         auth,
         call.session()?,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24314,7 +24629,10 @@ async fn self_fold(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24341,7 +24659,10 @@ async fn self_compact(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24368,7 +24689,10 @@ async fn self_unfold(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24395,7 +24719,10 @@ async fn self_folds(
         server,
         auth,
         caller,
-        Some(hooks.call().invocation),
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
         facade_door_input(&mut hooks)?,
     )
     .await;
@@ -24548,7 +24875,10 @@ async fn self_focus_refresh(
             server,
             auth,
             caller,
-            Some(hooks.call().invocation),
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
             facade_door_input(&mut hooks)?,
         )
         .await?,
@@ -24575,7 +24905,10 @@ async fn self_focus_subscribe(
             server,
             auth,
             caller,
-            Some(hooks.call().invocation),
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
             facade_door_input(&mut hooks)?,
         )
         .await?,
@@ -24602,7 +24935,10 @@ async fn self_focus_unsubscribe(
             server,
             auth,
             caller,
-            Some(hooks.call().invocation),
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
             facade_door_input(&mut hooks)?,
         )
         .await?,

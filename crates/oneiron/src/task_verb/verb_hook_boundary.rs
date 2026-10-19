@@ -34,7 +34,9 @@ use crate::runtime_hooks::verb::{
     HOOK_RESULT_NOT_RETAINED, SessionHookKey, SessionHooks, VerbArgsCheck, VerbAskCredential,
     VerbHookStorage,
 };
-use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
+use crate::runtime_hooks::{
+    InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume,
+};
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{
     AgentVerb, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view, validate_input,
@@ -116,6 +118,119 @@ pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Opt
         None => SessionHookKey::Process,
     };
     Ok(Some(HookSession { key, resume }))
+}
+
+/// The invocation a host door keeps in its own rows for the call `pre` ran
+/// (FIX 5381): a session-only call's hidden id under its keep key
+/// (`SessionHookKeep::hidden_invocation`), stable for its retries in this
+/// process and session and never the caller's invocation; any other call's
+/// own.
+#[must_use]
+pub fn door_invocation(vault: &Vault, pre: &VerbHookPre) -> InvocationId {
+    let invocation = pre.call().invocation;
+    match pre.session() {
+        Some(key) => InvocationId(
+            vault
+                .verb_hook_state
+                .session
+                .hidden_invocation(key, invocation.0),
+        ),
+        None => invocation,
+    }
+}
+
+/// [`door_invocation`] for a door that holds its caller's surface: the
+/// invocation `memory` carries, hidden when a call of row `verb` on it keeps
+/// no record, under the same key its hooks keep on. `None` when it carries
+/// none.
+#[must_use]
+pub fn door_invocation_of(memory: &Memory<'_>, verb: &str) -> Option<InvocationId> {
+    let invocation = memory.invocation()?;
+    if !memory.keeps_no_record() && !NO_RECORD_ROWS.contains(&verb) {
+        return Some(invocation);
+    }
+    let vault = memory.vault();
+    let key = vault.session_hook_key(memory.off_record_binding());
+    Some(InvocationId(
+        vault
+            .verb_hook_state
+            .session
+            .hidden_invocation(&key, invocation.0),
+    ))
+}
+
+/// The pre chain of a call a host runs itself on `session` when it keeps no
+/// record ([`hook_session`]), else on the vault: a host verb's chain or a
+/// row's that runs outside the row boundary (FIX 5380). `turn` is the
+/// task-work turn the calling operation holds, if any; a call on the vault
+/// opens its ask on its author's own.
+///
+/// # Errors
+///
+/// Storage errors as they occur; a hook's own failure is never one.
+pub fn hooks_pre(
+    vault: &Vault,
+    call: VerbCall,
+    args: Value,
+    check: VerbArgsCheck<'_>,
+    session: Option<&HookSession>,
+    turn: Option<Arc<TaskWorkTurn>>,
+) -> crate::Result<Result<VerbHookPre, VerbHookStop>> {
+    match session {
+        Some(session) => session_pre(vault, call, args, check, session, turn),
+        None => vault.pre_verb_hooks(call, args, check),
+    }
+}
+
+/// The post chain over `result` wherever `pre`'s chain ran: a session-only
+/// call's in its keep, any other's on the vault (FIX 5380).
+///
+/// # Errors
+///
+/// Storage errors as they occur; a hook's own failure is never one.
+pub fn hooks_post(
+    vault: &Vault,
+    pre: VerbHookPre,
+    result: Value,
+) -> crate::Result<Result<Value, VerbHookStop>> {
+    match pre.session().cloned().map(HookSession::kept) {
+        Some(session) => session_post(vault, pre, result, &session),
+        None => vault.post_verb_hooks(pre, result),
+    }
+}
+
+/// [`Vault::verb_hooks`] for a call a host runs itself (FIX 5380): on
+/// `session` when it keeps no record, its pre and post hooks' records and
+/// pauses kept there only, and kept as well when `run` fails; else on the
+/// vault, as today.
+///
+/// # Errors
+///
+/// What `run` returns, and storage errors as they occur.
+pub fn verb_hooks_in<E: From<crate::Error>>(
+    vault: &Vault,
+    session: Option<&HookSession>,
+    call: VerbCall,
+    args: Value,
+    check: VerbArgsCheck<'_>,
+    run: impl FnOnce(Value) -> Result<Value, E>,
+) -> Result<Result<Value, VerbHookStop>, E> {
+    let Some(session) = session else {
+        return vault.verb_hooks(call, args, check, run);
+    };
+    let pre = match session_pre(vault, call, args, check, session, None)? {
+        Ok(pre) => pre,
+        Err(VerbHookStop::Completed { result, .. }) => return Ok(Ok(result)),
+        Err(stop) => return Ok(Err(stop)),
+    };
+    let result = match run(pre.args.clone()) {
+        Ok(result) => result,
+        Err(error) => {
+            abort(vault, pre);
+            return Err(error);
+        }
+    };
+    Ok(session_post(vault, pre, result, session)?)
 }
 
 /// The pre chain of a session-only call ([`hook_session`]) a server door
