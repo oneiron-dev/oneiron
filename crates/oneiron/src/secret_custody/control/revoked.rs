@@ -4,15 +4,21 @@
 
 use zeroize::Zeroize;
 
-use super::super::doors::read_secret_custody_admission_in_txn;
-use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
+use super::super::doors::{
+    read_secret_custody_admission_in_txn, read_secret_custody_in_txn, resolve_secret_ref_in_txn,
+};
+use super::super::transition::{
+    Enactment, custody_portable, drop_sealed_carrier_in_txn, holds_sealed_carrier_in_txn,
+    write_custody_transition_in_txn,
+};
 use super::super::types::{CustodyClass, SecretCustodyStatus};
-use super::enacted;
+use super::input::drop_inputs_for_in_txn;
+use super::{CustodyKeptHere, SecretCustodyWork, enacted};
 use crate::authority::{ActSurface, CustodyChange, OwnerWorkBody};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
+use crate::secret_rotation::{RevokeCause, revoke_custody_in_txn};
 use crate::store::Store;
-use crate::world_keys::OwnerWorkReceipt;
 use crate::{EntityId, Vault};
 
 impl Vault {
@@ -22,8 +28,13 @@ impl Vault {
     /// naming this install, its carrier, as executor (CALLS
     /// CUSTODY_EXECUTOR), its enacted result, then the revoked transition
     /// bound to the request. Its `seen` is the secret's custody revision here
-    /// (CALLS CUSTODY_REVISION). `None`, and nothing recorded, for a record
-    /// that stays on this device or when this install cannot carry the act.
+    /// (CALLS CUSTODY_REVISION). Nothing is recorded, and the work says why
+    /// the revoke stays here (FIX 4994), for a record that stays on its
+    /// device, or when this install has no live machine profile to carry the
+    /// act.
+    ///
+    /// # Errors
+    /// A name no record holds; the store's errors.
     pub(crate) fn carry_custody_revoke_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -31,19 +42,17 @@ impl Vault {
         surface: ActSurface,
         secret_ref: &str,
         at: u64,
-    ) -> Result<Option<OwnerWorkReceipt>> {
-        let Some(id) = super::super::resolve_secret_ref_in_txn(&self.store, txn, secret_ref)?
-        else {
-            return Ok(None);
-        };
-        let Some(mut record) = super::super::read_secret_custody_in_txn(&self.store, txn, &id)?
-        else {
-            return Ok(None);
-        };
+    ) -> Result<SecretCustodyWork> {
+        let missing = || Error::CorruptedIndex("secret custody record for live name");
+        let id = resolve_secret_ref_in_txn(&self.store, txn, secret_ref)?.ok_or_else(missing)?;
+        let mut record = read_secret_custody_in_txn(&self.store, txn, &id)?.ok_or_else(missing)?;
         record.value_bytes.zeroize();
+        if !custody_portable(&record) {
+            return Ok(SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal));
+        }
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        if !custody_portable(&record) || self.owner_work_carrier_in_txn(txn, &fold)?.is_none() {
-            return Ok(None);
+        if self.owner_work_carrier_in_txn(txn, &fold)?.is_none() {
+            return Ok(SecretCustodyWork::kept(CustodyKeptHere::NoCarrier));
         }
         let seen = fold.custody_work_revision(id);
         let work = OwnerWorkBody::Custody {
@@ -55,7 +64,7 @@ impl Vault {
         };
         let receipt = self.record_owner_work_in_txn(txn, owner, surface, id, seen, work)?;
         let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
-            return Ok(Some(receipt));
+            return Ok(SecretCustodyWork::recorded(receipt));
         };
         self.append_owner_work_result_in_txn(txn, request, executor, enacted())?;
         let enactment = Enactment {
@@ -65,22 +74,26 @@ impl Vault {
         };
         write_custody_transition_in_txn(self, txn, id, &record, enactment, at)?;
         let after = self.authority_view_readonly_in_txn(txn)?;
-        Ok(Some(receipt.refreshed(&after)))
+        Ok(SecretCustodyWork::recorded(receipt.refreshed(&after)))
     }
 
     /// Settles every admitted custody revoke this vault has not met yet,
     /// byte-free, in one writer transaction: each portable record held under
-    /// an id the fold holds terminal is revoked here with its leases. The
-    /// owner work drain runs it after an authority catch-up and on the
-    /// served tick; the fold is its only input, so nothing is queued and a
-    /// restart loses nothing. Returns how many records it revoked.
+    /// an id the fold holds terminal is revoked here with its leases, its
+    /// value erased (CALLS CUSTODY_REVOKE_ERASE), and a carrier that still
+    /// seals the value is dropped, even where this install holds the carrier
+    /// alone. The owner work drain runs it after an authority catch-up and
+    /// on the served tick; the fold is its only input, so nothing is queued
+    /// and a restart loses nothing. Returns how many ids it settled.
     pub(crate) fn settle_revoked_custody(&self) -> Result<usize> {
         let due = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let mut due = Vec::new();
             for id in fold.custody_revoked_ids() {
-                if revoke_due_in_txn(&self.store, &txn, &id)? {
+                if revoke_due_in_txn(&self.store, &txn, &id)?
+                    || holds_sealed_carrier_in_txn(self, &txn, &id)?
+                {
                     due.push(id);
                 }
             }
@@ -115,8 +128,10 @@ fn revoke_due_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Res
 }
 
 /// Revokes record `id`, an id an admitted revoke names, here in `txn` with
-/// every lease over it, when this vault holds it of the portable class and
-/// not yet revoked. Returns whether it did.
+/// every lease over it and its value erased, when this vault holds it of the
+/// portable class and not yet revoked; otherwise drops what this install
+/// still holds of it beyond the record ([`drop_revoked_copies_in_txn`]).
+/// Returns whether it changed anything.
 pub(crate) fn settle_revoked_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -124,10 +139,23 @@ pub(crate) fn settle_revoked_in_txn(
     at: u64,
 ) -> Result<bool> {
     if !revoke_due_in_txn(&vault.store, txn, id)? {
-        return Ok(false);
+        return drop_revoked_copies_in_txn(vault, txn, id);
     }
-    crate::secret_rotation::revoke_custody_in_txn(vault, txn, id, at)?;
+    revoke_custody_in_txn(vault, txn, id, RevokeCause::Revoked, at)?;
     Ok(true)
+}
+
+/// Drops what this install holds of revoked record `id` beyond the record
+/// (CALLS CUSTODY_REVOKE_ERASE): the carrier that still seals its value,
+/// which the revoked carrier replaces where this install carries the act,
+/// and every input kept for a request on it. Returns whether it dropped any.
+pub(crate) fn drop_revoked_copies_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let carrier = drop_sealed_carrier_in_txn(vault, txn, id)?;
+    Ok(drop_inputs_for_in_txn(vault, txn, id)? > 0 || carrier)
 }
 
 /// Whether an admitted custody revoke names record `id` in `txn`'s fold:

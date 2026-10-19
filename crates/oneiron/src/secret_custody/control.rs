@@ -49,9 +49,10 @@ pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{InputBinding, RelayedInput, input_digest, keep_input_in_txn};
 pub(crate) use self::revoked::{
-    custody_revoked_in_txn, refuse_revoked_use_in_txn, settle_revoked_in_txn,
+    custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
+    settle_revoked_in_txn,
 };
-use super::codec::encode_secret_custody_body;
+use super::codec::{encode_bind_input, encode_register_input};
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, CUSTODY_RECIPIENTS_MAX, CustodyChange,
     CustodyRecipientPermit, OwnerWorkBody, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest,
@@ -261,18 +262,20 @@ impl SecretCustodyWork {
 
 /// What the owner's revoke of a secret did: the rotation receipt of the
 /// revoke here, and the shared receipt of the revoke recorded for his other
-/// machines.
+/// machines, or exactly why it stays here (FIX 4994).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretRevoked {
     /// The record and every lease over it, revoked here.
     pub rotation: RotationReceipt,
     /// The custody revoke this install carried and enacted in the same
-    /// commit. "Enacted" says it committed here, never that every replica
-    /// holds it yet (CALLS CUSTODY_COMPLETION). `None` when nothing was
-    /// recorded: the record stays on this device (device bound, cross-vault
-    /// or "this device only"), or this install has no live machine profile
-    /// to carry the owner's act, so no other machine learns of it from here.
-    pub work: Option<OwnerWorkReceipt>,
+    /// commit: "enacted" says it committed here, never that every replica
+    /// holds it yet (CALLS CUSTODY_COMPLETION). Kept here, with nothing
+    /// recorded, as [`CustodyKeptHere::DeviceLocal`] for a record that stays
+    /// on its device (device bound, cross-vault or "this device only"), or
+    /// [`CustodyKeptHere::NoCarrier`] when this install has no live machine
+    /// profile to carry the owner's act, so no other machine learns of it
+    /// from here.
+    pub custody: SecretCustodyWork,
 }
 
 /// What the owner's rotation of a secret did.
@@ -390,10 +393,13 @@ impl Vault {
             holder,
             permits: &permits,
         };
-        let envelope = match (change.change, change.sealed) {
-            (CustodyChange::Rewrap | CustodyChange::Revoke, _) => None,
-            (_, Some(sealed)) => Some(sealed.to_vec()),
-            (_, None) => Some(binding.seal(&holder_key, &plaintext(&change.material)?)?),
+        // A rewrap carries an input only for a bind (CALLS
+        // CUSTODY_BIND_TRAVEL); a revoke never does.
+        let envelope = match (change.change, &change.material, change.sealed) {
+            (CustodyChange::Revoke, ..)
+            | (CustodyChange::Rewrap, Material::Held | Material::Input(_), _) => None,
+            (_, _, Some(sealed)) => Some(sealed.to_vec()),
+            (_, material, None) => Some(binding.seal(&holder_key, &plaintext(material)?)?),
         };
         let input = envelope.as_deref().map(input_digest);
         // CALLS CUSTODY_RETRY: the same protected input again is the request
@@ -468,8 +474,9 @@ impl Vault {
     /// CUSTODY_CONCURRENT_ACTIVE), so its executor never refuses it. An
     /// active change whose secret an admitted revoke names is refused as
     /// stale; any other is executed from its protected input, opened with
-    /// `secret`, or for a rewrap from the record held here ([`execute`]).
-    /// `None` leaves it pending: no secret, input or record here yet.
+    /// `secret`, or for a rewrap that carries none from the record held here
+    /// ([`execute`]). `None` leaves it pending: no secret, input or record
+    /// here yet.
     pub(crate) fn custody_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -478,7 +485,7 @@ impl Vault {
         request: &OwnerWorkRequest,
         secret: Option<&MachineSecret>,
     ) -> Result<Option<OwnerWorkOutcome>> {
-        let OwnerWorkBody::Custody { change, .. } = &request.work else {
+        let OwnerWorkBody::Custody { change, input, .. } = &request.work else {
             return Ok(None);
         };
         let id = request.act.target;
@@ -492,10 +499,10 @@ impl Vault {
                 reason: OwnerWorkRefusal::StaleRevision,
             }));
         }
-        let material = match (change, secret) {
-            (CustodyChange::Rewrap, _) => Material::Held,
-            (_, Some(secret)) => Material::Input(secret),
-            (_, None) => return Ok(None),
+        let material = match (change, input, secret) {
+            (CustodyChange::Rewrap, None, _) => Material::Held,
+            (_, _, Some(secret)) => Material::Input(secret),
+            (_, _, None) => return Ok(None),
         };
         Ok(self
             .enact_custody_change_in_txn(txn, hash, request, material, at)?
@@ -506,7 +513,8 @@ impl Vault {
 /// The permits a change records: the exact ones a sealing surface bound,
 /// each still standing; the machines the plan names; or, when it names
 /// none, the holder alone for a register and the permits of the secret's
-/// one live active change for a rotate. A rewrap names its own.
+/// one live active change for a rotate or a bind. Any other rewrap names
+/// its own.
 fn change_permits(
     fold: &AuthorityFold,
     change: &ActiveChange<'_>,
@@ -522,8 +530,8 @@ fn change_permits(
     } else if !change.plan.recipients.is_empty() {
         permits::permits_for(fold, &change.plan.recipients).map_err(recipient_refused)?
     } else {
-        match change.change {
-            CustodyChange::Rotate => {
+        match (change.change, &change.material) {
+            (CustodyChange::Rotate, _) | (CustodyChange::Rewrap, Material::Bindings(_)) => {
                 let mut live: Vec<_> =
                     fold.custody_heads(change.id)
                         .into_iter()
@@ -550,10 +558,10 @@ fn change_permits(
                     ]
                 }
             }
-            CustodyChange::Register => {
+            (CustodyChange::Register, _) => {
                 vec![permits::permit_for(fold, holder).ok_or_else(|| recipient_refused(holder))?]
             }
-            CustodyChange::Rewrap | CustodyChange::Revoke => {
+            (CustodyChange::Rewrap | CustodyChange::Revoke, _) => {
                 return Err(refused("a rewrap names the installs it permits"));
             }
         }
@@ -569,12 +577,14 @@ fn change_permits(
     Ok(permits)
 }
 
-/// The body a door seals to a holder that is not this install: a register's
-/// whole record, value in it, or a rotate's new value.
+/// The body a door seals to the holder: a register's whole record, value in
+/// it, framed with its manifest's text when it has one; a rotate's new
+/// value; a bind's bindings.
 fn plaintext(material: &Material<'_>) -> Result<Zeroizing<Vec<u8>>> {
     match material {
-        Material::Record(record) => encode_secret_custody_body(record).map(Zeroizing::new),
+        Material::Record(record, manifest) => encode_register_input(record, *manifest),
         Material::Value(value) => Ok(Zeroizing::new(value.to_vec())),
+        Material::Bindings(bindings) => encode_bind_input(bindings).map(Zeroizing::new),
         Material::Input(_) | Material::Held => Err(invalid_authority()),
     }
 }

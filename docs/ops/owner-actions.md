@@ -401,7 +401,9 @@ oneiron api raw POST /v1/owner/secrets/found/not-a-secret --data '{"handle": "sc
   project when you leave it out), until you revoke it.
 - **Not a secret** overrules the scan. The value goes back into the record's body where the handle
   was, or the file's mark drops it. The custody record is revoked, and the scan stops flagging that
-  value in that record.
+  value in that record. That revoke keeps the value in custody for the scan to recognize. A key whose
+  value an earlier revoke erased can't be marked not a secret; if the value appears again, its new
+  finding can.
 
 Each answer writes its receipt. Not a secret works only for a key found in a record's body or in a
 file. A key in a claim or a text field keeps its handle.
@@ -424,8 +426,9 @@ such as `connector:github`.
 Name the secret by `handle` or `name`. `tier_ceiling` is the binding's rung, 0 (doored) by default
 and never above the class's live floor, and `scopes` defaults to `["read"]`. A binding for the same
 effector is replaced. The reply lists the record's bindings and the Gate record that keeps the
-binding. A portable secret's new binding stays on this install until you next rotate the secret:
-the rotation's custody transition carries the record as it then stands.
+binding. A portable secret's binding is a custody rewrap this install records and does as its
+holder, so its transition carries the new bindings to your other machines that hold the secret. The
+reply's `custody` says so, or why the binding stayed on this install.
 
 ## Hand a served repository's origin to another host
 
@@ -1723,7 +1726,14 @@ oneiron api raw POST /v1/owner/secrets/custody --data '{"change": "rotate",
   "input_base64": "..."}'
 ```
 
-The same input sent again returns the request it already made.
+The same input sent again returns the request it already made. A sealed register whose record names
+a manifest also sends `"manifest_ref"`: this install attaches the manifest it resolves for that ref,
+and the holder checks the record against it. A ref this install does not resolve is refused, by
+name.
+
+A revoke erases the secret's value at rest on each install that holds it and keeps its name and
+generation. Its reply's `custody` says whether it went to your other machines or why it stayed
+here. Copies already exported, in a checkpoint or delivered elsewhere are not recalled.
 
 ### Push with your recovery kit from an install with no profile
 
