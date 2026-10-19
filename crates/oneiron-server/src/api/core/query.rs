@@ -333,40 +333,63 @@ pub(crate) fn core_list_limit(limit: usize) -> usize {
     limit.min(CORE_MAX_LIST_LIMIT)
 }
 
-pub(crate) fn collect_live_entity_page<F>(
+/// One page of the live rows `fetch` reads in runs of edges that `admits`
+/// serves: `limit` of them and one more that proves a next page, or all
+/// that are left. A deleted shell or a row `admits` withholds takes no
+/// place, so the page reads on past it, however many (rule 5), and the
+/// cursor is always the last row served, never one withheld (FIX 5652).
+pub(crate) fn collect_live_entity_page<F, A>(
     vault: &oneiron::Vault,
     after: Option<oneiron::EntityId>,
     limit: usize,
     mut fetch: F,
+    mut admits: A,
 ) -> Result<(Vec<oneiron::EntityId>, Option<String>), EnvelopedApiError>
 where
     F: FnMut(Option<&oneiron::EntityId>, usize) -> Result<oneiron::IdScanPage, EnvelopedApiError>,
+    A: FnMut(&oneiron::EntityId) -> Result<bool, EnvelopedApiError>,
 {
     if limit == 0 {
         return Ok((Vec::new(), None));
     }
 
-    // One bounded run of edges per page: deleted shells are read too, and a
-    // page they leave short resumes where the run stopped (F13).
-    let fetched = fetch(after.as_ref(), limit.saturating_add(1))?;
     let mut ids = Vec::with_capacity(limit);
-    for id in fetched.ids {
-        if is_deleted_shell_for_core_list(vault, &id)? {
-            continue;
+    let mut resume = after;
+    loop {
+        let fetched = fetch(resume.as_ref(), limit.saturating_add(1))?;
+        for id in fetched.ids {
+            if is_deleted_shell_for_core_list(vault, &id)? || !admits(&id)? {
+                continue;
+            }
+            // A full page resumes after its last item, as the list always has.
+            if ids.len() == limit {
+                let next_cursor = ids.last().map(oneiron::EntityId::to_hex);
+                return Ok((ids, next_cursor));
+            }
+            ids.push(id);
         }
-        if ids.len() == limit {
-            let next_cursor = ids.last().map(oneiron::EntityId::to_hex);
-            return Ok((ids, next_cursor));
-        }
-        ids.push(id);
+        // A run that stopped before the rows ran out is read on from where it
+        // stopped; that place is never handed out.
+        let Some(resume_after) = fetched.resume_after else {
+            return Ok((ids, None));
+        };
+        resume = Some(resume_after);
     }
-    // A full page resumes after its last item, as the list always has; a page
-    // the run left short resumes where the run stopped.
-    let next_cursor = fetched.resume_after.map(|resume_after| {
-        let last_served = ids.last().filter(|_| ids.len() == limit);
-        last_served.unwrap_or(&resume_after).to_hex()
-    });
-    Ok((ids, next_cursor))
+}
+
+/// Whether `read`'s caller reads `id` under each private thread it sits in,
+/// turn by turn, the opener included (FIX 5652): the one bound a door
+/// serving rows by record scope holds a row to. One it does not read is one
+/// that is not here.
+pub(crate) fn core_private_threads_admit(
+    vault: &oneiron::Vault,
+    read: &oneiron::claim::ScopedRead<'_>,
+    id: &oneiron::EntityId,
+) -> Result<bool, ApiError> {
+    vault.private_threads_admit(read, id).map_err(|error| {
+        tracing::error!(error = %error, id = %id.to_hex(), "core private-thread check failed");
+        core_engine_error("core private-thread check failed", error)
+    })
 }
 
 pub(crate) fn is_deleted_shell_for_core_list(

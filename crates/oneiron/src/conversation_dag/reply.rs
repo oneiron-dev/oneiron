@@ -7,6 +7,7 @@ use super::graph::{
 use super::policy::{self, AppendFailure};
 use super::thread_projection::{chain_in_txn, selected_thread_in_txn};
 use super::{AppendRecord, AppendedRecord};
+use crate::claim::ScopedRead;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::limits::MAX_ANCESTOR_DEPTH;
@@ -28,19 +29,47 @@ pub struct ReplyStrip {
     pub record: EntityId,
     /// BLAKE3 content hash captured at the merge move.
     pub revision: String,
-    /// Target's txt field, only when it is still live at the pinned revision.
+    /// Target's txt field, only when it is still live at the pinned revision
+    /// and not `withheld`.
     pub text: Option<String>,
     /// Target is missing, deleted or no longer at the pinned revision.
     pub stale: bool,
     /// Target has been erased (rather than merely edited or not yet received).
     pub redacted: bool,
+    /// Target's words sit in a private-thread turn the reader does not read
+    /// (FIX 5652): `text` is `None` though the target stands at its revision.
+    pub withheld: bool,
 }
 
 impl Vault {
-    /// Projects a revision-bound reply strip. Never reconstructs or invents text.
-    pub fn reply_strip(&self, record: &EntityId) -> Result<Option<ReplyStrip>> {
+    /// Whether `read`'s caller reads the words of the row `id` under each
+    /// private thread it sits in, turn by turn, the opener included (FIX
+    /// 5652): the one bound a door serving rows by record scope, the TURN
+    /// routes, holds what it serves to. None of `read`'s other gates is
+    /// asked; `read` reads this vault. A row with no record has no thread to
+    /// withhold it.
+    pub fn private_threads_admit(&self, read: &ScopedRead<'_>, id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        read.private_threads_admit_in(&txn, id)
+    }
+
+    /// Projects a revision-bound reply strip for `read`'s caller. Never
+    /// reconstructs or invents text. A reply the caller does not read
+    /// ([`Self::private_threads_admit`]) is not found; a target it does not
+    /// read keeps its place and revision, never its words, so one added to
+    /// a private thread from a later turn on reads a reply to a turn before
+    /// its add without that turn's text (FIX 5652). Such a target is
+    /// `withheld`, neither stale nor redacted.
+    pub fn reply_strip(
+        &self,
+        read: &ScopedRead<'_>,
+        record: &EntityId,
+    ) -> Result<Option<ReplyStrip>> {
         let txn = self.store.env.read_txn()?;
         let bytes = require_type(&self.store, &txn, record, ENTITY_TYPE_TURN)?;
+        if !read.private_threads_admit_in(&txn, record)? {
+            return Err(Error::EntityNotFound);
+        }
         let mut input = bytes.as_slice();
         let value =
             rmpv::decode::read_value(&mut input).map_err(|_| invalid("invalid record body"))?;
@@ -95,6 +124,7 @@ impl Vault {
         if edges != [target] && !(redacted && edges.is_empty()) {
             return Err(Error::CorruptedIndex("reply pointer index"));
         }
+        let mut withheld = false;
         let (text, stale) = match target_row {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_TURN,
@@ -107,6 +137,9 @@ impl Vault {
                 }
                 if blake3::hash(&body).to_hex().as_str() != revision {
                     (None, true)
+                } else if !read.private_threads_admit_in(&txn, &target)? {
+                    withheld = true;
+                    (None, false)
                 } else {
                     let value = rmpv::decode::read_value(&mut body.as_slice())
                         .map_err(|_| invalid("invalid reply target body"))?;
@@ -128,6 +161,7 @@ impl Vault {
             text,
             stale,
             redacted,
+            withheld,
         }))
     }
 }
