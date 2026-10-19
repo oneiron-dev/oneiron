@@ -851,7 +851,11 @@ impl FoldBase {
         valid_entries.extend(tail.order.iter().copied());
         // The projection reads each world-key envelope from the rows read
         // whole, the base's and the tail's.
-        let tail_rows: Vec<_> = tail.order.iter().map(|hash| (*hash, new_rows[hash])).collect();
+        let tail_rows: Vec<_> = tail
+            .order
+            .iter()
+            .map(|hash| (*hash, new_rows[hash]))
+            .collect();
         let mut projected = self.projected.clone();
         for (hash, entry) in &tail_rows {
             if is_projected(&entry.op) {

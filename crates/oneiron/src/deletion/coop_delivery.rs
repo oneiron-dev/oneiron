@@ -30,6 +30,8 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::legal_hold as hold_store;
 use crate::{EntityId, Error, Result, Vault};
 
+mod refresh;
+
 /// The queue kind carrying both legs: the ask and the answer.
 pub const COOP_DELETION_DELIVERY_ATTEMPT_KIND: &str = "cooperative_deletion.delivery";
 /// The peer route an ask is POSTed to.
@@ -252,7 +254,8 @@ pub struct CooperativeDeletionAnswer {
 pub enum CooperativeDeletionIngress {
     /// Recorded; nothing was deleted.
     Filed,
-    /// The same bytes were already recorded.
+    /// The same bytes were already recorded, or the same ask signed again
+    /// by the walked tip after its sender's re-root (FIX 5088).
     AlreadyFiled,
     /// No pact with this peer, or the bytes do not verify against the key it pinned.
     Unauthenticated,
@@ -306,7 +309,8 @@ pub struct CooperativeDeletionDelivery {
     pub attempt: AttemptRecord,
     /// The full peer URL.
     pub destination: String,
-    /// The signed bytes, unchanged on every try.
+    /// The signed bytes, unchanged on every try but for the signature a
+    /// re-root's live root puts on them again (FIX 5088).
     pub bytes: Vec<u8>,
     payload: DeliveryPayload,
 }
@@ -468,7 +472,12 @@ impl Vault {
         }
         let key = (pact_id, body.nonce);
         self.with_write_txn_grouped(|txn| match INCOMING.get(&self.store, txn, &key)? {
-            Some(filed) if filed.request == bytes => Ok(CooperativeDeletionIngress::AlreadyFiled),
+            // The same ask again, as filed or signed again by the walked tip
+            // after the asker's re-root (FIX 5088): it stays filed once, its
+            // answer and its audit bytes as they were.
+            Some(filed) if filed.request == bytes || refresh::same_ask(&filed.request, bytes) => {
+                Ok(CooperativeDeletionIngress::AlreadyFiled)
+            }
             Some(_) => Ok(CooperativeDeletionIngress::Conflict),
             None => {
                 let filed = IncomingCooperativeDeletion {
@@ -631,10 +640,14 @@ impl Vault {
     /// Claims the next try and marks its leg `sent`. A try whose ledger row
     /// is gone or already past sending (an answered ask, or a job replayed
     /// from a restored image) is failed here and never reaches the host.
+    /// With `issuer`, this host's live root, a try a root it succeeded
+    /// signed goes signed again by it, its body as queued (FIX 5088): the
+    /// host's worker and an embedded sender pass the root they hold.
     pub fn claim_cooperative_deletion_delivery(
         &self,
         lease_owner: &str,
         now: u64,
+        issuer: Option<&crate::authority::HostSlipIssuer>,
     ) -> Result<Option<CooperativeDeletionDelivery>> {
         let queue = AttemptQueue::new(self);
         loop {
@@ -649,27 +662,31 @@ impl Vault {
                 return Ok(None);
             };
             let payload = serde_json::from_slice::<DeliveryPayload>(&attempt.payload).ok();
-            let live = match &payload {
+            let start = match &payload {
                 Some(payload) => self.with_write_txn_grouped(|txn| {
-                    move_leg(
+                    refresh::start_try_in_txn(
                         self,
                         txn,
+                        &attempt,
+                        lease_owner,
                         payload,
-                        CooperativeDeletionDeliveryStatus::Sent,
+                        issuer,
                         now,
                     )
                 })?,
-                None => false,
+                None => refresh::TryStart::Settled,
             };
-            match payload {
-                Some(payload) if live => {
+            match (payload, start) {
+                (Some(payload), refresh::TryStart::Send(bytes)) => {
                     return Ok(Some(CooperativeDeletionDelivery {
                         destination: payload.destination.clone(),
-                        bytes: payload.bytes.clone(),
+                        bytes,
                         attempt,
                         payload,
                     }));
                 }
+                // Another holder's try now: it is theirs to settle.
+                (_, refresh::TryStart::NotHeld) => {}
                 _ => {
                     queue.fail(FailAttempt {
                         id: attempt.id,

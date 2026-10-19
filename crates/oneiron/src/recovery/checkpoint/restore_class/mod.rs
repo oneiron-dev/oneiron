@@ -155,6 +155,11 @@ const OUTBOUND_GRANTS: Class = Class::Refuse {
     scope: Scope::Authority(Projection::OutboundGrant),
 };
 const MACHINE_IDENTITIES: Class = refuse("machine identities");
+/// This install's own serving MACHINE row (FIX 4728; Engine 10-19 15:0x):
+/// the one machine row an authority-preserving restore keeps as the live
+/// vault holds it, so the profile a start ensured never refuses a restore of
+/// an image taken before it. Every other machine row stays refused.
+const SERVING_MACHINE: Class = LIVE;
 const SKILL_HUB_CONFIGURATION: Class = refuse("skill hub configuration");
 const STANDING_GRANTS: Class = refuse("standing consent grants");
 /// A code consent wait (DOOR-079) entangles a one-shot answer, an external
@@ -440,11 +445,15 @@ pub(super) struct Classes {
     /// The live vault's origin authority rows an erase rewrote, by key. A
     /// read that fails keeps none, so those rows refuse as before.
     erased_authority: BTreeMap<Vec<u8>, crate::origin::residence::OriginAuthority>,
+    /// The live vault's own serving machine ([`SERVING_MACHINE`]), read in
+    /// one snapshot of `current` (`Vault::serving_machine_in_txn`).
+    serving_machine: Option<crate::EntityId>,
 }
 
 impl Classes {
-    /// The table, with the kinds `current` registered at run time.
-    pub(super) fn new(current: &crate::Vault) -> Self {
+    /// The table, with the kinds `current` registered at run time and its
+    /// own serving machine.
+    pub(super) fn new(current: &crate::Vault) -> crate::Result<Self> {
         let mut vault_meta = Vec::new();
         let mut sync_state = Vec::new();
         for (decl, class) in SIDE_TABLES.iter().copied().flatten() {
@@ -471,13 +480,15 @@ impl Classes {
                 *slot = class;
             }
         }
-        Self {
+        let serving_machine = current.serving_machine_in_txn(&current.store.env.read_txn()?)?;
+        Ok(Self {
             vault_meta,
             sync_state,
             kinds,
             erased_authority: crate::origin::residence::erased_writer_rows(current)
                 .unwrap_or_default(),
-        }
+            serving_machine,
+        })
     }
 
     /// The class of one canonical row of `database`, and the length of the
@@ -491,6 +502,13 @@ impl Classes {
             Some(Rows::ByKind) => (
                 EntityMetadataHeader::parse(value)
                     .and_then(|header| {
+                        if header.entity_type == ENTITY_TYPE_MACHINE
+                            && self
+                                .serving_machine
+                                .is_some_and(|machine| key == machine.as_bytes())
+                        {
+                            return Some(SERVING_MACHINE);
+                        }
                         if header.entity_type == ENTITY_TYPE_FEDERATION_GRANT
                             && own_device_grant_row(value)
                         {

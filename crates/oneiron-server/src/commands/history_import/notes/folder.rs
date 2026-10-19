@@ -27,7 +27,7 @@ use serde::Serialize;
 use super::super::ImportWarning;
 use super::{NoteCounts, TitleCounts};
 use crate::cli::{ImportFolderAttachArgs, ImportFolderCommand};
-use crate::config::{ServeConfig, resolve_serve_config};
+use crate::config::resolve_serve_config;
 use crate::server::SyncServer;
 
 /// How often `oneiron serve` rescans the attached folders.
@@ -128,34 +128,29 @@ pub(in crate::commands) fn import_folder(command: ImportFolderCommand) -> anyhow
     Ok(())
 }
 
-/// Rescans attached folders from `oneiron serve` (a local vault only: a
-/// hosted or relay node has no folder beside it).
-pub(in crate::commands) struct FolderRescans;
-
-impl FolderRescans {
-    pub(in crate::commands) fn from_config(config: &ServeConfig) -> Option<Self> {
-        (config.privacy_posture == oneiron::HostingPrivacyPosture::SelfHostLocal).then_some(Self)
-    }
-
-    /// Rescans every attached folder at start and every [`RESCAN_TICK`],
-    /// one pass at a time, off the async runtime.
-    pub(in crate::commands) fn spawn(self, server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(RESCAN_TICK);
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                interval.tick().await;
-                let server = Arc::clone(&server);
-                let pass = tokio::task::spawn_blocking(move || rescan_all(server.vault())).await;
-                let error = match pass {
-                    Ok(Ok(())) => continue,
-                    Ok(Err(error)) => format!("{error:#}"),
-                    Err(error) => error.to_string(),
-                };
-                tracing::warn!(error = %error, "folder source rescan failed");
-            }
-        })
-    }
+/// Rescans every attached folder from `oneiron serve` at start and every
+/// [`RESCAN_TICK`], one pass at a time, off the async runtime, on every
+/// posture: attaching a folder is the owner's standing act for it and
+/// detaching ends it, so the folders the vault records are the whole policy.
+/// A pass lands as the vault's local owner; a managed vault starts none,
+/// since it keeps no standing import authority yet. A folder that is not
+/// there now is said each pass and retracts nothing.
+pub(in crate::commands) fn spawn_rescans(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(RESCAN_TICK);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            let server = Arc::clone(&server);
+            let pass = tokio::task::spawn_blocking(move || rescan_all(server.vault())).await;
+            let error = match pass {
+                Ok(Ok(())) => continue,
+                Ok(Err(error)) => format!("{error:#}"),
+                Err(error) => error.to_string(),
+            };
+            tracing::warn!(error = %error, "folder source rescan failed");
+        }
+    })
 }
 
 fn rescan_all(vault: &oneiron::Vault) -> anyhow::Result<()> {

@@ -67,7 +67,10 @@ fn read_page(
         call,
     )
     .map_err(FacadeApiError::into_memory_error)?;
-    match call.room_turn().map_err(FacadeApiError::into_memory_error)? {
+    match call
+        .room_turn()
+        .map_err(FacadeApiError::into_memory_error)?
+    {
         Some(room) => {
             let value = serde_json::to_value(&input).map_err(|_| undecoded())?;
             let output = memory.for_room_turn(room)?.invoke(VERB, value)?;

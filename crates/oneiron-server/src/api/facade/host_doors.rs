@@ -1903,7 +1903,12 @@ fn setup_rows(setup: &oneiron::skill_hub::pack_catalog::PackSetupView) -> Vec<En
                 .iter()
                 .filter_map(|permission| permission.grant_ref.as_ref()),
         ));
-        rows.extend(connection.secrets.iter().filter_map(|secret| secret.custody_id));
+        rows.extend(
+            connection
+                .secrets
+                .iter()
+                .filter_map(|secret| secret.custody_id),
+        );
     }
     rows
 }

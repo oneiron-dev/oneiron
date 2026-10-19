@@ -246,7 +246,16 @@ pub(crate) fn run_verdict(
     );
     let answered = on_caller_meter(&meter, || {
         on_caller_payer(payer, || {
-            answer_verdict(server, principal, class, reader, lane, held, request, evidence_read)
+            answer_verdict(
+                server,
+                principal,
+                class,
+                reader,
+                lane,
+                held,
+                request,
+                evidence_read,
+            )
         })
     });
     let now = vault.now_recorded_at();
@@ -278,7 +287,10 @@ pub(crate) fn run_verdict(
 
 /// [`run_verdict`]'s question through the ladder, on whatever line the
 /// calling thread meters.
-#[expect(clippy::too_many_arguments, reason = "run_verdict's axes and its evidence list")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "run_verdict's axes and its evidence list"
+)]
 fn answer_verdict(
     server: &SyncServer,
     principal: EntityId,
