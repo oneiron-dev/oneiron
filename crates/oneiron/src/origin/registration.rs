@@ -8,9 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitRefName, GitWire, lock_repository};
 
-use super::smart_http::{
-    ORIGIN_REPO_DIR_SUFFIX, origin_serving_root, validate_repo_name,
-};
+use super::smart_http::{ORIGIN_REPO_DIR_SUFFIX, origin_serving_root, validate_repo_name};
 
 impl Vault {
     /// Registers one new bare repository under its smart-HTTP served name.
@@ -38,24 +36,33 @@ impl Vault {
             "--object-format=sha1".to_owned(),
             "--ref-format=files".to_owned(),
             "--template=".to_owned(),
-            format!("--initial-branch={}", &branch.as_str()["refs/heads/".len()..]),
+            format!(
+                "--initial-branch={}",
+                &branch.as_str()["refs/heads/".len()..]
+            ),
             ".".to_owned(),
         ]
         .into();
         let initialized = crate::git_wire::run_bridged_git_argv(staged.path(), &args)?;
         if !initialized.success {
-            return Err(Error::InvalidConfig(crate::git_wire::redact_bridged_failure(
-                &args,
-                initialized.exit_code,
-                &initialized.stderr,
-            )));
+            return Err(Error::InvalidConfig(
+                crate::git_wire::redact_bridged_failure(
+                    &args,
+                    initialized.exit_code,
+                    &initialized.stderr,
+                ),
+            ));
         }
         let destination = root.join(format!("{repo_name}{ORIGIN_REPO_DIR_SUFFIX}"));
         let _guard = lock_repository(&root)?;
         let txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         match std::fs::symlink_metadata(&destination) {
-            Ok(_) => return Err(Error::ConcurrentWrite("origin repository name is already registered")),
+            Ok(_) => {
+                return Err(Error::ConcurrentWrite(
+                    "origin repository name is already registered",
+                ));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }

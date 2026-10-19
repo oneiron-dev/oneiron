@@ -117,13 +117,17 @@ pub(crate) fn send(
 /// Every ask this vault sent: the engine's ledger projection, shared with
 /// an embedded handle (FIX 3139).
 pub(crate) fn sent(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteSent>> {
-    Ok(oneiron::task_verb::sdk::courtesy_delete_sent(server.vault())?)
+    Ok(oneiron::task_verb::sdk::courtesy_delete_sent(
+        server.vault(),
+    )?)
 }
 
 /// Every ask filed here, with each named world's stale stamp and the
 /// records the ask covers: the engine's ledger projection (FIX 3139).
 pub(crate) fn incoming(server: &SyncServer) -> OwnerResult<Vec<CourtesyDeleteIncoming>> {
-    Ok(oneiron::task_verb::sdk::courtesy_delete_incoming(server.vault())?)
+    Ok(oneiron::task_verb::sdk::courtesy_delete_incoming(
+        server.vault(),
+    )?)
 }
 
 /// Records the owner's choice on one filed ask and, with `reply_to`, queues

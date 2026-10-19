@@ -98,9 +98,8 @@ pub(in crate::sync) fn authorize_sync_selector_in_txn(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<()> {
-    authorize_selector_export_in_txn(
-        vault, txn, grant_scope, selector, vault.now_recorded_at(),
-    ).map(|_| ())
+    authorize_selector_export_in_txn(vault, txn, grant_scope, selector, vault.now_recorded_at())
+        .map(|_| ())
 }
 
 fn authorize_selector_export_in_txn(

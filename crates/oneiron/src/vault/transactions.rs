@@ -467,11 +467,12 @@ impl Vault {
                 // A key this write's mask found raises its notice here.
                 match crate::sync::federation_burst::check_active_in_txn(self, wtxn)
                     .map_err(E::from)
-                    .and_then(|()| f(wtxn)).and_then(|result| {
-                    crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
-                        .map_err(E::from)?;
-                    Ok(result)
-                }) {
+                    .and_then(|()| f(wtxn))
+                    .and_then(|result| {
+                        crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
+                            .map_err(E::from)?;
+                        Ok(result)
+                    }) {
                     Ok(result) => (result, vad_scope.finish()),
                     Err(err) => return Rows::Discard(Err(err)),
                 }

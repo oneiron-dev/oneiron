@@ -1,6 +1,8 @@
 //! Owner policy changes and the peer's own observed baseline.
-use super::{FederationBurstBaseline, FederationBurstBaselineState, FederationBurstPolicy,
-    FederationPeer, corrupt, observations};
+use super::{
+    FederationBurstBaseline, FederationBurstBaselineState, FederationBurstPolicy, FederationPeer,
+    corrupt, observations,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::{Result, Vault};
 
@@ -11,7 +13,9 @@ fn key(peer: &FederationPeer) -> Vec<u8> {
 }
 
 pub(super) fn load_in_txn(
-    vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer,
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: &FederationPeer,
 ) -> Result<FederationBurstPolicy> {
     vault.store.sync_queue.get(txn, &key(peer))?.map_or_else(
         || Ok(FederationBurstPolicy::default()),
@@ -21,7 +25,9 @@ pub(super) fn load_in_txn(
 
 impl Vault {
     pub fn federation_burst_policy(
-        &self, owner: &AuthenticatedOwner, peer: &FederationPeer,
+        &self,
+        owner: &AuthenticatedOwner,
+        peer: &FederationPeer,
     ) -> Result<FederationBurstPolicy> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
@@ -30,7 +36,9 @@ impl Vault {
     }
 
     pub fn set_federation_burst_policy(
-        &self, owner: &AuthenticatedOwner, peer: &FederationPeer,
+        &self,
+        owner: &AuthenticatedOwner,
+        peer: &FederationPeer,
         policy: FederationBurstPolicy,
     ) -> Result<FederationBurstPolicy> {
         self.with_write_txn_grouped(|txn| {
@@ -44,7 +52,9 @@ impl Vault {
     }
 
     pub fn federation_burst_baseline(
-        &self, owner: &AuthenticatedOwner, peer: &FederationPeer,
+        &self,
+        owner: &AuthenticatedOwner,
+        peer: &FederationPeer,
     ) -> Result<FederationBurstBaselineState> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
@@ -54,11 +64,24 @@ impl Vault {
 }
 
 pub(super) fn resolved_baseline(
-    policy: &FederationBurstPolicy, learned_rate: f64, learned_streak: f64,
+    policy: &FederationBurstPolicy,
+    learned_rate: f64,
+    learned_streak: f64,
 ) -> FederationBurstBaseline {
-    policy.baseline.clone().unwrap_or_else(|| FederationBurstBaseline {
-        name: "observed".into(),
-        writes_per_sec: if learned_rate > 0.0 { learned_rate } else { 1.0 },
-        structural_streak: if learned_streak > 0.0 { learned_streak } else { 1.0 },
-    })
+    policy
+        .baseline
+        .clone()
+        .unwrap_or_else(|| FederationBurstBaseline {
+            name: "observed".into(),
+            writes_per_sec: if learned_rate > 0.0 {
+                learned_rate
+            } else {
+                1.0
+            },
+            structural_streak: if learned_streak > 0.0 {
+                learned_streak
+            } else {
+                1.0
+            },
+        })
 }
