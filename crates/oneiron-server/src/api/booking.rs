@@ -90,7 +90,10 @@ pub(crate) use self::public::resolve_public_booking_page_listing;
 pub(crate) use self::public::turn_tests::cross_the_booking_windows;
 use self::subject::{resolve_booker_contact, session_key};
 use self::transport::http_transport_context;
-pub(crate) use self::transport::{BookingAdmissionContext, credential_transport_context};
+pub(crate) use self::transport::{
+    BookingAdmissionContext, booking_payer_verbs, credential_transport_context,
+    is_booking_payer_door,
+};
 use self::validate::validate_operation_shape;
 
 // The pre-split root path stays callable. Minting and resolution both live in
@@ -148,6 +151,13 @@ pub(crate) struct BookingTransportContext {
     /// principal, or the owner for an owner-grade credential naming none.
     /// `None` (an anonymous visitor) is sponsored by the vault owner.
     pub(crate) principal: Option<oneiron::WriteActor>,
+    /// Whether this request books only a page its owner published, through
+    /// the public booking authority: an anonymous visitor, and a stale owner
+    /// sign-in (FIX 5327). The owner's own legacy request keeps his page.
+    pub(crate) requires_publication: bool,
+    /// What made a stale owner sign-in the payer, if anything did (FIX
+    /// 5327): rechecked before a model call spends, by this module alone.
+    payer_guard: Option<transport::BookingPayerGuard>,
     pub(crate) transport: BookingTransport,
 }
 

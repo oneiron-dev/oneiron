@@ -47,7 +47,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/payer_funding.rs` | src | m | 7 crate-vis | — | Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805) |
 | `src/ai_host/policy.rs` | src | s | 5 crate-vis | — | The Dreamer's extraction route: what vault policy must already allow before a pass may send a transcript to… |
 | `src/ai_host/question_timer.rs` | src | s | 3 crate-vis | — | The hand-off of a bound Dreamer's timer work (OF-506, FIX 1149) |
-| `src/ai_host/resident_craft.rs` | src | s | 5 crate-vis | — | A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave… |
+| `src/ai_host/resident_craft.rs` | src | s | 6 crate-vis | — | A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave… |
 | `src/ai_host/self_heal_detectors.rs` | src | m | 1 crate-vis | — | The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418) |
 | `src/ai_host/skill_author.rs` | src | s | 2 crate-vis | — | The Coach's skill-edit author (OF-214) |
 | `src/ai_host/skill_discovery.rs` | src | m | 2 crate-vis | — | The Coach's skill discovery (ARCH-0056 §5, ARCH-0066 #coach, OF-420): the standing attribution classifier… |
@@ -91,7 +91,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking.rs` | src | m | 17 crate-vis | — | ONE-1819 [BK-08] the agent-readable booking surface |
 | `src/api/booking/admission.rs` | src | m | 2 crate-vis | — | — |
 | `src/api/booking/client_address_tests.rs` | test | m | — | — | Booking admission charges the client the connection proves (C7): its own peer, or the client a configured… |
-| `src/api/booking/constants.rs` | src | s | 14 crate-vis | — | — |
+| `src/api/booking/constants.rs` | src | s | 17 crate-vis | — | — |
 | `src/api/booking/execute.rs` | src | s | 2 crate-vis | — | The shared executor (ONE-1819): the one door from a machine-readable booking request to the merged solver… |
 | `src/api/booking/free_text.rs` | src | s | 3 crate-vis | — | A booking page's free-text constraint (ONE-1816), parsed on the cheap seat… |
 | `src/api/booking/front.rs` | src | s | 3 crate-vis | — | ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front |
@@ -107,7 +107,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/booking/public_lifecycle_tests.rs` | test | m | — | — | — |
 | `src/api/booking/public_tests.rs` | test | m | — | — | — |
 | `src/api/booking/subject.rs` | src | s | 3 crate-vis | — | — |
-| `src/api/booking/transport.rs` | src | s | 3 crate-vis | — | — |
+| `src/api/booking/transport.rs` | src | s | 7 crate-vis | — | — |
 | `src/api/booking/turn.rs` | src | s | 3 crate-vis | — | Rule five at the owner's booking windows: authenticated work past one waits for it to open and is never… |
 | `src/api/booking/turn_tests.rs` | test | s | 1 crate-vis | — | Rule five at the owner's booking windows: an authenticated caller past one waits for it to open and is… |
 | `src/api/booking/validate.rs` | src | s | 2 crate-vis | — | — |
@@ -351,6 +351,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/admission.rs` | src | m | 11 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/board_observations.rs` | src | m | 8 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | XL | 21 crate-vis | — | Board state, setup grammar, and page preflight |
+| `src/api/mcp_gateway/booking_call.rs` | src | s | 2 crate-vis | — | A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on… |
 | `src/api/mcp_gateway/call_meta.rs` | src | s | 4 crate-vis | — | What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and… |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 14 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
@@ -360,7 +361,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | L | 10 crate-vis | — | Execute-code and board-verb executors |
 | `src/api/mcp_gateway/memory_response.rs` | src | m | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 12 crate-vis | — | — |
-| `src/api/mcp_gateway/owner_call.rs` | src | s | 2 crate-vis | — | A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01) |
+| `src/api/mcp_gateway/owner_call.rs` | src | s | 4 crate-vis | — | A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01) |
 | `src/api/mcp_gateway/skill_execution.rs` | src | s | 2 crate-vis | — | The original MCP credential context lent to a callable skill's host door |
 | `src/api/mcp_gateway/stream_reads.rs` | src | s | 4 crate-vis | — | Own-task STREAM lines as one connection's credential may read them now: the board publisher admits each… |
 | `src/api/mcp_gateway/tasks_response.rs` | src | XL | 14 crate-vis | — | Tasks verb and response shaping |
@@ -546,7 +547,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/left_notices.rs` | src | s | 1 crate-vis | — | `POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this… |
 | `src/auth/locality.rs` | src | s | 6 crate-vis | — | Where the caller of a request sits (DEC-0005): on this device or off it |
 | `src/auth/machine_proof.rs` | src | s | 5 crate-vis | — | The machine a request names |
-| `src/auth/managed_request.rs` | src | m | 13 crate-vis | — | The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19) |
+| `src/auth/managed_request.rs` | src | m | 16 crate-vis | — | The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19) |
 | `src/auth/slips.rs` | src | m | 20 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
@@ -714,7 +715,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/serve/tests.rs` | test | L | 3 crate-vis | — | — |
 | `src/embedder/tests.rs` | test | XL | — | — | Provider-slot rows: the numerics contract, and the endpoint provider driven against a real HTTP server |
 | `src/embedder/tests/turns.rs` | test | m | — | — | Turns are the embedding unit (ARCH-0004): a witnessed conversation is found by what it meant, through the… |
-| `src/error/mod.rs` | src | m | 4 struct · 2 enum · 27 fn · 1 const · 1 re-export · 1 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
+| `src/error/mod.rs` | src | m | 4 struct · 2 enum · 27 fn · 1 const · 1 re-export · 3 crate-vis | ApiError, ApiErrorDetails, ApiErrorEnvelope, ApiErrorEnvelopeBody, EnvelopedApiError, ErrorCode | Structured HTTP API errors and their schema catalog |
 | `src/error/schema.rs` | src | s | 4 fn | — | JSON Schema generation for the API error catalog |
 | `src/feedback_delivery.rs` | src | s | 3 struct · 3 enum · 5 fn | FeedbackDeliveryConfig, FeedbackDeliveryError, FeedbackDestination, FeedbackHost, HttpFeedbackTransport, SendFeedbackError | Deployment-selected feedback transport |
 | `src/feedback_delivery/tests.rs` | test | s | — | — | — |
@@ -722,7 +723,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/app_tier.rs` | src | m | 6 crate-vis | — | Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks |
 | `src/handler/app_tier_tests.rs` | test | m | — | — | — |
 | `src/handler/conn_state.rs` | src | s | 11 crate-vis | — | Per-connection budgets, quotas, and sync-mode binding |
-| `src/handler/connection.rs` | src | L | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
+| `src/handler/connection.rs` | src | m | 3 crate-vis | — | Upgrade route, hello bootstrap, and the single-owner connection event loop |
+| `src/handler/connection/run.rs` | src | m | 1 crate-vis | — | The single-owner connection event loop: one socket's protocol hello, its root snapshot, then every frame it… |
 | `src/handler/documents.rs` | src | m | 4 crate-vis | — | Per-entity selector admission and scope-filtered document delivery on the sync socket |
 | `src/handler/ephemeral.rs` | src | s | 4 crate-vis | — | Ephemeral presence lane: validation, hub budget, and canonical fan-out frames |
 | `src/handler/federation.rs` | src | s | 2 crate-vis | — | Authenticated selector fetches with durable defer and current-grant replay |
@@ -735,7 +737,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/message_stream_tests.rs` | test | s | — | — | Streaming text stays on the existing opaque, budgeted ephemeral hub lane |
 | `src/handler/mod.rs` | src | s | 5 crate-vis | — | WebSocket upgrade handler and connection lifecycle |
 | `src/handler/note_socket_tests.rs` | test | L | — | — | Real websocket NOTE commands: actor binding, durable pins, reviewed edits |
-| `src/handler/protocol_close.rs` | src | s | 8 crate-vis | — | A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would… |
+| `src/handler/protocol_close.rs` | src | s | 9 crate-vis | — | A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would… |
 | `src/handler/residence_socket_tests.rs` | test | XL | — | — | A real enrol: root + thin index, one opened item, remote search and offline honesty |
 | `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its embedded engine's stop (OF-237) |
 | `src/handler/tests.rs` | test | XL | — | — | — |
@@ -928,7 +930,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/vault_key.rs` | src | m | 18 crate-vis | — | The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`… |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 7 crate-vis | InvalidView, View | — |
 | `src/projection/tests.rs` | test | s | — | — | — |
-| `src/protocol.rs` | src | m | 32 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
+| `src/protocol.rs` | src | m | 35 crate-vis | — | Custom Oneiron sync protocol — server-side extensions |
 | `src/replay_judge.rs` | src | L | 4 struct · 11 fn · 1 const | JournalRow, PersonTime, ServeAxisBandit, ServeReplayJudge | The serve host's skill judge (OF-495) |
 | `src/residence_machines.rs` | src | s | 2 crate-vis | — | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
 | `src/runtime/config.rs` | src | s | 1 struct · 7 fn · 2 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |

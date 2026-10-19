@@ -128,13 +128,7 @@ impl DreamerRunnerStore<'_> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let vault = self.vault();
-        let rubric = match RUBRIC.get(&vault.store, &*txn, &())? {
-            Some(rubric) => rubric,
-            None => serde_json::from_str::<CuratorRubric>(include_str!("curator_defaults.json"))
-                .map_err(|_| invalid())?,
-        };
-        rubric.validate()?;
+        let rubric = rubric_in_txn(self.vault(), txn)?;
         self.enqueue_kind_in_txn(
             txn,
             MAINTENANCE_QUEUE_KIND,
@@ -148,6 +142,21 @@ impl DreamerRunnerStore<'_> {
             now,
         )
     }
+}
+/// The owner-set rubric as `txn` reads it, else the shipped defaults.
+fn rubric_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CuratorRubric> {
+    let rubric = match RUBRIC.get(&vault.store, txn, &())? {
+        Some(rubric) => rubric,
+        None => serde_json::from_str::<CuratorRubric>(include_str!("curator_defaults.json"))
+            .map_err(|_| invalid())?,
+    };
+    rubric.validate()?;
+    Ok(rubric)
+}
+/// The rubric cadence slot `now` falls in (OF-191): the slot the curator's
+/// dedupe key names, one pass per slot whichever trigger asks first.
+pub(crate) fn curator_slot_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, now: u64) -> Result<u64> {
+    Ok(now / rubric_in_txn(vault, txn)?.cadence_secs)
 }
 fn owned_consolidation(body: &crate::ClaimBody, actor: EntityId) -> bool {
     let Some(Value::Map(evidence)) = &body.evidence else {

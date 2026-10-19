@@ -108,24 +108,30 @@ impl Oneiron {
     /// Opens an embedded, in-process vault and returns an actor-bound handle.
     ///
     /// An omitted path resolves to `~/.oneiron/default`; omitted options use
-    /// the engine defaults. The handle binds the embedded owner actor at once,
-    /// so there is no actor ceremony before the first verb. A second process
-    /// opening the same directory fails with `VAULT_LOCKED_SINGLE_WRITER`.
-    #[uniffi::constructor]
+    /// the engine defaults. `device_class` is the host's own declaration of
+    /// this install, `"computer"` or `"phone"`, never read off the operating
+    /// system; omitted, it opens as a computer, and any other name fails
+    /// `BAD_REQUEST` (FIX 5577). The handle binds the embedded owner actor at
+    /// once, so there is no actor ceremony before the first verb. A second
+    /// process opening the same directory fails with
+    /// `VAULT_LOCKED_SINGLE_WRITER`.
+    #[uniffi::constructor(default(device_class = None))]
     pub fn open(
         path: Option<String>,
         options: Option<OpenOptions>,
+        device_class: Option<String>,
     ) -> Result<Arc<Self>, OneironError> {
         // Crash output never carries world text: the engine's hook goes in
         // before any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
         let dimensions: Option<usize> = options.and_then(|options| options.dimensions).lower()?;
+        let device_class = host_device_class(device_class.as_deref())?;
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open(
             path.as_deref(),
             &oneiron_remote::OpenOptions {
                 dimensions,
-                device_class: None,
+                device_class,
             },
         )?;
         Ok(Arc::new(Self {
@@ -258,6 +264,28 @@ impl Oneiron {
     pub fn close_lens_frame(&self, card_id: String) -> Result<CloseLensFrameReply, OneironError> {
         let reply = self.inner.close_lens_frame(&card_id)?;
         codec::lift_record("close_lens_frame", &reply)
+    }
+}
+
+/// The class of machine a host declares on an embedded open (FIX 5577, as
+/// the Python and napi opens read it; CALLS: HOST_OPEN_DEVICE_CLASS =
+/// ExplicitHostInput): `"computer"` or `"phone"`, and `None` when it gave
+/// none, which keeps the open's own default. Never read off the operating
+/// system; any other name is `BAD_REQUEST`.
+fn host_device_class(
+    device_class: Option<&str>,
+) -> Result<Option<oneiron::authority::MachineDeviceClass>, OneironError> {
+    use oneiron::authority::MachineDeviceClass;
+    match device_class {
+        None => Ok(None),
+        Some("computer") => Ok(Some(MachineDeviceClass::Computer)),
+        Some("phone") => Ok(Some(MachineDeviceClass::Phone)),
+        Some(other) => Err(oneiron::MemoryError::new(
+            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+            format!("unknown device_class {other:?}; pass \"computer\" or \"phone\""),
+            &["Pass device_class \"computer\" or \"phone\", or omit it for a computer."],
+        )
+        .into()),
     }
 }
 

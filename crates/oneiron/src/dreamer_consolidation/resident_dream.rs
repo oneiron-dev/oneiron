@@ -1,10 +1,11 @@
 //! A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams
 //! under its own stamp, on its own model or on the vault weaver's model and
 //! window, and the weaver never reads its diary. Since its last dreaming it
-//! reads its sealed scratchpads, its receipts and its INBOX rows, oldest
-//! first, as many as the window holds, and writes one diary entry in its own
-//! voice. It may also propose craft notes about itself, actor.lesson and
-//! actor.failure_mode candidates, which land Proposed beside the entry.
+//! reads its sealed scratchpads, its receipts, its INBOX rows and the health
+//! cards about it (`resident_health`), oldest first, as many as the window
+//! holds, and writes one diary entry in its own voice. It may also propose
+//! craft notes about itself, actor.lesson and actor.failure_mode candidates,
+//! which land Proposed beside the entry.
 //! What it did not read stays for its next dreaming.
 //!
 //! The host lends the model and the instruction; the engine ships no
@@ -87,6 +88,13 @@ pub struct ResidentDreamProgress {
     /// The sealed pad its last dreaming read only in part.
     #[serde(default)]
     pub pad_partial: Option<ResidentDreamPartial>,
+    /// The time the newest health card about it that it read was last
+    /// touched (FIX 1145).
+    #[serde(default)]
+    pub health_after: u64,
+    /// That card's `health:` handle.
+    #[serde(default)]
+    pub health_after_id: String,
     pub dreamed_at: u64,
     pub entries: u64,
 }
@@ -216,6 +224,7 @@ struct DreamCut {
     inbox_after: Option<(u64, String)>,
     inbox_partial: Option<ResidentDreamPartial>,
     pad_partial: Option<ResidentDreamPartial>,
+    health_after: Option<(u64, String)>,
 }
 
 /// Moves a `(time, id)` read cursor forward, never back.
@@ -579,6 +588,23 @@ fn cut_for(
         break;
     }
     cut.sections.push(("Inbox", inbox_lines));
+
+    // The health cards about it, oldest touch first past its cursor (FIX
+    // 1145): a card's facts, never a diary body.
+    let mut health_lines = Vec::new();
+    for (key, line) in super::resident_health::health_card_lines(
+        vault,
+        resident,
+        progress.health_after,
+        &progress.health_after_id,
+    ) {
+        if !room.take(&line) {
+            break;
+        }
+        health_lines.push(line);
+        cut.health_after = Some(key);
+    }
+    cut.sections.push(("Health cards about you", health_lines));
     Ok(cut)
 }
 
@@ -901,6 +927,11 @@ pub async fn run_resident_dream(
             &mut progress.inbox_after,
             &mut progress.inbox_after_id,
             cut.inbox_after.as_ref(),
+        );
+        advance(
+            &mut progress.health_after,
+            &mut progress.health_after_id,
+            cut.health_after.as_ref(),
         );
         // A part read moves its input's offset on; an input read to its end
         // (a pad marked read, a row the cursor passed) has none left.

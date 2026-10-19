@@ -1,6 +1,6 @@
-//! Writing body files (FIX 5348): a body spilled as it streams, sealed
-//! chunk by chunk in a sealed directory, and the copies a promotion or a
-//! restore makes of one.
+//! Writing body files (FIX 5348, KS-2A): a body spilled as it streams as
+//! one minted instance, sealed chunk by chunk under its key in a sealed
+//! directory, and the copies a promotion or a restore makes of one.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -8,21 +8,23 @@ use std::sync::Arc;
 
 use heed::RwTxn;
 
+use super::custody::BodyInstance;
 use super::frames::{Domain, FileKey, FrameWriter, LineCounter, SealedStream, write_line_index};
 use super::reader::BodyFile;
 use super::rows::{BODY_KEYS, BodyKeyRow, body_key_row_in_txn};
 use super::{DirSeal, KeyScope, sealed_body_file_name};
 use crate::error::{Error, Result};
-use crate::side_table::SideTableDbs;
 use crate::store::{BodyDir, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, Store, body_file_name};
 
-/// A sealed body file a writer staged, and the key row the row or
-/// descriptor naming its body commits with ([`super::bind_body_key_in_txn`]).
+/// A body file a writer staged, and the instance row the row or descriptor
+/// naming its body commits with ([`super::bind_body_key_in_txn`]): a vault
+/// instance's on either tier, or an off-record session's wrapped key.
 pub(crate) struct StagedBodyKey {
     pub(super) digest: [u8; 32],
     pub(super) row: BodyKeyRow,
     scope: KeyScope,
-    key: Arc<FileKey>,
+    /// The opened key of a sealed file; `None` for a plain one.
+    key: Option<Arc<FileKey>>,
 }
 
 impl StagedBodyKey {
@@ -34,26 +36,29 @@ impl StagedBodyKey {
         &self.row
     }
 
-    /// Whether `held`, the key row a route already holds for this digest,
-    /// is a committed pair in `dir`, where this key's file is: wrapped for
-    /// this key's scope, its file there. Then it stays, and its file serves
-    /// the body.
+    /// Whether `held`, the instance row a route already holds for this
+    /// digest, is a committed pair in `dir`, where this file is: of this
+    /// scope, its file there. Then it stays, and its file serves the body.
     ///
     /// # Errors
     ///
     /// A row that does not parse, and filesystem errors.
     pub(crate) fn keeps(&self, held: &BodyKeyRow, dir: &BodyDir) -> Result<bool> {
-        Ok(dir
-            .sealed
-            .as_ref()
-            .is_some_and(|sealed| sealed.scope == self.scope)
-            && dir.holds_pair(&self.digest, Some(held))?)
+        let scoped = match &dir.sealed {
+            Some(sealed) => sealed.scope == self.scope,
+            None => self.scope == KeyScope::Vault,
+        };
+        Ok(scoped && dir.holds_pair(&self.digest, Some(held))?)
     }
 
-    /// Writes `index`, the body's line index, sealed beside its file in
-    /// `dir`. Derived: a failure leaves none, to be rebuilt.
+    /// Writes `index`, the body's line index, beside its file in `dir`:
+    /// sealed under the file's key, or plain beside a plain file. Derived: a
+    /// failure leaves none, to be rebuilt.
     pub(crate) fn write_line_index(&self, dir: &BodyDir, index: &[u64]) {
-        write_sealed_lines(dir, &self.digest, &self.key, index);
+        match &self.key {
+            Some(key) => write_sealed_lines(dir, &self.digest, key, index),
+            None => dir.write_line_index(&body_file_name(&self.digest), index),
+        }
     }
 }
 
@@ -74,11 +79,15 @@ fn write_sealed_lines(dir: &BodyDir, digest: &[u8; 32], key: &Arc<FileKey>, inde
 }
 
 /// One body spilling to a temp file in its directory: its bytes as they
-/// come, or, in a sealed directory, sealed under a fresh key of its own as
-/// they come. The caller removes the temp file if it is dropped unfinished.
+/// come, or, in a sealed directory, sealed as they come under its
+/// instance's key. The caller removes the temp file if it is dropped
+/// unfinished.
 pub(crate) struct BodySpill {
     temp: String,
     out: Out,
+    /// The vault instance it is, `None` for an off-record session's file
+    /// and for a temp that is never published.
+    instance: Option<[u8; 16]>,
 }
 
 enum Out {
@@ -90,28 +99,66 @@ enum Out {
 }
 
 impl BodySpill {
-    /// A spill into `dir`.
+    /// A spill into `dir` that may be published: a vault directory's is
+    /// `instance`, minted before the writer that names it opened; an
+    /// off-record session's takes a fresh key of its own, `instance` unused.
     ///
     /// # Errors
     ///
-    /// Filesystem errors, and a sealed directory whose key is not admitted.
-    pub(crate) fn create(dir: &BodyDir) -> Result<Self> {
-        let sealed = match &dir.sealed {
-            Some(sealed) => Some((
-                sealed.clone(),
-                Arc::new(FileKey::generate(sealed.seal()?.vault_id)?),
+    /// Filesystem errors, an off-record directory whose seal is not
+    /// admitted, and a vault directory given no instance.
+    pub(crate) fn create(dir: &BodyDir, instance: Option<BodyInstance>) -> Result<Self> {
+        match (dir.session, instance) {
+            (false, Some(instance)) => {
+                let key = dir.sealed.as_ref().map(|_| Arc::clone(instance.key()));
+                Self::open(dir, key, Some(*instance.instance()))
+            }
+            (true, None) => {
+                let key = match &dir.sealed {
+                    Some(sealed) => Some(Arc::new(FileKey::generate(sealed.seal()?.vault_id)?)),
+                    None => None,
+                };
+                Self::open(dir, key, None)
+            }
+            _ => Err(Error::InvariantViolation(
+                "a vault body file is one minted instance, a session's none",
             )),
+        }
+    }
+
+    /// A spill into `dir` that is never published: a temp a stager reads
+    /// back whole. A sealed directory's is sealed under a key held in
+    /// memory only, which no row and no custody ever holds.
+    ///
+    /// # Errors
+    ///
+    /// Filesystem and sealing errors.
+    pub(crate) fn ephemeral(dir: &BodyDir) -> Result<Self> {
+        let key = match &dir.sealed {
+            Some(_) => {
+                let mut vault = [0u8; 32];
+                crate::world_keys::os_fill(&mut vault)?;
+                Some(Arc::new(FileKey::generate(vault)?))
+            }
             None => None,
         };
+        Self::open(dir, key, None)
+    }
+
+    fn open(dir: &BodyDir, key: Option<Arc<FileKey>>, instance: Option<[u8; 16]>) -> Result<Self> {
         let (file, temp) = dir.create_temp()?;
-        let out = match sealed {
-            None => Out::Plain(file),
-            Some((dir, key)) => Out::Sealed {
+        let out = match (key, &dir.sealed) {
+            (Some(key), Some(sealed)) => Out::Sealed {
                 writer: Box::new(FrameWriter::new(file, key, Domain::Body)),
-                dir,
+                dir: sealed.clone(),
             },
+            _ => Out::Plain(file),
         };
-        Ok(Self { temp, out })
+        Ok(Self {
+            temp,
+            out,
+            instance,
+        })
     }
 
     /// The temp file's name in its directory.
@@ -127,8 +174,9 @@ impl BodySpill {
     }
 
     /// Finishes the body `digest`, `len` bytes long: a sealed spill's last
-    /// chunk and terminal record are sealed and its key wrapped for its
-    /// directory's scope. Nothing is published yet.
+    /// chunk and terminal record are sealed. Its instance row is staged: a
+    /// vault instance's, or an off-record key wrapped for its session.
+    /// Nothing is published yet.
     ///
     /// # Errors
     ///
@@ -145,24 +193,33 @@ impl BodySpill {
                         "a sealed body file holds other bytes than its body",
                     ));
                 }
-                let row = BodyKeyRow::wrap(dir.seal()?, dir.scope, &key, digest, len)?;
-                (
-                    file,
-                    Some(StagedBodyKey {
-                        digest: *digest,
-                        row,
-                        scope: dir.scope,
-                        key,
-                    }),
-                )
+                (file, Some((key, dir)))
             }
+        };
+        // A sealed spill reads back under its key, a temp's included.
+        let sealed_key = key.as_ref().map(|(key, _)| Arc::clone(key));
+        let staged = match (key, self.instance) {
+            (Some((key, dir)), None) if dir.scope == KeyScope::OffRecord => Some(StagedBodyKey {
+                digest: *digest,
+                row: BodyKeyRow::off_record(dir.seal()?, &key, digest, len)?,
+                scope: KeyScope::OffRecord,
+                key: Some(key),
+            }),
+            (key, Some(instance)) => Some(StagedBodyKey {
+                digest: *digest,
+                row: BodyKeyRow::vault(instance, len, false),
+                scope: KeyScope::Vault,
+                key: key.map(|(key, _)| key),
+            }),
+            _ => None,
         };
         Ok(SpilledBody {
             file,
             temp: self.temp,
             digest: *digest,
             len,
-            key,
+            sealed_key,
+            key: staged,
         })
     }
 }
@@ -173,6 +230,8 @@ pub(crate) struct SpilledBody {
     temp: String,
     digest: [u8; 32],
     len: u64,
+    /// The key a sealed spill was sealed under, a temp's included.
+    sealed_key: Option<Arc<FileKey>>,
     key: Option<StagedBodyKey>,
 }
 
@@ -190,24 +249,31 @@ impl SpilledBody {
     /// Filesystem errors, and an envelope that does not check.
     pub(crate) fn reader(&self) -> Result<BodyFile> {
         let file = self.file.try_clone()?;
-        match &self.key {
+        match &self.sealed_key {
             None => Ok(BodyFile::plain(file, self.len)),
-            Some(staged) => BodyFile::sealed(file, Arc::clone(&staged.key), &self.digest, self.len),
+            Some(key) => BodyFile::sealed(file, Arc::clone(key), &self.digest, self.len),
         }
     }
 
     /// Publishes the body under its name in `dir`, the directory it spilled
     /// into: synced, renamed into place, the directory synced. A plain
     /// body's name is its digest, an envelope's `<digest>-<instance>`. Its
-    /// staged key, `None` for a plain body.
+    /// staged instance row, `None` for an off-record session's plain body.
     ///
     /// # Errors
     ///
-    /// Filesystem errors; the temp file is removed.
+    /// Filesystem errors, and a temp spill, which is never published; the
+    /// temp file is removed.
     pub(crate) fn publish(self, dir: &BodyDir) -> Result<Option<StagedBodyKey>> {
-        let name = match &self.key {
-            None => body_file_name(&self.digest),
-            Some(staged) => sealed_body_file_name(&self.digest, &staged.row.instance),
+        let name = match (&self.key, &self.sealed_key) {
+            (_, None) => body_file_name(&self.digest),
+            (Some(staged), Some(_)) => sealed_body_file_name(&self.digest, &staged.row.instance),
+            (None, Some(_)) => {
+                dir.discard(&self.temp);
+                return Err(Error::InvariantViolation(
+                    "a temp body spill is never published",
+                ));
+            }
         };
         dir.publish(self.file, &self.temp, &name)?;
         Ok(self.key)
@@ -229,34 +295,6 @@ fn read_full(source: &mut impl Read, buffer: &mut [u8]) -> Result<usize> {
 }
 
 impl BodyDir {
-    /// Publishes `body`, the body `digest`, as a new envelope in this sealed
-    /// directory, and its staged key.
-    ///
-    /// # Errors
-    ///
-    /// Filesystem and sealing errors; nothing is left behind.
-    pub(crate) fn publish_sealed_body(
-        &self,
-        digest: &[u8; 32],
-        body: &[u8],
-    ) -> Result<StagedBodyKey> {
-        let mut spill = BodySpill::create(self)?;
-        let temp = spill.temp().to_owned();
-        let spilled = spill
-            .write(body)
-            .and_then(|()| spill.finish(digest, body.len() as u64));
-        let spilled = match spilled {
-            Ok(spilled) => spilled,
-            Err(error) => {
-                self.discard(&temp);
-                return Err(error);
-            }
-        };
-        spilled.publish(self)?.ok_or(Error::InvariantViolation(
-            "a sealed body directory published a plain body",
-        ))
-    }
-
     /// Copies in the sealed body `digest`, `len` bytes long, that `source`
     /// holds as an envelope under `key`, ciphertext as it is, under its own
     /// name: every envelope is authenticated as it passes, and the whole is
@@ -294,8 +332,8 @@ impl BodyDir {
     }
 
     /// Seals the plain body `digest`, `len` bytes long, that `source` holds
-    /// into a new envelope in this sealed directory, with its sealed line
-    /// index when `lines`, and its staged key.
+    /// into a new envelope of `instance` in this sealed vault directory,
+    /// with its sealed line index when `lines`, and its staged instance row.
     ///
     /// # Errors
     ///
@@ -307,8 +345,9 @@ impl BodyDir {
         len: u64,
         source: &mut impl Read,
         lines: bool,
+        instance: BodyInstance,
     ) -> Result<StagedBodyKey> {
-        let mut spill = BodySpill::create(self)?;
+        let mut spill = BodySpill::create(self, Some(instance))?;
         let temp = spill.temp().to_owned();
         let mut counter = LineCounter::default();
         let mut frame = vec![0u8; LINE_INDEX_BLOCK_BYTES as usize];
@@ -329,7 +368,7 @@ impl BodyDir {
             Ok(Some(staged)) => staged,
             Ok(None) => {
                 return Err(Error::InvariantViolation(
-                    "a sealed body directory published a plain body",
+                    "a vault body file is one minted instance",
                 ));
             }
             Err(error) => {
@@ -343,68 +382,58 @@ impl BodyDir {
         Ok(staged)
     }
 
-    /// Brings in the result body `digest`, `len` bytes long, that `file`
-    /// holds in another directory of `store`'s (an off-record session's):
-    /// a plain file through [`BodyDir::import`], an envelope's ciphertext as
-    /// it is, with its line index, unless the vault holds a committed pair
-    /// for the digest already.
+    /// Brings the result body `digest`, `len` bytes long, that `file` holds
+    /// in an off-record session's directory into this vault directory as
+    /// the vault instance `instance`: sealed again under its key in a sealed
+    /// vault, plain in a plain one, checked against the body as it streams,
+    /// its line index beside it. The session's key is never copied or
+    /// wrapped again (KS-2A).
     ///
     /// # Errors
     ///
-    /// As [`BodyDir::import`] and [`Self::import_sealed`].
-    pub(crate) fn import_body(
+    /// As [`BodyDir::import`] and [`Self::import_sealing`].
+    pub(crate) fn import_promoted(
         &self,
-        store: &Store,
         digest: &[u8; 32],
         len: u64,
-        file: BodyFile,
+        mut file: BodyFile,
+        instance: BodyInstance,
     ) -> Result<()> {
-        match file.into_sealed() {
-            Err(mut plain) => self.import(digest, len, &mut plain),
-            Ok((file, key, _)) => {
-                let row = {
-                    let rtxn = store.env.read_txn()?;
-                    body_key_row_in_txn(store, &rtxn, digest)?
-                };
-                if self.holds_pair(digest, row.as_ref())? {
-                    return Ok(());
-                }
-                self.import_sealed(digest, len, file, key, true)
-            }
+        if self.sealed.is_some() {
+            self.import_sealing(digest, len, &mut file, true, instance)?;
+        } else {
+            self.import(digest, len, &mut file)?;
         }
+        Ok(())
     }
 }
 
-/// FIX 5348: the key row of a result body a save brings from an off-record
-/// room into the vault, in the save's transaction, before the row naming it
-/// commits: the vault's own committed pair when it holds one, else the
-/// room's row wrapped again for the vault (promotion copied its file in
-/// first). Whether the vault's `bodies/` then holds the body.
+/// FIX 5348, KS-2A: the instance row of a result body a save brings from an
+/// off-record room into the vault, in the save's transaction, before the
+/// row naming it commits: the vault's own committed pair when it holds one,
+/// else the row of `promoted`, the vault instance its promotion imported
+/// the body as before this transaction opened, with the custody binding
+/// pinned. Whether the vault's `bodies/` then holds the body.
 ///
 /// # Errors
 ///
-/// Storage and filesystem errors, and a key that does not open.
+/// Storage and filesystem errors, and a key custody does not hold.
 pub(crate) fn keep_promoted_body_key_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
-    room: &impl SideTableDbs,
     digest: &[u8; 32],
     len: u64,
+    promoted: Option<[u8; 16]>,
 ) -> Result<bool> {
     let dir = store.body_dir()?;
     let mut row = body_key_row_in_txn(store, txn, digest)?;
     if !dir.holds_pair(digest, row.as_ref())?
-        && let Some(sealed) = &dir.sealed
-        && let Some(held) = body_key_row_in_txn(room, txn, digest)?
+        && let Some(instance) = promoted
     {
-        let from = DirSeal {
-            scope: KeyScope::OffRecord,
-            seal: sealed.seal.clone(),
-        };
-        if let Some(rewrapped) = held.rewrap(digest, &from, sealed)? {
-            BODY_KEYS.put(store, txn, digest, &rewrapped)?;
-            row = Some(rewrapped);
-        }
+        let promoted = BodyKeyRow::vault(instance, len, false);
+        super::custody::pin_body_custody_in_txn(store, txn)?;
+        BODY_KEYS.put(store, txn, digest, &promoted)?;
+        row = Some(promoted);
     }
     Ok(dir.open_reader(digest, len, row.as_ref())?.is_some())
 }

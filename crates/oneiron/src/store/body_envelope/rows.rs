@@ -1,11 +1,14 @@
-//! A sealed body file's key row (FIX 5348): one per digest, in
-//! `PROVENANCE_BODY_KEY`, beside the body's descriptors. It holds the file's
-//! instance, the format version and chunk format, the body's logical length
-//! and the file's data key wrapped under the vault's body-file wrap key. The
-//! wrap binds the digest, the instance, the length and the format, and the
-//! scope that may open it; the row holds no key in the clear and no
-//! fingerprint of one. The body's logical BLAKE3 and length stay what its
-//! holders and descriptors name.
+//! A body instance's row (FIX 5348, KS-2A): one per digest, in
+//! `PROVENANCE_BODY_KEY`, beside the body's descriptors. It names the
+//! instance whose key typed custody holds, the format version and chunk
+//! format, the body's logical length and whether the body rests in the row
+//! naming it (an inline result) or a file. A vault's row holds no key and no
+//! wrap of one, so no image that carries it recovers a key: only current
+//! custody opens the instance ([`super::custody`]). An off-record session's
+//! row alone carries its file key wrapped for the session's scope under the
+//! vault's body-file wrap key, and stays in the session's overlay, in
+//! memory. The body's logical BLAKE3 and length stay what its holders and
+//! descriptors name.
 
 use std::sync::Arc;
 
@@ -18,12 +21,14 @@ use oneiron_crypto::{
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::custody::{body_key_in, pin_body_custody_in_txn};
 use super::frames::{FORMAT_VERSION, FileKey};
 use super::{BodyDir, BodySeal, DirSeal, KeyScope, StagedBodyKey};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::store::ManifestDbs;
 
-/// The key rows, by the body's BLAKE3.
+/// The instance rows, by the body's BLAKE3.
 pub(crate) const BODY_KEYS: SideTable<[u8; 32], BodyKeyRow, Named> =
     SideTable::new(&side_table::PROVENANCE_BODY_KEY);
 
@@ -48,18 +53,25 @@ impl BodyFileFormat {
 
 const FORMAT: BodyFileFormat = BodyFileFormat::E0Chunks64k;
 
-/// One sealed body file's key row.
+/// One body instance's row.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BodyKeyRow {
-    /// The file's own random id: its name is `<digest>-<instance>`.
+    /// The instance's random id: a sealed file's name is
+    /// `<digest>-<instance>`, and custody keys it.
     pub(crate) instance: [u8; 16],
     pub(crate) version: u16,
     /// The body's logical length.
     pub(crate) len: u64,
     pub(crate) format: BodyFileFormat,
-    /// The file's data key, an E0 envelope under the wrap key.
-    wrapped: Vec<u8>,
+    /// The body rests in the row naming it (an inline result), not a file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) inline: bool,
+    /// An off-record session's file key, an E0 envelope under the vault's
+    /// wrap key, for the session's scope: in its overlay only. A vault row
+    /// holds none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    wrapped: Option<Vec<u8>>,
 }
 
 impl std::fmt::Debug for BodyKeyRow {
@@ -87,11 +99,24 @@ fn wrap_key_id(digest: &[u8; 32], instance: &[u8; 16], len: u64) -> [u8; 59] {
 }
 
 impl BodyKeyRow {
-    /// The row of `key`, the key of the body `digest` of `len` bytes,
-    /// wrapped for `scope` under `seal`.
-    pub(super) fn wrap(
+    /// The vault's row of `instance`, the body of `len` bytes: no key and no
+    /// wrap, custody holds the key. `inline` when the body rests in the row
+    /// naming it.
+    pub(crate) fn vault(instance: [u8; 16], len: u64, inline: bool) -> Self {
+        Self {
+            instance,
+            version: FORMAT_VERSION,
+            len,
+            format: FORMAT,
+            inline,
+            wrapped: None,
+        }
+    }
+
+    /// An off-record session's row of `key`, the key of the body `digest`
+    /// of `len` bytes, wrapped for the session's scope under `seal`.
+    pub(super) fn off_record(
         seal_key: &BodySeal,
-        scope: KeyScope,
         key: &FileKey,
         digest: &[u8; 32],
         len: u64,
@@ -102,7 +127,7 @@ impl BodyKeyRow {
             purpose: Purpose::BodyFileKey,
             epoch: EPOCH,
             key_id: &key_id,
-            recipient: scope.recipient(),
+            recipient: KeyScope::OffRecord.recipient(),
             vault_id: &seal_key.vault_id,
         };
         let wrapped = seal(
@@ -114,37 +139,39 @@ impl BodyKeyRow {
         .map_err(|_| crate::world_keys::refused("wrapping a body file's key failed"))?
         .to_bytes();
         Ok(Self {
-            instance: *key.instance(),
-            version: FORMAT_VERSION,
-            len,
-            format: FORMAT,
-            wrapped,
+            wrapped: Some(wrapped),
+            ..Self::vault(*key.instance(), len, false)
         })
     }
 
-    /// Whether this row's key is wrapped for `scope`, as its envelope says
-    /// before it opens.
+    /// Whether this row is `scope`'s: a vault row wraps nothing, an
+    /// off-record one its key for that scope, as its envelope says before it
+    /// opens.
     pub(super) fn wrapped_for(&self, scope: KeyScope) -> Result<bool> {
         if self.version != FORMAT_VERSION || self.format != FORMAT {
             return Err(corrupt());
         }
-        let envelope = Envelope::parse(&self.wrapped).map_err(|_| corrupt())?;
-        Ok(envelope.header().recipient == scope.recipient())
+        Ok(match (&self.wrapped, scope) {
+            (None, KeyScope::Vault) => true,
+            (Some(wrapped), KeyScope::OffRecord) => {
+                Envelope::parse(wrapped)
+                    .map_err(|_| corrupt())?
+                    .header()
+                    .recipient
+                    == KeyScope::OffRecord.recipient()
+            }
+            _ => false,
+        })
     }
 
-    /// The file key of the body `digest` this row wraps for `scope` under
-    /// `seal`.
-    pub(crate) fn open_under(
-        &self,
-        digest: &[u8; 32],
-        seal_key: &BodySeal,
-        scope: KeyScope,
-    ) -> Result<Arc<FileKey>> {
+    /// The off-record file key this row wraps, under `seal`.
+    fn open_wrapped(&self, digest: &[u8; 32], seal_key: &BodySeal) -> Result<Arc<FileKey>> {
+        let wrapped = self.wrapped.as_ref().ok_or_else(corrupt)?;
         let key_id = wrap_key_id(digest, &self.instance, self.len);
         let policy = OpenPolicy {
             purpose: Purpose::BodyFileKey,
             vault_id: &seal_key.vault_id,
-            recipient: scope.recipient(),
+            recipient: KeyScope::OffRecord.recipient(),
             key_id: &key_id,
             wraps: &[WrapType::SymmetricKek],
             aead_suites: &[AEAD],
@@ -152,7 +179,7 @@ impl BodyKeyRow {
             min_epoch: EPOCH,
             argon2_max: Argon2Cost::RFC9106_SECOND,
         };
-        let opened = Envelope::parse(&self.wrapped)
+        let opened = Envelope::parse(wrapped)
             .map_err(|_| corrupt())?
             .open(OpenKey::SymmetricKek(&seal_key.wrap), &policy)
             .map_err(|_| {
@@ -170,31 +197,27 @@ impl BodyKeyRow {
         )))
     }
 
-    /// The file key this row wraps, opened for the directory `dir` seals:
-    /// `None` when it is wrapped for another scope.
+    /// The file key of the body `digest` this row names, for the sealed
+    /// directory `dir` seals: a vault row's from current custody, an
+    /// off-record row's unwrapped. `None` when the row is another scope's.
     pub(super) fn open(&self, digest: &[u8; 32], dir: &DirSeal) -> Result<Option<Arc<FileKey>>> {
         if !self.wrapped_for(dir.scope)? {
             return Ok(None);
         }
-        self.open_under(digest, dir.seal()?, dir.scope).map(Some)
-    }
-
-    /// This row, wrapped for `from`'s scope, wrapped again for `to`'s: the
-    /// same file and key. `None` when it is not wrapped for `from`.
-    pub(crate) fn rewrap(
-        &self,
-        digest: &[u8; 32],
-        from: &DirSeal,
-        to: &DirSeal,
-    ) -> Result<Option<Self>> {
-        let Some(key) = self.open(digest, from)? else {
-            return Ok(None);
-        };
-        Self::wrap(to.seal()?, to.scope, &key, digest, self.len).map(Some)
+        match dir.scope {
+            KeyScope::Vault => {
+                let custody = dir
+                    .custody
+                    .as_ref()
+                    .ok_or_else(|| super::custody::custody_unavailable(1))?;
+                body_key_in(custody, &self.instance).map(Some)
+            }
+            KeyScope::OffRecord => self.open_wrapped(digest, dir.seal()?).map(Some),
+        }
     }
 }
 
-/// The key row of the body `digest` in `txn`'s snapshot of `dbs`: a
+/// The instance row of the body `digest` in `txn`'s snapshot of `dbs`: a
 /// session's composed view reads its overlay's over the vault's.
 ///
 /// # Errors
@@ -208,17 +231,18 @@ pub(crate) fn body_key_row_in_txn(
     BODY_KEYS.get(dbs, txn, digest)
 }
 
-/// Commits `staged`'s key row in the transaction that writes the row or
-/// descriptor naming its body, its file published in `dir`. A digest that
-/// already has a committed pair there keeps it: the staged file is then an
-/// orphan the collector takes, and no committed file's key is replaced. A
-/// key row whose file is gone is no pair, and the staged one takes its place.
+/// Commits `staged`'s instance row in the transaction that writes the row
+/// or descriptor naming its body, its file published in `dir`, and pins the
+/// custody binding with it. A digest that already has a committed pair there
+/// keeps it: the staged file is then an orphan the collector takes, its
+/// instance unnamed debris, and no committed file's instance is replaced. A
+/// row whose file is gone is no pair, and the staged one takes its place.
 ///
 /// # Errors
 ///
 /// Storage and filesystem errors, and a row that does not parse.
-pub(crate) fn bind_body_key_in_txn(
-    dbs: &impl SideTableDbs,
+pub(crate) fn bind_body_key_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
     txn: &mut RwTxn<'_>,
     dir: &BodyDir,
     staged: &StagedBodyKey,
@@ -228,12 +252,13 @@ pub(crate) fn bind_body_key_in_txn(
     {
         return Ok(());
     }
+    pin_body_custody_in_txn(dbs, txn)?;
     BODY_KEYS.put(dbs, txn, &staged.digest, &staged.row)
 }
 
-/// Deletes the key row of the body `digest`, in the collector transaction
-/// that releases its final holder. The instance of the file it named, so
-/// the file goes after the commit; `None` for a body with no key row.
+/// Deletes the instance row of the body `digest`, in the collector or erase
+/// transaction that releases its final holder: the instance it named, so
+/// its file goes after the commit; `None` for a body with no row.
 ///
 /// # Errors
 ///
