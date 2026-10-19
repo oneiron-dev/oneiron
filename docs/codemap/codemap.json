@@ -21635,7 +21635,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "mod": 18,
       "re-export": 8
@@ -21831,7 +21831,17 @@
      "path": "src/dreamer_runner/maintenance/type_tree_gate.rs",
      "purpose": "The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): \"revised by the loop from…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/type_tree_prior.rs",
+     "purpose": "The project tree's donor prior (ARCH-0079 #task-type, OF-420, FIX 5176): a thin leaf of a project's own tree…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -21848,7 +21858,7 @@
      "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 3,
       "struct": 3,
@@ -62003,7 +62013,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 82,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63020,7 +63030,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3869,
+   "source_files": 3870,
    "test_files": 902
   },
   "oneiron-android": {
