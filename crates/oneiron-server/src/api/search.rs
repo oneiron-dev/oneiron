@@ -19,7 +19,7 @@ use crate::server::{QueryDoor, SyncServer, query_caller};
 use axum::extract::Query;
 use axum::extract::State;
 use axum::extract::rejection::QueryRejection;
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, request::Parts};
 use axum::response::Json;
 use oneiron::Effort;
 use oneiron::claim::ScopedRead;
@@ -297,13 +297,13 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
     )
 )]
 pub(crate) async fn search_vector(
-    headers: HeaderMap,
+    parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<VectorSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = check_api_owner_act(&headers, &server)?.at(locality);
+    let auth = super::scoped_auth::check_request_owner_act(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     if let Some(text) = params.query_text.as_deref() {
         server.check_retrieval_query(
@@ -491,13 +491,13 @@ pub(crate) struct TextSearchQuery {
     )
 )]
 pub(crate) async fn search_text(
-    headers: HeaderMap,
+    parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<TextSearchQuery>, QueryRejection>,
 ) -> Result<Json<ScopedSearchResponse>, ApiError> {
     let arrived = Instant::now();
-    let auth = super::scoped_auth::check_search_text_auth(&headers, &server)?.at(locality);
+    let auth = super::scoped_auth::check_search_text_auth(&parts, &server)?.at(locality);
     let params = query_params(query)?;
     server.check_retrieval_query(
         query_caller(&auth),
@@ -512,7 +512,7 @@ pub(crate) async fn search_text(
         server.vault().home_search(),
         auth.is_owner_grade(),
         (!auth.is_owner_grade())
-            .then(|| auth.forwarded_caller_proof(&headers))
+            .then(|| auth.forwarded_caller_proof(&parts.headers))
             .flatten(),
         params.query.clone(),
         page_limit,

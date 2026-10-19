@@ -96,6 +96,10 @@ async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) ->
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
         return error.into_response();
     }
+    // A managed vault's attested owner reads while he is its live owner.
+    if let Err(error) = crate::api::scoped_auth::require_live_managed_owner(&server, &auth) {
+        return error.into_response();
+    }
     match server.vault.purpose_default_table() {
         Ok(table) => Json(table).into_response(),
         Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),

@@ -59,13 +59,19 @@ impl HostSelfDispatcher<'_> {
     /// would hold in the transactions it opens. While the room is off record
     /// a `vault.notes.create` or `vault.claims.upsert` call writes through
     /// the session's own handle instead, into the room's overlay (DOOR-127,
-    /// Engine ruling 10-18); every other call is refused.
+    /// Engine ruling 10-18). `vault.get`, `vault.hydrate`,
+    /// `vault.refs.resolve` and `vault.search.bm25` read the room's view on
+    /// the key the door admits for its caller (WILL L11-01,
+    /// `session_verbs`); every other call is refused.
     pub(super) fn dispatch_agent_verb(
         &self,
         call: SelfAgentVerbCall,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
         if let ExecutorStorage::Session(binding) = &self.storage {
+            if let Some(read) = super::session_verbs::session_read(call.verb) {
+                return self.dispatch_session_read(read, &call);
+            }
             if !crate::off_record::OffRecordSession::writes_verb(call.verb) {
                 return Ok(answered(Err(AgentVerbRefusal {
                     code: AGENT_VERB_SESSION_BOUND.to_owned(),
