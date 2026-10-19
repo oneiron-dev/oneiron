@@ -139,6 +139,8 @@ pub(super) struct RunInner {
     /// Who funds the run's calls when a room's root spend scope pays for
     /// them (OF-531), fixed when the run starts.
     pub(super) payer: Option<PayerPerson>,
+    /// The item a bound run serves (FIX 4453), fixed when the run starts.
+    attribution: Option<RunAttribution>,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
@@ -150,6 +152,19 @@ pub(super) struct RunInner {
 struct Revisioned {
     revision: u32,
     declaration: RunDeclaration,
+}
+
+/// What a bound run's calls serve, as the engine stamped it before the run
+/// began (FIX 4453): the agent, its free-time cycle and item, the label every
+/// call carries and the spend scope its spend lands on. Fixed for the run's
+/// life; never read from a prompt or from the run's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunAttribution {
+    pub agent: crate::EntityId,
+    pub cycle: crate::EntityId,
+    pub item: crate::EntityId,
+    pub purpose: crate::llm::CallPurpose,
+    pub spend_scope: String,
 }
 
 pub(super) struct CallFacts {
@@ -214,7 +229,42 @@ impl RunAdmission {
         receipts: Arc<dyn RunReceiptSink>,
         payer: Option<PayerPerson>,
     ) -> Self {
-        let run = run.into();
+        Self::start(run.into(), declaration, meter, host, receipts, payer, None)
+    }
+
+    /// Starts a run as [`Self::with_payer`] does, bound to `attribution`: the
+    /// free-time item its calls serve, as the engine stamped it before the
+    /// run began (FIX 4453). The attribution is fixed for the run's life.
+    #[must_use]
+    pub fn with_attribution(
+        run: impl Into<String>,
+        declaration: RunDeclaration,
+        meter: BudgetGuard,
+        host: Option<Arc<HostAccount>>,
+        receipts: Arc<dyn RunReceiptSink>,
+        payer: Option<PayerPerson>,
+        attribution: RunAttribution,
+    ) -> Self {
+        Self::start(
+            run.into(),
+            declaration,
+            meter,
+            host,
+            receipts,
+            payer,
+            Some(attribution),
+        )
+    }
+
+    fn start(
+        run: String,
+        declaration: RunDeclaration,
+        meter: BudgetGuard,
+        host: Option<Arc<HostAccount>>,
+        receipts: Arc<dyn RunReceiptSink>,
+        payer: Option<PayerPerson>,
+        attribution: Option<RunAttribution>,
+    ) -> Self {
         Self {
             inner: Arc::new(RunInner {
                 instance: crate::EntityId::now(),
@@ -226,6 +276,7 @@ impl RunAdmission {
                 guard: meter,
                 host,
                 payer,
+                attribution,
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
                 paid: Mutex::new(BTreeSet::new()),
@@ -242,6 +293,13 @@ impl RunAdmission {
     #[must_use]
     pub fn payer(&self) -> Option<&PayerPerson> {
         self.inner.payer.as_ref()
+    }
+
+    /// The free-time item this run's calls serve, when the engine bound it
+    /// one (FIX 4453).
+    #[must_use]
+    pub fn attribution(&self) -> Option<&RunAttribution> {
+        self.inner.attribution.as_ref()
     }
 
     /// The run's budget line as its meter reads now.

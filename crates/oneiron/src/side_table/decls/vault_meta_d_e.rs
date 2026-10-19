@@ -106,6 +106,22 @@ side_tables! {
     CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// FIX 4453: the last owner-set free-time boundary this node opened a cycle for, and the
+    /// cycle still open. Key: id16 (agent definition).
+    DREAMER_FREE_TIME_CLOCK: VaultMeta b"dreamer:free_time:clock:v1:" Named;
+    /// FIX 4453: one free-time cycle: its policy snapshot, period, root spend scope, items, the
+    /// agent's note to its human (its own words, admitted at the wall) and its own-time choice.
+    /// Key: id16 (agent) + u64be (boundary).
+    DREAMER_FREE_TIME_CYCLE: VaultMeta b"dreamer:free_time:cycle:v1:" Named Authored;
+    /// FIX 4453: the immutable binding of one free-time item attempt to its agent, cycle, item,
+    /// label and spend scope, stamped when its cycle opened. Key: id16 (attempt).
+    DREAMER_FREE_TIME_ITEM: VaultMeta b"dreamer:free_time:item:v1:" Named;
+    /// FIX 4453: the owner's free-time policy for one agent: the total per cycle, the cycle's
+    /// clock and zone, an optional pinned split and the owner's act. Key: id16 (agent definition).
+    DREAMER_FREE_TIME_POLICY: VaultMeta b"dreamer:free_time:policy:v1:" Named;
+    /// FIX 4453: one free-time item's terminal receipt, by label; the floor reads these. Key:
+    /// id16 (agent) + id16 (cycle) + id16 (item).
+    DREAMER_FREE_TIME_RECEIPT: VaultMeta b"dreamer:free_time:receipt:v1:" Named;
     /// Branch-scoped reflection-gap queue namespaced by partition hash and the branch's
     /// relationship/project scope axes. Key: hex64 ":" hex32-or-"none" ":" hex32-or-"none" ":"
     /// hash32.

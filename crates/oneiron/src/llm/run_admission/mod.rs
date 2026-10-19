@@ -23,7 +23,9 @@ mod receipt;
 mod settle;
 mod wire;
 
-pub use admission::{RunAdmission, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR};
+pub use admission::{
+    RunAdmission, RunAttribution, RunCall, RunCallError, RunDenied, UNRESOLVED_SELECTOR,
+};
 pub use declaration::{
     BudgetLine, DeclarationEditor, DeclarationError, DeclaredTeachers, LeaseUnit, RunDeclaration,
 };

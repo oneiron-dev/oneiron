@@ -76,6 +76,15 @@ pub const DREAMER_NOTE_REVIEW_ATTEMPT_KIND: &str = "dreamer.note_review";
 ///
 /// Doubles as the payload `job_type`.
 pub const DREAMER_RESIDENT_DREAM_ATTEMPT_KIND: &str = "dreamer.resident_dream";
+/// An agent's free time for its human (FIX 4453): one item per owner-set
+/// cycle, run under the resident's own stamp on the model its host lends it.
+/// What it suggests lands as a proposal. The cycle's own-time item is the
+/// resident's dreaming ([`DREAMER_RESIDENT_DREAM_ATTEMPT_KIND`]) bound to the
+/// cycle. Admitted on the Timer wake (Macro scope) before the residents'
+/// dreaming.
+///
+/// Doubles as the payload `job_type`.
+pub const DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND: &str = "dreamer.free_time.for_human";
 /// A Dreamer-lane TASK's realization: the one row `tasks.create` queues for
 /// a TASK routed to the Dreamer, carrying the TASK's bare spec rather than
 /// the runner envelope. Admitted on any wake after the wake recipes; its one

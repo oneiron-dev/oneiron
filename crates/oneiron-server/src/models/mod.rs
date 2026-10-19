@@ -20,7 +20,8 @@ use std::sync::Arc;
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{
-    HostAccount, PayerPerson, RunAdmission, RunDeclaration, RunReceiptSink,
+    BudgetLine, HostAccount, LeaseUnit, PayerPerson, RunAdmission, RunAttribution, RunDeclaration,
+    RunReceiptSink,
 };
 use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
 use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
@@ -212,6 +213,32 @@ impl ModelRuntime {
             self.host.clone(),
             Arc::clone(&self.receipts),
             payer,
+        )
+    }
+
+    /// [`Self::undeclared_run`] for a free-time item's calls (FIX 4453): the
+    /// run carries `attribution`, which the engine stamped before it began,
+    /// beside this runtime's receipts and host account. No room pays for it.
+    #[must_use]
+    pub fn attributed_run(
+        &self,
+        run: impl Into<String>,
+        meter: BudgetGuard,
+        attribution: RunAttribution,
+    ) -> RunAdmission {
+        let line = BudgetLine {
+            limit_units: meter.read().limit_units,
+            reserve_units: meter.reserve_units(),
+            unit: LeaseUnit::tokens(),
+        };
+        RunAdmission::with_attribution(
+            run,
+            RunDeclaration::undeclared(line),
+            meter,
+            self.host.clone(),
+            Arc::clone(&self.receipts),
+            None,
+            attribution,
         )
     }
 
