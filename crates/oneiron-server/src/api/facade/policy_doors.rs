@@ -13,7 +13,9 @@
 //! [`super::owner_binding`] binds the request's own owner proof, the owner's
 //! read key held to it at the caller's locality, and the proof's person as a
 //! human (WILL-PLAN L13 row 01). A setting the owner changes records his act,
-//! with where he spoke from.
+//! with where he spoke from: the surface the call itself carried (a linked
+//! machine its request's headers prove, through `host_door_surface`; FIX
+//! 4625), never an input field.
 //!
 //! Each lists no row beside its outcome (`host_door_lists`): the wake policy
 //! and the inference defaults live in side tables, an action's replay record
@@ -22,6 +24,7 @@
 use std::sync::Arc;
 
 use oneiron::WriteActor;
+use oneiron::authority::ActSurface;
 use oneiron::code_run::actions::{ActionHostBinding, AgentActionCall};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::policy_setting_doors::{
@@ -36,16 +39,18 @@ use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 /// Runs `call` from the app's table as the credential's principal, under
-/// the owner's proof when `needs_owner`. Beside its outcome, no row.
+/// the owner's proof when `needs_owner`, his act recording `surface`. Beside
+/// its outcome, no row.
 async fn run_action(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: &'static str,
     call: MemoryResult<AgentActionCall>,
     needs_owner: bool,
+    surface: ActSurface,
 ) -> Listed<PolicyActionOutcome> {
     (
-        run_action_answer(server, auth, verb, call, needs_owner).await,
+        run_action_answer(server, auth, verb, call, needs_owner, surface).await,
         Vec::new(),
     )
 }
@@ -56,6 +61,7 @@ async fn run_action_answer(
     verb: &'static str,
     call: MemoryResult<AgentActionCall>,
     needs_owner: bool,
+    surface: ActSurface,
 ) -> MemoryResult<PolicyActionOutcome> {
     let call = call?;
     let (actor, class) =
@@ -105,7 +111,7 @@ async fn run_action_answer(
         None => super::owner_authorship(auth, server)
             .map_err(|error| FacadeApiError::from(error).into_memory_error())?,
     };
-    let owner_surface = Some(super::owner_binding::act_surface(auth));
+    let owner_surface = Some(surface);
     let vault = Arc::clone(&server.vault);
     tokio::task::spawn_blocking(move || {
         let actor = WriteActor::new(actor, class);
@@ -131,14 +137,23 @@ async fn run_action_answer(
 }
 
 /// `vault.settings.wake_policy.set`: the owner sets the dreamer's wake
-/// policy through `dreamer.wake_policy.set`.
+/// policy through `dreamer.wake_policy.set`, his act recording `surface`.
 pub(crate) async fn vault_settings_wake_policy_set(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: WakePolicySetRequest,
 ) -> Listed<PolicyActionOutcome> {
     let call = input.into_action().map_err(MemoryError::from);
-    run_action(server, auth, "vault.settings.wake_policy.set", call, true).await
+    run_action(
+        server,
+        auth,
+        "vault.settings.wake_policy.set",
+        call,
+        true,
+        surface,
+    )
+    .await
 }
 
 /// `vault.settings.inference_defaults`: the per-purpose inference defaults,
@@ -149,21 +164,24 @@ pub(crate) async fn vault_settings_inference_defaults(
     _input: EmptyRequest,
 ) -> Listed<PolicyActionOutcome> {
     let call = policy_setting_doors::inference_defaults_read_action().map_err(MemoryError::from);
+    // A read records no act: the header-less surface.
     run_action(
         server,
         auth,
         "vault.settings.inference_defaults",
         call,
         false,
+        super::owner_binding::act_surface(auth),
     )
     .await
 }
 
 /// `vault.settings.inference_defaults.replace`: the whole table replaced,
-/// through `inference.defaults.replace`.
+/// through `inference.defaults.replace`, an owner's act recording `surface`.
 pub(crate) async fn vault_settings_inference_defaults_replace(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
+    surface: ActSurface,
     input: InferenceDefaultsReplaceRequest,
 ) -> Listed<PolicyActionOutcome> {
     let call = input.into_action().map_err(MemoryError::from);
@@ -173,6 +191,7 @@ pub(crate) async fn vault_settings_inference_defaults_replace(
         "vault.settings.inference_defaults.replace",
         call,
         false,
+        surface,
     )
     .await
 }

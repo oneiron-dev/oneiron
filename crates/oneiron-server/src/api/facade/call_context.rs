@@ -4,10 +4,13 @@
 //! one; the held socket binds its connection's credential and reads the call
 //! context its `rpc.req` carried the same way (FIX 2059). The actor, its
 //! class, its read proof and its locality are the credential's own, never a
-//! transport field's.
+//! transport field's. Where the owner's say-so reached this install (the
+//! act's audit surface) is the request's own too: the HTTP route reads the
+//! verified machine proof its headers carry (FIX 4625), never an input field.
 
 use axum::http::{HeaderMap, StatusCode};
 use oneiron::EntityId;
+use oneiron::authority::ActSurface;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, ProducerRows};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::runtime_hooks::verb::VerbAskDrainPermit;
@@ -17,6 +20,7 @@ use crate::api::call_receipt;
 use crate::api::write_facet::request_session;
 use crate::auth::CoreAuth;
 use crate::lens_frames::CardOwner;
+use crate::server::SyncServer;
 
 /// What a transport carried for one context field of a call.
 #[derive(Clone, Copy)]
@@ -93,6 +97,9 @@ pub(crate) struct FacadeCall<'a> {
     creator_run: Option<String>,
     /// The live subscription the call's lens card renders for.
     subscription: Option<String>,
+    /// Where the owner's say-so on this call reached this install, for an
+    /// owner act's audit record only: no admission rule reads it.
+    surface: ActSurface,
     /// A narrower caller's own holder proof, as its ingress carried it, for
     /// the home an opened device asks (FIX 2905, FIX 2907). `None` for an
     /// owner-grade caller, and for an ingress that carries no per-call proof.
@@ -100,9 +107,12 @@ pub(crate) struct FacadeCall<'a> {
 }
 
 impl<'a> FacadeCall<'a> {
-    /// A request on the HTTP facade: its credential, and the room turn,
-    /// invocation and session its headers name.
-    pub(super) fn http(auth: &'a CoreAuth, headers: &'a HeaderMap) -> Self {
+    /// A request on the HTTP facade: its credential, the room turn,
+    /// invocation and session its headers name, and the surface its owner
+    /// act records: a linked machine its headers' machine proof verifies
+    /// on this very request (`owner_routes::machine_routes::act_surface`,
+    /// FIX 4625).
+    pub(super) fn http(server: &SyncServer, auth: &'a CoreAuth, headers: &'a HeaderMap) -> Self {
         Self {
             auth,
             room_turn: Carried::spelled(header(headers, ROOM_TURN_HEADER), |room| {
@@ -118,6 +128,7 @@ impl<'a> FacadeCall<'a> {
             drain: None,
             creator_run: None,
             subscription: None,
+            surface: crate::api::owner_routes::machine_routes::act_surface(server, auth, headers),
             forwarded: (!auth.is_owner_grade())
                 .then(|| auth.forwarded_caller_proof(headers))
                 .flatten(),
@@ -129,8 +140,10 @@ impl<'a> FacadeCall<'a> {
     /// invocation and session its `rpc.req` call context names (FIX 2059),
     /// each read as the HTTP header of the same name is: a malformed one is
     /// refused where the row reads it. The session binds this call only. A
-    /// call on a socket carries no holder proof of its own, so a narrower
-    /// one asks no home.
+    /// socket's call carries no headers, so its owner act records the
+    /// header-less surface ([`super::owner_binding::act_surface`]); it
+    /// carries no holder proof of its own either, so a narrower one asks no
+    /// home.
     pub(crate) fn bound(
         auth: &'a CoreAuth,
         room_turn: Option<&str>,
@@ -148,6 +161,7 @@ impl<'a> FacadeCall<'a> {
             drain: None,
             creator_run: None,
             subscription: None,
+            surface: super::owner_binding::act_surface(auth),
             forwarded: None,
         }
     }
@@ -157,7 +171,7 @@ impl<'a> FacadeCall<'a> {
     /// verified again now: the room turn and invocation the call named, and
     /// no session, since a call that named one resumes only on its retry.
     #[cfg(feature = "code-sandbox-wasmtime")]
-    pub(crate) const fn resumed(
+    pub(crate) fn resumed(
         auth: &'a CoreAuth,
         room: Option<EntityId>,
         invocation: InvocationId,
@@ -175,6 +189,7 @@ impl<'a> FacadeCall<'a> {
             drain: Some(drain),
             creator_run: None,
             subscription: None,
+            surface: super::owner_binding::act_surface(auth),
             forwarded: None,
         }
     }
@@ -216,6 +231,12 @@ impl<'a> FacadeCall<'a> {
     /// The drain's permit, when settlement runs this call again.
     pub(super) const fn drain(&self) -> Option<&VerbAskDrainPermit> {
         self.drain.as_ref()
+    }
+
+    /// Where the owner's say-so on this call reached this install, for an
+    /// owner act's audit record (FIX 4625).
+    pub(super) const fn surface(&self) -> ActSurface {
+        self.surface
     }
 
     /// Who this call asks an opened device's home for (FIX 2905): an
@@ -272,6 +293,7 @@ impl<'a> FacadeCall<'a> {
             drain: self.drain.clone(),
             creator_run: self.creator_run.clone(),
             subscription: self.subscription.clone(),
+            surface: self.surface,
             forwarded: self.forwarded.clone(),
         }
     }
@@ -289,6 +311,7 @@ pub(super) struct OwnedFacadeCall {
     drain: Option<VerbAskDrainPermit>,
     creator_run: Option<String>,
     subscription: Option<String>,
+    surface: ActSurface,
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
 }
 
@@ -304,6 +327,7 @@ impl OwnedFacadeCall {
             drain: self.drain.clone(),
             creator_run: self.creator_run.clone(),
             subscription: self.subscription.clone(),
+            surface: self.surface,
             forwarded: self.forwarded.clone(),
         }
     }

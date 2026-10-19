@@ -205,7 +205,8 @@ async fn fold_read<T: Send + 'static>(
     + 'static,
 ) -> Listed<T> {
     let resolved = (|| {
-        let bound = action_bound(server, auth)
+        // A history read records no owner act: the header-less surface.
+        let bound = action_bound(server, auth, super::owner_binding::act_surface(auth))
             .map_err(facade_error)?
             .ok_or_else(|| {
                 MemoryError::new(

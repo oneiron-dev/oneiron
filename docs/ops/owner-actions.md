@@ -1211,8 +1211,37 @@ slot can hold a piece.
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
-root. A running server shows the same at `GET /v1/owner/recovery-kit`; issue, confirm and restore
-run only from the CLI, so no piece crosses HTTP.
+root. A running server shows the same at `GET /v1/owner/recovery-kit`. The commands above run on
+a stopped vault. On a running server, a root change goes through your request and its target
+install:
+
+- Any install you are signed in on records the request with `POST /v1/owner/roots/requests`:
+  `target`, and `change` = `pin`, `activate`, `restore` or `anchor`, with `root` and `machine` as
+  the change names them. The request carries ids only. Its receipt says "recorded, awaiting a
+  holder" until the target acts, or why nothing was recorded (the target is this install, or not
+  a linked one).
+- The target lists what waits for it at `GET /v1/owner/roots/requests`.
+- `GET /v1/owner/owner-work/{request}` reads where any owner work request stands.
+- A pin needs no kit: the target makes it on its own.
+
+Kit material travels only in the body of the named target's own call:
+`POST /v1/owner/roots/requests/run` and `POST /v1/owner/recovery-kit/pad-access`. That means the
+pieces as recovery codes, the passphrase, a confirm's `carry` machines, and an anchoring's
+enrolment request and code.
+
+- Each call names its `target`. The target must be the install that answers, proved by its
+  machine proof: it verifies under the key that machine stands on in the vault.
+- The target must also be a machine the worlds' privacy lets hold their keys, as the
+  verified-destination judge reads each world's recipient choice. For one-machine and
+  my-machines worlds that means one of your own machines (marked mine), and the host too on a
+  hosted vault. Any other proven machine qualifies only where no world keeps its keys off it.
+- A target that is another install, or is unproved, or is disallowed, gets a named refusal
+  (`kit_target_elsewhere`, `kit_target_unproved`, `kit_target_not_allowed`) before any kit is
+  read.
+- An activation's `issue_kit` answers the new kit's pieces in that call's reply alone, and
+  `confirm_kit` reads two back and closes the request.
+- Kit material is never stored, logged or put in a receipt, and no install relays it for
+  another.
 
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own:

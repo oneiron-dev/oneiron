@@ -405,6 +405,9 @@ impl ActionRegistry {
     }
     /// Executes an agent chat action under an INDEPENDENT authenticated-owner
     /// witness bound by the host, never by a transcript or action argument.
+    /// `surface` is where the host authenticated the owner's say-so: an owner
+    /// setting the action changes records it in his act (FIX 4626), audit
+    /// only.
     pub fn execute_agent_with_owner(
         &self,
         vault: &Vault,
@@ -412,6 +415,7 @@ impl ActionRegistry {
         principal: &LensPrincipalBinding,
         call: &AgentActionCall,
         owner: &AuthenticatedOwner,
+        surface: crate::authority::ActSurface,
     ) -> Result<ActionDispatch> {
         if principal.kind() != LensActingPrincipalKind::AgentTask {
             return Err(invalid("agent action requires an agent principal"));
@@ -419,7 +423,7 @@ impl ActionRegistry {
         let binding = ActionHostBinding {
             verb_door: None,
             owner: Some(owner),
-            owner_surface: None,
+            owner_surface: Some(surface),
             live_run: None,
             planner: None,
         };

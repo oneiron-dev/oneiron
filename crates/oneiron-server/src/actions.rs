@@ -62,7 +62,8 @@ impl SharedActionExecutor {
     ) -> Result<ActionDispatch> {
         self.registry.execute_agent(vault, actor, principal, call)
     }
-    /// An agent's call under an owner proof the host authenticated on its own.
+    /// An agent's call under an owner proof the host authenticated on its
+    /// own, from `surface` (his act's audit record; FIX 4626).
     pub fn execute_agent_with_owner(
         &self,
         vault: &Vault,
@@ -70,9 +71,10 @@ impl SharedActionExecutor {
         principal: &LensPrincipalBinding,
         call: &AgentActionCall,
         owner: &AuthenticatedOwner,
+        surface: oneiron::authority::ActSurface,
     ) -> Result<ActionDispatch> {
         self.registry
-            .execute_agent_with_owner(vault, actor, principal, call, owner)
+            .execute_agent_with_owner(vault, actor, principal, call, owner, surface)
     }
     /// One call from either caller, a person's app button or an agent's call,
     /// as the host's credential binds it.

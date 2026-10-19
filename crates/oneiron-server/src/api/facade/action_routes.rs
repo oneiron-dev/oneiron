@@ -40,6 +40,7 @@ use axum::extract::{Path, Request, State};
 use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::authority::ActSurface;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::actions::{ActionArgument, ActionDispatch, ActionJson, AgentActionCall};
 use oneiron::code_run::live_run::{LiveRunCredential, is_live_run_verb};
@@ -60,6 +61,7 @@ use tower::ServiceExt;
 use self::execution::{execute, run_bound};
 use super::{FacadeApiError, facade_actor, facade_input, facade_json, owner_authorship};
 use crate::actions::SharedActionExecutor;
+use crate::api::owner_routes::machine_routes::act_surface;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::{LiveRunCaller, LiveRunRefusal, ResolvedLiveRun, SyncServer};
 
@@ -154,7 +156,10 @@ pub(super) async fn invoke_action_dispatch(
     })?;
     // A credential that names no principal meets the facade's own refusal.
     facade_actor(server, auth)?;
-    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
+    // Where the owner spoke from: a linked machine this request's own
+    // headers prove, else the header-less rule (FIX 4625).
+    let surface = act_surface(server, auth, &headers);
+    let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
@@ -220,8 +225,9 @@ pub(crate) struct ActionBound {
     class: EdgeActorClass,
     key: oneiron::claim::ScopedReadActorKey,
     owner: Option<AuthenticatedOwner>,
-    /// Where the owner spoke from, for an owner setting's act record.
-    surface: Option<oneiron::authority::ActSurface>,
+    /// Where the owner spoke from, for an owner setting's act record: the
+    /// surface the caller derived from its own request (FIX 4625).
+    surface: Option<ActSurface>,
     /// The live run the action acts for, resolved from its handle.
     live_run: Option<ResolvedLiveRun>,
 }
@@ -232,10 +238,15 @@ pub(crate) struct ActionBound {
 /// owner its host action names, with that owner's guarded key at the
 /// caller's locality and the owner's proof; a hosted operator's root is
 /// refused, never left to a fallback (FIX 2222). A managed vault's attested
-/// owner binds its request's own proof (WILL-PLAN L13 row 01).
+/// owner binds its request's own proof (WILL-PLAN L13 row 01). `surface` is
+/// where the owner's say-so reached this install, as the caller read it from
+/// its own request ([`act_surface`] over its headers, or
+/// [`super::owner_binding::act_surface`] for a call that carries none; FIX
+/// 4625): an owner act records it, and no rule reads it.
 pub(crate) fn action_bound(
     server: &SyncServer,
     auth: &CoreAuth,
+    surface: ActSurface,
 ) -> Result<Option<ActionBound>, FacadeApiError> {
     let (actor, class, key, owner) =
         if let Some(action) = crate::api::host_action::facade_host_action(server, auth)? {
@@ -266,7 +277,7 @@ pub(crate) fn action_bound(
         class,
         key,
         owner,
-        surface: Some(super::owner_binding::act_surface(auth)),
+        surface: Some(surface),
         live_run: None,
     }))
 }
@@ -294,7 +305,7 @@ pub(crate) fn rest_action_bound<T: serde::Serialize>(
     if headers.contains_key(super::ROOM_TURN_HEADER) {
         return Ok(None);
     }
-    let Some(bound) = action_bound(server, auth)? else {
+    let Some(bound) = action_bound(server, auth, act_surface(server, auth, headers))? else {
         return Ok(None);
     };
     Ok(action_json(input)?.map(|_| bound))
@@ -346,7 +357,9 @@ pub(super) async fn execute_result_set_action(
         return Err(internal());
     };
     require_action_scope(auth, action.command().as_str())?;
-    let mut bound = action_bound(server, auth)?.ok_or_else(|| {
+    // A held card's event carries no request headers.
+    let surface = super::owner_binding::act_surface(auth);
+    let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",
             ["Present a verified slip paired to this principal."],
@@ -403,7 +416,9 @@ pub(super) async fn attach_run_as(
 ) -> Result<String, FacadeApiError> {
     auth.require(CoreScope::Write)?;
     facade_actor(server, auth)?;
-    let bound = action_bound(server, auth)?.ok_or_else(|| {
+    // An attach is no owner act; its binding keeps the header-less surface.
+    let surface = super::owner_binding::act_surface(auth);
+    let bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "a live run attaches the credential's own read key",
             ["Present a verified slip paired to the run's agent."],
