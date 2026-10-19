@@ -726,16 +726,19 @@
       "RunRungSettlement",
       "RunSettlementsRequest",
       "RunSettlementsView",
+      "RunnerBudgetReservation",
+      "RunnerBudgetReservationsRequest",
+      "RunnerBudgetReservationsView",
       "SelfBudgetRequest",
       "SpendLeaseView",
       "SpendScopeRequest",
       "TopUpSpendLeaseRequest"
      ],
      "path": "src/agent_dispatch/budget_doors.rs",
-     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter",
+     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter with its reservations",
      "surface": {
-      "fn": 8,
-      "struct": 14
+      "fn": 9,
+      "struct": 17
      }
     },
     {
@@ -20154,7 +20157,7 @@
      "path": "src/dreamer_runner/admission/mod.rs",
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 22
      }
     },
@@ -20934,7 +20937,7 @@
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
       "mod": 4,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -20952,6 +20955,25 @@
      "surface": {
       "fn": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConsolidationHomeNode",
+      "ConsolidationHomeView",
+      "ConsolidationLineageRequest",
+      "ConsolidationLineageView",
+      "ConsolidationStepRef",
+      "ConsolidationTryView"
+     ],
+     "path": "src/dreamer_runner/owner_doors.rs",
+     "purpose": "The owner's reads of the private Dreamer runner (DOOR-101): which node this runner holds as the elected…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 6
      }
     },
     {
@@ -31652,7 +31674,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 5
      }
@@ -31735,6 +31757,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 2
      }
@@ -33346,7 +33369,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 23,
       "re-export": 50
      }
@@ -52874,7 +52897,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 985
+      "fn": 988
      }
     },
     {
@@ -59561,7 +59584,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60578,7 +60601,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3694,
+   "source_files": 3695,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69200,7 +69223,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 956
+      "fn": 959
      }
     },
     {
@@ -70294,7 +70317,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 957
+      "fn": 960
      }
     },
     {
@@ -73318,7 +73341,7 @@
      "path": "src/api/facade/budget_doors.rs",
      "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -73548,7 +73571,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -83240,10 +83263,16 @@
       "ConsolidationEvidenceLocator",
       "ConsolidationEvidenceRequest",
       "ConsolidationEvidenceSource",
+      "ConsolidationHomeNode",
+      "ConsolidationHomeView",
+      "ConsolidationLineageRequest",
+      "ConsolidationLineageView",
       "ConsolidationMessageEvidence",
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConsolidationStepRef",
+      "ConsolidationTryView",
       "ConstraintContinuation",
       "ConstraintObject",
       "ConstraintTimeRangeWire",
@@ -84951,6 +84980,9 @@
       "RunTreeRepair",
       "RunTreeStatus",
       "RunTreeTimestamps",
+      "RunnerBudgetReservation",
+      "RunnerBudgetReservationsRequest",
+      "RunnerBudgetReservationsView",
       "SavedIntentState",
       "SavedResumeStep",
       "ScheduledBackfill",
@@ -85722,7 +85754,7 @@
      "purpose": "—",
      "surface": {
       "enum": 783,
-      "struct": 2435
+      "struct": 2444
      }
     },
     {
