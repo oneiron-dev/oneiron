@@ -33,6 +33,10 @@ pub(super) struct Revision {
     replaced_mark: Option<AuthorityEntryHash>,
     /// The chain's revisions in this one's own past.
     past: Arc<BTreeSet<AuthorityEntryHash>>,
+    /// It is an owner say-so, an admitted answer or an anchor's mark: a
+    /// concurrent one that says otherwise contests the chain's head (FIX
+    /// 4610).
+    said: bool,
     /// It landed past this replica's sequence floor as restriction only: it
     /// acknowledges no edit here, and as the head it holds its chain here
     /// (Astra #1430).
@@ -48,6 +52,11 @@ impl Revision {
     /// The chain's revisions in this one's own past.
     pub(super) fn past(&self) -> &BTreeSet<AuthorityEntryHash> {
         &self.past
+    }
+
+    /// It is an owner say-so (FIX 4610).
+    pub(super) fn said(&self) -> bool {
+        self.said
     }
 
     /// One entry applied over two different pasts (a removal's proof beside
@@ -66,6 +75,7 @@ impl Revision {
                 && left.replaced_mark == right.replaced_mark,
             replaced_mark: left.replaced_mark.min(right.replaced_mark),
             past: Arc::new(left.past.intersection(&right.past).copied().collect()),
+            said: left.said && right.said,
             past_floor: left.past_floor || right.past_floor,
         })
     }
@@ -93,6 +103,7 @@ pub(super) fn with_revision(
                 .filter(|replaced| replaced.profile.says_mine())
                 .map(|replaced| replaced.entry),
             past,
+            said: head.say_so.is_some(),
             past_floor: restriction_only,
         }),
     );

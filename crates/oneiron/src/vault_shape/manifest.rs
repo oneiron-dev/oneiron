@@ -5,6 +5,7 @@
 //! (`crate::gate::manifest_resolution_narrows`) lands with a receipt, checked
 //! again in the writer that lands it. Every other change waits for the
 //! owner's word.
+use super::live::ShapeSources;
 use super::seed::hex;
 use super::{ShapeChange, ShapeItemClass, ShapePlanItem, ShapeRow, ShapeTarget, invalid};
 use crate::channel_identity::channel_identity_send_holder_in_txn;
@@ -38,11 +39,13 @@ impl Vault {
     /// resolved policy on every axis. The rest stay Widening. Returns
     /// whether each of `senders` may send once every manifest change is in
     /// place (ARCH-0070 reach); None when the plan changes no manifest, or
-    /// one of its changes would not land.
+    /// one of its changes would not land. `sources` lists the stored
+    /// manifests the projection's own writer folds.
     pub(super) fn classify_shape_manifests(
         &self,
         items: &mut [ShapePlanItem],
         senders: &[EntityId],
+        sources: &mut ShapeSources,
     ) -> Result<Option<BTreeMap<EntityId, bool>>> {
         let mut at = Vec::new();
         let mut installs = Vec::new();
@@ -80,8 +83,13 @@ impl Vault {
             }
             Ok(sends)
         };
-        let (steps, sends) =
-            self.project_manifest_changes(&installs, &retires, crate::unix_seconds_now(), read)?;
+        let (steps, sends) = self.project_manifest_changes(
+            &installs,
+            &retires,
+            crate::unix_seconds_now(),
+            read,
+            &mut self.folded_manifests(sources),
+        )?;
         for (index, narrows) in at.into_iter().zip(steps) {
             if narrows {
                 items[index].class = ShapeItemClass::Receipted;
@@ -93,7 +101,8 @@ impl Vault {
     /// Installs the manifest a row declares, as `owner`. Bytes the owner
     /// once quarantined under that id refuse: the install would store them
     /// and they would still not count. A row planned as a `narrowing` lands
-    /// only if it still narrows the policy the vault holds just before it.
+    /// only if it still narrows the policy the vault holds just before it;
+    /// `sources` lists the stored manifests that check's writer folds.
     pub(super) fn install_shape_manifest(
         &self,
         owner: &AuthenticatedOwner,
@@ -101,6 +110,7 @@ impl Vault {
         body: &str,
         narrowing: bool,
         now: u64,
+        sources: &mut ShapeSources,
     ) -> Result<String> {
         let id = EntityId::from_hex(manifest_ref)
             .map_err(|_| invalid("a manifest is named by entity id hex"))?;
@@ -117,11 +127,30 @@ impl Vault {
         }
         if !narrowing {
             self.install_owner_policy_manifest(owner, id, bytes, now)?;
-        } else if !self.install_owner_policy_manifest_narrowing(owner, id, bytes, now)? {
+        } else if !self.install_owner_policy_manifest_narrowing(
+            owner,
+            id,
+            bytes,
+            now,
+            &mut self.folded_manifests(sources),
+        )? {
             return Err(invalid(
                 "this manifest no longer narrows the vault's policy as it stands; plan again, and it waits for the owner's word",
             ));
         }
         Ok(id.to_hex())
+    }
+
+    /// Lists in `sources` the stored manifests a gate writer's policy folds,
+    /// on that writer's own snapshot; an outcome-only call reads none.
+    fn folded_manifests<'s>(
+        &'s self,
+        sources: &'s mut ShapeSources,
+    ) -> impl FnMut(&heed::RoTxn<'_>) + 's {
+        move |txn| {
+            if sources.listing() {
+                sources.list_read(crate::gate::policy_manifest_contributors(&self.store, txn));
+            }
+        }
     }
 }

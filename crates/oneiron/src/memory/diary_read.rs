@@ -628,6 +628,8 @@ impl Memory<'_> {
             gate.touch(self.vault, txn, agent)?;
             let mut entries = Vec::new();
             for (id, note, learned_at) in diary_entries_in_txn(self.vault, txn, agent)? {
+                // Each entry the gate judges, read or counted as held.
+                self.produced_from([id]);
                 if gate.admit(self.vault, txn, agent, id)? == DiaryEntryAdmission::Read {
                     entries.push(DiaryEntry {
                         id,

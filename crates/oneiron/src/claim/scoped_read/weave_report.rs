@@ -98,6 +98,47 @@ pub struct WeaveReport {
     pub sections: Vec<WeaveSection>,
 }
 
+impl WeaveReport {
+    /// The rows the read that selected this report's items read them from
+    /// (DEC-0005): each claim, project, goal, budget and link endpoint, a
+    /// dreaming's resident, and what an agent-health card is built from.
+    #[must_use]
+    pub fn source_rows(&self) -> Vec<EntityId> {
+        let mut rows = Vec::new();
+        for item in self.sections.iter().flat_map(|section| &section.items) {
+            match item {
+                WeaveItem::Claim { id, .. } => rows.push(*id),
+                WeaveItem::Project { id, goal } => {
+                    rows.push(*id);
+                    rows.extend(goal.as_deref().and_then(|goal| EntityId::from_hex(goal).ok()));
+                }
+                WeaveItem::Budget {
+                    project,
+                    budget_ref,
+                } => rows.extend([*project, *budget_ref]),
+                WeaveItem::Link { source, target, .. } => rows.extend([*source, *target]),
+                WeaveItem::DreamProgress { resident, .. } => rows.push(*resident),
+                WeaveItem::AgentHealth { card } => rows.extend(card_rows(card)),
+            }
+        }
+        rows
+    }
+}
+
+/// The rows an agent-health card is built from, as the card keeps them:
+/// its agent, TASK, attempts, diagnostics and evidence, and the Coach's
+/// ask on it (the diagnostic it was asked on and the attempt that answers).
+fn card_rows(card: &AgentHealthCard) -> Vec<EntityId> {
+    let mut rows = vec![card.subject];
+    rows.extend(card.task.into_iter().chain(card.attempt).chain(card.confession));
+    rows.extend(card.diagnostics.iter().chain(&card.evidence).copied());
+    if let Some(ask) = &card.coach {
+        rows.extend(ask.diagnostic);
+        rows.extend(EntityId::from_hex(&ask.attempt).ok());
+    }
+    rows
+}
+
 impl ScopedRead<'_> {
     /// Project live vault rows for one bound reader, with a mandatory scoped
     /// receipt. The recipe cannot elevate a role or expand the actor's floor.

@@ -50,12 +50,14 @@ pub struct HookBodyRun {
 pub trait HookVerdict: Send + Sync {
     /// Asks `request_json`, an `ai.verdict` input, for `reader`, the reader
     /// the hook's grant names, answering by `deadline`. The verdict as JSON,
-    /// or the refusal's text. Blocks: the runner calls it off the runtime.
+    /// or the refusal's text, beside the rows the same ask resolved its
+    /// evidence to: `Some([])` for one read from none, `None` when they are
+    /// not known. Blocks: the runner calls it off the runtime.
     fn verdict(
         &self,
         reader: EntityId,
         class: EdgeActorClass,
         request_json: &str,
         deadline: Instant,
-    ) -> std::result::Result<String, String>;
+    ) -> (std::result::Result<String, String>, Option<Vec<EntityId>>);
 }

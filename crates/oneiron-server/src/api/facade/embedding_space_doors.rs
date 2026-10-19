@@ -137,7 +137,7 @@ pub(crate) async fn vault_embedding_spaces_move(
 /// both spaces' towers, and acts on the reading. Beside it, each live
 /// probe's family and targets and every hit its reciprocal ranks stand on;
 /// a check it waited on lists none (the move's stored check is a side
-/// table), and a candidate still filling lists `None`.
+/// table), and a candidate still filling lists the pending document found.
 pub(crate) async fn vault_embedding_spaces_move_check(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

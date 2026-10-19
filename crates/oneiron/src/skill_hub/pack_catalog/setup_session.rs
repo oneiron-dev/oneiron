@@ -146,6 +146,11 @@ pub struct PackSetupSecretState {
     pub name: String,
     /// A live custody record holds the name.
     pub stored: bool,
+    /// The live custody record the view read the name to, in the same
+    /// transaction; a host lists it beside the view. Never on the wire, and
+    /// never a value.
+    #[serde(skip)]
+    pub custody_id: Option<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -524,9 +529,11 @@ impl Vault {
     ) -> Result<PackSetupConnectionState> {
         let mut secrets = Vec::with_capacity(connection.secrets.len());
         for secret in &connection.secrets {
+            let custody = live_custody_in_txn(&self.store, txn, &secret.name)?;
             secrets.push(PackSetupSecretState {
                 name: secret.name.clone(),
-                stored: live_custody_in_txn(&self.store, txn, &secret.name)?.is_some(),
+                stored: custody.is_some(),
+                custody_id: custody.map(|(id, _)| id),
             });
         }
         let mut permissions = Vec::with_capacity(connection.permissions.len());

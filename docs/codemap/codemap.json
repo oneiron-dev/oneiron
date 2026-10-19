@@ -2047,7 +2047,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 4
      }
     },
@@ -3076,7 +3076,7 @@
      "path": "src/authority/left_notices.rs",
      "purpose": "A removed person's own notices of losing a shared vault (OF-158 client leave)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -3163,7 +3163,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -3216,7 +3216,7 @@
      "path": "src/authority/machine_profile/owner_answers.rs",
      "purpose": "The owner's machine answers (mesh PR1b): a profile revision that carries his act ([`OwnerAct`]), signed by…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "fn": 2
      }
     },
@@ -3227,7 +3227,7 @@
      "path": "src/authority/machine_standing.rs",
      "purpose": "A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -3666,6 +3666,7 @@
      "path": "src/authority/slip_vault/courtesy.rs",
      "purpose": "The host's signature on a courtesy deletion ask and on its answer (OF-273)",
      "surface": {
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -4334,7 +4335,7 @@
      "path": "src/authority/world_refold.rs",
      "purpose": "A world edit, a world key record or a grant travel choice above a main-log row the fold did not keep, folded…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -11799,7 +11800,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -18962,6 +18963,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/deletion/coop_delivery/refresh.rs",
+     "purpose": "A courtesy try across this vault's own host re-root (FIX 5088; Engine 10-19 15:0x)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CooperativeDeletionReply",
       "CooperativeDeletionReplyOutcome",
@@ -24532,7 +24543,7 @@
      "path": "src/engine_executor/host.rs",
      "purpose": "JS host bridge: recording dispatcher, sandbox contract, and prompt sites",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -24575,7 +24586,7 @@
      "path": "src/engine_executor/skill_call.rs",
      "purpose": "One callable bridge entry between turns of an attached, leased run",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -35073,7 +35084,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -36449,7 +36460,7 @@
      "path": "src/note/brief_view.rs",
      "purpose": "Fresh brief views: current ledger state, cursor drift, and one renderer",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -54463,8 +54474,23 @@
      "surface": {
       "enum": 1,
       "fn": 10,
-      "re-export": 71,
+      "re-export": 72,
       "struct": 39
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActAnswer",
+      "DetailsOnDevice"
+     ],
+     "path": "src/task_verb/sdk_act_answer.rs",
+     "purpose": "What an act answers its caller (FIX 3414)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -55189,13 +55215,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AppendBlobVersionRequest",
       "AuthorTakeRequest",
       "AuthorTakeTarget",
       "BlobContent",
+      "Bm25Search",
       "ClaimRefRequest",
       "CommitRequest",
       "ConsolidationEnqueueRequest",
@@ -55217,7 +55244,8 @@
      "surface": {
       "crate-vis": 8,
       "enum": 2,
-      "struct": 17
+      "fn": 2,
+      "struct": 18
      }
     },
     {
@@ -61693,7 +61721,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62603,7 +62631,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 193,
+     "files": 194,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62773,7 +62801,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3847,
+   "source_files": 3849,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76675,6 +76703,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/search_home_doors.rs",
+     "purpose": "`vault.search.bm25`'s facade door (FIX 3876): the page is read on the call's own caller surface, the one a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/secret_grant_doors.rs",
      "purpose": "The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted…",
      "surface": {
@@ -78328,7 +78366,7 @@
      "path": "src/api/search.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -78339,6 +78377,16 @@
      "purpose": "Raw search under a request's hard deadline (`deadlineMs`): the page reads on the blocking pool, and the door…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/search/home_text.rs",
+     "purpose": "The home's half of a text search on a device that syncs only what it opened (OF-534, FIX 3876)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -80648,7 +80696,7 @@
      "path": "src/device_local.rs",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -84734,7 +84782,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 445,
+     "files": 447,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85177,7 +85225,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 823,
+   "source_files": 825,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -85379,6 +85427,9 @@
       "AccessFactorPolicy",
       "AccessRequestStatus",
       "AccessStatus",
+      "ActAnswerFanoutLaunchView",
+      "ActAnswerRecordEraseOutcome",
+      "ActAnswerSharedActExecuted",
       "ActExecution",
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
@@ -86392,6 +86443,7 @@
       "DescriptionSource",
       "DesignDirection",
       "DesignSpec",
+      "DetailsOnDevice",
       "DeterministicFallback",
       "DiagnosticEventView",
       "DiagnosticsGetRequest",
@@ -88903,8 +88955,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 840,
-      "struct": 2685
+      "enum": 843,
+      "struct": 2686
      }
     },
     {
