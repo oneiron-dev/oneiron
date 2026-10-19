@@ -2,19 +2,25 @@
 use serde::{Deserialize, Serialize};
 
 use super::HostBinding;
-use super::highway_runner::workflow_try::{WorkflowBinder, dispatch_bound};
+use super::highway_runner::workflow_try::{WorkflowBinder, WorkflowFunding, dispatch_bound};
 use super::sdk_agents::AgentDefinitionSpec;
 use crate::agent_def::workflow::WorkflowDefinition;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
-    WorkflowDispatchStatus,
+    SpawnSpend, SpendScopeId, WorkflowDispatchStatus,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error};
-use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
+use crate::llm::run_admission::{DeclaredMaximum, LeaseUnit};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
+};
+use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -152,6 +158,34 @@ pub struct WorkflowBoundDispatchRequest {
     #[serde(default)]
     pub context_spec: Option<ContextSpec>,
     pub task_ref: EntityId,
+}
+
+/// Starts one run of a saved workflow that realizes a TASK, as the member
+/// whose own verified credential calls (FIX 5316). The TASK is an idle
+/// standard task the member owns, on the engine's runner lane, that no try
+/// realizes now; the run's root is its try and settles it when the run
+/// ends, and the steps stay TASK-less. The member pays: the run is a root
+/// whose spend scope opens under the cap they set and were shown, with them
+/// as its payer, and a step this host cannot bill them for holds on the
+/// owners' payer-needed ask, never on the owner's account. The TASK, the
+/// workflow, each step's definition and the context `context_spec` asks
+/// for are read on the member's own lane. A retry with the same intent key,
+/// request and terms returns the same run; another under it is refused.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowPersonDispatchRequest {
+    pub workflow_ref: EntityId,
+    pub intent_key: String,
+    pub briefing: String,
+    #[serde(default)]
+    pub context_spec: Option<ContextSpec>,
+    pub task_ref: EntityId,
+    /// The most the run may spend, as the member set it: more than zero.
+    pub cap_units: u64,
+    /// The engine's named lease unit; a monetary line names its money unit.
+    pub unit: String,
+    /// When the member was shown `cap_units`, in host milliseconds.
+    pub shown_at_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -332,6 +366,198 @@ pub(crate) fn dispatch_workflow_bound_as(
         spawn,
         input.task_ref,
     )?)
+}
+
+/// Domain of a member-funded run's root spend scope id.
+const MEMBER_FUNDING_DOMAIN: &[u8] = b"oneiron.workflow.member_funding.v1";
+/// What a member reads when their lane does not read a ref the binding
+/// names.
+const MEMBER_UNREADABLE: &str = "vault.workflows.dispatch_bound reads its TASK, its workflow and \
+                                 each step's definition on your own credential's lane, and one \
+                                 is not readable there";
+/// What a member reads when the context they ask for projects a row their
+/// lane does not read.
+const MEMBER_CONTEXT_UNREADABLE: &str = "vault.workflows.dispatch_bound projects the context \
+                                         you asked for on your own credential's lane, and it \
+                                         reaches rows that lane does not read";
+
+/// `vault.workflows.dispatch_bound` (FIX 5316): `person`, a member by the
+/// proof their door bound to their own slip, binds one run of a saved
+/// workflow to a TASK as themselves. `memory` is the handle their credential
+/// reads through: the TASK, the workflow, each step's definition and every
+/// row the requested context projects are read on its lane first, never
+/// the owner's. The run is a root the member funds: its spend scope opens
+/// in the admitting writer under their terms, with them as payer. The
+/// intent key is qualified by the member, the TASK and the workflow, and
+/// the terms name the root, so another member's retry never names this run
+/// and other terms under the same key are another request. The binder
+/// rechecks the member's proof in that writer.
+pub fn dispatch_workflow_bound_as_person(
+    memory: &Memory<'_>,
+    person: &AuthenticatedOwner,
+    input: WorkflowPersonDispatchRequest,
+) -> MemoryResult<WorkflowRunView> {
+    let vault = memory.vault();
+    let actor = person.revalidate_person(vault)?;
+    if memory.actor() != actor || memory.actor_class() != EdgeActorClass::Human {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "vault.workflows.dispatch_bound binds as the person whose credential calls",
+            &["Call it on your own verified human credential."],
+        ));
+    }
+    let funding = member_funding(actor, &input)?;
+    let reader = memory.read_key()?;
+    let unreadable = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            MEMBER_UNREADABLE,
+            &["Bind only a TASK and a workflow your Grant reads, whose steps it reads too."],
+        )
+    };
+    if !lane_reads(vault, &reader, &[input.task_ref, input.workflow_ref])? {
+        return Err(unreadable());
+    }
+    let steps = vault
+        .get_workflow(&input.workflow_ref)?
+        .ok_or_else(unreadable)?
+        .steps;
+    if !lane_reads(vault, &reader, &steps)? {
+        return Err(unreadable());
+    }
+    let request = DispatchAgent {
+        target: AgentDispatchTarget::Workflow(input.workflow_ref),
+        parent_attempt: None,
+        dedupe_key: Some(format!(
+            "vault.workflows.dispatch_bound:{}:{}:{}:{}",
+            actor.to_hex(),
+            input.task_ref.to_hex(),
+            input.workflow_ref.to_hex(),
+            input.intent_key
+        )),
+        run_id: None,
+        now: vault.now_recorded_at(),
+    };
+    let spawn = AgentSpawnContext::default()
+        .with_context_spec(
+            input
+                .context_spec
+                .unwrap_or_default()
+                .with_briefing(input.briefing),
+        )
+        .with_spend(SpawnSpend {
+            scope: funding.scope.clone(),
+        });
+    let context = AgentDispatcher::new(vault).bound_workflow_context_rows(&request, &spawn)?;
+    if !lane_reads(vault, &reader, &context)? {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            MEMBER_CONTEXT_UNREADABLE,
+            &[
+                "Ask for context your Grant reads: set context_spec's memory and chat to exclude, or to a projection your lane reads.",
+            ],
+        ));
+    }
+    let binder = WorkflowBinder::Person {
+        person,
+        funding: &funding,
+    };
+    started_run(dispatch_bound(
+        vault,
+        &binder,
+        request,
+        spawn,
+        input.task_ref,
+    )?)
+}
+
+/// `vault.workflows.dispatch_bound` on an embedded handle: its own actor
+/// binds as the person it is, never as the embedded owner. A handle bound
+/// to the slip its caller presented binds on that slip, bound to their
+/// proof; any other handle a transport reached is refused, as is an actor
+/// that is not a live person.
+pub fn dispatch_workflow_bound_as_member(
+    memory: &Memory<'_>,
+    input: WorkflowPersonDispatchRequest,
+) -> MemoryResult<WorkflowRunView> {
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "vault.workflows.dispatch_bound is a live person's own act",
+            &["Call it as that person, on their own verified human credential."],
+        )
+    };
+    if memory.actor_class() != EdgeActorClass::Human {
+        return Err(refused());
+    }
+    let vault = memory.vault();
+    let actor = memory.actor();
+    let person = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
+    let person = match memory.presented_credential() {
+        Some(slip) => vault.bind_person_credential(person, slip.clone())?,
+        None if memory.native_invocation() => person,
+        None => return Err(refused()),
+    };
+    dispatch_workflow_bound_as_person(memory, &person, input)
+}
+
+/// The terms a member accepted, as the root they fund: a cap of more than
+/// zero in a named unit, when they saw it, and the root spend scope this
+/// binding and those terms name. The same request and terms reopen the same
+/// root; other terms name another.
+fn member_funding(
+    person: EntityId,
+    input: &WorkflowPersonDispatchRequest,
+) -> MemoryResult<WorkflowFunding> {
+    if input.cap_units == 0 {
+        return Err(MemoryError::bad_request(
+            "cap_units must be more than zero: set the most this run may spend, as you were shown it",
+        ));
+    }
+    let unit = LeaseUnit::new(input.unit.as_str()).map_err(|_| {
+        MemoryError::bad_request(
+            "unit must name a lease unit: lowercase ASCII letters, digits, `_` and `-`",
+        )
+    })?;
+    let cap = input.cap_units.to_be_bytes();
+    let shown = input.shown_at_ms.to_be_bytes();
+    let root = EntityId::derive(
+        MEMBER_FUNDING_DOMAIN,
+        &[
+            person.as_bytes().as_slice(),
+            input.task_ref.as_bytes().as_slice(),
+            input.workflow_ref.as_bytes().as_slice(),
+            input.intent_key.as_bytes(),
+            cap.as_slice(),
+            unit.as_str().as_bytes(),
+            shown.as_slice(),
+        ],
+    )?;
+    Ok(WorkflowFunding {
+        scope: SpendScopeId::launch(format!("workflow-member:{}", root.to_hex()))?,
+        maximum: DeclaredMaximum {
+            units: input.cap_units,
+            unit,
+        },
+        shown_at_ms: input.shown_at_ms,
+    })
+}
+
+/// Whether `reader`'s lane reads every one of `refs`, bodies included, in
+/// one snapshot. Every ref is read, however many.
+fn lane_reads(vault: &Vault, reader: &ScopedReadActorKey, refs: &[EntityId]) -> MemoryResult<bool> {
+    if refs.is_empty() {
+        return Ok(true);
+    }
+    let points: Vec<_> = refs.iter().copied().map(PointRead::id).collect();
+    let checked = vault
+        .scoped_read(reader.clone())
+        .with_claim_status(ClaimReadStatus::Recorded)
+        .read(&points, None)?;
+    Ok(checked
+        .value
+        .iter()
+        .all(|row| row.as_ref().is_some_and(|row| row.body.is_some())))
 }
 
 pub fn read_workflow_run_as(

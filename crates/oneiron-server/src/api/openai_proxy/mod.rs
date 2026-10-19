@@ -6,8 +6,11 @@
 //! `integration.exchange`, pinned Proposed for the Dreamer to settle.
 //!
 //! The caller is a paired connector credential with its holder proof
-//! (`x-oneiron-binding`), resolved as `/mcp` resolves it. Calls are
-//! buffered: `stream: true` is refused, and `/v1/responses` is not served.
+//! (`x-oneiron-binding`), resolved as `/mcp` resolves it, or, on a managed
+//! vault, the owner his supervisor attested for the call, whom `/mcp` takes
+//! as himself (FIX 5255): no connector registration stands behind him, and
+//! the exchange he proposes is his own. Calls are buffered: `stream: true` is
+//! refused, and `/v1/responses` is not served.
 mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -17,7 +20,7 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, State},
-    http::{HeaderMap, StatusCode},
+    http::{Extensions, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -65,27 +68,32 @@ async fn chat_completions(
     headers: HeaderMap,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
+    connection: Extensions,
     body: Bytes,
 ) -> Response {
-    match complete(&headers, locality, &server, &body).await {
+    match complete(&headers, &connection, locality, &server, &body).await {
         Ok(reply) => Json(reply).into_response(),
         Err(refused) => refused,
     }
 }
 
-/// Recall, inject, forward, remember: one call's whole loop.
+/// Recall, inject, forward, remember: one call's whole loop. Its caller is
+/// the one `/mcp` resolves: the registered connector its credential names,
+/// or a managed vault's attested owner.
 async fn complete(
     headers: &HeaderMap,
+    connection: &Extensions,
     locality: CallerLocality,
     server: &Arc<SyncServer>,
     body: &[u8],
 ) -> Result<ChatCompletionResponse, Response> {
     let chat: ChatCompletionRequest = serde_json::from_slice(body)
         .map_err(|refused| invalid("invalid_body", refused.to_string()))?;
-    let actor = super::resolve_mcp_gateway_actor(
+    let actor = super::resolve_mcp_caller(
         McpSurfaceMode::Primary,
         "memory-proxy",
         headers,
+        connection,
         locality,
         server,
     )
@@ -195,13 +203,19 @@ async fn complete_as(
 /// world and that facet, so a credential narrowed to them carries its bounds
 /// into it (FIX 1400); one narrowed any other way, or by record or channel,
 /// is refused, never widened. The actor also holds a live key on the proxy's
-/// own connector, its grant slate stamped.
+/// own connector, its grant slate stamped. A managed vault's attested owner
+/// is no connector: he holds every power the proxy uses, while the vault
+/// records him as its live owner, and no key or slate stands behind him.
 fn admit_connector(
     actor: &McpCallContext,
     server: &SyncServer,
 ) -> Result<Option<EntityId>, Response> {
     let auth = actor.auth.as_ref().ok_or_else(unauthorized)?;
     if !auth.credential_is_live(&server.vault) {
+        return Err(unauthorized());
+    }
+    let owner = is_attested_owner(actor);
+    if owner && super::require_live_managed_owner(server, auth).is_err() {
         return Err(unauthorized());
     }
     let landing = actor.landing.map_err(|_| {
@@ -234,6 +248,9 @@ fn admit_connector(
             "the connector binds verbs without vault.recall and vault.remember",
         ));
     }
+    if owner {
+        return Ok(landing);
+    }
     // An Active key bound to this actor, whose slate's owner stamp holds at
     // the revision the key admitted. A read that fails admits nothing.
     let registration = server.vault
@@ -252,6 +269,15 @@ fn admit_connector(
         ));
     }
     Ok(landing)
+}
+
+/// Whether `actor` is a managed vault's attested owner, calling as himself.
+fn is_attested_owner(actor: &McpCallContext) -> bool {
+    actor
+        .auth
+        .as_ref()
+        .and_then(crate::auth::CoreAuth::managed_owner)
+        == Some(actor.actor_ref)
 }
 
 /// The model call the body asks for, before the memory goes in. Only a
@@ -379,8 +405,10 @@ async fn recall(
 /// the connector's own claim. It lands Proposed whatever the connector's
 /// ceiling. A credential narrowed to the connector's world and landing facet
 /// proposes under those bounds, which the writer judges again (FIX 1400);
-/// any other proposes as it always did. The answer was already paid for, so
-/// a refused proposal is reported in the reply, not raised.
+/// any other proposes as it always did. A managed vault's attested owner
+/// proposes it as his own claim, with no proxy key to check. The answer was
+/// already paid for, so a refused proposal is reported in the reply, not
+/// raised.
 fn remember(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -419,9 +447,14 @@ fn remember(
     };
     // The shared carried-proposal writer checks the credential, placement,
     // live proxy key and both slate legs in the transaction that writes.
-    match oneiron::memory::caps::check_claim_input(&input)
-        .and_then(|()| memory.claim_propose_for_proxy(&input))
-    {
+    let proposed = oneiron::memory::caps::check_claim_input(&input).and_then(|()| {
+        if is_attested_owner(actor) {
+            memory.claim_propose(&input)
+        } else {
+            memory.claim_propose_for_proxy(&input)
+        }
+    });
+    match proposed {
         Ok(receipt) => ChatCompletionRemembered::Saved {
             claim: receipt.claim_short_id,
             approval: receipt.approval,

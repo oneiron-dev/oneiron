@@ -128,7 +128,7 @@ impl BodyDir {
         Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
     }
 
-    fn create_temp(&self) -> Result<(File, String)> {
+    pub(super) fn create_temp(&self) -> Result<(File, String)> {
         let name = format!("{TEMP_PREFIX}{}", uuid::Uuid::now_v7().simple());
         let fd = openat(
             &self.dir,
@@ -143,7 +143,7 @@ impl BodyDir {
     /// Syncs `file`, renames it from `temp` to `name` and syncs the
     /// directory, so `name` is present only once it is whole. An existing
     /// `name` holds the same bytes and is replaced in one step.
-    fn publish(&self, file: File, temp: &str, name: &str) -> Result<()> {
+    pub(super) fn publish(&self, file: File, temp: &str, name: &str) -> Result<()> {
         let published = file
             .sync_all()
             .map_err(Error::from)
@@ -155,7 +155,7 @@ impl BodyDir {
         published
     }
 
-    fn discard(&self, temp: &str) {
+    pub(super) fn discard(&self, temp: &str) {
         let _ = unlinkat(&self.dir, temp, AtFlags::empty());
     }
 
@@ -404,7 +404,7 @@ const SECRET_WHOLE_SCAN_MAX: usize = crate::origin::lfs::LFS_WHOLE_SCAN_MAX as u
 /// character each, so a binary body is scanned too. It keeps the first hit,
 /// which marks the body: build exhaust is kept whole and never refused
 /// (ARCH-0069 S7), whatever the owner's switch says.
-struct SecretScan {
+pub(super) struct SecretScan {
     phrases: crate::batch::secret_scan::PhraseStream,
     /// Keys and armor a frame edge splits, an assignment whose name and value
     /// two frames hold, and the blocklist across edges.
@@ -428,7 +428,7 @@ impl Default for SecretScan {
 }
 
 impl SecretScan {
-    fn feed(&mut self, mut bytes: &[u8]) {
+    pub(super) fn feed(&mut self, mut bytes: &[u8]) {
         if self.hit.is_some() {
             self.whole = None;
             return;
@@ -485,7 +485,7 @@ impl SecretScan {
         }
     }
 
-    fn finish(&mut self) -> Option<&'static str> {
+    pub(super) fn finish(&mut self) -> Option<&'static str> {
         if !std::mem::take(&mut self.carry).is_empty() {
             self.read(char::REPLACEMENT_CHARACTER.encode_utf8(&mut [0; 4]));
         }

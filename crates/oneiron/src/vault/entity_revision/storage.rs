@@ -728,7 +728,12 @@ impl Vault {
     /// Reads exactly the selected body version, preserving deletion/custody seals.
     pub fn get_raw_with_mode(&self, id: &EntityId, mode: ReadMode) -> Result<Option<Vec<u8>>> {
         let txn = self.store.env.read_txn()?;
-        read_entity_revision_in_txn(self, &txn, id, mode)
+        let Some(raw) = read_entity_revision_in_txn(self, &txn, id, mode)? else {
+            return Ok(None);
+        };
+        // The live revision of a file-plane ASSET reads as its body, as
+        // `get_raw` reads it (FIX 3677).
+        Ok(Some(self.materialized_revision_in_txn(&txn, id, raw)?))
     }
 
     /// Returns the current exact revision and retains its Loro frontier.

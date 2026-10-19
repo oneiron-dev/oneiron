@@ -32,6 +32,7 @@
 //! it never adds cross-vault reads or replaces the vault's membership policy.
 
 mod args;
+mod attested_routes;
 #[cfg(test)]
 mod ctl_shed_tests;
 mod host;
@@ -49,7 +50,7 @@ mod settings;
 mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
-pub(crate) use state_serve::{ManagedOwnerHolder, ManagedWidenHolder};
+pub(crate) use state_serve::{ManagedIngress, ManagedOwnerHolder, ManagedWidenHolder};
 mod vault_gates;
 #[cfg(target_os = "linux")]
 mod vm_guest;

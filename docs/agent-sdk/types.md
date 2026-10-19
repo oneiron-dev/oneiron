@@ -2865,6 +2865,8 @@ class Oneiron:
             """The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."""
         def dispatch(self, spec: Facade.WorkflowDispatchRequest) -> Facade.WorkflowRunView:
             """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
+        def dispatch_bound(self, spec: Facade.WorkflowPersonDispatchRequest) -> Facade.WorkflowRunView:
+            """A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run."""
         def status(self, spec: Facade.WorkflowRunRequest) -> Facade.WorkflowRunView:
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
     class _VaultTaskTypesVerbs:
