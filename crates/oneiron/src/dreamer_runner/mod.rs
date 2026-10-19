@@ -49,8 +49,11 @@ pub use self::program::{
     TurnProgramRegistration,
 };
 pub(crate) use self::program::{
-    TurnProgramAuthority, arm_turn_program_in_txn, disarm_turn_program_in_txn,
-    drain_turn_program_wakes, erase_turn_program_actor_in_txn, record_turn_program_wakes_in_txn,
+    PROGRAM_PARK_OWNER, ProgramWrite, TurnProgramAuthority, TurnProgramBinding, TurnProgramBound,
+    TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
+    disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
+    join_program_checkpoint_in_txn, note_program_write_uncertain, program_milestone_envelope,
+    record_turn_program_wakes_in_txn, settle_program_outbound_in_txn, settle_program_write_in_txn,
     turn_programs_armed_in_txn,
 };
 #[cfg(feature = "sync")]

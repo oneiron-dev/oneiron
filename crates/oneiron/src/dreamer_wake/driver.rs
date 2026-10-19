@@ -299,6 +299,8 @@ impl<'a> DreamerWakeDriver<'a> {
         // Set once a TASK's admission is refused: the rest of the pass admits
         // the vault's own work and no more TASKs.
         let mut task_admission_refused = false;
+        // The same for turn programs (DOOR-141 PR2).
+        let mut program_admission_refused = false;
 
         loop {
             // Attempt-boundary yield (ONE-1683): one Pending poll with a
@@ -466,6 +468,43 @@ impl<'a> DreamerWakeDriver<'a> {
                                 "a TASK realization was not admitted; this pass admits no more TASKs"
                             );
                             task_admission_refused = true;
+                            DreamerAdmissionOutcome::Empty
+                        }
+                    }
+                }
+                outcome => outcome,
+            };
+            // Then the turn programs landed turns woke (DOOR-141 PR2), and
+            // only on an executor that runs them: a pass whose host binds no
+            // program runtime admits none. A program whose admission fails
+            // stops program admission for this pass, never the pass.
+            let priority = match priority {
+                DreamerAdmissionOutcome::Empty
+                    if !self.consolidation_only
+                        && !program_admission_refused
+                        && exec.runs_turn_programs() =>
+                {
+                    let admitted = self
+                        .milestone_claim(DreamerMilestoneKind::Started, input.now)
+                        .and_then(|started_milestone| {
+                            self.store.admit_next_turn_program(AdmitDreamerAttempt {
+                                lease_owner: input.lease_owner.clone(),
+                                now: input.now,
+                                budget_id: self.budget_id.clone(),
+                                budget_total_units: input.budget_total_units,
+                                reserve_units: input.reserve_units,
+                                started_milestone,
+                            })
+                        });
+                    match admitted {
+                        Ok(outcome) => outcome,
+                        Err(error) => {
+                            tracing::warn!(
+                                kind = ?error.kind(),
+                                %error,
+                                "a turn program was not admitted; this pass admits no more programs"
+                            );
+                            program_admission_refused = true;
                             DreamerAdmissionOutcome::Empty
                         }
                     }
@@ -817,7 +856,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         now: input.now,
                     })?;
                     self.complete_attempt(&*exec, &admitted, input.now).await?;
-                    self.write_milestone(attempt_id, DreamerMilestoneKind::Done, input.now)?;
+                    self.write_attempt_milestone(&admitted, DreamerMilestoneKind::Done, input.now)?;
                     report.completed += 1;
                 }
                 DreamerAttemptExecution::Deferred {
@@ -834,8 +873,8 @@ impl<'a> DreamerWakeDriver<'a> {
                         },
                         retry_at,
                     )?;
-                    self.write_milestone(
-                        attempt_id,
+                    self.write_attempt_milestone(
+                        &admitted,
                         DreamerMilestoneKind::CheckpointReached,
                         input.now,
                     )?;
@@ -871,8 +910,8 @@ impl<'a> DreamerWakeDriver<'a> {
                     // A designed landing leaves a durable resume point, exactly
                     // like a deadline-cut park — never a `Done` milestone,
                     // which would claim the job delivered.
-                    self.write_milestone(
-                        attempt_id,
+                    self.write_attempt_milestone(
+                        &admitted,
                         DreamerMilestoneKind::CheckpointReached,
                         input.now,
                     )?;
@@ -904,8 +943,8 @@ impl<'a> DreamerWakeDriver<'a> {
                         },
                     )?;
                     self.publish(attempt_id, ProgressKind::Parked, Some(reason), input.now)?;
-                    self.write_milestone(
-                        attempt_id,
+                    self.write_attempt_milestone(
+                        &admitted,
                         DreamerMilestoneKind::CheckpointReached,
                         input.now,
                     )?;
@@ -937,8 +976,8 @@ impl<'a> DreamerWakeDriver<'a> {
                     }
                     if hard_cut {
                         // A deadline-cut park leaves a durable resume point.
-                        self.write_milestone(
-                            attempt_id,
+                        self.write_attempt_milestone(
+                            &admitted,
                             DreamerMilestoneKind::CheckpointReached,
                             input.now,
                         )?;

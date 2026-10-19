@@ -8,11 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::authority::VerifiedSlip;
-use crate::dreamer_runner::DREAMER_TURN_PROGRAM_ATTEMPT_KIND;
+use crate::dreamer_runner::{DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerMilestoneClaim};
 use crate::error::{Error, Result};
+use crate::write_envelope::WriteEnvelope;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
-use super::types::TurnProgramAttemptStamp;
+use super::types::{ProgramRecipePin, TurnProgramAttemptStamp};
 use super::{ADMISSION, ATTEMPT};
 
 const SCOPE_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-scope:v1";
@@ -288,11 +289,130 @@ impl Vault {
     /// stands in for it (`dreamer_actor_for_attempt` finds none to read).
     pub fn program_actor_for_attempt(&self, id: AttemptId) -> Result<WriteActor> {
         let txn = self.store.env.read_txn()?;
-        let stamp = ATTEMPT.get(self, &txn, &id)?.ok_or_else(invalid)?;
-        if stamp.attempt_id != *id.as_bytes() {
+        stamped_actor_in_txn(self, &txn, id)
+    }
+
+    /// Binds a program attempt for one entry (DOOR-141 PR2): its stamp, the
+    /// admission it names and the authority that admission sealed, judged
+    /// again against the live vault, and the pinned program, which must
+    /// still be the program pinned. An actor id or a digest is never the
+    /// authority: a lapse binds nothing, and nothing new runs.
+    pub(crate) fn bind_turn_program_execution(
+        &self,
+        attempt: AttemptId,
+    ) -> Result<TurnProgramBound> {
+        let txn = self.store.env.read_txn()?;
+        let stamp = ATTEMPT.get(self, &txn, &attempt)?.ok_or_else(invalid)?;
+        if stamp.attempt_id != *attempt.as_bytes() {
             return Err(invalid());
         }
-        let class = EdgeActorClass::try_from_u8(stamp.actor_class).ok_or_else(invalid)?;
-        Ok(WriteActor::new(stamp.actor, class))
+        let row = ADMISSION
+            .get(self, &txn, &stamp.admission)?
+            .ok_or_else(invalid)?;
+        if row.refused.is_some() || row.wake.authority.actor() != stamp.actor {
+            return Err(invalid());
+        }
+        let pin = row.definition.ok_or_else(invalid)?;
+        if !row.wake.authority.stands_in_txn(self, &txn)? {
+            return Ok(TurnProgramBound::Lapsed(AUTHORITY_LAPSED));
+        }
+        if !super::arm::pin_stands_in_txn(self, &txn, &pin)? {
+            return Ok(TurnProgramBound::Lapsed(PIN_MOVED));
+        }
+        Ok(TurnProgramBound::Bound(TurnProgramBinding {
+            actor: WriteActor::new(stamp.actor, row.wake.authority.class()?),
+            admission: stamp.admission,
+            code_run: super::run::turn_program_code_run(&stamp.admission)?,
+            pin,
+        }))
+    }
+}
+
+/// Why a bound program runs nothing new: its waking actor's authority.
+const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
+/// Why a bound program runs nothing new: its pinned program.
+const PIN_MOVED: &str = "the pinned program changed since it was admitted";
+
+/// One program attempt bound for one entry: the waking actor it runs as,
+/// the code run its admission fixed, and the pinned program it runs.
+pub(crate) struct TurnProgramBinding {
+    pub(crate) actor: WriteActor,
+    pub(crate) admission: [u8; 32],
+    pub(crate) code_run: EntityId,
+    pub(crate) pin: ProgramRecipePin,
+}
+
+/// What binding one program attempt for an entry found.
+pub(crate) enum TurnProgramBound {
+    Bound(TurnProgramBinding),
+    /// The waking actor's authority, or the pin, no longer stands.
+    Lapsed(&'static str),
+}
+
+/// The actor `id`'s stamp names, in `txn`.
+fn stamped_actor_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<WriteActor> {
+    let stamp = ATTEMPT.get(vault, txn, &id)?.ok_or_else(invalid)?;
+    if stamp.attempt_id != *id.as_bytes() {
+        return Err(invalid());
+    }
+    let class = EdgeActorClass::try_from_u8(stamp.actor_class).ok_or_else(invalid)?;
+    Ok(WriteActor::new(stamp.actor, class))
+}
+
+/// `envelope` as `actor` wrote it: the same source, provenance and approval.
+fn as_actor(envelope: &WriteEnvelope, actor: WriteActor) -> WriteEnvelope {
+    WriteEnvelope::new(
+        actor,
+        envelope.source(),
+        envelope.provenance().clone(),
+        envelope.approval(),
+    )
+}
+
+/// The Dreamer author's milestone envelope as a program attempt's waking
+/// actor writes it (DOOR-141 PR2): a program's milestones are its actor's.
+pub(crate) fn program_milestone_envelope(
+    vault: &Vault,
+    attempt: AttemptId,
+    envelope: &WriteEnvelope,
+) -> Result<WriteEnvelope> {
+    Ok(as_actor(
+        envelope,
+        vault.program_actor_for_attempt(attempt)?,
+    ))
+}
+
+/// The started milestone of a program attempt its admission selected,
+/// re-authored as the attempt's waking actor and applied in the admission's
+/// own writer (DOOR-141 PR2). A milestone is never the admission: one that
+/// cannot be written is logged and the admission stands.
+pub(crate) fn apply_program_started_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: &AttemptRecord,
+    milestone: DreamerMilestoneClaim,
+) {
+    let applied = (|| -> Result<()> {
+        let actor = stamped_actor_in_txn(vault, &*wtxn, attempt.id)?;
+        let milestone = DreamerMilestoneClaim {
+            envelope: as_actor(&milestone.envelope, actor),
+            ..milestone
+        };
+        let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+        super::super::milestone::apply_milestone_claim_in_txn(
+            vault,
+            &mut savepoint,
+            attempt,
+            milestone,
+        )?;
+        savepoint.commit()?;
+        Ok(())
+    })();
+    if let Err(error) = applied {
+        tracing::warn!(
+            kind = ?error.kind(),
+            attempt = ?attempt.id,
+            "a turn program's started milestone was not written; its admission stands"
+        );
     }
 }

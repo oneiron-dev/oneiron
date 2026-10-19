@@ -8,6 +8,7 @@ mod host_doors;
 mod human_speech;
 mod leader;
 mod memory_verbs;
+mod program_step;
 mod reader_spawn;
 mod session_verbs;
 mod summarize;
@@ -126,6 +127,10 @@ pub struct HostSelfDispatcher<'a> {
     /// Whose log the fold verbs reach (OF-181): the executor call's own run,
     /// unless a host action bound the live run it acts for.
     fold_log: fold_verbs::FoldLog,
+    /// The turn program this run is (DOOR-141 PR2), when the host bound one:
+    /// only [`Self::for_turn_program`] sets it, from the program's own
+    /// leased try. No guest call reaches it.
+    program: Option<program_step::ProgramBinding>,
 }
 
 /// One bridge call's place in a durable engine-executor run.
@@ -250,6 +255,7 @@ impl<'a> HostSelfDispatcher<'a> {
             replay_exposures: Vec::new(),
             model_provider: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
+            program: None,
         })
     }
 

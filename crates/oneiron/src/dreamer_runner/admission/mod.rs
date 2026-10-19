@@ -501,7 +501,13 @@ impl DreamerRunnerStore<'_> {
         };
 
         if let Some(milestone) = input.started_milestone {
-            apply_milestone_claim_in_txn(self.vault, wtxn, &attempt, milestone)?;
+            if attempt.kind == DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
+                // DOOR-141 PR2: the selected program's started milestone is
+                // its waking actor's, written in this writer.
+                super::program::apply_program_started_in_txn(self.vault, wtxn, &attempt, milestone);
+            } else {
+                apply_milestone_claim_in_txn(self.vault, wtxn, &attempt, milestone)?;
+            }
         }
 
         // OF-220: the TASK this try realizes is taken on the task highway.

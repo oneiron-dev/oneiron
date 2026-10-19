@@ -270,6 +270,14 @@ side_tables! {
     /// DOOR-141: the waking actor one turn program attempt runs as, never a base-agent stamp, and
     /// the admission that bound it. Key: id16(attempt).
     DREAMER_TURN_PROGRAM_ATTEMPT: VaultMeta b"dreamer:turn_program:attempt:v1:" Named;
+    /// DOOR-141 PR2: one turn program's code run: the try that entered it, the admission that
+    /// fixed it, its lifecycle and result, and the checkpoint frontier it last committed.
+    /// Key: id16(code run).
+    DREAMER_TURN_PROGRAM_RUN: VaultMeta b"dreamer:turn_program:run:v1:" Named;
+    /// DOOR-141 PR2: one effect settled into a turn program's step: its issuing binding, then its
+    /// terminal evidence and exact result, or that its end is unknown. Key: id16(code run) +
+    /// id16(step).
+    DREAMER_TURN_PROGRAM_STEP: VaultMeta b"dreamer:turn_program:step:v1:" Named;
     /// DOOR-141: a wake a landed turn owes an armed program, recorded in that turn's own commit and
     /// consumed by its admission. Key: id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_WAKE: VaultMeta b"dreamer:turn_program:wake:v1:" Named;
