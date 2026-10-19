@@ -34,6 +34,7 @@ const SUPERVISOR_OWNED: &[&str] = &[
     "oauth_issuer",
     "oauth_jwks_uri",
     "oauth_resource_indicator",
+    "kit_bundle_public_urls",
     "allow_unauthenticated",
     "allowed_origins",
     "artifact_domains",

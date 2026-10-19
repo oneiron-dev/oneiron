@@ -315,8 +315,9 @@ side_tables! {
     /// (32) ‖ u64be bytes staged. Key: hex32 (the uploading machine) ":" b|k.
     SYNC_RESIDENCE_BUNDLE_STAGE: SyncState b"rb:s:" Raw;
     /// The publisher turn of the vault's sealed bundle on the home (FIX 3351): u64be vault second
-    /// the holder's turn runs from ‖ u64be slot the machine whose turn lapsed holds first (0 for
-    /// none) ‖ that machine (16) ‖ each machine that asked for it (16), the holder first. Key: ().
+    /// the holder's turn runs from ‖ u64be count of machines whose turn lapsed ‖ each (FIX 4405):
+    /// u64be slot it holds first ‖ that machine (16) ‖ each machine that asked for it (16), the
+    /// holder first. Key: ().
     SYNC_RESIDENCE_BUNDLE_TURN: SyncState b"rb:t" Raw;
     /// One part of a staged upload. Key: hex32 (the uploading machine) ":" b|k ":" hex16
     /// (offset).

@@ -91,23 +91,36 @@ fn request_origin(uri: &Uri, headers: &HeaderMap) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// The addresses a kit may have signed for this home, each once (FIX 4298;
-/// CALLS: KIT_BUNDLE_ORIGIN_SOURCES, [ConfiguredPublic, RequestAuthority]):
-/// the public URL the operator configured (`oauth_resource_indicator`), as
-/// the kit reads a home's address, for a home behind a proxy or tunnel that
-/// does not keep the kit's Host; then the address the request names.
-fn kit_origins(public: Option<&str>, uri: &Uri, headers: &HeaderMap) -> Vec<String> {
-    let mut origins: Vec<String> = public
-        .and_then(|url| reqwest::Url::parse(url).ok())
-        .and_then(|url| kit_bundle_fetch_origin(&url))
-        .into_iter()
-        .collect();
-    if let Some(origin) = request_origin(uri, headers)
-        && !origins.contains(&origin)
-    {
-        origins.push(origin);
+/// The addresses a kit may have signed for this home, each once (FIX 4298,
+/// FIX 4404; CALLS: KIT_BUNDLE_ORIGIN_SOURCES, [ConfiguredPublic,
+/// RequestAuthority]): each public URL the operator configured, as the kit
+/// reads a home's address, for a home behind proxies or tunnels that do not
+/// keep the kit's Host; then the address the request names.
+fn kit_origins<S: AsRef<str>>(public: &[S], uri: &Uri, headers: &HeaderMap) -> Vec<String> {
+    let mut origins = Vec::new();
+    let named = public
+        .iter()
+        .filter_map(|url| reqwest::Url::parse(url.as_ref()).ok())
+        .filter_map(|url| kit_bundle_fetch_origin(&url))
+        .chain(request_origin(uri, headers));
+    for origin in named {
+        if !origins.contains(&origin) {
+            origins.push(origin);
+        }
     }
     origins
+}
+
+/// The public URLs the operator configured for kit fetches (CALLS:
+/// KIT_BUNDLE_PUBLIC_URLS, `kit_bundle_public_urls`): that list, or, when it
+/// is empty, the one `oauth_resource_indicator`.
+fn kit_public_urls(server: &SyncServer) -> &[String] {
+    let config = &server.config;
+    if config.kit_bundle_public_urls.is_empty() {
+        config.oauth_resource_indicator.as_slice()
+    } else {
+        &config.kit_bundle_public_urls
+    }
 }
 
 /// `POST /v1/recovery/sealed-bundle/part`: one slice of a kept generation's
@@ -120,12 +133,12 @@ fn kit_origins(public: Option<&str>, uri: &Uri, headers: &HeaderMap) -> Vec<Stri
     operation_id = "recovery_sealed_bundle_part",
     request_body(
         content = KitBundlePartRequest,
-        description = "One signed slice request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root a publisher named for the generation, over the vault, the root, the home's address (the host and port of its configured public URL, or the URI authority or Host the request names, port included), the method, this path, the object, the generation, the offset, the time and the nonce.",
+        description = "One signed slice request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root a publisher named for the generation, over the vault, the root, the home's address (the host and port of one of its configured public URLs, or the URI authority or Host the request names, port included), the method, this path, the object, the generation, the offset, the time and the nonce.",
         content_type = "application/json"
     ),
     responses(
         (status = 200, description = "The slice.", body = KitBundlePartResponse, content_type = "application/json"),
-        (status = 400, description = "The body does not parse, a field is malformed, or neither the request nor the home's configured public URL names a host.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 400, description = "The body does not parse, a field is malformed, or neither the request nor any of the home's configured public URLs names a host.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "The request does not verify, no generation kept for the root matches, or the offset is at or past the object's end. All look the same.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "The sealed bundle read stopped.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -139,12 +152,7 @@ pub(super) async fn part(
     let input: KitBundlePartRequest = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("the kit fetch does not parse", None))?;
     let bad = |field: &str| ApiError::bad_request("the kit fetch field is malformed", Some(field));
-    let mut origins = kit_origins(
-        server.config.oauth_resource_indicator.as_deref(),
-        &uri,
-        &headers,
-    )
-    .into_iter();
+    let mut origins = kit_origins(kit_public_urls(&server), &uri, &headers).into_iter();
     let generation = input
         .generation
         .as_deref()
@@ -166,20 +174,22 @@ pub(super) async fn part(
         .ok()
         .and_then(|signature| signature.try_into().ok())
         .ok_or_else(|| bad("signature"))?;
-    let other = origins.next();
     let vault = Arc::clone(server.vault());
     let object = fetch.object;
     let offset = fetch.offset;
-    // A request that does not verify for one address takes no nonce, so the
-    // other address checks it afresh.
+    // A request that does not verify for one address takes no nonce, so each
+    // other address checks it afresh, until one reads.
     let read = tokio::task::spawn_blocking(move || {
-        let read = kit_sealed_bundle_part(&vault, &fetch, &signature);
-        match other {
-            Some(origin) if read.is_err() => {
-                kit_sealed_bundle_part(&vault, &KitBundleFetch { origin, ..fetch }, &signature)
+        let mut fetch = fetch;
+        let mut read = kit_sealed_bundle_part(&vault, &fetch, &signature);
+        for origin in origins {
+            if read.is_ok() {
+                break;
             }
-            _ => read,
+            fetch.origin = origin;
+            read = kit_sealed_bundle_part(&vault, &fetch, &signature);
         }
+        read
     })
     .await
     .map_err(|_| ApiError::internal_server_error("the sealed bundle read stopped"))?;

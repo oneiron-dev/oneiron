@@ -60,6 +60,9 @@ pub struct SyncServerConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    /// Every public URL a kit fetch may be signed for, as for a home behind
+    /// several tunnel aliases (FIX 4404). Empty: `oauth_resource_indicator`.
+    pub kit_bundle_public_urls: Vec<String>,
     /// The `[native_mail]` server the native mail pack's check reaches.
     pub native_mail: Option<super::NativeMailConfig>,
     /// The `[connectors.<name>]` transports the generic connector call
@@ -135,6 +138,7 @@ impl Default for SyncServerConfig {
             oauth_issuer: None,
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
+            kit_bundle_public_urls: Vec::new(),
             native_mail: None,
             connectors: std::collections::BTreeMap::new(),
             allow_unauthenticated: false,
@@ -256,6 +260,7 @@ pub struct ServeConfig {
     pub oauth_issuer: Option<String>,
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
+    pub kit_bundle_public_urls: Vec<String>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
     pub artifact_domains: Vec<String>,
@@ -382,6 +387,7 @@ impl Default for ServeConfig {
             oauth_issuer: server.oauth_issuer,
             oauth_jwks_uri: server.oauth_jwks_uri,
             oauth_resource_indicator: server.oauth_resource_indicator,
+            kit_bundle_public_urls: server.kit_bundle_public_urls,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
             artifact_domains: server.artifact_domains,
@@ -532,6 +538,7 @@ impl ServeConfig {
             oauth_issuer: self.oauth_issuer.clone(),
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
+            kit_bundle_public_urls: self.kit_bundle_public_urls.clone(),
             native_mail: self.native_mail.clone(),
             connectors: self
                 .connectors
