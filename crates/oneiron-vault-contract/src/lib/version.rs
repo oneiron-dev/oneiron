@@ -13,7 +13,9 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// ([`ManagedTrainingSetting`](crate::ManagedTrainingSetting)) on every ledger
 /// report, required on `LedgerUpdate` and `PrepareReap` alike, and how the
 /// vault came up ([`ManagedReadiness`](crate::ManagedReadiness)) on every
-/// `Ping`. Supervisor and vault move to v3 together; no v2 reader is kept.
+/// `Ping`. v3 also carries the training purge ctl request
+/// ([`CtlRequest::TrainingPurge`](crate::CtlRequest::TrainingPurge)).
+/// Supervisor and vault move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

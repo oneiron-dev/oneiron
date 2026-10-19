@@ -22,7 +22,7 @@
 //! | `ancestor_index` / `ancestry_bypass` | fold ancestry and revocation bypass |
 //! | `log_budget` | pinned fold-work bounds, the slip issuer, and the store doors' per-signer bound |
 //! | `import_order` | the order an import or a sync pass hands the store doors several rows in |
-//! | `entry_transition` | per-entry transition and consent/quorum predicates |
+//! | `entry_transition` | per-entry transition and consent predicates |
 //! | `anchor_fold` | owner roots and an anchor's machine marks, before the roster |
 //! | `machine_profile` | per-admitter machine chains and the trusted projection |
 //! | `pinned_root` / `owner_roots` | this install's pin, and the stored roots it reads |
@@ -87,6 +87,7 @@ mod install_fold;
 mod invitee_slip;
 mod invocation_slip;
 mod left_notices;
+mod local_host_root;
 mod local_open;
 mod log_budget;
 mod log_structure;
@@ -102,6 +103,7 @@ mod observation_policy;
 mod op_apply;
 mod owner_act;
 mod owner_choice;
+mod owner_key_enrollment;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
@@ -241,6 +243,7 @@ pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
+pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
 pub use local_open::LocalOpenProfile;
 pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
 pub use machine_identity::{

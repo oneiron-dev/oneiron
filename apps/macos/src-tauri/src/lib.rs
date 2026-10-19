@@ -20,6 +20,7 @@ pub mod asr;
 pub mod capture;
 pub mod copy;
 pub mod disclosure;
+pub mod root_rekey;
 pub mod session;
 pub mod vault_sink;
 
@@ -59,6 +60,15 @@ const DESKTOP_ROOT_SECRET_SOURCE: &[RootSecretSource] = &[
 ];
 /// What the engine's log names this open.
 const DESKTOP_OPEN: &str = "desktop app open";
+/// Hook (FIX 5571 re-key; CALLS "rekey desktop writer lease"): `true` opens
+/// the recorder's vault with [`Vault::open_owned`] and keeps its writer
+/// lease for the app's life, which the local owner's proof for a re-key
+/// needs ([`root_rekey`]). `false` keeps today's [`Vault::open`]: an owned
+/// open refuses while another process holds the lease (`oneiron serve` or
+/// an owner command on this vault, a second recorder), where today's open
+/// goes on, and a held lease refuses their owned opens in turn. Until it
+/// flips, a re-key's confirm answers that the owner is unproven.
+const DESKTOP_OPEN_KEEPS_WRITER_LEASE: bool = false;
 
 /// One place the desktop may find its vault's host root secret.
 #[derive(Clone, Copy)]
@@ -92,14 +102,19 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
-            let (vault, wrong_root) = open_vault(&handle)?;
+            let vault_dir = handle.path().app_data_dir()?.join(VAULT_DIR);
+            let (vault, wrong_root) = open_vault(&vault_dir)?;
             let log = SegmentLog::new();
-            let sink = Arc::new(LoggingSink::new(VaultSegmentSink::new(vault), log.clone()));
+            let sink = Arc::new(LoggingSink::new(
+                VaultSegmentSink::new(Arc::clone(&vault)),
+                log.clone(),
+            ));
             let launcher = LiveCapture::new(sink, Arc::new(SystemRoute));
             app.manage(AppState {
                 session: Mutex::new(RecorderSession::new(Box::new(launcher), log)),
                 wrong_root,
             });
+            app.manage(root_rekey::RekeyState::new(vault, vault_dir));
             install_menu_bar(&handle)?;
 
             // A menu-bar app, not a Dock app: no icon bounces when a
@@ -114,7 +129,9 @@ pub fn run() {
             session_state,
             affirm_disclosure,
             start_recording,
-            stop_recording
+            stop_recording,
+            root_rekey::root_rekey_prepare,
+            root_rekey::root_rekey_confirm
         ])
         .run(tauri::generate_context!())
         .expect("the recorder could not start");
@@ -209,12 +226,11 @@ where
     }
 }
 
-/// The recorder's vault, and whether its open reported the wrong-root fact.
-fn open_vault<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Result<(Arc<Vault>, bool), Box<dyn std::error::Error>> {
+/// The recorder's vault at `path`, and whether its open reported the
+/// wrong-root fact.
+fn open_vault(path: &std::path::Path) -> Result<(Arc<Vault>, bool), Box<dyn std::error::Error>> {
     open_vault_at_with_host_root(
-        &app.path().app_data_dir()?.join(VAULT_DIR),
+        path,
         DESKTOP_ROOT_SECRET_SOURCE,
         DESKTOP_ROOTS_FRESH_LOCAL_VAULT,
     )
@@ -249,42 +265,78 @@ fn profile_install(
     sources: &[RootSecretSource],
     new_local_origin: bool,
 ) -> bool {
+    let profiled = with_effective_secret(
+        vault,
+        path,
+        sources,
+        new_local_origin,
+        |found| match found {
+            Some((_, secret)) => profile_from(vault, Some(secret), new_local_origin),
+            None => profile_from(vault, None, false),
+        },
+    );
+    match profiled {
+        Ok(wrong_root) => wrong_root,
+        Err(SourceFailure::ServerConfig(reason)) => {
+            tracing::warn!(
+                reason = %reason,
+                "the server config did not resolve, so no host root secret is read; \
+                 this install stays unprofiled and the app opens on"
+            );
+            false
+        }
+        Err(SourceFailure::RetainedSlot(error)) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                reason = %error,
+                "this device's keystore gave no host root secret for the vault; \
+                 this install stays unprofiled and the app opens on"
+            );
+            false
+        }
+    }
+}
+
+/// Why the search for this Mac's host root secret stopped: the first source
+/// that failed. A failure is never stood in for by a later source.
+enum SourceFailure {
+    /// The server config did not resolve; the reason keeps only its
+    /// top-level context, which names the file and never its contents.
+    ServerConfig(String),
+    /// This device's keystore gave no answer for the retained slot.
+    RetainedSlot(oneiron::Error),
+}
+
+/// Runs `use_secret` on the first host root secret `sources` holds, with
+/// its source, or on `None` when none holds one: the one search the open
+/// and a re-key's re-read ([`root_rekey`]) both make. `create_retained`
+/// fills an empty retained slot first ([`Vault::retained_host_root_secret`]).
+/// A source that fails stops the search with its failure. The secret lives
+/// only for the call.
+fn with_effective_secret<T>(
+    vault: &Vault,
+    path: &std::path::Path,
+    sources: &[RootSecretSource],
+    create_retained: bool,
+    use_secret: impl FnOnce(Option<(RootSecretSource, &[u8])>) -> T,
+) -> Result<T, SourceFailure> {
     for source in sources {
         match source {
             RootSecretSource::ServerConfig => match configured_auth_secret(path) {
-                Ok(Some(secret)) => {
-                    return profile_from(vault, Some(secret.as_bytes()), new_local_origin);
-                }
+                Ok(Some(secret)) => return Ok(use_secret(Some((*source, secret.as_bytes())))),
                 Ok(None) => {}
-                Err(reason) => {
-                    tracing::warn!(
-                        reason = %reason,
-                        "the server config did not resolve, so no host root secret is read; \
-                         this install stays unprofiled and the app opens on"
-                    );
-                    return false;
-                }
+                Err(reason) => return Err(SourceFailure::ServerConfig(reason)),
             },
             RootSecretSource::RetainedSlot => {
-                match vault.retained_host_root_secret(new_local_origin) {
-                    Ok(Some(secret)) => {
-                        return profile_from(vault, Some(&secret[..]), new_local_origin);
-                    }
+                match vault.retained_host_root_secret(create_retained) {
+                    Ok(Some(secret)) => return Ok(use_secret(Some((*source, &secret[..])))),
                     Ok(None) => {}
-                    Err(error) => {
-                        tracing::warn!(
-                            kind = ?error.kind(),
-                            reason = %error,
-                            "this device's keystore gave no host root secret for the vault; \
-                             this install stays unprofiled and the app opens on"
-                        );
-                        return false;
-                    }
+                    Err(error) => return Err(SourceFailure::RetainedSlot(error)),
                 }
             }
         }
     }
-    profile_from(vault, None, false)
+    Ok(use_secret(None))
 }
 
 /// The configured `auth_secret` for the vault at `path`, as `oneiron serve`
@@ -313,7 +365,11 @@ fn profile_from(vault: &Vault, secret: Option<&[u8]>, new_local_origin: bool) ->
 fn open_vault_at(path: &std::path::Path) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
     oneiron::panic_report::install_panic_hook();
     std::fs::create_dir_all(path)?;
-    let vault = Vault::open(path, VaultConfig::device())?;
+    let vault = if DESKTOP_OPEN_KEEPS_WRITER_LEASE {
+        Vault::open_owned(path, VaultConfig::device())?
+    } else {
+        Vault::open(path, VaultConfig::device())?
+    };
     // Signing doors (delete receipts) need this install's keys from the keystore.
     vault.install_default_keystore(path);
     Ok(Arc::new(vault))

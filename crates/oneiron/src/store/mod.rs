@@ -124,6 +124,7 @@ mod body_envelope;
 #[cfg(unix)]
 mod body_store;
 mod channel_identity_receipts;
+pub(crate) mod checkpoint_payload;
 mod commitment_due;
 mod diagnostics;
 mod gate_decision;
@@ -149,6 +150,7 @@ mod root_directory;
 mod send_receipt_audit;
 mod short_id_alias;
 mod structural_kind_registry;
+mod training_link;
 mod writer_lease;
 
 #[cfg(test)]

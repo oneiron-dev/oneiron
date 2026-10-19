@@ -173,6 +173,11 @@ pub enum KeystoreError {
     /// Any other platform failure, by name and code only.
     #[error("keystore failure: {0} ({1})")]
     Platform(&'static str, i64),
+    /// This backend cannot do what was asked in one platform operation, so it
+    /// did nothing rather than fake it: a [`DeviceKeystore::replace`] where
+    /// there is no in-place update.
+    #[error("keystore operation not supported: {0}")]
+    Unsupported(&'static str),
 }
 
 pub type Result<T> = std::result::Result<T, KeystoreError>;
@@ -185,6 +190,18 @@ pub trait DeviceKeystore: Send + Sync + 'static {
     fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<()>;
     /// Empties the slot. An empty slot is not an error.
     fn delete(&self, slot: &KeystoreSlot) -> Result<()>;
+    /// Overwrites a filled slot's secret in place, in one platform operation,
+    /// so a reader sees the old secret or the new one and never an empty slot
+    /// (FIX 5571: the retained host root a re-key replaces). `Ok(false)` when
+    /// the slot is empty: a replace never fills one, which is `create`'s. A
+    /// backend with no in-place update answers `Unsupported` and writes
+    /// nothing; it never deletes and creates again.
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool> {
+        let _ = (slot, secret);
+        Err(KeystoreError::Unsupported(
+            "this keystore cannot replace a slot in place",
+        ))
+    }
     fn locality(&self) -> KeystoreLocality;
     /// What keeps the slots at rest. An adapter that claims more than files
     /// says so; nothing else does.

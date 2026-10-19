@@ -1,6 +1,6 @@
 //! Durable idempotent provider-list meters, aggregated only per owner and vault.
 use super::{codec::*, keys::*, model::*};
-use oneiron::agent_dispatch::budget_doors::RunRungSettlement;
+use oneiron::agent_dispatch::budget_doors::{RunRungSettlement, UsageEventOrigin};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[derive(Clone)]
@@ -11,10 +11,13 @@ impl UsageLedger {
     pub fn new(vault: Arc<oneiron::Vault>) -> Self {
         Self { vault }
     }
+    /// Records `event` once under its idempotency key, billed as `source`
+    /// and written by `origin`, the engine or a usage post.
     pub fn record_event(
         &self,
         event: UsageEvent,
         source: UsageMode,
+        origin: UsageEventOrigin,
     ) -> Result<UsageRecordResult, UsageError> {
         event.validate()?;
         // A meter records facts for every payer. A source never turns a
@@ -50,6 +53,8 @@ impl UsageLedger {
                 }
                 if let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? {
                     let stored = decode_entry(&raw)?;
+                    // The first write's origin stands: a replay never
+                    // relabels it, and origin never makes one conflict.
                     if stored.event != event || stored.source != source {
                         return Err(UsageError::IdempotencyConflict);
                     }
@@ -67,6 +72,7 @@ impl UsageLedger {
                 let stored = StoredUsageEvent {
                     event,
                     source,
+                    origin,
                     cost: cost.clone(),
                     recorded_at: now_secs(),
                 };
@@ -124,11 +130,13 @@ impl UsageLedger {
     }
 
     /// The settled physical calls of one free-time cycle (FIX 4453), from
-    /// their stamped durable events, oldest first: every call whose run the
-    /// engine bound to `agent`'s `cycle` before it began, each retry,
-    /// fallback and late settlement included. A call no cycle bound never
-    /// matches. A stored event that does not decode leaves the read
-    /// incomplete and is never read as zero spend.
+    /// their stamped durable events, oldest first: every call stamped with
+    /// `agent`'s `cycle`, each retry, fallback and late settlement included,
+    /// whether the engine stamped its run before it began or a poster
+    /// stamped the event. Each entry's `source` says which (FIX 5724); both
+    /// count alike. A call no cycle stamp names never matches. A stored
+    /// event that does not decode leaves the read incomplete and is never
+    /// read as zero spend.
     pub fn cycle_settlements(
         &self,
         owner: &str,
@@ -229,8 +237,9 @@ pub struct CycleSettlements {
     pub complete: bool,
 }
 
-/// One stored call's settlement, with the safe spend dimensions its run
-/// was admitted with: run, label, agent, cycle, item and spend scope.
+/// One stored call's settlement, with the safe spend dimensions its record
+/// names (run, label, agent, cycle, item and spend scope) and the path that
+/// first wrote it.
 fn settlement(stored: &StoredUsageEvent, call: &UsageRun) -> RunRungSettlement {
     let event = &stored.event;
     RunRungSettlement {
@@ -242,6 +251,7 @@ fn settlement(stored: &StoredUsageEvent, call: &UsageRun) -> RunRungSettlement {
         offer: call.offer.clone(),
         route: call.route.clone(),
         purpose: call.purpose.clone(),
+        source: stored.origin,
         agent: event.agent_id.clone(),
         cycle: call.cycle.clone(),
         item: call.item.clone(),
@@ -266,6 +276,8 @@ fn settlement(stored: &StoredUsageEvent, call: &UsageRun) -> RunRungSettlement {
 pub(super) struct StoredUsageEvent {
     pub event: UsageEvent,
     pub source: UsageMode,
+    /// The path that first wrote the event; a replay never relabels it.
+    pub origin: UsageEventOrigin,
     pub cost: Option<Money>,
     pub recorded_at: u64,
 }

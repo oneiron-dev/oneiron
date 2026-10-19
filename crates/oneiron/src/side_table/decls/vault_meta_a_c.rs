@@ -345,6 +345,10 @@ side_tables! {
     /// The vault's last sealed checkpoint: its sequence and signed commitment's
     /// BLAKE3, which the next one names as predecessor (OF-570 (e)). Key: ().
     CHECKPOINT_CHAIN_HEAD: VaultMeta b"checkpoint_chain:head:v1" Named;
+    /// One incarnation of a checkpoint payload compartment (KS-7): its custody generation and
+    /// whether it is active, retained or erased. Never a key and never a refcount. Key: subtype
+    /// (1) + canonical owner (32) + incarnation (16).
+    CHECKPOINT_PAYLOAD_INSTANCE: VaultMeta b"checkpoint_payload:instance:v1:" Named Engine;
     /// Two-slot channel assignment index: occupant id16 then predecessor id16, all-zero for an
     /// empty slot. Key: bytes32 (blake3 of the length-framed channel and address).
     CHANNEL_IDENTITY_ASSIGNMENT: VaultMeta b"cid_assign:v1:" Raw;
@@ -483,6 +487,13 @@ side_tables! {
     CODE_RUN_FOLDS: VaultMeta b"code_run:folds:v1:" Raw;
     /// Node-local per-model wire-heal tally, keyed by validated model id. Key: string.
     CODE_RUN_HEAL_COUNT: VaultMeta b"code_run:heal_count:v1:" Raw Engine;
+    /// DOOR-141 PR3b: a turn program's resume checkpoint, joined to its code run's checkpoint
+    /// commit: the head (the pinned program it replays, the record position and state hash its
+    /// last entry committed, the applied and injected positions, its page count and the wait it
+    /// parked on) and keyed pages listing each settled call by its record row, request digest
+    /// and the delivered wait reply answering it. Refs and digests only, never an effect's body.
+    /// Key: id16(code run) + be64(kind: 0 head, 1 page) + be64(page).
+    CODE_RUN_PROGRAM_RESUME: VaultMeta b"code_run:program_resume:v1:" Named;
     /// The secret scan's hit in one raw-output body (its reason string), keyed by the same
     /// content handle; absent for a body it found nothing in. Key: string.
     CODE_RUN_RAW_OUTPUT_SECRET: VaultMeta b"code_run:raw_output:secret:v1:" Raw;
