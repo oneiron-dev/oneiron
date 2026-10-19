@@ -1,5 +1,5 @@
-//! The device side of sync (ARCH-0023b): a machine that is not the elected
-//! home dials its home and keeps its vault in sync there. The home is the one
+//! The device side of sync (ARCH-0023b): a machine that is not the home
+//! dials its home and keeps its vault in sync there. The home is the one
 //! `oneiron device enrol` recorded ([`enrolment`]), or one its `[device_sync]`
 //! section names by hand. It dials over the paired mesh, on the mesh
 //! listener's own endpoint, when the home has a paired mesh address and a
@@ -12,9 +12,17 @@
 //! channel beside the server's relay to its own clients, never in place of
 //! it. Logs carry machine ids only, never a slip or a key.
 //!
-//! A named `home_node_id` makes the home this machine's elected home before
-//! anything reads the election, and publishes it, with `home_url` as its
-//! endpoint, as the connection's home-node topology. The paired credential
+//! Before it dials, the device declares its own MACRO home candidacy from
+//! its section's `always_on` and `primary` flags and whether its Dreamer
+//! runs (FIX 4898). A named or enrolled `home_node_id` stays this device's
+//! own candidate for the home, always-on local, beside the vault's
+//! authorized candidates, and is published, with `home_url` as its
+//! endpoint, as the connection's home-node topology, so residence reads go
+//! there while that node is the elected home. With no declaration the
+//! device elects that home as before; once the home's own declaration names
+//! its node, the declared facts rule, and a node only fallen machines
+//! declare stands no more. Being elected moves no dial: an elected device
+//! keeps its home as its route. The paired credential
 //! also binds each socket's NOTE session, and the own-device grant it names
 //! selects what residence reads (index, first touch, promotion) may return.
 //! The checkpoint the enrolment's link pinned is adopted on the first
@@ -57,8 +65,8 @@ pub(crate) struct DeviceSyncHost {
 
 impl DeviceSyncHost {
     /// Dials this machine's home, when it has one and may: an enrolled
-    /// machine that is not the elected home, with the home a live machine.
-    /// Otherwise one "disabled" line says why, and serve runs on without it.
+    /// machine, with the home a live machine. Otherwise one "disabled" line
+    /// says why, and serve runs on without it.
     pub(crate) async fn start(
         server: &Arc<SyncServer>,
         config: &ServeConfig,
@@ -127,6 +135,16 @@ impl DeviceSyncHost {
     }
 }
 
+/// Whether this machine dials a home: its `[device_sync]` section names one,
+/// or `oneiron device enrol` recorded one. Its host is then a device of that
+/// home: its Dreamer claims nothing, and its MACRO home candidacy is the one
+/// its section's flags declare (FIX 4898).
+pub(crate) fn dials_home(config: &ServeConfig, vault: &oneiron::Vault) -> bool {
+    config.device_sync.is_some()
+        || EnrolmentFiles::for_vault(&config.keystore, vault)
+            .is_ok_and(|files| files.read().is_ok_and(|record| record.is_some()))
+}
+
 /// What this machine dials: the home `[device_sync]` names by hand, else the
 /// one it enrolled with, and the worlds the section follows.
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
@@ -140,6 +158,10 @@ struct Dial {
     /// Enrolled by `oneiron device enrol`: the home holds this machine's
     /// profile, which reaches this vault on the first authority catch-up.
     enrolled: bool,
+    /// The section's `always_on` and `primary` flags: what this machine's
+    /// MACRO home candidacy declares (FIX 4898).
+    always_on: bool,
+    primary: bool,
 }
 
 impl Dial {
@@ -156,6 +178,9 @@ impl Dial {
             .transpose()?
             .unwrap_or_default();
         let node = section.and_then(|section| section.home_node_id);
+        let (always_on, primary) = section.map_or((false, false), |section| {
+            (section.always_on, section.primary)
+        });
         if let Some(named) = section
             .map(DeviceSyncConfig::named_home)
             .transpose()?
@@ -176,6 +201,8 @@ impl Dial {
                 home_node: node,
                 pin,
                 enrolled: false,
+                always_on,
+                primary,
             }));
         }
         let Some((files, record)) = enrolment else {
@@ -194,6 +221,8 @@ impl Dial {
             home_node: Some(node.unwrap_or(record.home_node_id)),
             pin: record.authority_checkpoint_pin,
             enrolled: true,
+            always_on,
+            primary,
         }))
     }
 }
@@ -230,12 +259,13 @@ async fn open(
         home_node,
         pin,
         enrolled,
+        always_on,
+        primary,
     } = dial;
     let vault = Arc::clone(&server.vault);
+    let macro_ready = server.ai.dreamer_runs();
     let (machine, paired) = tokio::task::spawn_blocking(move || {
-        if let Some(node) = home_node {
-            hold_home(&vault, node)?;
-        }
+        declare_candidacy(&vault, home_node, always_on, primary, macro_ready)?;
         standing(&vault, home, enrolled)
     })
     .await??;
@@ -548,33 +578,53 @@ impl MeshCatalog {
     }
 }
 
-/// The candidate a named home stands as: always-on local, the one class a
-/// configured home claims with no cloud attachment to prove.
+/// The candidate a named or enrolled home stands as on this device:
+/// always-on local, the one class a configured home claims with no cloud
+/// attachment to prove.
 #[cfg(feature = "mesh")]
 const fn home_candidate(node: u64) -> oneiron::DreamerHomeNodeCandidate {
     oneiron::DreamerHomeNodeCandidate::always_on_local(node)
 }
 
-/// Holds `node` as this install's elected home, before `standing` reads the
-/// election: a Dreamer that claimed this install at start yields to the
-/// home the config names.
+/// Declares this machine's own MACRO home candidacy (FIX 4898) from its
+/// `[device_sync]` flags and whether its Dreamer runs (`macro_ready`), then
+/// elects with the home it dials (`home_node`) as this device's own
+/// candidate beside the vault's authorized candidates, before `standing`
+/// reads the election: a Dreamer that claimed this install yields to that
+/// home, and the home's own declaration, once it names the node, rules over
+/// it. A failed election is logged and the connection still starts, as
+/// being elected moves no dial.
 #[cfg(feature = "mesh")]
-fn hold_home(vault: &oneiron::Vault, node: u64) -> anyhow::Result<()> {
+fn declare_candidacy(
+    vault: &oneiron::Vault,
+    home_node: Option<u64>,
+    always_on: bool,
+    primary: bool,
+    macro_ready: bool,
+) -> anyhow::Result<()> {
     let store = oneiron::DreamerRunnerStore::new(vault);
     anyhow::ensure!(
-        store.local_home_node_candidate(true, true, false)?.node_id != node,
+        home_node != Some(store.local_home_node_candidate(true, true, false)?.node_id),
         "home_node_id is this machine's own sync node id"
     );
+    crate::home_candidacy::declare(vault, always_on, primary, macro_ready);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
-    store.elect_home_node(&[home_candidate(node)], now)?;
+    let own: Vec<_> = home_node.map(home_candidate).into_iter().collect();
+    if let Err(error) = store.elect_home_node(&own, now) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "device sync left the MACRO home as it stood: the election failed"
+        );
+    }
     Ok(())
 }
 
-/// The connection's home-node topology: the one named home, reached at
-/// `url`. It is the sync URL itself, so residence reads ride the same mesh
-/// dialer.
+/// The connection's home-node topology: the one named home, as this
+/// device's own candidate beside the vault's authorized candidates, reached
+/// at `url`, so residence reads go there while it is the elected home. It
+/// is the sync URL itself, so residence reads ride the same mesh dialer.
 #[cfg(feature = "mesh")]
 fn home_topology(node: u64, url: &str) -> oneiron::sync::HomeNodeTopology {
     let home = home_candidate(node);
@@ -631,12 +681,13 @@ fn direct(url: &str) -> anyhow::Result<()> {
 }
 
 /// This install's MACHINE, when it may dial `home`, and whether `home` has a
-/// paired mesh address. It may when it is enrolled and live, not the elected
-/// home, and `home` is a live machine. A machine `oneiron device enrol` added
-/// (`enrolled`) is enrolled at the home: its own profile, and the home's,
-/// reach this vault on the first authority catch-up. A profile the owner has
-/// not answered yet (an unanswered serving install's own) counts here as no
-/// profile, so it dials and is dialled as before it had one (selfprofile).
+/// paired mesh address. It may when it is enrolled and live, and `home` is a
+/// live machine; an elected MACRO home dials its home as any device does. A
+/// machine `oneiron device enrol` added (`enrolled`) is enrolled at the home:
+/// its own profile, and the home's, reach this vault on the first authority
+/// catch-up. A profile the owner has not answered yet (an unanswered serving
+/// install's own) counts here as no profile, so it dials and is dialled as
+/// before it had one (selfprofile).
 #[cfg(feature = "mesh")]
 fn standing(
     vault: &oneiron::Vault,
@@ -665,11 +716,6 @@ fn standing(
         ),
     }
     anyhow::ensure!(local.id != home, "home_machine names this machine");
-    anyhow::ensure!(
-        !oneiron::sync::residence::local_is_elected_home(vault)?,
-        "this machine is the elected home, which dials no one (name the home's \
-         sync_node_id as home_node_id to hold it as home instead)"
-    );
     match vault.authority_fold()?.machine(home).filter(answered) {
         Some(machine) => anyhow::ensure!(
             live(machine),

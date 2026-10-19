@@ -268,6 +268,13 @@ impl AiHandle {
         self.device
     }
 
+    /// Whether this host's Dreamer runs, so it can take MACRO work: what its
+    /// home candidacy declares (FIX 4898).
+    #[must_use]
+    pub(crate) fn dreamer_runs(&self) -> bool {
+        self.hints.is_some()
+    }
+
     /// Admits a call of `role` against the vault's live model policy: its
     /// manifest and route when it has one, the role's seat otherwise.
     pub fn admit_role(
@@ -638,6 +645,7 @@ impl AiHost {
             pass_admission: dreamer::PassAdmission::default(),
         };
         let Some(models) = models else {
+            served_without_dreamer(&vault, device);
             return host;
         };
         let status = Arc::clone(&handle.status);
@@ -655,7 +663,10 @@ impl AiHost {
                 handle.summaries = models.dreamer.summary_instruction.is_some();
                 host.dreamer = Some(dreamer);
             }
-            Err(reason) => status.update(|status| status.dreamer = WorkStatus::idle(reason)),
+            Err(reason) => {
+                status.update(|status| status.dreamer = WorkStatus::idle(reason));
+                served_without_dreamer(&vault, device);
+            }
         }
         match start_workflows(
             &vault,
@@ -904,6 +915,17 @@ fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// A served host whose Dreamer does not run declares that it cannot take
+/// MACRO work now (FIX 4898), so no other machine elects it for MACRO; its
+/// own election still claims a vault no node has claimed, for its standing
+/// questions. A device of another home (`device`) declares through its
+/// `[device_sync]` section instead.
+fn served_without_dreamer(vault: &Vault, device: bool) {
+    if !device {
+        crate::home_candidacy::declare(vault, true, false, false);
+    }
 }
 
 async fn start_dreamer(

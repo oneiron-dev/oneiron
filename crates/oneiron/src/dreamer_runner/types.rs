@@ -197,9 +197,10 @@ pub const fn dreamer_extraction_role_admissible(role: DreamerTurnRole) -> bool {
 /// Candidate node signals for home-node MACRO election.
 ///
 /// `attached` is the sync attachment signal. It is authority-bearing only for
-/// cloud candidates; local always-on and primary candidates are elected from
-/// the current caller-supplied candidate set, which the runner keeps so an
-/// owner's home pick re-elects over it.
+/// cloud candidates. Each election ranks the vault's authorized home
+/// candidacies (a live owner machine's signed declaration, FIX 4898) beside
+/// the candidacy the host kept for itself, so an owner's home pick
+/// re-elects over both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct DreamerHomeNodeCandidate {
     pub node_id: u64,
@@ -289,12 +290,13 @@ impl DreamerHomeNodeClass {
         }
     }
 
-    /// The election tier: an attached cloud, then the owner's picked node
-    /// (`picked`, a live eligible candidate), then always-on, then primary.
+    /// The election tier: the owner's picked node (`picked`, a live eligible
+    /// candidate) outright, then an attached cloud, then always-on, then
+    /// primary (Engine 10-19, FIX 4898: no default class overrides his pick).
     pub(super) const fn rank(self, picked: bool) -> u8 {
         match self {
-            Self::CloudAttached => 0,
-            _ if picked => 1,
+            _ if picked => 0,
+            Self::CloudAttached => 1,
             Self::AlwaysOnLocal => 2,
             Self::PrimaryDevice => 3,
         }

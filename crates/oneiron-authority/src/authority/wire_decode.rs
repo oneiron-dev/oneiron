@@ -226,6 +226,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_CONVERSATION_TRAINING_VAULT => {
             super::conversation_training_vault::decode_conversation_training_vault(entries)
         }
+        OP_KIND_HOME_CANDIDACY => super::home_candidacy::decode_home_candidacy(entries),
         _ => Err(invalid_authority()),
     }
 }

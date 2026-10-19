@@ -177,6 +177,9 @@ pub struct AuthorityFold {
     /// force here (FIX 5502).
     pub(crate) conversation_training_vault:
         super::conversation_training_vault::FoldedConversationTrainingVault,
+    /// Each machine's newest MACRO home candidacy, as the log carries it
+    /// (FIX 4898); an election judges each on this fold.
+    pub(crate) home_candidacy: BTreeMap<EntityId, super::home_candidacy::DeclaredHomeCandidacy>,
     /// Every owner work request and its one result, as this install counts
     /// them.
     pub(super) owner_work: super::owner_work::FoldedOwnerWork,
@@ -370,6 +373,9 @@ pub(super) struct FoldState {
     /// way (FIX 5502).
     pub(super) conversation_training_vault:
         super::conversation_training_vault::ConversationTrainingVaultState,
+    /// Each machine's home candidacies, the newest replacing the older
+    /// (FIX 4898).
+    pub(super) home_candidacy: super::home_candidacy::HomeCandidacyState,
     /// Every owner work request and result, merged by union.
     pub(super) owner_work: super::owner_work::OwnerWorkState,
     /// Each world key's counted records, merged by union.
@@ -623,6 +629,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     super::owner_choice::merge_owner_choices(
         &mut merged.conversation_training_vault,
         &right.conversation_training_vault,
+    );
+    super::home_candidacy::merge_home_candidacies(
+        &mut merged.home_candidacy,
+        &right.home_candidacy,
     );
     super::owner_work::merge_owner_work(&mut merged.owner_work, &right.owner_work);
     super::world_key_fold::merge_world_keys(&mut merged.world_keys, &right.world_keys);

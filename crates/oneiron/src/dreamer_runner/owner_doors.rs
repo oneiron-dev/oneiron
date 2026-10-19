@@ -1,7 +1,8 @@
 //! The owner's doors over the private Dreamer runner (DOOR-101): which node
-//! this runner holds as the elected MACRO home, the host's last candidate
-//! set it elected over, the owner's home pick as every linked machine folds
-//! it, and one consolidation job's retry chain
+//! this runner holds as the elected MACRO home, the candidates its election
+//! ranks (the vault's authorized home candidacies and its host's own, FIX
+//! 4898), the owner's home pick as every linked machine folds it, and one
+//! consolidation job's retry chain
 //! with a page of its committed steps; and the owner's pick of the home node
 //! (PR2a), a signed act on the vault's main authority log. Each read
 //! revalidates the owner in its one read transaction and reads everything in
@@ -52,13 +53,16 @@ pub struct ConsolidationHomeView {
     /// This install's stable sync client id as a decimal string, read
     /// without minting one: `None` before this install has an id.
     pub this_node: Option<String>,
-    /// Whether this node keeps a candidate set: the host's last one, which
-    /// its last election ranked. `false`: no election has run here, and
-    /// `candidates` is empty; none is inferred from the winner or the pick.
+    /// Whether this node has candidates to show: an authorized home
+    /// candidacy, or a candidacy its host kept for itself. `false`: neither,
+    /// and `candidates` is empty; none is inferred from the winner or the
+    /// pick.
     pub candidates_available: bool,
-    /// The host's last candidates, in the order it supplied them. A pick
-    /// of a node outside them is recorded all the same; only this node's
-    /// election passes over it.
+    /// The candidates this node's election ranks, as its fold reads them
+    /// now: each live owner machine's declaration that says it can run
+    /// MACRO, then the host's own candidacy in the order it supplied it. A
+    /// pick of a node outside them is recorded all the same; only the
+    /// election passes over it until a matching declaration lands.
     pub candidates: Vec<ConsolidationHomeCandidate>,
     /// The owner's pick (a decimal node id) the last unconflicted pick
     /// names: what he recorded, not the node elected. `None` for no pick or
@@ -73,7 +77,7 @@ pub struct ConsolidationHomeView {
     pub conflict: Vec<ConsolidationHomePickHead>,
 }
 
-/// One node the host offered this node's election.
+/// One node this node's election ranks.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConsolidationHomeCandidate {
     /// The node's stable sync client id, as a decimal string.
@@ -131,8 +135,8 @@ pub struct ConsolidationHomePickReceipt {
     pub heads: Vec<ConsolidationHomePickHead>,
     /// The live picks in conflict, empty when none.
     pub conflict: Vec<ConsolidationHomePickHead>,
-    /// This machine's MACRO home after its own re-election over its host's
-    /// last candidates; `None` while no election places one here.
+    /// This machine's MACRO home after its own re-election over its
+    /// candidates; `None` while no election places one here.
     pub home: Option<ConsolidationHomeNode>,
 }
 
@@ -222,8 +226,9 @@ pub struct ConsolidationStepRef {
 }
 
 /// Reads, as the vault owner, this node's MACRO home designation, the
-/// host's last candidate set and this install's sync client id in one read
-/// transaction. It elects, mints and wakes nothing.
+/// candidates its election ranks (the one source the election reads) and
+/// this install's sync client id in one read transaction. It elects, mints,
+/// signs and wakes nothing.
 ///
 /// # Errors
 ///
@@ -236,17 +241,16 @@ pub fn consolidation_home_as(
     owner.revalidate_in_txn(vault, &txn)?;
     let runner = DreamerRunnerStore::new(vault);
     let home = runner.home_node_designation_in_txn(&txn)?.map(home_node);
-    let candidates = runner.home_candidates_in_txn(&txn)?;
+    let local = runner.home_candidates_in_txn(&txn)?;
+    let declared = crate::authority::home_candidacies_in_txn(vault, &txn)?;
+    let candidates =
+        super::home::HomeCandidates::of(&declared, local.as_deref().unwrap_or_default()).candidates;
     let picks = PickView::of(&crate::authority::home_pick_in_txn(vault, &txn)?);
     Ok(ConsolidationHomeView {
         home,
         this_node: crate::identity::read_client_id_in_txn(vault, &txn)?.map(|id| id.to_string()),
-        candidates_available: candidates.is_some(),
-        candidates: candidates
-            .unwrap_or_default()
-            .into_iter()
-            .map(home_candidate)
-            .collect(),
+        candidates_available: local.is_some() || !candidates.is_empty(),
+        candidates: candidates.into_iter().map(home_candidate).collect(),
         pick: picks.pick,
         revision: picks.revision,
         heads: picks.heads,
@@ -257,7 +261,7 @@ pub fn consolidation_home_as(
 /// Picks, as the vault owner, the node that runs his vault's MACRO
 /// consolidation, or clears the pick: a signed owner act on the vault's main
 /// authority log, which every linked machine folds and re-elects over its
-/// own host's candidates. `surface` is where he said so, for audit only. The
+/// own candidates. `surface` is where he said so, for audit only. The
 /// pick is recorded whether or not this machine knows the node; its landing
 /// re-elects this machine's home in the same transaction. No admitted call,
 /// lease or budget moves. A `seen` revision makes the pick land only over

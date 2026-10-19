@@ -136,6 +136,7 @@ pub(super) fn fold_entry_state(
                 super::conversation_training::ConversationTrainingChoiceState::default(),
             conversation_training_vault:
                 super::conversation_training_vault::ConversationTrainingVaultState::default(),
+            home_candidacy: super::home_candidacy::HomeCandidacyState::default(),
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
@@ -314,6 +315,21 @@ pub(super) fn fold_entry_state(
     // chain the owner marked "yours" (OF-534). It changes no state.
     if let AuthorityOp::ResidenceResult(result) = &entry.op {
         if let Err(issue) = residence_result_stands(&state, entry, result, hash) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
+    // A machine's home candidacy, signed by its own install key the same
+    // way, with no owner act: it states what the machine is (FIX 4898).
+    if let AuthorityOp::HomeCandidacy(declaration) = &entry.op {
+        if let Err(issue) = super::home_candidacy::apply_home_candidacy(
+            &mut state,
+            entry,
+            declaration,
+            hash,
+            (context.pin, context.machine_standing),
+        ) {
             return EntryFold::Invalid(issue);
         }
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
@@ -598,6 +614,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
+        | AuthorityOp::HomeCandidacy(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => false,
     }
