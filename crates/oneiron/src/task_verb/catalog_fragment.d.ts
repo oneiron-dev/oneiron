@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1068 code-mode rows (1044 host rows, 24 run rows), 3537 declarations.
-// Replies: 952 fully typed, 112 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1077 code-mode rows (1053 host rows, 24 run rows), 3553 declarations.
+// Replies: 961 fully typed, 112 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1229,6 +1229,24 @@ declare namespace Sdk {
   type CoreferenceShareConsentRequest = { local_person: EntityId; other_person: EntityId; pact: string };
   type CoreferenceShareConsentReceipt = { local_person: EntityId; other_person: EntityId; pact: string; consent_claim: EntityId };
   type CoreferenceUnlinkReceipt = { local_person: EntityId; other_person: EntityId; unlinked: boolean; retracted_claims: EntityId[]; original_claims_retained: boolean };
+  type FederationBurstScope = { kind: "vault"; vault_id: number } | { kind: "connect"; peer_vault_id: string };
+  type FederationBurstWorld = { kind: "all" } | { kind: "base" } | { kind: "world"; world_ref: EntityId };
+  type FederationBurstPeerRequest = { principal: EntityId; grant: EntityId; scope: FederationBurstScope; world: FederationBurstWorld; facets?: EntityId[]; bands?: SelectorRange[] };
+  type FederationBurstBaseline = { name: string; writes_per_sec: number; structural_streak: number };
+  type FederationBurstBaselineState = { baseline: FederationBurstBaseline; learned: boolean; vault_size: number; recent_writes: number; rate_ratio: number; streak: number; streak_ratio: number };
+  type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
+  type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
+  type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
+  type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
+  type ConnectDelivery = { body: ConnectWindow; signature: string };
+  type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string };
+  type FederationBurstWorkState = "pending" | "imported" | "rejected";
+  type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState };
+  type FederationBurstReplayRequest = { peer: FederationBurstPeerRequest; batch_ref: string };
+  type FederationIsolatedUpdate = { request_ref: string; window: string; admitted_update: number[]; rate_ratio: number; streak_ratio: number };
+  type FederationBurstReviewBundle = { bundle_ref: string; request_refs: string[]; updates: FederationIsolatedUpdate[]; quarantined: boolean; replay_automatic: boolean };
+  type FederationBurstReviewRequest = { bundle_ref: string };
+  type FederationBurstReviewReceipt = { bundle_ref: string; batches: FederationBurstReceipt[] };
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
@@ -1248,8 +1266,6 @@ declare namespace Sdk {
   type GuestCopyState = "unknown";
   type ConnectDisconnected = { receipt: ConnectPactReceipt; outbound_access: boolean; inbound_access: boolean; sync_stopped: boolean; copied_bytes_recallable: boolean; recipient_copy_state: GuestCopyState };
   type ConnectExportRequest = { pact: string; window_key: string; world_ref: EntityId; facets?: EntityId[]; bands?: SelectorRange[] };
-  type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
-  type ConnectDelivery = { body: ConnectWindow; signature: string };
   type ConnectRejoinStatus = "imported" | "deferred";
   type ConnectRejoined = { pact: string; epoch: number; world_ref: EntityId; status: ConnectRejoinStatus; request?: string | null };
   type TrustedContactReach = { sender: EntityId; channel: string; verb: string; target: string };
@@ -4938,6 +4954,28 @@ declare const vault: Sdk.VaultHost & {
     spawn(input: Sdk.LiveRunRequest<Sdk.FanoutBatchInput>): Promise<Sdk.FanoutBatchView | StoredResult>;
   };
   federation: {
+    burst: {
+      /** The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context. */
+      baseline(input: Sdk.FederationBurstPeerRequest): Promise<Sdk.FederationBurstBaselineState | StoredResult>;
+      /** The owner reads an authenticated batch original disposition, named baseline context and current durable replay state. */
+      disposition(input: Sdk.FederationBurstReplayRequest): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt. */
+      ingress(input: Sdk.ConnectDelivery): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner reads one grant-bound peer's relative-burst outcome policy. */
+      policy: ((input: Sdk.FederationBurstPeerRequest) => Promise<Sdk.FederationBurstPolicy | StoredResult>) & {
+        /** The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant. */
+        set(input: Sdk.FederationBurstPolicySetRequest): Promise<Sdk.FederationBurstPolicy | StoredResult>;
+      };
+      /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
+      replay(input: Sdk.FederationBurstReplayRequest): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection. */
+      review: ((input: Sdk.EmptyRequest) => Promise<Sdk.FederationBurstReviewBundle[] | StoredResult>) & {
+        /** The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions. */
+        reject(input: Sdk.FederationBurstReviewRequest): Promise<Sdk.FederationBurstReviewReceipt | StoredResult>;
+        /** The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority. */
+        release(input: Sdk.FederationBurstReviewRequest): Promise<Sdk.FederationBurstReviewReceipt | StoredResult>;
+      };
+    };
     connect: {
       /** The owner accepts the peer host signed Connect half and receives the matching host counter-half. */
       accept(input: Sdk.AcceptConnect): Promise<Sdk.ConnectAccepted | StoredResult>;

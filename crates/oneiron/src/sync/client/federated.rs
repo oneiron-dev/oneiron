@@ -140,6 +140,16 @@ impl SyncClient {
         update: &[u8],
         role: FederationAdmissionRole,
     ) -> std::result::Result<(), TransportError> {
+        self.import_federated_window_update_with_disposition(window_key, update, role).map(|_| ())
+    }
+
+    /// The ordinary federation import door, with its durable routed receipt.
+    pub fn import_federated_window_update_with_disposition(
+        &mut self,
+        window_key: &str,
+        update: &[u8],
+        role: FederationAdmissionRole,
+    ) -> std::result::Result<crate::sync::federation_burst::FederationBurstReceipt, TransportError> {
         if update.len() > MAX_DECODED_PAYLOAD_BYTES {
             return Err(TransportError::FrameTooLarge {
                 size: update.len(),
@@ -157,6 +167,18 @@ impl SyncClient {
         let standing = peer
             .membership(&self.vault)
             .map_err(map_federated_admission_err)?;
+        let kind = match role {
+            FederationAdmissionRole::Member => WorkKind::MemberUpdate,
+            FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
+        };
+        let identity = crate::sync::federation_burst::DeferredWork::new(&peer, &key, kind, update)
+            .map_err(map_federated_admission_err)?;
+        let batch_ref = blake3::Hash::from(identity.id).to_hex().to_string();
+        match self.vault.federation_burst_disposition(&peer, &batch_ref) {
+            Ok(receipt) if receipt.state != crate::sync::federation_burst::FederationBurstWorkState::Pending => return Ok(receipt),
+            Ok(_) | Err(crate::Error::EntityNotFound) => {},
+            Err(error) => return Err(map_federated_admission_err(error)),
+        }
         // The pact the grant delivers through, read once: a guest's CLAIMs
         // land in the foreign WORLD copies its source vault names (FIX 3497).
         let delivery = self.pact_delivery(peer.grant())?;
@@ -180,10 +202,6 @@ impl SyncClient {
                 }
                 return Err(error);
             }
-        };
-        let kind = match role {
-            FederationAdmissionRole::Member => WorkKind::MemberUpdate,
-            FederationAdmissionRole::Guest => WorkKind::GuestUpdate,
         };
         // The stamps the update holds are charged with it, and a deferred
         // update holds none (Astra-b F2 on #1432).
@@ -216,14 +234,17 @@ impl SyncClient {
                     request_id,
                     inputs,
                 });
-            return Ok(());
+            return self.vault.federation_burst_disposition(&peer, &batch_ref)
+                .map_err(map_federated_admission_err);
         }
-        self.import_peer_update(&admitted, peer.grant(), delivery)?;
-        match work {
-            Some(work) => work.complete(&self.vault, &peer),
-            None => record_outcome(&self.vault, &peer, false),
-        }
-        .map_err(map_federated_admission_err)
+        let work = work.ok_or(TransportError::InvalidPayload("missing retained federation batch"))?;
+        let vault = std::sync::Arc::clone(&self.vault);
+        crate::sync::federation_burst::with_import_guard(&vault, &peer, &work.id, &work.authority_digest, || {
+            self.import_peer_update(&admitted, peer.grant(), delivery)
+        })?;
+        work.complete(&self.vault, &peer).map_err(map_federated_admission_err)?;
+        self.vault.federation_burst_disposition(&peer, &batch_ref)
+            .map_err(map_federated_admission_err)
     }
 
     pub fn confirm_staged_vault_import(

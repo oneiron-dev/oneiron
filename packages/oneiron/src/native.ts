@@ -343,6 +343,15 @@ vaultFederationCoreferenceLink(input: unknown): unknown
 vaultFederationCoreferenceConfirm(input: unknown): unknown
 vaultFederationCoreferenceShareConsent(input: unknown): unknown
 vaultFederationCoreferenceUnlink(input: unknown): unknown
+vaultFederationBurstBaseline(input: unknown): unknown
+vaultFederationBurstPolicy(input: unknown): unknown
+vaultFederationBurstPolicySet(input: unknown): unknown
+vaultFederationBurstIngress(input: unknown): unknown
+vaultFederationBurstDisposition(input: unknown): unknown
+vaultFederationBurstReview(input: unknown): unknown
+vaultFederationBurstReviewRelease(input: unknown): unknown
+vaultFederationBurstReviewReject(input: unknown): unknown
+vaultFederationBurstReplay(input: unknown): unknown
 vaultFederationConnectIdentity(input: unknown): unknown
 vaultFederationConnectGrantsMint(input: unknown): unknown
 vaultFederationConnectOffer(input: unknown): unknown

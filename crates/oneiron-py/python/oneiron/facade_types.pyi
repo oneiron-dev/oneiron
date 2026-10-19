@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1034 facade rows, 3496 declarations.
-Inputs: 971 of 1034 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 925 of 1034 fully typed, 109 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1043 facade rows, 3512 declarations.
+Inputs: 980 of 1043 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 934 of 1043 fully typed, 109 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -6007,6 +6007,100 @@ class CoreferenceUnlinkReceipt(TypedDict):
     unlinked: bool
     retracted_claims: list[EntityId]
     original_claims_retained: bool
+class FederationBurstScopeVault(TypedDict):
+    kind: Literal["vault"]
+    vault_id: int
+class FederationBurstScopeConnect(TypedDict):
+    kind: Literal["connect"]
+    peer_vault_id: str
+FederationBurstScope = FederationBurstScopeVault | FederationBurstScopeConnect
+class FederationBurstWorldAll(TypedDict):
+    kind: Literal["all"]
+class FederationBurstWorldBase(TypedDict):
+    kind: Literal["base"]
+class FederationBurstWorldWorld(TypedDict):
+    kind: Literal["world"]
+    world_ref: EntityId
+FederationBurstWorld = FederationBurstWorldAll | FederationBurstWorldBase | FederationBurstWorldWorld
+class FederationBurstPeerRequest(TypedDict):
+    principal: EntityId
+    grant: EntityId
+    scope: FederationBurstScope
+    world: FederationBurstWorld
+    facets: NotRequired[list[EntityId]]
+    bands: NotRequired[list[SelectorRange]]
+class FederationBurstBaseline(TypedDict):
+    name: str
+    writes_per_sec: float
+    structural_streak: float
+class FederationBurstBaselineState(TypedDict):
+    baseline: FederationBurstBaseline
+    learned: bool
+    vault_size: int
+    recent_writes: int
+    rate_ratio: float
+    streak: int
+    streak_ratio: float
+FederationBurstOutcome = Literal["allow", "isolate-and-propose", "defer"]
+class FederationBurstPolicy(TypedDict):
+    baseline: NotRequired[FederationBurstBaseline | None]
+    unusual_rate: FederationBurstOutcome
+    unusual_streak: FederationBurstOutcome
+class FederationBurstPolicySetRequest(TypedDict):
+    peer: FederationBurstPeerRequest
+    policy: FederationBurstPolicy
+class ConnectWindow(TypedDict):
+    pact: str
+    epoch: int
+    source_vault: str
+    recipient_vault: str
+    world_ref: EntityId
+    facets: list[EntityId]
+    bands: list[SelectorRange]
+    window_key: str
+    update: list[int]
+class ConnectDelivery(TypedDict):
+    body: ConnectWindow
+    signature: str
+class FederationBurstDispositionAllow(TypedDict):
+    outcome: Literal["allow"]
+class FederationBurstDispositionIsolateAndPropose(TypedDict):
+    outcome: Literal["isolate-and-propose"]
+    bundle_ref: str
+    replay_ref: str
+class FederationBurstDispositionDefer(TypedDict):
+    outcome: Literal["defer"]
+    replay_ref: str
+FederationBurstDisposition = FederationBurstDispositionAllow | FederationBurstDispositionIsolateAndPropose | FederationBurstDispositionDefer
+FederationBurstWorkState = Literal["pending", "imported", "rejected"]
+class FederationBurstReceipt(TypedDict):
+    batch_ref: str
+    principal: EntityId
+    grant: EntityId
+    window_key: str
+    disposition: FederationBurstDisposition
+    state: FederationBurstWorkState
+    baseline: FederationBurstBaselineState
+class FederationBurstReplayRequest(TypedDict):
+    peer: FederationBurstPeerRequest
+    batch_ref: str
+class FederationIsolatedUpdate(TypedDict):
+    request_ref: str
+    window: str
+    admitted_update: list[int]
+    rate_ratio: float
+    streak_ratio: float
+class FederationBurstReviewBundle(TypedDict):
+    bundle_ref: str
+    request_refs: list[str]
+    updates: list[FederationIsolatedUpdate]
+    quarantined: bool
+    replay_automatic: bool
+class FederationBurstReviewRequest(TypedDict):
+    bundle_ref: str
+class FederationBurstReviewReceipt(TypedDict):
+    bundle_ref: str
+    batches: list[FederationBurstReceipt]
 class ConnectIdentity(TypedDict):
     vault: str
     host_key: str
@@ -6074,19 +6168,6 @@ class ConnectExportRequest(TypedDict):
     world_ref: EntityId
     facets: NotRequired[list[EntityId]]
     bands: NotRequired[list[SelectorRange]]
-class ConnectWindow(TypedDict):
-    pact: str
-    epoch: int
-    source_vault: str
-    recipient_vault: str
-    world_ref: EntityId
-    facets: list[EntityId]
-    bands: list[SelectorRange]
-    window_key: str
-    update: list[int]
-class ConnectDelivery(TypedDict):
-    body: ConnectWindow
-    signature: str
 ConnectRejoinStatus = Literal["imported", "deferred"]
 class ConnectRejoined(TypedDict):
     pact: str

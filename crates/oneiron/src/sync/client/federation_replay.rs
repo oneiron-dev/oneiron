@@ -32,6 +32,33 @@ impl SyncClient {
         else {
             return Ok(false);
         };
+        self.replay_federation_work(&peer, work)
+    }
+
+    /// Retries exactly one retained batch, without a second rate debit.
+    /// A still-isolated batch stays pending until recovery or owner release.
+    pub fn replay_federation_burst(
+        &mut self, batch_ref: &str,
+    ) -> Result<crate::sync::federation_burst::FederationBurstReceipt, TransportError> {
+        let peer = self.config.federation_peer.clone().ok_or(TransportError::InvalidPayload("federation peer unbound"))?;
+        let id = crate::deletion::parse_hex::<32>(batch_ref)
+            .ok_or(TransportError::InvalidPayload("invalid batch_ref"))?;
+        let receipt = self.vault.federation_burst_disposition(&peer, batch_ref)
+            .map_err(map_federated_admission_err)?;
+        if receipt.state == crate::sync::federation_burst::FederationBurstWorkState::Pending {
+            if let Some(work) = DeferredWork::update_by_id(&self.vault, &peer, &id)
+                .map_err(map_federated_admission_err)?
+            {
+                self.replay_federation_work(&peer, work)?;
+            }
+        }
+        self.vault.federation_burst_disposition(&peer, batch_ref)
+            .map_err(map_federated_admission_err)
+    }
+
+    fn replay_federation_work(
+        &mut self, peer: &FederationPeer, work: DeferredWork,
+    ) -> Result<bool, TransportError> {
         let role = match work.kind {
             WorkKind::MemberUpdate => FederationAdmissionRole::Member,
             WorkKind::GuestUpdate => FederationAdmissionRole::Guest,
@@ -67,15 +94,42 @@ impl SyncClient {
                 // the row settles, so the work behind it drains.
                 let error = map_federated_admission_err(error);
                 if matches!(error, TransportError::InvalidPayload(_)) {
-                    work.reject(&self.vault, &peer)
+                    work.reject(&self.vault, peer)
                         .map_err(map_federated_admission_err)?;
                 }
                 return Err(error);
             }
         };
-        self.import_peer_update(&admitted, peer.grant(), delivery)?;
-        work.complete(&self.vault, &peer)
+        let vault = std::sync::Arc::clone(&self.vault);
+        crate::sync::federation_burst::with_import_guard(&vault, peer, &work.id, &work.authority_digest, || {
+            self.import_peer_update(&admitted, peer.grant(), delivery)
+        })?;
+        work.complete(&self.vault, peer)
             .map_err(map_federated_admission_err)?;
         Ok(true)
+    }
+    /// Replays only an already retained, authenticated batch. The owner's
+    /// proof and the original grant remain guards on every write it makes.
+    pub fn replay_federation_burst_as_owner(
+        manager: &std::sync::Arc<crate::sync::WindowManager>,
+        owner: &crate::consent::AuthenticatedOwner,
+        input: crate::sync::federation_burst::FederationBurstReplayRequest,
+    ) -> crate::Result<crate::sync::federation_burst::FederationBurstReceipt> {
+        let peer = input.peer.authorize(manager.vault())?.with_owner(manager.vault(), owner)?;
+        let (mut client, _events) = Self::new(std::sync::Arc::clone(manager), Default::default())?;
+        client.config.federation_peer = Some(peer);
+        client.replay_federation_burst(&input.batch_ref).map_err(burst_transport_error)
+    }
+
+}
+
+
+fn burst_transport_error(error: TransportError) -> crate::Error {
+    match error {
+        TransportError::AdmissionDenied(denial) => crate::error::GateError::GateWriteRejected {
+            outcome: denial.outcome().as_str(),
+            reason_codes: denial.reason_codes().iter().map(|reason| reason.as_str()).collect(),
+        }.into(),
+        other => crate::Error::InvalidConfig(other.to_string()),
     }
 }

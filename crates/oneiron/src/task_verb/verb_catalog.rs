@@ -317,6 +317,15 @@ pub enum AgentVerb {
     VaultFederationCoreferenceConfirm,
     VaultFederationCoreferenceShareConsent,
     VaultFederationCoreferenceUnlink,
+    VaultFederationBurstBaseline,
+    VaultFederationBurstPolicy,
+    VaultFederationBurstPolicySet,
+    VaultFederationBurstIngress,
+    VaultFederationBurstDisposition,
+    VaultFederationBurstReview,
+    VaultFederationBurstReviewRelease,
+    VaultFederationBurstReviewReject,
+    VaultFederationBurstReplay,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -1374,6 +1383,15 @@ impl AgentVerb {
         Self::VaultFederationCoreferenceConfirm,
         Self::VaultFederationCoreferenceShareConsent,
         Self::VaultFederationCoreferenceUnlink,
+        Self::VaultFederationBurstBaseline,
+        Self::VaultFederationBurstPolicy,
+        Self::VaultFederationBurstPolicySet,
+        Self::VaultFederationBurstIngress,
+        Self::VaultFederationBurstDisposition,
+        Self::VaultFederationBurstReview,
+        Self::VaultFederationBurstReviewRelease,
+        Self::VaultFederationBurstReviewReject,
+        Self::VaultFederationBurstReplay,
         Self::VaultFederationConnectIdentity,
         Self::VaultFederationConnectGrantsMint,
         Self::VaultFederationConnectOffer,
@@ -2436,6 +2454,15 @@ impl AgentVerb {
                 "vault.federation.coreference.share_consent"
             }
             Self::VaultFederationCoreferenceUnlink => "vault.federation.coreference.unlink",
+            Self::VaultFederationBurstBaseline => "vault.federation.burst.baseline",
+            Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
+            Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
+            Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
+            Self::VaultFederationBurstDisposition => "vault.federation.burst.disposition",
+            Self::VaultFederationBurstReview => "vault.federation.burst.review",
+            Self::VaultFederationBurstReviewRelease => "vault.federation.burst.review.release",
+            Self::VaultFederationBurstReviewReject => "vault.federation.burst.review.reject",
+            Self::VaultFederationBurstReplay => "vault.federation.burst.replay",
             Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
             Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
             Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
@@ -3519,6 +3546,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -4603,6 +4639,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -5371,6 +5416,7 @@ impl AgentVerb {
                 | Self::VaultSharedStarted
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
+                | Self::VaultFederationBurstReview
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultResidenceDirectives
@@ -5789,6 +5835,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -6672,6 +6727,11 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
                 | Self::VaultFederationConnectAccept
@@ -7465,6 +7525,15 @@ impl AgentVerb {
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
             Self::VaultFederationCoreferenceUnlink => &["spec"],
+            Self::VaultFederationBurstBaseline => &["spec"],
+            Self::VaultFederationBurstPolicy => &["spec"],
+            Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultFederationBurstIngress => &["spec"],
+            Self::VaultFederationBurstDisposition => &["spec"],
+            Self::VaultFederationBurstReview => &[],
+            Self::VaultFederationBurstReviewRelease => &["spec"],
+            Self::VaultFederationBurstReviewReject => &["spec"],
+            Self::VaultFederationBurstReplay => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -8523,6 +8592,15 @@ impl AgentVerb {
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
             Self::VaultFederationCoreferenceUnlink => &["spec"],
+            Self::VaultFederationBurstBaseline => &["spec"],
+            Self::VaultFederationBurstPolicy => &["spec"],
+            Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultFederationBurstIngress => &["spec"],
+            Self::VaultFederationBurstDisposition => &["spec"],
+            Self::VaultFederationBurstReview => &[],
+            Self::VaultFederationBurstReviewRelease => &["spec"],
+            Self::VaultFederationBurstReviewReject => &["spec"],
+            Self::VaultFederationBurstReplay => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -10191,6 +10269,33 @@ impl AgentVerb {
             }
             Self::VaultFederationCoreferenceUnlink => {
                 "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."
+            }
+            Self::VaultFederationBurstBaseline => {
+                "The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context."
+            }
+            Self::VaultFederationBurstPolicy => {
+                "The owner reads one grant-bound peer's relative-burst outcome policy."
+            }
+            Self::VaultFederationBurstPolicySet => {
+                "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."
+            }
+            Self::VaultFederationBurstIngress => {
+                "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."
+            }
+            Self::VaultFederationBurstDisposition => {
+                "The owner reads an authenticated batch original disposition, named baseline context and current durable replay state."
+            }
+            Self::VaultFederationBurstReview => {
+                "The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection."
+            }
+            Self::VaultFederationBurstReviewRelease => {
+                "The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority."
+            }
+            Self::VaultFederationBurstReviewReject => {
+                "The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions."
+            }
+            Self::VaultFederationBurstReplay => {
+                "The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."
             }
             Self::VaultFederationConnectIdentity => {
                 "The owner reads this vault identity and the host key used for reciprocal Connect consent."

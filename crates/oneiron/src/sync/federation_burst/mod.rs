@@ -5,6 +5,14 @@
 //! Transport payload, fabricated-window, and malformed-record bounds still apply.
 
 mod observations;
+mod policy;
+mod ledger;
+mod import_guard;
+pub(crate) use import_guard::check_active_in_txn;
+pub(in crate::sync) use import_guard::with_import_guard;
+mod types;
+mod review_doors;
+pub use types::*;
 mod peer_health;
 mod queue;
 mod review_bundle;
@@ -35,6 +43,7 @@ pub struct FederationPeer {
     principal: EntityId,
     scope: FederationGrantScope,
     selector: SyncSelector,
+    owner: Option<crate::consent::AuthenticatedOwner>,
 }
 
 impl FederationPeer {
@@ -55,11 +64,24 @@ impl FederationPeer {
             principal,
             scope,
             selector: selector.clone(),
+            owner: None,
         })
     }
 
+    pub(in crate::sync) fn with_owner(mut self, vault: &Vault, owner: &crate::consent::AuthenticatedOwner) -> Result<Self> {
+        self.owner = Some(owner.clone());
+        self.revalidate(vault)?;
+        Ok(self)
+    }
+
     pub(in crate::sync) fn revalidate(&self, vault: &Vault) -> Result<()> {
-        authorize_sync_selector(vault, self.scope, &self.selector)
+        let txn = vault.store.env.read_txn()?;
+        self.revalidate_in_txn(vault, &txn)
+    }
+
+    pub(in crate::sync) fn revalidate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if let Some(owner) = &self.owner { owner.revalidate_in_txn(vault, txn)?; }
+        crate::sync::selector::authorize_sync_selector_in_txn(vault, txn, self.scope, &self.selector)
     }
 
     /// The transport-authenticated principal this peer speaks as.
@@ -94,6 +116,23 @@ impl FederationPeer {
                     reason: SyncSelectorValidation::MemberNotGranted,
                 })
             })
+    }
+
+    pub(in crate::sync) fn authority_digest_in_txn(
+        &self, vault: &Vault, txn: &heed::RoTxn<'_>,
+    ) -> Result<[u8; 32]> {
+        self.revalidate_in_txn(vault, txn)?;
+        let raw = crate::federation::live_federation_grant_in(vault, txn, &self.grant())?;
+        let fold = vault.authority_view_readonly_in_txn(txn)?;
+        let mut hash = blake3::Hasher::new();
+        hash.update(&raw);
+        for (id, pact) in fold.federation_pacts.iter().filter(|(_, pact)| pact.grant_ref == self.grant()) {
+            hash.update(id);
+            hash.update(&pact.pact_epoch.to_be_bytes());
+            let scope = rmp_serde::to_vec_named(&(&pact.effective_scope, &pact.pact_scope)).map_err(|_| corrupt())?;
+            hash.update(&scope);
+        }
+        Ok(*hash.finalize().as_bytes())
     }
 
     fn digest(&self) -> [u8; 32] {
@@ -173,11 +212,13 @@ fn admit_work_at(
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     let (writes, now) = sample;
     peer.revalidate(vault)?;
-    let work = DeferredWork::new(peer, key, kind, payload)?;
+    let mut work = DeferredWork::new(peer, key, kind, payload)?;
     vault.with_write_txn_grouped(|txn| {
+        work.authority_digest = peer.authority_digest_in_txn(vault, txn)?;
         // Duplicate/reconnected requests replay the exact durable item. They
         // neither add a debit nor go through the burst policy a second time.
         if let Some(saved) = work.load_in_txn(vault, txn)? {
+            saved.revalidate_authority_in_txn(vault, txn, peer)?;
             let decision = if saved.isolated_update.is_some()
                 && !observations::replay_ready_in_txn(vault, txn, peer, now)?
             {
@@ -191,31 +232,33 @@ fn admit_work_at(
             };
             return Ok((decision, Some(saved)));
         }
-        let health = observations::observe_in_txn(vault, txn, peer, writes, now)?;
-        if !health.unusual_rate() {
-            return Ok((FederationBurstDecision::Allow(health.inputs), None));
+        if let Some(receipt) = ledger::load(vault, txn, peer, &work.id)? {
+            let inputs = NormalizedBurstInputs {
+                rate_ratio: receipt.baseline.rate_ratio, streak: receipt.baseline.streak,
+            };
+            return Ok((FederationBurstDecision::Allow(inputs), Some(work.with_inputs(inputs))));
         }
+        let health = observations::observe_in_txn(vault, txn, peer, writes, now)?;
         let mut work = work.with_inputs(health.inputs);
-        let decision = if health.isolate() && admitted_update.is_some() {
-            work.isolated_update = admitted_update.map(|parts| {
-                parts
-                    .iter()
-                    .map(|(window, bytes)| ((*window).to_owned(), bytes.to_vec()))
-                    .collect()
-            });
-            work.streak_ratio = health.streak_ratio;
-            FederationBurstDecision::IsolateAndPropose {
-                request_id: work.id,
-                bundle_id: peer.digest(),
-                inputs: health.inputs,
+        let decision = match health.outcome() {
+            FederationBurstOutcome::Allow => FederationBurstDecision::Allow(health.inputs),
+            FederationBurstOutcome::IsolateAndPropose if admitted_update.is_some() => {
+                work.isolated_update = admitted_update.map(|parts| {
+                    parts.iter().map(|(window, bytes)| ((*window).to_owned(), bytes.to_vec())).collect()
+                });
+                work.streak_ratio = health.streak_ratio;
+                FederationBurstDecision::IsolateAndPropose {
+                    request_id: work.id, bundle_id: peer.digest(), inputs: health.inputs,
+                }
             }
-        } else {
-            FederationBurstDecision::Defer {
-                request_id: work.id,
-                inputs: health.inputs,
+            // A read has no rows to isolate: retain its exact request instead.
+            FederationBurstOutcome::Defer | FederationBurstOutcome::IsolateAndPropose => {
+                FederationBurstDecision::Defer { request_id: work.id, inputs: health.inputs }
             }
         };
         work.put_in_txn(vault, txn)?;
+        ledger::record(vault, txn, peer, &work, decision, health.baseline)?;
+        review_doors::retain_in_txn(vault, txn, &work)?;
         Ok((decision, Some(work)))
     })
 }

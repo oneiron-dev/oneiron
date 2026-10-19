@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 /// per part, each with the same request ref, rate and streak (FIX 3662). It
 /// is review evidence, not replay authority: replay re-admits the original
 /// peer bytes under the window the request named.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FederationIsolatedUpdate {
     pub request_ref: String,
     pub window: String,
@@ -23,7 +23,7 @@ pub struct FederationIsolatedUpdate {
 }
 
 /// One coalesced proposal, rather than an approval prompt for every row.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FederationBurstReviewBundle {
     pub bundle_ref: String,
     /// Each isolated request once, in the order its parts first appear.
@@ -39,6 +39,12 @@ impl Vault {
     /// waiting for human approval, and one peer never holds another's queue.
     pub fn federation_burst_review_bundles(&self) -> Result<Vec<FederationBurstReviewBundle>> {
         let txn = self.store.env.read_txn()?;
+        self.federation_burst_review_bundles_in_txn(&txn)
+    }
+
+    pub(super) fn federation_burst_review_bundles_in_txn(
+        &self, txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<FederationBurstReviewBundle>> {
         let mut bundles = BTreeMap::<[u8; 32], Vec<FederationIsolatedUpdate>>::new();
         for row in self
             .store
@@ -65,7 +71,8 @@ impl Vault {
                 });
             }
         }
-        Ok(bundles
+        let mut retained = super::review_doors::retained_in_txn(self, &txn)?;
+        let pending = bundles
             .into_iter()
             .map(|(peer, updates)| FederationBurstReviewBundle {
                 bundle_ref: format!("federation-review:{}", blake3::Hash::from(peer).to_hex()),
@@ -74,7 +81,16 @@ impl Vault {
                 quarantined: true,
                 replay_automatic: true,
             })
-            .collect())
+            .collect::<Vec<_>>();
+        for bundle in &mut retained {
+            bundle.quarantined = pending.iter().any(|row| row.bundle_ref == bundle.bundle_ref);
+        }
+        for bundle in pending {
+            if !retained.iter().any(|row| row.bundle_ref == bundle.bundle_ref) {
+                retained.push(bundle);
+            }
+        }
+        Ok(retained)
     }
 }
 

@@ -22,6 +22,7 @@ pub(super) type IsolatedParts = Vec<(String, Vec<u8>)>;
 #[derive(Debug, Clone)]
 pub(in crate::sync) struct DeferredWork {
     pub(in crate::sync) id: [u8; 32],
+    pub(in crate::sync) authority_digest: [u8; 32],
     /// The window the original request names: its replay address.
     pub(in crate::sync) window: String,
     pub(in crate::sync) kind: WorkKind,
@@ -30,12 +31,13 @@ pub(in crate::sync) struct DeferredWork {
     pub(super) peer: [u8; 32],
     pub(super) isolated_update: Option<IsolatedParts>,
     pub(super) streak_ratio: f32,
-    selector: Vec<u8>,
+    pub(super) selector: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct StoredWork {
     id: [u8; 32],
+    authority_digest: [u8; 32],
     peer: [u8; 32],
     selector: Vec<u8>,
     window: String,
@@ -57,7 +59,7 @@ fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
 }
 
 impl DeferredWork {
-    pub(super) fn new(
+    pub(in crate::sync) fn new(
         peer: &FederationPeer,
         key: &WindowKey,
         kind: WorkKind,
@@ -82,6 +84,7 @@ impl DeferredWork {
         hash.update(payload);
         Ok(Self {
             id: *hash.finalize().as_bytes(),
+            authority_digest: [0; 32],
             peer: peer.digest(),
             selector,
             window: key.as_str().to_owned(),
@@ -94,6 +97,15 @@ impl DeferredWork {
                 streak: 0,
             },
         })
+    }
+
+    pub(in crate::sync) fn revalidate_authority_in_txn(
+        &self, vault: &Vault, txn: &heed::RoTxn<'_>, peer: &FederationPeer,
+    ) -> Result<()> {
+        if self.authority_digest != peer.authority_digest_in_txn(vault, txn)? {
+            return Err(crate::Error::InvalidConfig("federation batch grant or pact scope changed; reject the retained batch and send a newly authorized delivery".into()));
+        }
+        Ok(())
     }
 
     pub(super) fn with_inputs(mut self, inputs: NormalizedBurstInputs) -> Self {
@@ -151,6 +163,7 @@ impl DeferredWork {
     pub(super) fn put_in_txn(&self, vault: &Vault, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         let value = postcard::to_allocvec(&StoredWork {
             id: self.id,
+            authority_digest: self.authority_digest,
             peer: self.peer,
             selector: self.selector.clone(),
             window: self.window.clone(),
@@ -206,6 +219,7 @@ impl DeferredWork {
         }
         Ok(Self {
             id: row.id,
+            authority_digest: row.authority_digest,
             peer: row.peer,
             selector: row.selector,
             window: row.window,
@@ -239,7 +253,9 @@ impl DeferredWork {
             return Err(corrupt());
         }
         vault.with_write_txn_grouped(|txn| {
+            peer.revalidate_in_txn(vault, txn)?;
             vault.store.sync_queue.delete(txn, &self.key())?;
+            super::ledger::settle(vault, txn, peer, self, structural_failure)?;
             // Keep a small, payload-free delivery witness. If the socket dies
             // after direct enqueue, the same authenticated ticket can fetch
             // again. A guessed hash with no witness cannot bypass observation.
@@ -256,6 +272,18 @@ impl DeferredWork {
     pub(in crate::sync) fn next_update(
         vault: &Vault,
         peer: &FederationPeer,
+    ) -> Result<Option<Self>> {
+        Self::find_update(vault, peer, None)
+    }
+
+    pub(in crate::sync) fn update_by_id(
+        vault: &Vault, peer: &FederationPeer, id: &[u8; 32],
+    ) -> Result<Option<Self>> {
+        Self::find_update(vault, peer, Some(id))
+    }
+
+    fn find_update(
+        vault: &Vault, peer: &FederationPeer, id: Option<&[u8; 32]>,
     ) -> Result<Option<Self>> {
         peer.revalidate(vault)?;
         let txn = vault.store.env.read_txn()?;
@@ -274,6 +302,8 @@ impl DeferredWork {
             {
                 return Err(corrupt());
             }
+            if id.is_some_and(|id| work.id != *id) { continue; }
+            work.revalidate_authority_in_txn(vault, &txn, peer)?;
             if work.kind != WorkKind::Selector
                 && (work.isolated_update.is_none()
                     || observations::replay_ready_in_txn(
