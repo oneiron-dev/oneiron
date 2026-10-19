@@ -28,9 +28,8 @@ use super::super::doors::{
 use super::super::owner_door::recheck_manifest_snapshot_in_txn;
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
-use super::input::{
-    AttachedManifest, InputBinding, drop_input_in_txn, held_input_in_txn, split_attached,
-};
+use super::input::{Attached, InputBinding, drop_input_in_txn, held_input_in_txn, split_attached};
+use super::manifest::register_snapshot;
 use super::permits::permitted_keys;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, CustodyChange, OwnerWorkBody, OwnerWorkOutcome,
@@ -119,9 +118,9 @@ enum Opened {
     Missing,
     /// It does not open under the request's binding.
     Invalid,
-    /// Its body, and the manifest its recorder attached beside a sealed
-    /// register's envelope, if any.
-    Body(Zeroizing<Vec<u8>>, Option<AttachedManifest>),
+    /// Its body, and what its recorder attached beside a sealed register's
+    /// envelope, if anything.
+    Body(Zeroizing<Vec<u8>>, Option<Attached>),
 }
 
 /// A record whose value is wiped when it drops, on every path.
@@ -234,21 +233,13 @@ impl Vault {
                             };
                             let record = Held(record);
                             // The manifest the recorder sealed beside the
-                            // record, or the one it resolved for the
+                            // record, the one it resolved for the
                             // manifest_ref a surface stated, which must be
-                            // the record's.
-                            let snapshot = match (framed, attached) {
-                                (framed, None) => framed,
-                                (None, Some(attached))
-                                    if attached.manifest_ref == record.0.manifest_ref =>
-                                {
-                                    Some(attached.text)
-                                }
-                                (_, Some(_)) => {
-                                    return Ok(Some(Enacted::refused(
-                                        OwnerWorkRefusal::InvalidInput,
-                                    )));
-                                }
+                            // the record's, or the vault's current approved
+                            // one for a surface that stated none.
+                            let snapshot = match register_snapshot(framed, attached, &record.0) {
+                                Ok(snapshot) => snapshot,
+                                Err(refusal) => return Ok(Some(Enacted::refused(refusal))),
                             };
                             if let Some(refusal) = recheck_manifest_snapshot_in_txn(
                                 &self.store,

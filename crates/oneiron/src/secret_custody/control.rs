@@ -38,6 +38,7 @@
 mod doors;
 mod execute;
 pub(super) mod input;
+mod manifest;
 pub(super) mod permits;
 mod revoked;
 #[cfg(feature = "sync")]
@@ -48,6 +49,7 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{InputBinding, RelayedInput, input_digest, keep_input_in_txn};
+pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::revoked::{
     custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
     settle_revoked_in_txn,
@@ -60,7 +62,7 @@ use crate::authority::{
 };
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::RotationReceipt;
-use crate::world_keys::{MachineSecret, OwnerWorkReceipt, OwnerWorkUnassigned};
+use crate::world_keys::{MachineSecret, OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned};
 use crate::{EntityId, Vault};
 
 /// Which install a custody request names to do its work (CALLS
@@ -220,6 +222,10 @@ pub struct SecretCustodyWork {
     /// Why the change stays on this install; `None` once recorded.
     pub kept_here: Option<CustodyKeptHere>,
     pub delivery: CustodyDelivery,
+    /// For a register the owner's surface sealed without stating a
+    /// `manifest_ref`, what its holder checks the record against (CALLS
+    /// CUSTODY_MANIFEST_UNSTATED); `None` for any other change.
+    pub manifest: Option<CustodyManifestCheck>,
 }
 
 impl SecretCustodyWork {
@@ -228,6 +234,7 @@ impl SecretCustodyWork {
             work: None,
             kept_here: Some(why),
             delivery: CustodyDelivery::NotSent,
+            manifest: None,
         }
     }
 
@@ -243,6 +250,7 @@ impl SecretCustodyWork {
             work: Some(receipt),
             kept_here: None,
             delivery,
+            manifest: None,
         }
     }
 
@@ -251,11 +259,27 @@ impl SecretCustodyWork {
     #[must_use]
     pub fn text(&self) -> &'static str {
         match (&self.work, self.kept_here) {
-            (Some(receipt), _) => receipt
-                .unassigned
-                .map_or_else(|| receipt.status.text(), OwnerWorkUnassigned::text),
+            (Some(receipt), _) => receipt.unassigned.map_or_else(
+                || self.status_text(receipt.status),
+                OwnerWorkUnassigned::text,
+            ),
             (None, Some(why)) => why.text(),
             (None, None) => "not recorded",
+        }
+    }
+
+    /// A recorded request's words: a register that carries no manifest says
+    /// it registers without a manifest check (CALLS
+    /// CUSTODY_MANIFEST_UNSTATED).
+    fn status_text(&self, status: OwnerWorkStatus) -> &'static str {
+        match (status, &self.manifest) {
+            (OwnerWorkStatus::RecordedAwaitingHolder, Some(CustodyManifestCheck::Unchecked)) => {
+                "recorded, awaiting a holder; to be registered without a manifest check"
+            }
+            (OwnerWorkStatus::Enacted, Some(CustodyManifestCheck::Unchecked)) => {
+                "enacted by its holder; registered without a manifest check"
+            }
+            (status, _) => status.text(),
         }
     }
 }

@@ -102,8 +102,8 @@ pub(crate) use self::control::{
     refuse_revoked_use_in_txn,
 };
 pub use self::control::{
-    CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyPlan, SealedCustodyChange,
-    SecretCustodyView, SecretCustodyWork, SecretRevoked, SecretRotated,
+    CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyManifestCheck, CustodyPlan,
+    SealedCustodyChange, SecretCustodyView, SecretCustodyWork, SecretRevoked, SecretRotated,
 };
 pub(crate) use self::doors::{
     CustodyWrite, SecretCustodyAdmission, put_secret_custody_in_txn,

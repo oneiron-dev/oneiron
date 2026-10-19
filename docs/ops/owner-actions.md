@@ -428,7 +428,9 @@ and never above the class's live floor, and `scopes` defaults to `["read"]`. A b
 effector is replaced. The reply lists the record's bindings and the Gate record that keeps the
 binding. A portable secret's binding is a custody rewrap this install records and does as its
 holder, so its transition carries the new bindings to your other machines that hold the secret. The
-reply's `custody` says so, or why the binding stayed on this install.
+reply's `custody` says so, or why the binding stayed on this install. A machine whose own floor is
+narrower than the binding's rung keeps its old bindings and holds the new ones pending. It takes
+them once its floor admits them, unless a later bind, rotation or revoke of the secret comes first.
 
 ## Hand a served repository's origin to another host
 
@@ -1741,7 +1743,12 @@ oneiron api raw POST /v1/owner/secrets/custody --data '{"change": "rotate",
 The same input sent again returns the request it already made. A sealed register whose record names
 a manifest also sends `"manifest_ref"`: this install attaches the manifest it resolves for that ref,
 and the holder checks the record against it. A ref this install does not resolve is refused, by
-name.
+name. A sealed register that sends no `"manifest_ref"` gets the vault's one current approved
+manifest attached instead. That is the manifest file at the commit this install publishes now for
+a branch of a repository it serves, when exactly one such commit holds one. The holder checks a
+record that names that manifest against it. When no manifest applies, or several do, the request
+records that it carries none, and the reply's `custody.said` says the secret is registered without
+a manifest check. Send `"manifest_ref"` whenever the record names a manifest.
 
 A revoke erases the secret's value at rest on each install that holds it and keeps its name and
 generation. Its reply's `custody` says whether it went to your other machines or why it stayed
