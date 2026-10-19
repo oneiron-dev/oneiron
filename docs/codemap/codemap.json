@@ -2855,7 +2855,7 @@
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an Ask or Connect guest's capability slip, bound to its grant, and withdraws one…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -6109,7 +6109,7 @@
      "path": "src/batch/verified_claim_transition.rs",
      "purpose": "Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -19035,13 +19035,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -24586,7 +24586,7 @@
      "path": "src/entity_doc/document.rs",
      "purpose": "The common actor-stamped Loro document primitive",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "fn": 9,
       "struct": 3
      }
@@ -35309,7 +35309,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 50,
-      "fn": 33,
+      "fn": 34,
       "struct": 2,
       "type": 1
      }
@@ -56840,7 +56840,7 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 1
      }
     },
@@ -77766,7 +77766,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
