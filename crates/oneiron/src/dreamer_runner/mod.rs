@@ -58,6 +58,15 @@ pub(crate) use self::program::{
     record_turn_program_wakes_in_txn, settle_program_outbound_in_txn, settle_program_write_in_txn,
     turn_program_erase_details, turn_programs_armed_in_txn,
 };
+// DOOR-141 PR3a: a turn program's reads, for its host doors and the SDK.
+pub use self::program::{
+    ProgramAdmissionOutcomeView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
+    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
+    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_run, settled_program_step,
+    turn_program_admission,
+};
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;

@@ -138,12 +138,19 @@ class Oneiron:
         path: str | os.PathLike[str] | None = None,
         *,
         dimensions: int | None = None,
+        device_class: str | None = None,
     ) -> "Oneiron":
         """Opens an embedded vault and returns an actor-bound handle.
 
         Omitting ``path`` resolves to ``~/.oneiron/default`` against the current
         process home, at call time. The handle is usable immediately; there is
         no ``as_actor`` call to make first.
+
+        ``device_class`` is the kind of machine this install is, as the host
+        declares it (FIX 5591): ``"computer"``, the default when omitted, or
+        ``"phone"``; any other name raises ``BAD_REQUEST``. It is set before
+        the vault opens, so the install enrols as it, and never read off the
+        operating system.
 
         Embedded open is currently supported only on Unix (macOS/Linux).
         On other targets, including Windows, it fails closed because writer
@@ -153,7 +160,7 @@ class Oneiron:
         ``VAULT_LOCKED_SINGLE_WRITER``; connect to the owning process instead.
         """
         resolved = os.fspath(path) if path is not None else None
-        return cls(_translate(lambda: _NativeClient.open(resolved, dimensions)))
+        return cls(_translate(lambda: _NativeClient.open(resolved, dimensions, device_class)))
 
     @classmethod
     def open_with_host_root(
@@ -162,6 +169,7 @@ class Oneiron:
         host_root_secret: bytes,
         *,
         dimensions: int | None = None,
+        device_class: str | None = None,
     ) -> dict[str, Any]:
         """:meth:`open`, then this install's own machine profile from the vault's host root secret.
 
@@ -181,11 +189,13 @@ class Oneiron:
         vault's settled root, over a profile that already stands, opens and
         says so in ``host_root["wrong_root"]``: reported, never refused. The
         handle binds the local owner actor, as :meth:`open` does, and carries
-        no owner proof.
+        no owner proof. ``device_class`` is :meth:`open`'s.
         """
         resolved = os.fspath(path) if path is not None else None
         native = _translate(
-            lambda: _NativeClient.open_with_host_root(resolved, host_root_secret, dimensions)
+            lambda: _NativeClient.open_with_host_root(
+                resolved, host_root_secret, dimensions, device_class
+            )
         )
         raw = native.host_root_profile()
         profile = json.loads(raw) if raw is not None else {}
@@ -1520,6 +1530,9 @@ class Oneiron:
         def disarm(self, spec):
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_disarm(json.dumps(spec))))
+        def admission(self, spec):
+            """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_admission(json.dumps(spec))))
     class _VaultWeaveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3821,6 +3834,12 @@ class Oneiron:
         def checkpoint(self, spec):
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
             return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
+        def program(self, spec):
+            """Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it."""
+            return json.loads(_translate(lambda: self._client.vault_runs_program(json.dumps(spec))))
+        def program_step(self, spec):
+            """Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."""
+            return json.loads(_translate(lambda: self._client.vault_runs_program_step(json.dumps(spec))))
         def review(self, spec):
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
             return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))
