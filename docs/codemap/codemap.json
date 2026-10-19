@@ -73048,6 +73048,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/host_root.rs",
+     "purpose": "`NativeClient.open_with_host_root` (FIX 5342, the Python half of FIX 4730): `open`, then this install's own…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -73074,6 +73084,13 @@
      "layout": "file",
      "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…"
     },
+    "host_root": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`NativeClient.open_with_host_root` (FIX 5342, the Python half of FIX 4730): `open`, then this install's own…"
+    },
     "pairing": {
      "files": 1,
      "impl_vault": false,
@@ -73084,7 +73101,7 @@
    },
    "over_bar": 1,
    "purpose": "`oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1)",
-   "source_files": 4,
+   "source_files": 5,
    "test_files": 0
   },
   "oneiron-remote": {
@@ -81811,7 +81828,7 @@
      "path": "src/handler/protocol_close.rs",
      "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {

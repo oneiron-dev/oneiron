@@ -13,5 +13,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | Asserts the PyPI major still equals the engine's `MEMORY_PACK_VERSION` |
 | `src/embedded_engine.rs` | src | s | 1 crate-vis | — | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
+| `src/host_root.rs` | src | s | 2 crate-vis | — | `NativeClient.open_with_host_root` (FIX 5342, the Python half of FIX 4730): `open`, then this install's own… |
 | `src/lib.rs` | src | XL | — | — | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) |
 | `src/pairing.rs` | src | s | 2 crate-vis | — | What the native `pair` hands the Python wrapper (OF-469, FIX 3376): the origin, the credential, the… |
