@@ -107,6 +107,9 @@ impl Vault {
     pub fn put_origin_publication_intent(&self, request: &OriginPublicationRequest) -> Result<()> {
         let body = super::origin_publication_intent_claim(request)?;
         self.with_write_txn_grouped(|wtxn| {
+            // An erased intent is never named again (FIX 3877).
+            let id = &request.provenance_claim_id;
+            crate::origin::actor_erase::refuse_renaming_in_txn(self, wtxn, id, &body)?;
             self.put_reserved_claim_in_txn(
                 wtxn,
                 &request.provenance_claim_id,

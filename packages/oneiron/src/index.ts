@@ -1193,6 +1193,28 @@ export class Oneiron {
         /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
         unlink: (input: Facade.CoreferencePairRequest): Facade.CoreferenceUnlinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceUnlink(input) as Facade.CoreferenceUnlinkReceipt),
       },
+      burst: {
+        /** The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context. */
+        baseline: (input: Facade.FederationBurstPeerRequest): Facade.FederationBurstBaselineState => this.#call(() => this.#client.vaultFederationBurstBaseline(input) as Facade.FederationBurstBaselineState),
+        /** The owner reads one grant-bound peer's relative-burst outcome policy. */
+        policy: Object.assign((input: Facade.FederationBurstPeerRequest): Facade.FederationBurstPolicy => this.#call(() => this.#client.vaultFederationBurstPolicy(input) as Facade.FederationBurstPolicy), {
+          /** The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant. */
+          set: (input: Facade.FederationBurstPolicySetRequest): Facade.FederationBurstPolicy => this.#call(() => this.#client.vaultFederationBurstPolicySet(input) as Facade.FederationBurstPolicy),
+        }),
+        /** The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt. */
+        ingress: (input: Facade.ConnectDelivery): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstIngress(input) as Facade.FederationBurstReceipt),
+        /** The owner reads an authenticated batch original disposition, named baseline context and current durable replay state. */
+        disposition: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstDisposition(input) as Facade.FederationBurstReceipt),
+        /** The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection. */
+        review: Object.assign((input: Facade.EmptyRequest): Facade.FederationBurstReviewBundle[] => this.#call(() => this.#client.vaultFederationBurstReview(input) as Facade.FederationBurstReviewBundle[]), {
+          /** The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority. */
+          release: (input: Facade.FederationBurstReviewRequest): Facade.FederationBurstReviewReceipt => this.#call(() => this.#client.vaultFederationBurstReviewRelease(input) as Facade.FederationBurstReviewReceipt),
+          /** The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions. */
+          reject: (input: Facade.FederationBurstReviewRequest): Facade.FederationBurstReviewReceipt => this.#call(() => this.#client.vaultFederationBurstReviewReject(input) as Facade.FederationBurstReviewReceipt),
+        }),
+        /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
+        replay: (input: Facade.FederationBurstReplayRequest): Facade.FederationBurstReceipt => this.#call(() => this.#client.vaultFederationBurstReplay(input) as Facade.FederationBurstReceipt),
+      },
       connect: {
         /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
         identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),
@@ -1859,6 +1881,18 @@ export class Oneiron {
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
       export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
       origin: {
+        /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
+        register: (input: Facade.OriginRegisterRequest): Facade.OriginRegistered => this.#call(() => this.#client.vaultCodeOriginRegister(input) as Facade.OriginRegistered),
+        mirror: {
+          /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginMirrorView => this.#call(() => this.#client.vaultCodeOriginMirrorGet(input) as Facade.OriginMirrorView),
+          /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+          set: (input: Facade.OriginMirrorSetRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorSet(input) as Facade.OriginMirrorTarget),
+          /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
+          clear: (input: Facade.OriginRepoRequest): Facade.OriginMirrorCleared => this.#call(() => this.#client.vaultCodeOriginMirrorClear(input) as Facade.OriginMirrorCleared),
+          /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+          push: (input: Facade.OriginRepoRequest): Facade.OriginMirrorRun => this.#call(() => this.#client.vaultCodeOriginMirrorPush(input) as Facade.OriginMirrorRun),
+        },
         authority: {
           /** Read one served origin authority and this host identity under the owner credential. */
           get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),
@@ -2345,9 +2379,9 @@ export class Oneiron {
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
       home: {
-        /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
+        /** The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything. */
         get: (input: Facade.EmptyRequest = {}): Facade.ConsolidationHomeView => this.#call(() => this.#client.vaultConsolidationHomeGet(input) as Facade.ConsolidationHomeView),
-        /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+        /** The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease. */
         pick: (input: Facade.ConsolidationHomePickRequest): Facade.ConsolidationHomePickReceipt => this.#call(() => this.#client.vaultConsolidationHomePick(input) as Facade.ConsolidationHomePickReceipt),
       },
       /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */

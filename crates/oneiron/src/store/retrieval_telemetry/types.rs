@@ -238,9 +238,9 @@ impl RetrievalPolicyPins {
     /// Whether `weights` already holds every pin at its declared share.
     #[must_use]
     pub fn respects(&self, weights: RetrievalBlendWeights) -> bool {
-        self.pins.iter().all(|pin| {
-            (weights.weight(pin.signal) - pin.value).abs() <= 1e-6
-        })
+        self.pins
+            .iter()
+            .all(|pin| (weights.weight(pin.signal) - pin.value).abs() <= 1e-6)
     }
 }
 

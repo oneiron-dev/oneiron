@@ -128,8 +128,7 @@ impl Vault {
                 agent,
             )?;
             let key_owner = key_owner_in_txn(self, txn, actor)?;
-            let receipt =
-                self.finish_world_key_work_in_txn(txn, Some(owner), key_owner, receipt, secret)?;
+            let receipt = self.finish_world_key_work_in_txn(txn, key_owner, receipt, secret)?;
             stored.status = WorldPrivacyRequestStatus::Applied {
                 receipt_id: receipt.receipt_id.clone(),
                 holder: actor.to_hex(),

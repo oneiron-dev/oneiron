@@ -31,8 +31,9 @@ use tokio::sync::{broadcast, watch};
 use super::payer_funding::room_launch_funding;
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
-    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, TurnCredential, after_turn,
-    begin_answer, chat_request, keepalive_every, text_message, turn_generate_pre, witness_turn,
+    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, TurnCredential, after_turn,
+    begin_answer, chat_request, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
+    text_message, turn_generate_pre, witness_turn,
 };
 use crate::server::blocking;
 
@@ -141,6 +142,9 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         .chat_seat()
         .cloned()
         .ok_or("no [models] rung serves generative_reasoner")?;
+    // FIX 4465 D: a self agent's kept prefix, read before its context is
+    // spent below; the action takes it only once its own call is admitted.
+    let reuse = blocking(|| reuse_chat_breakpoint(ai, vault, &action, &context));
     // The agent must still pass the dispatch predicate, as chat's does.
     let instructions = AgentDispatcher::new(vault)
         .dispatchable_definition(&AgentDispatchTarget::Custom(context.agent))
@@ -180,6 +184,19 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         }
         admitted = admit(messages)?;
     }
+    // A missing, stale or refused breakpoint leaves the action as it always
+    // ran; a kept one is sent first, with this call behind it.
+    let (admitted, today, breakpoint) = match reuse {
+        ChatReuse::Reused(reused) => {
+            let reused = *reused;
+            (reused.live, Some(admitted), Some(reused.breakpoint))
+        }
+        ChatReuse::Unavailable(reason) => {
+            live_fork_unavailable(reason);
+            (admitted, None, None)
+        }
+        ChatReuse::Today => (admitted, None, None),
+    };
     let keepalive = keepalive_every(
         vault
             .message_stream_policy()
@@ -237,6 +254,8 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
             },
             keepalive,
             mark,
+            breakpoint,
+            today,
         },
     )
     .map_err(|refusal| match refusal {

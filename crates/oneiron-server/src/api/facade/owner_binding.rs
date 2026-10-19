@@ -82,11 +82,13 @@ pub(super) fn managed_owner_binding(
 /// Where an owner's say-so on `auth` reached this install, for the act's
 /// audit record only: no admission rule reads it (owner ruling 10-19, "it
 /// doesn't matter where you said yes"). The owner doors' rule
-/// (`owner_routes::machine_routes::act_surface`) for a door that holds no
-/// request headers: the hosted console for a managed vault's attested owner,
-/// else this install. A linked machine's own proof rides the headers, so
-/// these doors label its request this install's.
-pub(super) fn act_surface(auth: &CoreAuth) -> ActSurface {
+/// (`owner_routes::machine_routes::act_surface`) for a call that carries no
+/// request headers (a held socket's, a drain's resumed call, an MCP row, a
+/// lens card's event): the hosted console for a managed vault's attested
+/// owner, else this install. An HTTP request's surface is its own, read from
+/// the machine proof its headers carry (`FacadeCall::http`, and each route
+/// that hands `action_bound` its headers' surface; FIX 4625).
+pub(crate) fn act_surface(auth: &CoreAuth) -> ActSurface {
     if auth.managed_owner().is_some() {
         ActSurface::HostedConsole
     } else {

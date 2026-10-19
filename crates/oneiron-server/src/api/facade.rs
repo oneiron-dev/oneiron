@@ -69,15 +69,16 @@ mod critic_review_doors;
 mod critical_confirm_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
-mod disclosure_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
+mod disclosure_doors;
 mod dispatch;
 mod embedding_space_doors;
 mod eval_doors;
 mod extraction_doors;
 mod fanout_doors;
 mod federation_connect_doors;
+mod federation_burst_doors;
 mod feedback_doors;
 mod fold_doors;
 mod foreign_code_doors;
@@ -109,7 +110,7 @@ mod note_doors;
 mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
-mod owner_binding;
+pub(super) mod owner_binding;
 mod persona_doors;
 mod plugin_section_doors;
 mod policy_doors;
@@ -124,8 +125,8 @@ mod retrieval_doors;
 pub(super) mod role_picks;
 mod run_read_doors;
 mod run_review_doors;
-mod seal_doors;
 mod saved_query_doors;
+mod seal_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
@@ -135,11 +136,11 @@ mod shared_act_doors;
 mod shared_admin_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
-mod skill_default_doors;
 mod sieve_doors;
 mod sieve_observation_doors;
-mod skill_doors;
 mod skill_attribution_doors;
+mod skill_default_doors;
+mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
 mod standing_doors;
@@ -160,11 +161,11 @@ mod wire_health_doors;
 
 pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
-pub(crate) use model_stream_doors::ModelStreams;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
 pub(crate) use host_doors::ai_speech_for_run;
+pub(crate) use model_stream_doors::ModelStreams;
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;
@@ -547,7 +548,7 @@ async fn facade_route(
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
-    let call = FacadeCall::http(&auth, &headers);
+    let call = FacadeCall::http(&server, &auth, &headers);
     let verb = uri.path().trim_start_matches('/');
     let output = call_verb(&server, &call, verb, facade_json(payload)).await?;
     Ok(Json(output.value))

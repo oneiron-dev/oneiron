@@ -67,6 +67,12 @@ use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
 use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 
+mod compaction;
+
+pub(crate) use compaction::{
+    AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
+};
+
 /// The seeded definition that speaks when a request names no agent.
 const DEFAULT_AGENT: &str = "sys.default";
 /// The header a caller carries a logical verb's id in (ARCH-0080 §3): a retry
@@ -463,18 +469,40 @@ fn start_turn(
         .into_iter()
         .map(|text| text_message(LlmMessageRole::System, text))
         .collect();
-    let skip = request.history.len().saturating_sub(settings.history_turns);
-    for earlier in request.history.into_iter().skip(skip) {
-        let role = match earlier.role {
-            HistoryRole::User => LlmMessageRole::User,
-            HistoryRole::Assistant => LlmMessageRole::Assistant,
+    // FIX 4465 D: a self agent on its live fork reads its log from the
+    // retained ledger, as the caller reads it where it sits; every other
+    // turn takes the caller's lines as before.
+    let self_chat = crate::server::blocking(|| {
+        let reader = match auth.principal_ref() {
+            Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
+            None => vault.memory(actor, class),
         };
-        messages.push(text_message(role, earlier.text));
+        compaction::self_chat(
+            &server.ai,
+            &vault,
+            &reader,
+            agent,
+            &request.conversation_ref,
+            settings.history_turns,
+        )
+    });
+    match &self_chat {
+        Some(chat) => chat.push_log(&mut messages),
+        None => {
+            let skip = request.history.len().saturating_sub(settings.history_turns);
+            for earlier in request.history.into_iter().skip(skip) {
+                let role = match earlier.role {
+                    HistoryRole::User => LlmMessageRole::User,
+                    HistoryRole::Assistant => LlmMessageRole::Assistant,
+                };
+                messages.push(text_message(role, earlier.text));
+            }
+        }
     }
     messages.push(text_message(LlmMessageRole::User, request.text.clone()));
     // Admitted through its role before anything is written: a vault route
     // this server cannot serve refuses here, with no call made.
-    let admitted = server
+    let mut admitted = server
         .ai
         .admit_role(&vault, CHAT_ROLE, chat_request(&seat, messages))
         .map_err(|refusal| match refusal {
@@ -494,6 +522,9 @@ fn start_turn(
                 refusal.to_string(),
             ),
         })?;
+    if self_chat.is_some() {
+        compaction::mark_prefix(&mut admitted.request);
+    }
     // `host.turn.generate` (ARCH-0080 §5): its pre chain runs once the turn
     // is admitted, so a refused admission leaves no hook's blocks or notes,
     // and before the user's turn is witnessed, so a skip or an ask ends the
@@ -618,6 +649,9 @@ fn start_turn(
             credential: credential.clone(),
             keepalive,
             mark,
+            breakpoint: self_chat
+                .map(|chat| chat.breakpoint(WriteActor::new(actor, class), locality)),
+            today: None,
         },
     )
     .map_err(|refusal| match refusal {
@@ -984,6 +1018,13 @@ pub(crate) struct Answer {
     /// so no delta goes out into the reply's conversation once an attendee
     /// entered it from there on.
     pub(crate) mark: OutputMark,
+    /// A self agent's breakpoint on its live fork (FIX 4465 D); `None`
+    /// leaves the answer as it always was.
+    pub(crate) breakpoint: Option<AnswerBreakpoint>,
+    /// The call a turn action would always have sent, when `admitted` is
+    /// its reused prefix: sent instead if the captured rung fails before it
+    /// speaks.
+    pub(crate) today: Option<RoleCall>,
 }
 
 /// Where a reply is written.
@@ -1043,6 +1084,8 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         credential,
         keepalive,
         mark,
+        breakpoint,
+        today,
     } = answer;
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
@@ -1065,6 +1108,22 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     };
     let container = answer_container(&vault, &open);
     let wakes = container.map(|_| vault.subscribe_task_updates());
+    // FIX 4465 D: a self agent's breakpoint, right before the answer's
+    // stream: its live fork is this answer's own admitted call.
+    let pending = breakpoint.map(|breakpoint| {
+        compaction::enter(
+            ai,
+            &vault,
+            breakpoint,
+            &admitted,
+            handle.message_id(),
+            compaction::TurnMeter {
+                payer,
+                funding: funding.clone(),
+                budget_units,
+            },
+        )
+    });
 
     // The turn is a run on the vault's budget policy for this actor, one line
     // per turn, billed to its funding. Each rung the call reaches is admitted
@@ -1085,9 +1144,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
                 meter,
                 funding,
             );
-            admitted
-                .ladder
-                .stream(&run, admitted.request, None)
+            compaction::open_stream(&run, admitted, today, pending.as_ref())
                 .map_err(|error| format!("chat budget: {error:?}"))
         });
     let stream = match started {
@@ -1152,9 +1209,11 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
                 signals: AgentWakeSignals::default(),
             },
         );
+        let saved = saved.lock().ok().and_then(|mut slot| slot.take());
+        compaction::keep(&landed.0, pending, saved.as_ref());
         let _ = finished.send(AnswerOutcome {
             result,
-            saved: saved.lock().ok().and_then(|mut slot| slot.take()),
+            saved,
             text: streamed
                 .lock()
                 .map_or_else(|_| String::new(), |text| text.clone()),
