@@ -57,7 +57,8 @@ impl ProtocolRefusal {
     /// closes the socket with it. The receipt is best effort: a row that
     /// cannot be written is logged and the close goes ahead.
     async fn close(self, server: &SyncServer, verb: &str, transport: &mut StoppingTransport) {
-        let _ = crate::api::call_receipt::record_socket_close(server, verb, self.code(), self.reason);
+        let _ =
+            crate::api::call_receipt::record_socket_close(server, verb, self.code(), self.reason);
         transport
             .send_unguarded_close_frame(self.close_frame())
             .await;
@@ -76,7 +77,11 @@ pub(super) async fn hello(
     match transport.hello().await {
         HelloOutcome::Valid(version) => Some(version),
         HelloOutcome::Reject(refusal) => {
-            tracing::warn!(conn_id, reason = refusal.reason, "protocol hello rejected — closing");
+            tracing::warn!(
+                conn_id,
+                reason = refusal.reason,
+                "protocol hello rejected — closing"
+            );
             refusal.close(server, HELLO_VERB, transport).await;
             None
         }

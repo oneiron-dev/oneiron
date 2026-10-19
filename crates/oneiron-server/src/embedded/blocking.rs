@@ -95,8 +95,8 @@ impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
     /// worker pool runs beside it.
     pub fn start(app: A, config: ServeConfig, limits: HostLimits) -> anyhow::Result<Self> {
         ensure_app_thread()?;
-        let runtime = super::runtime::engine_runtime(super::runtime::worker_cap(limits))
-            .context(cause(
+        let runtime =
+            super::runtime::engine_runtime(super::runtime::worker_cap(limits)).context(cause(
                 EngineErrorKind::StartFailed,
                 "the embedded engine's runtime did not start",
             ))?;
