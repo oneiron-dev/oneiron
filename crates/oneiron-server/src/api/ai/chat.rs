@@ -571,7 +571,7 @@ fn start_turn(
     // in keeps its hooks' records and pauses in that session only, as a row
     // does (FIX 5380): judged on the caller's own surface, never a header.
     // Its retry names the hook pause it resumes (FIX 5526).
-    let resumes = hook_ask::named(headers, &hooked())?;
+    let resumes = hook_ask::named(headers, &hooked());
     let hooked_call = || match invocation {
         Some(id) => hook_ask::resuming(hooked().with_invocation(id), resumes),
         None => hooked(),

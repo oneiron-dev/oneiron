@@ -105,9 +105,9 @@ pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> MemoryResult<Opt
     // none resumes nothing.
     let resume = memory.and_then(|memory| memory.invocation().and(memory.hook_ask()));
     if !anonymous && !NO_RECORD_ROWS.contains(&verb) {
-        if let (Some(memory), Some(_)) = (memory, resume)
+        if let (Some(memory), Some(ask)) = (memory, resume)
             && let Some(invocation) = memory.invocation()
-            && let Some(stop) = memory.vault().gone_hook_pause(invocation)?
+            && let Some(stop) = memory.vault().gone_hook_pause(invocation, ask)?
         {
             return Err(stopped(stop));
         }

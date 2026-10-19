@@ -48,6 +48,13 @@ const SESSION_PAUSE_GONE: &str = "This hook pause was off the record and lived o
      its session on this server. That session ended or the server restarted; it cannot be \
      resumed. Start a new call.";
 
+/// Whether a recorded call's retry that names its ask after the drain's pass
+/// forgot the call it saved (`ask::prune`, past `VERB_ASK_KEEP`) runs as a
+/// new call, as it did before the thin client named the ask on every retry
+/// (FIX 5693): true keeps that path, false refuses it as a gone pause. A
+/// session-only call's pause that is gone refuses either way.
+const PRUNED_RECORDED_ASK_RUNS_NEW: bool = true;
+
 /// The stop a resume of a gone pause ends with; `hook` names the asking hook
 /// when the keep still knows it.
 fn gone(hook: &str) -> VerbHookStop {
@@ -266,18 +273,48 @@ fn ended(key: &SessionHookKey) -> Error {
 }
 
 impl Vault {
-    /// The stop of a call that names a hook pause it resumes under
-    /// `invocation` but runs as a call that keeps its record now (L13 PR-D,
+    /// The stop of a call that names `ask`, a hook pause it resumes under
+    /// `invocation`, but runs as a call that keeps its record now (L13 PR-D,
     /// FIX 4283): when the vault holds no call paused under `invocation`,
     /// the pause was a session-only call's whose session ended or whose
     /// server restarted, and it refuses with [`SESSION_PAUSE_GONE`] rather
     /// than run as a new call. `None` when the vault holds one: its own
-    /// retry reads it.
+    /// retry reads it. `None` too, while [`PRUNED_RECORDED_ASK_RUNS_NEW`]
+    /// holds, when `ask` was this recorded call's own, whose saved call the
+    /// drain's pass forgot (FIX 5693).
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub(crate) fn gone_hook_pause(&self, invocation: InvocationId) -> Result<Option<VerbHookStop>> {
-        Ok((!super::saved(self, invocation)?).then(|| gone("")))
+    pub(crate) fn gone_hook_pause(
+        &self,
+        invocation: InvocationId,
+        ask: EntityId,
+    ) -> Result<Option<VerbHookStop>> {
+        if super::saved(self, invocation)?
+            || (PRUNED_RECORDED_ASK_RUNS_NEW && recorded_ask(self, invocation, ask)?)
+        {
+            return Ok(None);
+        }
+        Ok(Some(gone("")))
     }
+}
+
+/// Whether `ask` is the settled ask a recorded call's hook opened under
+/// `invocation`: its intent key names that invocation itself. A
+/// session-only call's ask names its hidden id instead
+/// (`SessionHookKeep::hidden_invocation`), never the caller's.
+fn recorded_ask(vault: &Vault, invocation: InvocationId, ask: EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(result) = crate::task_verb::ask_settlement_in(vault, &rtxn, ask)? else {
+        return Ok(false);
+    };
+    Ok(result
+        .settlement
+        .requested
+        .intent_key
+        .strip_prefix(VERB_HOOK_INTENT)
+        .and_then(|rest| rest.split_once('/'))
+        .and_then(|(named, _)| InvocationId::parse_hex(named))
+        == Some(invocation))
 }
