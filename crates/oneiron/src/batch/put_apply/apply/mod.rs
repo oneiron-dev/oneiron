@@ -10,7 +10,7 @@ use super::{
     AppliedPut, AuthorityLogKeyOccupant, ENTITY_METADATA_HEADER_LEN, apply_short_id_plan,
     authority_observation_secs_for_write, check_authority_log_store_key,
     delete_short_id_rows_for_id, evict_authority_log_store_key_squatter, parse_entity_metadata,
-    plan_short_id_update, reject_overlay_member_base_write, stage_claim_projection,
+    plan_short_id_update_hashed, reject_overlay_member_base_write, stage_claim_projection,
     stage_entity_body_row, stage_entity_index_rows, stage_optional_side_row,
     validate_immutable_task_record, validate_local_agent_definition_create,
     validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
@@ -466,14 +466,19 @@ pub(in crate::batch) fn apply_put(
     } else {
         store.short_id_prefix(entity_type).ok()
     };
+    // A short reference hashes the logical body: a file-plane ASSET's facts,
+    // never the manifest its row keeps (FIX 3677).
     let short_id_plan = if let Some(short_id_prefix) = short_id_prefix {
-        Some(plan_short_id_update(
+        Some(plan_short_id_update_hashed(
             store,
             &*wtxn,
             &id,
             entity_type,
             &short_id_prefix,
-            data,
+            options.storage.asset_file.map_or_else(
+                || crate::batch::short_id_content_hash(data),
+                |file| file.short_hash(),
+            ),
         )?)
     } else {
         None
@@ -753,6 +758,13 @@ pub(in crate::batch) fn apply_put(
         crate::deletion::ROW_DELETION_FENCE.delete(store, wtxn, &HexId(id))?;
     }
     stage_entity_body_row(store, wtxn, &id, entity_type, occurred, learned_at, data)?;
+    if entity_type == crate::registry::ENTITY_TYPE_ASSET {
+        crate::store::stage_asset_body_in_txn(store, wtxn, &id, data, options.storage.asset_file)?;
+    } else if options.storage.asset_file.is_some() {
+        return Err(Error::InvariantViolation(
+            "only an ASSET's body lives in an asset body file",
+        ));
+    }
     crate::skill_hub::stage_refinement_origin(
         store,
         wtxn,
