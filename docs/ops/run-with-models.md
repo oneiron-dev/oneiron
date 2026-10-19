@@ -1409,28 +1409,42 @@ A call opens with one JSON line:
   transport proof, the same ones the HTTP API takes in `Authorization` and
   `x-oneiron-binding`.
 - They pass the same doors at the on-device locality, then the owner door.
-- A bad or missing token closes the socket before any audio. An admitted call
-  is answered `{"op":"accepted"}`.
+- A refused hello (a bad or missing token among them) is answered with one
+  line, `{"op":"refused","code":"<code>","reason":"<plain text>"}` and a line
+  feed, and the socket closes before any audio. The `code` is one of
+  `writes_frozen`, `no_hello`, `not_hello`, `credential`,
+  `not_capability_slip`, `not_enrolled_device`, `managed_owner`, `nonce`,
+  `scope`, `owner`, `principal`, `room`, `roster`, `payer_missing`,
+  `payer_needed`, `agent` and `unavailable` (the call could not be prepared
+  on this host). The `reason` never carries a token, a proof, a MAC or a
+  nonce. An admitted call is answered `{"op":"accepted"}`; a failure after
+  that is an `{"op":"error","code":".."}` frame.
 - On a managed vault (`serve --managed-by-hypnos`, its `[models.voice]` from
   `--settings-file` and its socket from `--voice-socket`) the hello carries no
   slip:
-  `{"op":"hello","managed_owner":{"holder_ref":"..","mac":".."},"issued_at":..,"sample_rate":16000,"channels":1}`.
+  `{"op":"hello","managed_owner":{"holder_ref":"..","mac":".."},"issued_at":..,"nonce":"<32 lowercase hex>","sample_rate":16000,"channels":1}`.
   `managed_owner` is the supervisor's `ManagedOwnerAction` for the vault's
-  owner, signed with `ManagedOwnerRequest::voice(room, roster, issued_at)`.
+  owner, signed with `ManagedOwnerRequest::voice(room, roster, &body)`, where
+  `body` is `managed_voice_body(issued_at, &nonce)`.
   The transcript is v2: a keyed BLAKE3 under a key derived from the spawn
   token with the domain `oneiron/managed-account-owner/v2`, over the vault
   name, `holder_ref`, the method, the path, the raw query (right after the
   path), the three bound values and the body, each prefixed with its length
   as eight big-endian bytes. A voice hello signs method `VOICE`, path
   `/voice`, an empty query, the hello's `room` and `roster` (empty when
-  absent) as the first two bound values with the third empty, and
-  `issued_at` (Unix seconds) as eight big-endian body bytes. The vault takes
-  each attestation once, within 60 seconds of its `issued_at`. The call then
-  runs as that person off-device, while the owner door still names them the
-  vault's live owner (checked again every five seconds). Each call is
-  admitted like a served write, so a frozen vault takes no call, and a call
-  in flight keeps a reap from finding the vault quiescent. A slip hello on a
-  managed vault, or a managed hello on a plain one, is refused.
+  absent) as the first two bound values with the third empty, and a 24-byte
+  body: `issued_at` (Unix seconds) as eight big-endian bytes, then the 16 raw
+  bytes of `nonce`. The `nonce` is 16 fresh random bytes for each hello,
+  sent as 32 lowercase hex characters; a managed hello without one, or with
+  one of any other form, is refused `nonce`, and no other hello carries one.
+  The vault takes each attestation once, within 60 seconds of its
+  `issued_at`; two calls opened in the same second sign apart by their
+  nonces. The call then runs as that person off-device, while the owner door
+  still names them the vault's live owner (checked again every five
+  seconds). Each call is admitted like a served write, so a frozen vault
+  takes no call, and a call in flight keeps a reap from finding the vault
+  quiescent. A slip hello on a managed vault without its enrolled machine's
+  claim, or a managed hello on a plain one, is refused.
 
 After that the stream carries:
 - **the transcript ops** (`open`, `partial`, `final`, `close`);

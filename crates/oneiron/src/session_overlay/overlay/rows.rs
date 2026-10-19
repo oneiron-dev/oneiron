@@ -22,8 +22,10 @@ impl SessionOverlay {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        // The room's bookkeeping spends none of its budget (`unbudgeted_row`).
-        if !unbudgeted_row(keyspace, key) {
+        // The room's bookkeeping spends none of its budget: `unbudgeted_row`
+        // rows, and a row a write marked as its own (`mark_bookkeeping_row`),
+        // whose growth the preflight below then counts as none.
+        if !unbudgeted_row(keyspace, key) && !self.holds_bookkeeping_row(keyspace, key) {
             self.reject_unbudgetable_payload(key, value)?;
         }
         let mutation = OverlayMutation::Put {
@@ -33,6 +35,42 @@ impl SessionOverlay {
         };
         self.preflight_segment_mutation(&mutation)?;
         self.stage_mutation(mutation)
+    }
+
+    /// Marks `key` of `keyspace`, in this thread's active segment, as the
+    /// bookkeeping of the write that segment stages: a run's write receipt
+    /// beside its room row (WILL L11-01 S01-2a, Engine 10-19), under
+    /// #3160's rule for `unbudgeted_row` rows. For as long as the room holds
+    /// the row, its puts are neither refused for the room's budget nor
+    /// counted in its total, so a room at its limit takes exactly the writes
+    /// it took before; a delete of the row, or a clear of its keyspace, ends
+    /// the mark. The mark commits or aborts with the segment, as its rows do.
+    pub(crate) fn mark_bookkeeping_row(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        key: &[u8],
+    ) -> Result<()> {
+        self.stage_mutation(OverlayMutation::Bookkeeping {
+            keyspace,
+            key: key.to_vec(),
+        })
+    }
+
+    /// Whether the active segment's view of the room holds `key` of
+    /// `keyspace` as a write's bookkeeping (`mark_bookkeeping_row`).
+    fn holds_bookkeeping_row(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> bool {
+        ACTIVE_SEGMENT.with(|slot| {
+            slot.borrow()
+                .as_ref()
+                .filter(|segment| Arc::ptr_eq(&segment.overlay, self))
+                .is_some_and(|segment| {
+                    segment
+                        .preview
+                        .bookkeeping
+                        .get(&keyspace.slot())
+                        .is_some_and(|marked| marked.contains(key))
+                })
+        })
     }
 
     #[allow(

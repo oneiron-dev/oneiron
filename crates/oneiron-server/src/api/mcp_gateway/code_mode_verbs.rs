@@ -38,6 +38,7 @@
 //! outlives the guest's image queue and the guest.
 
 mod receipt_evidence;
+mod session_write;
 
 use self::receipt_evidence::ReceiptWriter;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
@@ -1048,11 +1049,15 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         }
         mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
         // A search reads on the credential's lane, a facet stamp places only
-        // a row that lane reads, and a consult lands only refs it reads.
+        // a row that lane reads, a consult lands only refs it reads, and a
+        // TASK binding reads its TASK and workflow there (FIX 5316).
         if !matches!(
             call,
             RunCall::Bridge(
-                SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge | SelfEffect::ConsultResult
+                SelfEffect::MemorySearch
+                    | SelfEffect::MemoryPutEdge
+                    | SelfEffect::ConsultResult
+                    | SelfEffect::WorkflowDispatch
             )
         ) {
             return Ok(None);
@@ -1071,6 +1076,16 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 code: error.kind.to_owned(),
             })?;
         self.credential_lane()
+    }
+
+    /// A room write a session-bound run stages (WILL L11-01, S01-2a) meets
+    /// this connector's door as its session reads do, and lands under the
+    /// credential's live ceiling (`session_write`).
+    fn admit_session_write(
+        &self,
+        verb: AgentVerb,
+    ) -> Result<oneiron::code_run::SessionWriteAdmission, AgentVerbRefusal> {
+        self::session_write::admit(self, verb)
     }
 
     /// A result the run retained leaves this device again only while every

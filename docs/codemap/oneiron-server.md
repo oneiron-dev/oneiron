@@ -335,6 +335,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/board_setup.rs` | src | XL | 21 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 14 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
+| `src/api/mcp_gateway/code_mode_verbs/session_write.rs` | src | s | 1 crate-vis | — | A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a) |
 | `src/api/mcp_gateway/device_release.rs` | src | s | 9 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
 | `src/api/mcp_gateway/envelope.rs` | src | m | 17 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | L | 10 crate-vis | — | Execute-code and board-verb executors |
@@ -517,7 +518,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/left_notices.rs` | src | s | 1 crate-vis | — | `POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this… |
 | `src/auth/locality.rs` | src | s | 6 crate-vis | — | Where the caller of a request sits (DEC-0005): on this device or off it |
 | `src/auth/machine_proof.rs` | src | s | 5 crate-vis | — | The machine a request names |
-| `src/auth/managed_request.rs` | src | s | 10 crate-vis | — | The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19) |
+| `src/auth/managed_request.rs` | src | s | 11 crate-vis | — | The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19) |
 | `src/auth/slips.rs` | src | m | 20 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
@@ -949,14 +950,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/attachment.rs` | src | s | 1 fn | — | The voice host as a wake-pass attachment: it serves the owner's admitted stream beside one pass and spends… |
 | `src/voice_host/backend.rs` | src | s | 2 crate-vis | — | The voice call's backend for the host's own model calls (OF-410): partial enrichment and the sentence… |
 | `src/voice_host/boot.rs` | src | m | 7 crate-vis | — | The server's own voice loop at serve start (OF-410) |
-| `src/voice_host/brain.rs` | src | m | 2 struct · 1 fn · 3 crate-vis | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
+| `src/voice_host/brain.rs` | src | m | 2 struct · 1 fn · 4 crate-vis | ChatBrain, ChatBrainBindings | The voice call's brain (OF-410): the chat role, as `/ai/chat` runs it |
 | `src/voice_host/connection.rs` | src | m | 4 crate-vis | — | One private, pre-admitted UDS connection on the existing Tokio runtime |
 | `src/voice_host/entry_barrier.rs` | src | s | 6 crate-vis | — | The newcomer barrier on a live reply (OF-365 P5, FIX 1389) |
 | `src/voice_host/extraction.rs` | src | s | 3 crate-vis | — | — |
+| `src/voice_host/hello_refusal.rs` | src | s | 3 crate-vis | — | A voice hello refused before its call is admitted (`boot`) is answered with one line… |
 | `src/voice_host/media_bridge.rs` | src | L | 1 struct · 1 enum · 21 crate-vis | VoiceMediaBindings, VoiceMediaIn | The host's own speech and hearing on the media seats (OF-410) |
 | `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 5 re-export · 3 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
-| `src/voice_host/public.rs` | src | s | 16 crate-vis | — | Credential-bound public sessions |
+| `src/voice_host/public.rs` | src | s | 17 crate-vis | — | Credential-bound public sessions |
 | `src/voice_host/public_events.rs` | src | s | 12 crate-vis | — | Public event correlation and dequeue fencing, independent of transport |
+| `src/voice_host/public_hold.rs` | src | s | 9 crate-vis | — | A public live voice session's hold on its host's write gate: one admission, taken when the session starts… |
 | `src/voice_host/public_loop.rs` | src | m | 2 crate-vis | — | The public transport drives the existing voice host and media worker |
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/speech.rs` | src | m | 2 struct · 1 enum · 3 fn · 16 crate-vis | PlayoutFrame, VoiceBrainOut, VoicePlayout | The brain's reply in the host's own voice (OF-410) |
