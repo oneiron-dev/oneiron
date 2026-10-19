@@ -479,7 +479,8 @@ side_tables! {
     /// control, never text. Key: b"s" or b"c" + id16.
     PUBLISHER_TRAINING_CUSTODY: VaultMeta b"publisher_training:custody:v1:" Named
         => crate::Vault::erase_publisher_training_custody_in_txn;
-    /// The publisher training outbox's next event number and receipt cursor (OF-420). Key: `()`.
+    /// The publisher training outbox's private order, months used (each with its scope, next ordinal
+    /// and receipt cursor), link-key flag and purge (OF-420, TRAINING-LINK = C). Key: `()`.
     PUBLISHER_TRAINING_STATE: VaultMeta b"publisher_training:state:v1" Named;
     /// Scope self-demotion log. Key: u64be + id16.
     RAMP_DEMOTION: VaultMeta b"ramp_demote:v1:" Named;
