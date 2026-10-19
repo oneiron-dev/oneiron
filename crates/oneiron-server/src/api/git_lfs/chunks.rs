@@ -1,7 +1,7 @@
 //! Grant-scoped binary have/want endpoint over the standing bearer identity.
 
 use super::gate::{LfsAccess, authorize_request};
-use super::support::{declared_size, lfs_waited_out, read_whole};
+use super::support::{declared_size, lfs_piece_hold, lfs_waited_out, read_whole};
 use crate::api::Transfers;
 use crate::api::transfer::ReadHold;
 use crate::error::{ApiError, EnvelopedApiError};
@@ -15,7 +15,6 @@ use futures_util::stream;
 use oneiron::Vault;
 use oneiron::authority::PeerMachine;
 use oneiron::origin::lfs::{LFS_CHUNK_MAX, LfsOid};
-use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -119,19 +118,14 @@ fn reply(
         }
     });
     // Each piece is released only while no world withheld from the peer
-    // keeps the object; a flag set mid-reply ends the body with an error.
+    // keeps the object; a flag set mid-reply ends the body with an error that
+    // says why (FIX 4939).
     Body::from_stream(stream::unfold(receiver, move |mut receiver| {
         let vault = Arc::clone(&vault);
         async move {
             let piece = receiver.recv().await?;
-            if oneiron::sync::chunks::lfs_object_withheld_for(&vault, object, peer)
-                .unwrap_or(true)
-            {
+            if let Some(kept) = lfs_piece_hold(&vault, object, peer) {
                 receiver.close();
-                let kept = io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "lfs object kept on this device",
-                );
                 return Some((Err(kept), receiver));
             }
             Some((Ok(piece), receiver))

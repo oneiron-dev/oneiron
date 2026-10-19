@@ -17,7 +17,7 @@ use crate::{EntityId, Error, Result};
 /// read omits it (a missing or withheld row, as before), or the typed
 /// refusal of the legal order that keeps a row this reader otherwise reads
 /// from use.
-pub(crate) type NamedSlot = std::result::Result<Option<ReadRow>, Error>;
+pub type NamedSlot = std::result::Result<Option<ReadRow>, Error>;
 
 /// What one named point read found.
 enum PointReadOutcome {
@@ -52,6 +52,20 @@ impl PointReadOutcome {
 }
 
 impl ScopedRead<'_> {
+    /// [`Self::read`] for a door whose caller named each target (FIX 5226):
+    /// each slot is its row, `None` where every collection read omits it (a
+    /// missing or withheld row, as before), or the refusal of the legal
+    /// order that keeps from use a row this reader otherwise reads. One
+    /// slot's refusal never aborts the others, and the receipt counts
+    /// exactly what [`Self::read`] counts for the same slice.
+    pub fn read_named(
+        &self,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+    ) -> Result<ScopedReadResult<Vec<NamedSlot>>> {
+        self.read_named_projected(reads, requested, |_, slots| Ok::<_, Error>(slots))
+    }
+
     /// [`Self::read`] for a door whose caller named each target, keeping the
     /// rows, their receipt and a dependent projection in one snapshot as
     /// [`Self::read_projected`] does. Each slot answers its own read, and one
