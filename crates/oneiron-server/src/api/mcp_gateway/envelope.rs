@@ -203,6 +203,10 @@ pub(crate) struct McpCallContext {
     /// Ask): its row's pre chain enters as the drain's run of it. Never a
     /// request's.
     pub(crate) drain: Option<oneiron::runtime_hooks::verb::VerbAskDrainPermit>,
+    /// A narrower caller's own holder proof, as the MCP HTTP ingress
+    /// carried it, for the home an opened device asks (FIX 2905, FIX 2907).
+    /// `None` for an owner-grade caller and off that ingress.
+    pub(crate) forwarded: Option<oneiron::authority::ForwardedCallerProof>,
 }
 
 impl std::ops::Deref for McpCallContext {
@@ -214,6 +218,19 @@ impl std::ops::Deref for McpCallContext {
 }
 
 impl McpCallContext {
+    /// Who this request asks an opened device's home for (FIX 2905): an
+    /// owner-grade credential is the device's owner; a narrower one is
+    /// judged at the home on the holder proof its ingress carried, and with
+    /// none asks nothing.
+    pub(crate) fn home_caller(&self) -> oneiron::memory::HomeRecallCaller {
+        let owner_grade = self
+            .actor
+            .auth
+            .as_ref()
+            .is_some_and(crate::auth::CoreAuth::is_owner_grade);
+        oneiron::memory::HomeRecallCaller::admitted(owner_grade, self.forwarded.clone())
+    }
+
     /// The closed metadata envelope for one result on this endpoint.
     pub(super) fn metadata(
         &self,
@@ -634,11 +651,15 @@ pub(crate) async fn handle_mcp_request(
         );
     }
     let request_id = mcp_request_id(request.id.as_ref().unwrap_or(&Value::Null));
+    // The machine this request's connection proved: the call reads, and
+    // every release is judged, for it (mesh PR2b).
+    let peer = crate::auth::proved_peer(headers, connection);
 
     match request.method.as_str() {
         "initialize" => {
-            let actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             // It states the credential's scope, so it is released as every
             // result is (DEC-0005).
             let result = json!({
@@ -660,8 +681,9 @@ pub(crate) async fn handle_mcp_request(
         }
         "notifications/initialized" => Ok(json!({})),
         "oneiron/wakes" => {
-            let actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             super::wakes::poll(server, &actor, request.params).await
         }
         // Deliberately actor-free: a listing that echoed the caller back would
@@ -669,16 +691,18 @@ pub(crate) async fn handle_mcp_request(
         // immutable registration is that it is the same bytes for everyone.
         // The credential is still REQUIRED, just never reflected.
         "tools/list" => {
-            let _actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let _actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             Ok(json!({
                 "surfaceMode": mode.as_str(),
                 "tools": server.mcp_surface(mode).listing(),
             }))
         }
         "tools/call" => {
-            let actor =
-                resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server).await?;
+            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
+                .await?
+                .toward(peer);
             // OF-538: what the call's receipt states of its request, taken
             // before the params are consumed.
             let tool = request

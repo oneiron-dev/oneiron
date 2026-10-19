@@ -48,8 +48,8 @@ mod checkpoint_image;
 mod checkpoint_policy;
 mod checkpoint_policy_choice;
 mod claim_write;
-mod engine_machine;
 mod critical_confirm_door;
+mod engine_machine;
 mod entry_transition;
 mod first_seen_clock;
 mod fold_engine;
@@ -214,7 +214,10 @@ pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
 pub use machine_write::machine_claim_transcript;
-pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
+pub use mesh_machine::{
+    MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
+    MeshMachineBinding,
+};
 pub use observation_policy::*;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{

@@ -13,8 +13,8 @@ mod device_scan;
 mod model;
 mod paging;
 mod readdir;
-mod snapshot;
 mod scoped_files;
+mod snapshot;
 mod walk;
 
 pub use self::readdir::GraphFsFileRead;

@@ -3,20 +3,26 @@ mod operations;
 pub mod outline;
 pub mod plan;
 
-use std::collections::BTreeMap;
-use serde::{Deserialize, Serialize};
-use crate::edit_roundtrip::deck_create::{ArtifactVersionRef, DeckCreationRecord, DesignSpec, KeptOutline, OutlineFreshness};
+use crate::edit_roundtrip::deck_create::{
+    ArtifactVersionRef, DeckCreationRecord, DesignSpec, KeptOutline, OutlineFreshness,
+};
 use crate::provenance::made_by::MadeByTrigger;
 use outline::DeckOutline;
 use plan::DeckPlanView;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DeckOutlineProposeRequest { pub outline: DeckOutline }
+pub struct DeckOutlineProposeRequest {
+    pub outline: DeckOutline,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DeckOutlineRefRequest { pub outline_ref: String }
+pub struct DeckOutlineRefRequest {
+    pub outline_ref: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -36,7 +42,10 @@ pub struct DeckOutlineView {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct DeckOutlineDeclined { pub outline_ref: String, pub declined: bool }
+pub struct DeckOutlineDeclined {
+    pub outline_ref: String,
+    pub declined: bool,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

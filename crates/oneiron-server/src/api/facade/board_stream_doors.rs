@@ -45,8 +45,7 @@ async fn on_run_board(
     let connection = run_connection(run.run_id());
     let mut hooks = None;
     let (value, _rows) =
-        crate::api::execute_run_board_verb(server, writer, &connection, call, &mut hooks)
-            .await?;
+        crate::api::execute_run_board_verb(server, writer, &connection, call, &mut hooks).await?;
     if let Some(hooks) = hooks {
         crate::api::deliver_run_board_hooks(server, hooks).await?;
     }
@@ -92,10 +91,7 @@ async fn subscription(
         BoardVerbCall::Unsubscribe { scopes }
     };
     let (_, connection, value) = on_run_board(server, auth, input.live_run, call).await?;
-    let active = value
-        .get("active")
-        .cloned()
-        .ok_or_else(|| internal(verb))?;
+    let active = value.get("active").cloned().ok_or_else(|| internal(verb))?;
     let active = serde_json::from_value(active).map_err(|_| internal(verb))?;
     Ok(BoardSubscriptionReply {
         connection: connection.0,
@@ -126,7 +122,9 @@ pub(crate) async fn self_focus_unsubscribe(
 /// The subscription scope one wake was minted under, from its envelope id
 /// (`<task id>:<arrived|failed>:<revision>`), as the MCP wake handoff reads it.
 fn wake_scope(wake: &WakeEnvelope) -> Option<SubscriptionScope> {
-    let event = wake.event_ref.strip_prefix(&format!("{}:", wake.task_ref))?;
+    let event = wake
+        .event_ref
+        .strip_prefix(&format!("{}:", wake.task_ref))?;
     match event.split_once(':') {
         Some(("failed", _)) => Some(SubscriptionScope::MyTasks),
         Some(("arrived", _)) => Some(SubscriptionScope::ConsultsToMe),

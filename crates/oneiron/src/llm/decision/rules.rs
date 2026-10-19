@@ -64,10 +64,11 @@ pub struct HostRule {
 }
 
 /// One revision of one rule row, as a receipt names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HostRuleRef {
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub id: EntityId,
     pub revision: u32,
 }
