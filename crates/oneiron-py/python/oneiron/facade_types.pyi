@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 737 facade rows, 2614 declarations.
-Inputs: 685 of 737 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 662 of 737 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 95; unread shapes: 0.
+Census: 739 facade rows, 2616 declarations.
+Inputs: 686 of 739 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 663 of 739 fully typed, 76 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 93; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -8380,11 +8380,27 @@ class SlideReviewUnitInput(TypedDict):
     review_image: NotRequired[str | None]
     review_image_ref: NotRequired[str | None]
     renderer: str
+DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
+class AnswerContractNoul(TypedDict):
+    kind: Literal["noul"]
+class AnswerContractChoice(TypedDict):
+    kind: Literal["choice"]
+    options: list[str]
+class AnswerContractScore(TypedDict):
+    kind: Literal["score"]
+    min: float
+    max: float
+class AnswerContractBox(TypedDict):
+    kind: Literal["box"]
+class AnswerContractPoint(TypedDict):
+    kind: Literal["point"]
+AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
+DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class SlideReviewSubmit(TypedDict):
     artifact_ref: str
     run_ref: str
     units: list[SlideReviewUnitInput]
-    question: Any
+    question: DecisionQuestion
     author: Any
     labels: Any
     reversibility: NotRequired[Any | None]
@@ -8425,7 +8441,7 @@ ArtifactAskUnits = ArtifactAskUnitsSheetRows | ArtifactAskUnitsParagraphs | Arti
 class ArtifactAskSubmit(TypedDict):
     artifact_ref: str
     run_ref: str
-    question: Any
+    question: DecisionQuestion
     units: ArtifactAskUnits
     reversibility: NotRequired[Any | None]
     evidence_refs: NotRequired[list[str]]
@@ -8442,6 +8458,9 @@ class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
     refused: list[UnitRefusal]
+class ArtifactAdmitSubmit(TypedDict):
+    ask: ArtifactAskSubmit
+    decisions: list[TypedDecision]
 class CriticBinding(TypedDict):
     lens_id: str
     lens_ref: str
@@ -10262,20 +10281,6 @@ class AiVideoJobFailed(TypedDict):
 AiVideoJob = AiVideoJobQueued | AiVideoJobRunning | AiVideoJobDone | AiVideoJobFailed
 class AiVideoCancelled(TypedDict):
     job: str
-class AnswerContractNoul(TypedDict):
-    kind: Literal["noul"]
-class AnswerContractChoice(TypedDict):
-    kind: Literal["choice"]
-    options: list[str]
-class AnswerContractScore(TypedDict):
-    kind: Literal["score"]
-    min: float
-    max: float
-class AnswerContractBox(TypedDict):
-    kind: Literal["box"]
-class AnswerContractPoint(TypedDict):
-    kind: Literal["point"]
-AnswerContract = AnswerContractNoul | AnswerContractChoice | AnswerContractScore | AnswerContractBox | AnswerContractPoint
 AiVerdictReversibility = Literal["reversible_read", "outbound_effect"]
 class AiVerdictRequest(TypedDict):
     question: str
@@ -10314,8 +10319,6 @@ class AiVerdict(TypedDict):
     outcome: NotRequired[RoutineOutcome | None]
     screenshot: NotRequired[bool]
     until_ms: NotRequired[int | None]
-DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
-DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):
     entity_type: int
     limit: int
@@ -10355,6 +10358,10 @@ class GraphAskOutcomeFailed(TypedDict):
     answers: list[AnswerRecord]
     abstained: list[EntityId]
 GraphAskOutcome = GraphAskOutcomeDone | GraphAskOutcomeFailed
+class GraphAdmitRequest(TypedDict):
+    question: DecisionQuestion
+    unit: EntityId
+    decision: TypedDecision
 class DecisionDial(TypedDict):
     first: DecisionRung
     ceiling: DecisionRung

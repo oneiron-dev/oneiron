@@ -1301,6 +1301,7 @@ fn mcp_agent_verb_input(
         "vault.artifacts.release_wait" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.review_slides" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.ask" => a.spec.clone().ok_or_else(invalid),
+        "vault.artifacts.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.critic.review" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.inspect_deck" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.propose_deck" => a.spec.clone().ok_or_else(invalid),
@@ -1499,6 +1500,7 @@ fn mcp_agent_verb_input(
         "ai.video.cancel" => a.spec.clone().ok_or_else(invalid),
         "ai.verdict" => a.spec.clone().ok_or_else(invalid),
         "vault.graph.ask" => a.spec.clone().ok_or_else(invalid),
+        "vault.graph.admit" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.create" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.edit" => a.spec.clone().ok_or_else(invalid),
         "vault.questions.pause" => a.spec.clone().ok_or_else(invalid),
@@ -3103,6 +3105,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.artifacts.ask" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.artifacts.admit" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.critic.review" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3411,6 +3416,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.graph.ask" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.graph.admit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.questions.create" => {
@@ -11778,6 +11786,24 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.artifacts.admit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.artifacts.admit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::blob_artifact::ArtifactAdmitSubmit =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_artifacts_admit(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.critic.review" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.critic.review", &input)
@@ -12854,6 +12880,24 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_graph_ask(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.graph.admit" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.graph.admit", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::receipt::GraphAdmitRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_graph_admit(server, auth, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

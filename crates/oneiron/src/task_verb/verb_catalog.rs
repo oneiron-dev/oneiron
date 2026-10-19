@@ -451,6 +451,7 @@ pub enum AgentVerb {
     VaultArtifactsReleaseWait,
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
+    VaultArtifactsAdmit,
     VaultCriticReview,
     VaultArtifactsInspectDeck,
     VaultArtifactsProposeDeck,
@@ -540,6 +541,7 @@ pub enum AgentVerb {
     AiVideoCancel,
     AiVerdict,
     VaultGraphAsk,
+    VaultGraphAdmit,
     VaultQuestionsCreate,
     VaultQuestionsEdit,
     VaultQuestionsPause,
@@ -1219,6 +1221,7 @@ impl AgentVerb {
         Self::VaultArtifactsReleaseWait,
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
+        Self::VaultArtifactsAdmit,
         Self::VaultCriticReview,
         Self::VaultArtifactsInspectDeck,
         Self::VaultArtifactsProposeDeck,
@@ -1308,6 +1311,7 @@ impl AgentVerb {
         Self::AiVideoCancel,
         Self::AiVerdict,
         Self::VaultGraphAsk,
+        Self::VaultGraphAdmit,
         Self::VaultQuestionsCreate,
         Self::VaultQuestionsEdit,
         Self::VaultQuestionsPause,
@@ -2002,6 +2006,7 @@ impl AgentVerb {
             Self::VaultArtifactsReleaseWait => "vault.artifacts.release_wait",
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
+            Self::VaultArtifactsAdmit => "vault.artifacts.admit",
             Self::VaultCriticReview => "vault.critic.review",
             Self::VaultArtifactsInspectDeck => "vault.artifacts.inspect_deck",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
@@ -2091,6 +2096,7 @@ impl AgentVerb {
             Self::AiVideoCancel => "ai.video.cancel",
             Self::AiVerdict => "ai.verdict",
             Self::VaultGraphAsk => "vault.graph.ask",
+            Self::VaultGraphAdmit => "vault.graph.admit",
             Self::VaultQuestionsCreate => "vault.questions.create",
             Self::VaultQuestionsEdit => "vault.questions.edit",
             Self::VaultQuestionsPause => "vault.questions.pause",
@@ -2773,6 +2779,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
@@ -2862,6 +2869,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -3563,6 +3571,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
@@ -3652,6 +3661,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -4418,6 +4428,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
@@ -4507,6 +4518,7 @@ impl AgentVerb {
                 | Self::AiVideoCancel
                 | Self::AiVerdict
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -4988,6 +5000,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
+                | Self::VaultArtifactsAdmit
                 | Self::VaultCriticReview
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
@@ -5041,6 +5054,7 @@ impl AgentVerb {
                 | Self::AiVideo
                 | Self::AiVideoCancel
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultQuestionsCreate
                 | Self::VaultQuestionsEdit
                 | Self::VaultQuestionsPause
@@ -5180,6 +5194,7 @@ impl AgentVerb {
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::VaultGraphAsk
+                | Self::VaultGraphAdmit
                 | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsAdmit
@@ -5658,6 +5673,7 @@ impl AgentVerb {
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
+            Self::VaultArtifactsAdmit => &["spec"],
             Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
@@ -5747,6 +5763,7 @@ impl AgentVerb {
             Self::AiVideoCancel => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
+            Self::VaultGraphAdmit => &["spec"],
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
@@ -6427,6 +6444,7 @@ impl AgentVerb {
             Self::VaultArtifactsReleaseWait => &["spec"],
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
+            Self::VaultArtifactsAdmit => &["spec"],
             Self::VaultCriticReview => &["spec"],
             Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
@@ -6516,6 +6534,7 @@ impl AgentVerb {
             Self::AiVideoCancel => &["spec"],
             Self::AiVerdict => &["spec"],
             Self::VaultGraphAsk => &["spec"],
+            Self::VaultGraphAdmit => &["spec"],
             Self::VaultQuestionsCreate => &["spec"],
             Self::VaultQuestionsEdit => &["spec"],
             Self::VaultQuestionsPause => &["spec"],
@@ -8057,6 +8076,9 @@ impl AgentVerb {
             Self::VaultArtifactsAsk => {
                 "Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."
             }
+            Self::VaultArtifactsAdmit => {
+                "Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard."
+            }
             Self::VaultCriticReview => {
                 "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
             }
@@ -8302,6 +8324,9 @@ impl AgentVerb {
                 "The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."
             }
             Self::VaultGraphAsk => "",
+            Self::VaultGraphAdmit => {
+                "Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller."
+            }
             Self::VaultQuestionsCreate => "",
             Self::VaultQuestionsEdit => "",
             Self::VaultQuestionsPause => "",

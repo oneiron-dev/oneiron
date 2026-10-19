@@ -4110,6 +4110,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_artifacts_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.artifacts.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.artifacts.admit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_critic_review(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.critic.review")?;
         let output = py
@@ -4773,6 +4780,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.graph.ask")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.graph.ask", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_graph_admit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.graph.admit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.graph.admit", input))
             .map_err(raise)?;
         encode(&output)
     }

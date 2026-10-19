@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 737 facade rows, 2571 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 693.
+// UniFFI census: 739 facade rows, 2573 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 695.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -26021,6 +26021,68 @@ pub struct SlideReviewUnitInput {
     pub renderer: String,
 }
 
+/// `oneiron::llm::decision::types::DecisionClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DecisionClass {
+    #[serde(rename = "retrieval")]
+    Retrieval,
+    #[serde(rename = "contradiction")]
+    Contradiction,
+    #[serde(rename = "triage")]
+    Triage,
+    #[serde(rename = "judgment")]
+    Judgment,
+    #[serde(rename = "useful_upstream")]
+    UsefulUpstream,
+    #[serde(rename = "preference")]
+    Preference,
+    #[serde(rename = "provenance")]
+    Provenance,
+}
+
+/// `oneiron::llm::decision::types::AnswerContract`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum AnswerContract {
+    #[serde(rename = "noul")]
+    Noul,
+    #[serde(rename = "choice")]
+    Choice {
+        #[serde(rename = "options")]
+        options: Vec<String>,
+    },
+    #[serde(rename = "score")]
+    Score {
+        #[serde(rename = "min")]
+        min: f64,
+        #[serde(rename = "max")]
+        max: f64,
+    },
+    #[serde(rename = "box")]
+    Box,
+    #[serde(rename = "point")]
+    Point,
+}
+
+/// `oneiron::llm::decision::types::DecisionQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionQuestion {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "version")]
+    pub version: u32,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "class")]
+    pub class: DecisionClass,
+    #[serde(rename = "contract")]
+    pub contract: AnswerContract,
+    #[serde(rename = "accept_type")]
+    pub accept_type: bool,
+}
+
 /// `oneiron::blob_artifact::verbs::SlideReviewSubmit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -26032,7 +26094,7 @@ pub struct SlideReviewSubmit {
     #[serde(rename = "units")]
     pub units: Vec<SlideReviewUnitInput>,
     #[serde(rename = "question")]
-    pub question: crate::WireJson,
+    pub question: DecisionQuestion,
     #[serde(rename = "author")]
     pub author: crate::WireJson,
     #[serde(rename = "labels")]
@@ -26149,7 +26211,7 @@ pub struct ArtifactAskSubmit {
     #[serde(rename = "run_ref")]
     pub run_ref: String,
     #[serde(rename = "question")]
-    pub question: crate::WireJson,
+    pub question: DecisionQuestion,
     #[serde(rename = "units")]
     pub units: ArtifactAskUnits,
     #[serde(
@@ -26207,6 +26269,16 @@ pub struct ArtifactAskOutcome {
     pub abstained: Vec<UnitAbstention>,
     #[serde(rename = "refused")]
     pub refused: Vec<UnitRefusal>,
+}
+
+/// `oneiron::blob_artifact::verbs::ArtifactAdmitSubmit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactAdmitSubmit {
+    #[serde(rename = "ask")]
+    pub ask: ArtifactAskSubmit,
+    #[serde(rename = "decisions")]
+    pub decisions: Vec<TypedDecision>,
 }
 
 /// `oneiron::critic::review::submit::CriticBinding`.
@@ -31643,31 +31715,6 @@ pub struct AiVideoCancelled {
     pub job: String,
 }
 
-/// `oneiron::llm::decision::types::AnswerContract`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-#[serde(deny_unknown_fields)]
-pub enum AnswerContract {
-    #[serde(rename = "noul")]
-    Noul,
-    #[serde(rename = "choice")]
-    Choice {
-        #[serde(rename = "options")]
-        options: Vec<String>,
-    },
-    #[serde(rename = "score")]
-    Score {
-        #[serde(rename = "min")]
-        min: f64,
-        #[serde(rename = "max")]
-        max: f64,
-    },
-    #[serde(rename = "box")]
-    Box,
-    #[serde(rename = "point")]
-    Point,
-}
-
 /// `oneiron::task_verb::sdk_host::AiVerdictReversibility`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AiVerdictReversibility {
@@ -31766,43 +31813,6 @@ pub struct AiVerdict {
     pub screenshot: Option<bool>,
     #[serde(rename = "until_ms", default, skip_serializing_if = "Option::is_none")]
     pub until_ms: Option<u64>,
-}
-
-/// `oneiron::llm::decision::types::DecisionClass`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum DecisionClass {
-    #[serde(rename = "retrieval")]
-    Retrieval,
-    #[serde(rename = "contradiction")]
-    Contradiction,
-    #[serde(rename = "triage")]
-    Triage,
-    #[serde(rename = "judgment")]
-    Judgment,
-    #[serde(rename = "useful_upstream")]
-    UsefulUpstream,
-    #[serde(rename = "preference")]
-    Preference,
-    #[serde(rename = "provenance")]
-    Provenance,
-}
-
-/// `oneiron::llm::decision::types::DecisionQuestion`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct DecisionQuestion {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "version")]
-    pub version: u32,
-    #[serde(rename = "text")]
-    pub text: String,
-    #[serde(rename = "class")]
-    pub class: DecisionClass,
-    #[serde(rename = "contract")]
-    pub contract: AnswerContract,
-    #[serde(rename = "accept_type")]
-    pub accept_type: bool,
 }
 
 /// `oneiron::receipt::questions::GraphAskSelection`.
@@ -31919,6 +31929,18 @@ pub enum GraphAskOutcome {
         #[serde(rename = "abstained")]
         abstained: Vec<String>,
     },
+}
+
+/// `oneiron::receipt::questions::GraphAdmitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphAdmitRequest {
+    #[serde(rename = "question")]
+    pub question: DecisionQuestion,
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "decision")]
+    pub decision: TypedDecision,
 }
 
 /// `oneiron::llm::decision::types::DecisionDial`.

@@ -477,6 +477,7 @@ vaultArtifactsWaits(requestJson: string): string
 vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsAsk(input: unknown): unknown
+vaultArtifactsAdmit(input: unknown): unknown
 vaultCriticReview(input: unknown): unknown
 vaultArtifactsInspectDeck(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
@@ -566,6 +567,7 @@ aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
 aiVerdict(input: unknown): unknown
 vaultGraphAsk(input: unknown): unknown
+vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown

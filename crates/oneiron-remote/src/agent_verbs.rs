@@ -1414,6 +1414,9 @@ impl OneironClient {
                 "vault.artifacts.ask" => remote_agent_verb_output::<
                     oneiron::blob_artifact::ArtifactAskOutcome,
                 >(client, verb, &input),
+                "vault.artifacts.admit" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::ArtifactAskOutcome,
+                >(client, verb, &input),
                 "vault.critic.review" => remote_agent_verb_output::<
                     oneiron::critic::review::CriticReviewOutcome,
                 >(client, verb, &input),
@@ -1683,6 +1686,11 @@ impl OneironClient {
                 "vault.graph.ask" => remote_agent_verb_output::<oneiron::receipt::GraphAskOutcome>(
                     client, verb, &input,
                 ),
+                "vault.graph.admit" => {
+                    remote_agent_verb_output::<oneiron::receipt::GraphAskOutcome>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.questions.create" => remote_agent_verb_output::<
                     oneiron::llm::decision::questions::QuestionRecord,
                 >(client, verb, &input),
@@ -7812,6 +7820,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.artifacts.ask", value)
     }
+    pub fn vault_artifacts_admit(
+        &self,
+        input: &oneiron::blob_artifact::ArtifactAdmitSubmit,
+    ) -> Result<oneiron::blob_artifact::ArtifactAskOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.admit", value)
+    }
     pub fn vault_critic_review(
         &self,
         input: &oneiron::critic::review::CriticReviewSubmit,
@@ -8891,6 +8911,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.graph.ask", value)
+    }
+    pub fn vault_graph_admit(
+        &self,
+        input: &oneiron::receipt::GraphAdmitRequest,
+    ) -> Result<oneiron::receipt::GraphAskOutcome, MemoryError> {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.graph.admit", value)
     }
     pub fn vault_questions_create(
         &self,
