@@ -30,6 +30,8 @@ mod secrets;
 pub mod settings_policy;
 /// Account and organization vault bindings with per-vault lifecycle hooks.
 pub mod tenancy;
+/// The host's vault UID allocation table: its path, file shape and row codec.
+pub mod vault_uids;
 mod version;
 /// The vault-VM wire shared by the guest adapter and the host's VMM driver.
 pub mod vm;
