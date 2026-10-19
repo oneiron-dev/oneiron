@@ -160,6 +160,10 @@ side_tables! {
     /// An entity's typed body: its schema tag, birth and head frontiers and commit count. Key:
     /// id16 (entity).
     TYPED_BODY_HEAD: VaultMeta b"typed_body:head:v1:" Named;
+    /// Who made one typed-body commit: its actor and MadeBy, or its time alone once that actor
+    /// was erased; the commit's message names no one. Key: id16 (entity) + u64be (commit peer).
+    TYPED_BODY_RECEIPT: VaultMeta b"typed_body:receipt:v1:" Named
+        => crate::typed_body::erase_receipt_actor_in_txn;
     /// A standing artifact question's last ask of one artifact: the head versions it read and
     /// the proposal its answers wait under. Key: id16(question) + id16(artifact).
     TYPED_QUESTION_ARTIFACT_ASKED: VaultMeta b"typed_question:artifact_asked:v1:" Named;

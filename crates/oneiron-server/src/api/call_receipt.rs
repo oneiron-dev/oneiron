@@ -355,6 +355,44 @@ pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInp
     }
 }
 
+/// What a reply states when the send-time recheck replaced its answer with
+/// the refusal `code` (`message` its text) before it left (FIX 814): the
+/// call's final delivery, a second row beside the call's own `original`,
+/// refused with that code, whose ref the replacement carries
+/// (`Vault::record_delivery_refusal`). The call's own row stays as it was.
+/// The anonymous exception writes none and says so. A call with no row of
+/// its own, a server gone, or a row that cannot be written (logged, as
+/// [`record`] logs) leave the replacement unrecorded, never stating the
+/// original's ref.
+pub(crate) fn record_delivery_refusal(
+    server: Option<&SyncServer>,
+    original: &CallStamp,
+    code: &str,
+    message: &str,
+) -> CallStamp {
+    if original.no_record() {
+        return CallStamp::NoRecord;
+    }
+    let (Some(server), Some(original_ref)) = (server, original.receipt_ref()) else {
+        return CallStamp::Unrecorded;
+    };
+    let digest = oneiron::receipt::call_refusal_digest(code, message);
+    match server
+        .vault()
+        .record_delivery_refusal(original_ref, code, digest)
+    {
+        Ok(Some(receipt_ref)) => CallStamp::Recorded(receipt_ref),
+        Ok(None) => {
+            tracing::warn!(%original_ref, %code, "delivery refusal found no call receipt");
+            CallStamp::Unrecorded
+        }
+        Err(error) => {
+            tracing::warn!(%original_ref, %code, %error, "delivery refusal answered without its receipt");
+            CallStamp::Unrecorded
+        }
+    }
+}
+
 /// The door a path's replies are recorded by, and the verb an unattributed
 /// reply there states: the facade's verb, the MCP endpoint, a refused WS
 /// upgrade. `None` for routes that keep no wire receipt.

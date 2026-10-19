@@ -5,11 +5,12 @@
 // runtime.d.ts's. The revision, the digest of this text, is
 // `CATALOG_FRAGMENT_REVISION` (catalog_fragment_revision.rs).
 // Every verb call resolves with its row's output itself, or with a `StoredResult` card in its place past 512 KiB of JSON.
-// A refused call throws a string, the refusal's JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,
+// A refused call rejects with a string, the refusal's JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
-// A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
-// refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1084 code-mode rows (1060 host rows, 24 run rows), 3593 declarations.
+// A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
+// refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
+// cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
+// Census: 1084 code-mode rows (1060 host rows, 24 run rows), 3591 declarations.
 // Replies: 967 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -2258,8 +2259,8 @@ declare namespace Sdk {
   type TeamBindingView = { team_ref: string; pattern: CoordinationPatternView; leader: EntityId; member_attempt_refs: EntityId[]; proposal_refs: string[]; root_task?: string | null; started_at: number };
   type TeamReceiptView = { team_ref: string; type_ref: TypeStamp; pattern: CoordinationPatternView; pattern_skill?: SkillRevisionView | null; axis: TeamAxis; width: number; models: string[]; outcome_receipt?: string | null };
   type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: string; effort: ReasoningEffort; why: string; reused: boolean };
-  type CriticAssociation = "branch_attempt" | "canonical_run_ref";
-  type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
+  type CriticAssociation = "branch_attempt" | "canonical_run_ref" | "declared_spawn_attempt";
+  type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
   type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string };
   type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null };
   type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number };
@@ -2327,14 +2328,14 @@ declare namespace Sdk {
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
   type ArtifactAdmitSubmit = { ask: ArtifactAskSubmit; decisions: TypedDecision[] };
   type CriticBinding = { lens_id: string; lens_ref: string; actor_ref: string; actor_class: number };
-  type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[] };
+  type CriticReviewSubmit = { target_ref: string; kind: string; session_ref: string; run_ref: string; type_node: string; type_tree_version: number; axis: string; auto_resolve_threshold: number; catalog: unknown; critics: CriticBinding[]; spawn_attempt_ref?: string | null };
   type CritiqueTriageScores = { accept: number; revise: number; discard: number };
   type MergedFinding = { key: string; verdict: CritiqueVerdict; severity: CritiqueSeverity; confidence: number; artifact_ids: string[]; evidence_refs: string[]; suggested_edit?: string | null; auto_resolved: boolean };
   type CritiqueTriage = { verdict: CritiqueVerdict; scores: CritiqueTriageScores; acted_on_artifact_ids: string[]; hard_veto_artifact_ids: string[]; out_of_scope_artifact_ids: string[]; findings: MergedFinding[]; auto_resolved: boolean };
   type CritiqueProvenance = { critic_ref: string; critic_class: number; model_id: string; model_revision?: string | null };
   type CriticPrediction = { what: string; by_when: number; how_checked: OutcomeBinding };
   type CritiqueArtifact = { schema_version: number; artifact_id: string; run_id: string; branch_job: AttemptId; candidate_ref: string; lens_id: string; domain: string; provenance: CritiqueProvenance; calibration: LearningCell; prediction?: CriticPrediction | null; verdict: CritiqueVerdict; severity: CritiqueSeverity; hard_check_passed?: boolean | null; evidence_refs: string[]; suggested_edit?: string | null; out_of_scope?: boolean; created_at: number };
-  type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[] };
+  type CriticReviewOutcome = { verdict_claim_ref: string; triage: CritiqueTriage; artifacts: CritiqueArtifact[]; receipts: DecisionReceipt[]; spawn_attempt_ref?: string | null };
   type OutlineCommunication = { audience: string; outcome: string; main_message: string };
   type OutlineDivision = "fixed" | "split";
   type OutlinePriority = "required" | "optional";
@@ -2418,16 +2419,14 @@ declare namespace Sdk {
   type DeckRender = { side: DeckRenderSide; slide: string; image_hash: number[]; renderer: string };
   type DeckEditContext = { made_by?: EntityId | null; thread?: EntityId | null; renders?: DeckRender[] };
   type DeckProposeRequest = { artifact_ref: string; transaction: DeckTransaction; run_ref: string; context?: DeckEditContext; made_by?: MadeBy | null };
-  type OfficeFormat = "xlsx" | "docx" | "pptx";
-  type DeckRejectionSheet = { name: string; index: number };
-  type DeckRejectionSheetDependency = { from_sheet: string; to_sheet: string };
-  type DeckRejectionSummary = { format: OfficeFormat; sheets: DeckRejectionSheet[]; defined_names: string[]; has_pivots: boolean; has_charts: boolean; has_macros: boolean; cross_sheet_dependencies: DeckRejectionSheetDependency[]; unknown_parts: string[] };
+  type DeckInspection = { slides: DeckSlideInspection[]; ambiguities: DeckIdentityAmbiguity[]; marks: IdMarks };
+  type DeckRejectionInspection = { state: "inspected"; deck: DeckInspection; parts: string[] } | { state: "unreadable"; reason: string };
   type DeckRejectionCheck = { name: string; passed: boolean; detail: string };
   type DeckRejectionReport = { ok: boolean; checks: DeckRejectionCheck[] };
   type DeckNativeRefusal = { kind: "external_chart_source"; detail: string } | { kind: "formula_backed_series"; detail: string } | { kind: "ambiguous_chart_data"; detail: string } | { kind: "shared_chart_data" } | { kind: "unsupported_chart_family"; detail: string } | { kind: "merged_continuation_cell" } | { kind: "unsupported_merge_topology"; detail: string } | { kind: "length_change"; have: number; want: number } | { kind: "stale"; detail: string } | { kind: "invalid"; detail: string } | { kind: "cache_mismatch" } | { kind: "outside_allowed_parts"; part: string } | { kind: "workbook"; detail: string } | { kind: "package"; detail: string } | { kind: "xml"; detail: string };
   type DeckStepRefusal = { kind: "target_changed" } | { kind: "ambiguous_anchor"; detail: string } | { kind: "animated_text_structure_changed" } | { kind: "animation_dependency_unsupported"; detail: string } | { kind: "non_invertible_group_transform" } | { kind: "unrepresentable_transform"; detail: string } | { kind: "inherited_transform" } | { kind: "part_diff_outside_transaction"; part: string } | { kind: "write_outside_target"; part: string; why: string } | { kind: "text_mapping"; detail: string } | { kind: "missing"; detail: string } | { kind: "id_space_exhausted" } | { kind: "reparent_unsupported"; detail: string } | { kind: "clone_dependency_unsupported"; relationship: string } | { kind: "reorder_unsupported"; detail: string } | { kind: "glued_connector"; connector?: number | null } | { kind: "invalid"; detail: string } | { kind: "picture"; detail: string } | { kind: "read_back"; detail: string } | { kind: "package"; detail: string } | { kind: "xml"; detail: string } | { kind: "deck"; detail: string } | { kind: "native"; refusal: DeckNativeRefusal } | { kind: "asset"; detail: string };
   type DeckTransactionRefusal = { kind: "invalid"; detail: string } | { kind: "base_changed" } | { kind: "not_editable" } | { kind: "step"; step: number; verb: string; refusal: DeckStepRefusal } | { kind: "part_diff_outside_transaction"; part: string } | { kind: "package"; detail: string } | { kind: "deck"; detail: string };
-  type DeckProposeRejection = { inspection: DeckRejectionSummary; report: DeckRejectionReport; refusal: DeckTransactionRefusal };
+  type DeckProposeRejection = { inspection: DeckRejectionInspection; report: DeckRejectionReport; refusal: DeckTransactionRefusal };
   type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: unknown | null };
   type KeptProposal = { version: ArtifactVersionView; stranded: boolean; remapped: number; drifted: number; receipt: ReceiptRecord };
@@ -5404,7 +5403,7 @@ declare const vault: Sdk.VaultHost & {
       save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
       /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
       save_from_here(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
-      /** A person starts an off-record stretch in a room they belong to, on their own credential. */
+      /** A person, or an agent within its Write Grant, starts an off-record stretch in a room they belong to, on their own credential. */
       start(input: Sdk.OffRecordRoomStartRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
       /** Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk. */
       status(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
@@ -5413,7 +5412,7 @@ declare const vault: Sdk.VaultHost & {
       /** Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant. */
       witness(input: Sdk.OffRecordRoomWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
     };
-    /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
+    /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous, under their own name for it, and answers the handle later calls name it by. */
     start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
     /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */
     status(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;

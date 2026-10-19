@@ -5375,6 +5375,11 @@ async fn execute_agent_verb_listing(
     let invocation = actor
         .invocation
         .unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
+    // describe names one target (FIX 3256): a conflict is refused before its
+    // hooks see it, as on REST, and again on the args they leave.
+    if tool == "describe" {
+        oneiron::task_verb::sdk::validate_input(tool, &input).map_err(mcp_facade_error)?;
+    }
     // Rule 5: a task-work row, or a row whose engine call produces task work,
     // takes its one turn here, for MCP and code mode alike, binds it on the
     // surface its row runs on and holds it through its hooks and its row.
@@ -5386,14 +5391,12 @@ async fn execute_agent_verb_listing(
                 | "vault.projects.route_tradeoff"
                 | "vault.artifacts.body.fork.merge"
                 | "vault.artifacts.body.proposal.settle"
-        )
-        || (tool == "describe" && oneiron::task_verb::sdk::describe_takes_task_work_turn(&input))
-    {
+        ) {
         Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
     } else {
         None
     };
-    let surface = McpRowSurface {
+    let mut surface = McpRowSurface {
         position,
         invocation,
         run,
@@ -5408,6 +5411,20 @@ async fn execute_agent_verb_listing(
         surface.memory(server, actor, producers),
     )?;
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
+    // Rule 5 (FIX 4445): a row one branch of whose engine call produces task
+    // work takes its turn on the args its pre hooks left, as the served
+    // facade does, so a rewrite into that branch runs on an awaited turn.
+    // The row holds one turn only, bound on its surface and its memory alike.
+    let (memory, task_work_turn) = if task_work_turn.is_none()
+        && (tool == "describe"
+            && oneiron::task_verb::sdk::describe_takes_task_work_turn(&hooks.args))
+    {
+        let turn = Arc::new(server.admit_task_work(actor.actor_ref).await);
+        surface.task_work_turn = Some(Arc::clone(&turn));
+        (memory.with_task_work_turn(Arc::clone(&turn)), Some(turn))
+    } else {
+        (memory, task_work_turn)
+    };
     let (output, source, carrier, epoch) = execute_agent_verb_row(
         server,
         tool,
@@ -6226,6 +6243,8 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "describe" => {
+            oneiron::task_verb::sdk::validate_input("describe", &input)
+                .map_err(mcp_facade_error)?;
             if input.get("self").and_then(Value::as_bool) == Some(true) {
                 let auth = actor.auth.as_ref().ok_or_else(invalid)?;
                 let (value, listed) =
@@ -7590,6 +7609,28 @@ async fn execute_agent_verb_row(
                         served.extend(listed);
                         output
                     }),
+                // A managed vault's attested owner carries no slip: the request's own owner proof, which the export revalidates in its snapshot, as the facade takes it (FIX 5202).
+                (None, None) if auth.managed_owner().is_some() => {
+                    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+                        McpGatewayError::new(
+                            -32020,
+                            "forbidden",
+                            "full-vault export requires verified owner authority",
+                        )
+                    })?;
+                    server
+                        .vault
+                        .export_with_authenticated_owner_listing(
+                            &input,
+                            &owner,
+                            surface,
+                            actor.locality(),
+                        )
+                        .map(|(output, listed)| {
+                            served.extend(listed);
+                            output
+                        })
+                }
                 (None, None) => {
                     return Err(McpGatewayError::new(
                         -32020,

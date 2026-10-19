@@ -3946,6 +3946,7 @@ impl OneironClient {
             task_ref: task_ref.map(str::to_owned),
             ..Default::default()
         };
+        input.validate()?;
         let value = serde_json::to_value(&input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
