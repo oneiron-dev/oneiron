@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1055 facade rows, 3580 declarations.
-Inputs: 990 of 1055 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 945 of 1055 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1057 facade rows, 3584 declarations.
+Inputs: 992 of 1057 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 947 of 1057 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -12308,6 +12308,17 @@ class RoomClaimOutcomeClaimed(TypedDict):
 class RoomClaimOutcomeHeldBy(TypedDict):
     HeldBy: RoomClaimReceipt
 RoomClaimOutcome = Literal["NotAddressed"] | RoomClaimOutcomeClaimed | RoomClaimOutcomeHeldBy
+ThreadAudienceHistory = Literal["full", "from_now"]
+class ThreadAudienceAddRequest(TypedDict):
+    thread_ref: str
+    person_ref: str
+    history: ThreadAudienceHistory
+class ThreadAudienceReceipt(TypedDict):
+    thread_ref: str
+    event_ref: str
+class ThreadAudienceRemoveRequest(TypedDict):
+    thread_ref: str
+    person_ref: str
 class ProjectGoalDraft(TypedDict):
     goal: str
     why: str

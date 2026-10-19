@@ -6179,6 +6179,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_thread_audience_add(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.thread_audience.add", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_thread_audience_remove(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.thread_audience.remove", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_projects_propose(
         &self,
         input: serde_json::Value,

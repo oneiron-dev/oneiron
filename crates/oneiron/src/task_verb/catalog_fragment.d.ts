@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1090 code-mode rows (1065 host rows, 25 run rows), 3630 declarations.
-// Replies: 973 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1092 code-mode rows (1067 host rows, 25 run rows), 3634 declarations.
+// Replies: 975 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2504,6 +2504,10 @@ declare namespace Sdk {
   type RoomClaimRequest = { room_ref: string; turn_ref: string };
   type RoomClaimReceipt = { room_id: string; turn_id: string; actor: string; receipt_ref: string; at: number };
   type RoomClaimOutcome = { Claimed: RoomClaimReceipt } | { HeldBy: RoomClaimReceipt } | "NotAddressed";
+  type ThreadAudienceHistory = "full" | "from_now";
+  type ThreadAudienceAddRequest = { thread_ref: string; person_ref: string; history: ThreadAudienceHistory };
+  type ThreadAudienceReceipt = { thread_ref: string; event_ref: string };
+  type ThreadAudienceRemoveRequest = { thread_ref: string; person_ref: string };
   type ProjectGoalDraft = { goal: string; why: string; axes: string[] };
   type ProjectProposalPicks = { leader_agent_def_ref: string; board_human_refs: string[]; budget_share_bps: number; starting_skill_refs: string[] };
   type ProjectProposalRequest = { card_id: string; source_message_ref: string; goal: ProjectGoalDraft; picks: ProjectProposalPicks };
@@ -5844,8 +5848,14 @@ declare const vault: Sdk.VaultHost & {
     reply_strips(input: Sdk.ReplyStripsRequest): Promise<Sdk.ReplyStripsPage | StoredResult>;
     /** A room's effective sharing scope and why it is clamped, for a member of the room. */
     sharing(input: Sdk.RoomRefRequest): Promise<Sdk.RoomSharingView | StoredResult>;
-    /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
+    /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove. */
     speak(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
+    thread_audience: {
+      /** Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it. */
+      add(input: Sdk.ThreadAudienceAddRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
+      /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. */
+      remove(input: Sdk.ThreadAudienceRemoveRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
+    };
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
   };
