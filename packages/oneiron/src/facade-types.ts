@@ -4433,7 +4433,7 @@ export type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode:
 /** `oneiron::context_projection::spec::ContextSpec` */
 export type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null }
 /** `oneiron::task_verb::sdk_workflows::WorkflowDispatchRequest` */
-export type WorkflowDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null }
+export type WorkflowDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref?: EntityId | null }
 /** `oneiron::task_verb::sdk_workflows::WorkflowStepCapture` */
 export type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref: EntityId; definition: AgentDefinitionSpec }
 /** `oneiron::task_verb::sdk_workflows::WorkflowStepRun` */

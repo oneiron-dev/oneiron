@@ -28,6 +28,12 @@
 //! On the same signal it asks each queued project question (OF-501): a
 //! person's turn queued it by reference, and it runs here, off that turn, on
 //! the host's typed ladder once the host installed one.
+//!
+//! Each pass, at start and on every wake, also settles the TASK each ended
+//! run that realizes one still owes it (FIX 4391), a run that ended in this
+//! pass included: in a writer of its own per run, a completed run's
+//! done-means judged on the host's ladder outside it. A run that does not
+//! settle is logged, and the timer looks again.
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -41,6 +47,7 @@ use oneiron::failure_ladder::FailureLadderOutcome;
 use oneiron::learning::TypeRef;
 use oneiron::llm::decision::HeldLadder;
 use oneiron::self_heal::audit::AttemptConfession;
+use oneiron::task_verb::RunnerDoneAnswer;
 use tokio::sync::{broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
@@ -418,6 +425,7 @@ fn pump_once(
             }
         }
     }
+    let unsettled = settle_workflow_tasks(vault, decisions);
     let wave_pending = AttemptQueue::new(vault).list()?.iter().any(|attempt| {
         attempt.kind == oneiron::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND
             && matches!(
@@ -427,7 +435,56 @@ fn pump_once(
                     | oneiron::attempt_queue::AttemptState::Leased
             )
     });
-    Ok(held || wave_pending || !dispatcher.open_workflow_roots()?.is_empty())
+    Ok(held || wave_pending || unsettled || !dispatcher.open_workflow_roots()?.is_empty())
+}
+
+/// Settles the TASK each ended run that realizes one still owes it, one
+/// writer per run (FIX 4391). A completed run's done-means is judged here,
+/// outside that writer, on the host's ladder once the host installed one;
+/// until then its Done asks up. `true` while any run still owes it: one
+/// that failed to settle is logged and tried again on the next pass.
+fn settle_workflow_tasks(vault: &Vault, decisions: Option<&DecisionHost>) -> bool {
+    let dispatcher = AgentDispatcher::new(vault);
+    let roots = match dispatcher.unsettled_workflow_tasks() {
+        Ok(roots) => roots,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "ended workflows that realize a TASK could not be listed");
+            return true;
+        }
+    };
+    let mut owed = false;
+    for root in roots {
+        let judged = judge_workflow_done(&dispatcher, root, decisions);
+        if let Err(error) = dispatcher.settle_workflow_task(root, judged, now_secs()) {
+            owed = true;
+            tracing::warn!(kind = ?error.kind(), ?root, "a workflow's TASK did not settle; the next pass tries again");
+        }
+    }
+    owed
+}
+
+/// A completed run's "Done means met?", answered on the host's ladder. With
+/// no question owed, no ladder installed yet, or questions that do not hold,
+/// there is no answer and the Done asks up.
+fn judge_workflow_done(
+    dispatcher: &AgentDispatcher<'_>,
+    root: AttemptId,
+    decisions: Option<&DecisionHost>,
+) -> Option<RunnerDoneAnswer> {
+    let question = match dispatcher.workflow_done_question(root) {
+        Ok(question) => question?,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), ?root, "a workflow's Done question could not be read; its Done asks up");
+            return None;
+        }
+    };
+    match decisions?.task_decisions() {
+        Ok(decisions) => Some(question.decide(&decisions)),
+        Err(error) => {
+            tracing::warn!(%error, "the task surface's questions are invalid; Done asks up");
+            None
+        }
+    }
 }
 
 /// Asks every queued project question on the host's ladder; with none

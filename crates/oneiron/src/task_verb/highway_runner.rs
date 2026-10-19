@@ -35,6 +35,8 @@ use super::runner_done::RunnerDoneAnswer;
 use super::verb_kind::TaskKind;
 use super::wire_decode::task_verb_body_in;
 
+pub(crate) mod workflow_try;
+
 impl HostBinding {
     /// The binding a runner calls under, from the leased row it holds: the
     /// row's own id, lease owner and attempt count. A row with no live

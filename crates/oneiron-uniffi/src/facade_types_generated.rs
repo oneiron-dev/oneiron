@@ -33205,6 +33205,8 @@ pub struct WorkflowDispatchRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub context_spec: Option<ContextSpec>,
+    #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_workflows::WorkflowStepCapture`.

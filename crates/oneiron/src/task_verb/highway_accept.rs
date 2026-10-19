@@ -27,6 +27,7 @@ use super::highway::{
     attempt_handle, attempt_hex, forbidden, generation_digest, invalid_state, lease_owner_for,
     local_node_in, not_found, qualified_key, stamp_fields,
 };
+use super::highway_runner::workflow_try::WORKFLOW_TRY_OWNER;
 use super::highway_types::{
     HostBinding, TaskAccept, TaskCallReceipt, TaskHandle, TaskOutcome, TaskVia,
 };
@@ -148,13 +149,17 @@ impl Memory<'_> {
     /// first, so a stale or missing one stays a receipt outcome; a held one
     /// makes the runner a party to the TASK its try realizes, through L02's
     /// rule ([`TaskActorVerb::RunnerTake`]). Answers the TASK's standing
-    /// with the fence.
+    /// with the fence. A saved workflow's wrapper binds under an owner no
+    /// lease carries and runs its own fence instead (FIX 4391).
     pub(super) fn runner_standing_in(
         &self,
         txn: &heed::RoTxn<'_>,
         binding: &HostBinding,
         task_ref: crate::EntityId,
     ) -> MemoryResult<(TaskStanding, HostFence)> {
+        if binding.lease_owner() == WORKFLOW_TRY_OWNER {
+            return self.workflow_try_standing_in(txn, binding, task_ref);
+        }
         let fence = host_fence_in(self.vault(), txn, binding, &task_ref.to_hex())?;
         let standing = match &fence {
             HostFence::Held(_) => self.highway_task_actor_in(
