@@ -649,6 +649,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.dreaming.set`
 - `vault.agents.grants.mint`
 - `vault.agents.grants.revoke`
+- `vault.agents.base`
 - `vault.standing_blocks.configure`
 - `vault.standing_blocks.reconfigure`
 - `vault.standing_blocks.get`
