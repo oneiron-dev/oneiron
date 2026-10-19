@@ -94,6 +94,37 @@ pub(super) struct WorkflowIntent {
     /// it against the real parent; a retry naming another is another intent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<super::CommReach>,
+    /// The TASK this run realizes and the owner who bound it (FIX 4391).
+    /// Only the wrapper carries the backlink; a retry naming another TASK,
+    /// or none, is another intent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<WorkflowTaskBinding>,
+}
+
+/// A run's binding to the TASK it realizes: the TASK and the owner whose
+/// Owner standing admitted it, as hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkflowTaskBinding {
+    pub task_ref: String,
+    pub bound_by: String,
+}
+
+impl WorkflowTaskBinding {
+    pub(super) fn new(task: crate::EntityId, bound_by: crate::EntityId) -> Self {
+        Self {
+            task_ref: task.to_hex(),
+            bound_by: bound_by.to_hex(),
+        }
+    }
+
+    /// The TASK and the owner who bound it.
+    pub(super) fn ids(&self) -> Result<(crate::EntityId, crate::EntityId)> {
+        Ok((
+            crate::EntityId::from_hex(&self.task_ref)?,
+            crate::EntityId::from_hex(&self.bound_by)?,
+        ))
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -108,6 +139,10 @@ pub(super) struct WorkflowRecord {
     pub results: Vec<WorkflowStepResult>,
     #[serde(default)]
     pub launch: Option<super::LaunchStatement>,
+    /// How the run ended when its TASK's settlement ran (FIX 4391), so a
+    /// pass over ended runs settles each once. A TASK-less run never sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_settled: Option<String>,
 }
 
 pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
@@ -241,6 +276,13 @@ impl super::AgentDispatcher<'_> {
             || record.results.len() > record.steps.len()
         {
             return Err(invalid("workflow admission does not match the wrapper"));
+        }
+        // FIX 4391: only a bound run's wrapper carries a TASK backlink, and
+        // only a bound one is checked, so a TASK-less run reads as before.
+        if let Some(binding) = &record.intent.task
+            && row.task_ref.as_deref() != Some(binding.task_ref.as_str())
+        {
+            return Err(invalid("workflow wrapper does not carry its TASK backlink"));
         }
         let definition = crate::agent_def::workflow::decode_workflow(&record.intent.definition)?;
         if definition.steps.len() != record.steps.len() {
