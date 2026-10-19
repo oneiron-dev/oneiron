@@ -2501,6 +2501,22 @@ class Oneiron:
     class _VaultDisclosureVerbs:
         def offer(self, spec: Facade.DisclosureOfferRequest) -> Facade.DisclosureOffered:
             """An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses."""
+        @property
+        def ceiling(self) -> "Oneiron._VaultDisclosureCeilingVerbs": ...
+        @property
+        def reveals(self) -> "Oneiron._VaultDisclosureRevealsVerbs": ...
+    class _VaultDisclosureCeilingVerbs:
+        def get(self, spec: Facade.DisclosureCeilingRequest) -> Facade.DisclosureCeilingView:
+            """Reads the owner registry dial for one model connection, optionally one data class."""
+        def set(self, spec: Facade.DisclosureCeilingSet) -> Facade.DisclosureCeilingView:
+            """The owner sets one connection or class disclosure ceiling; no read authority changes."""
+        def clear(self, spec: Facade.DisclosureCeilingRequest) -> Facade.DisclosureCeilingView:
+            """The owner clears one dial, restoring connection or actor-class inference."""
+    class _VaultDisclosureRevealsVerbs:
+        def __call__(self, spec: Facade.RevealAsksRequest) -> list[Facade.RevealAskView]:
+            """The owner reads model-disclosure asks and receipts, including PERSON handles, without values."""
+        def answer(self, spec: Facade.RevealAnswerRequest) -> Facade.RevealAnsweredView:
+            """The owner approves once, approves standing, or denies the exact frozen reveal ask."""
     class _VaultSharesVerbs:
         def create(self, spec: Facade.ShareCreateRequest) -> Facade.ShareCreated:
             """The handle's actor issues a share: the brief, its recipient, the most the view may show and the text that travels."""
@@ -3666,11 +3682,11 @@ class Oneiron:
             """Stops a video job at its provider."""
     class _RevealVerbs:
         def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
-            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+            """Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
         def wait(self, spec: Facade.RevealWaitRequest) -> Facade.RevealWaitAnswer:
             """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
-            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+            """What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value."""
     class _HostVerbs:
         def compact(self, spec: Facade.HostCompactRequest) -> Facade.HostCompactResult:
             """Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."""

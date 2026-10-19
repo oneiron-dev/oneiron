@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1021 facade rows, 3458 declarations.
-Inputs: 962 of 1021 fully typed, 59 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 920 of 1021 fully typed, 101 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1026 facade rows, 3468 declarations.
+Inputs: 967 of 1026 fully typed, 59 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 925 of 1026 fully typed, 101 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -8962,6 +8962,32 @@ class DisclosureOffered(TypedDict):
     owner_ref: str
     created_at: int
     expires_at: int
+DisclosureDataClass = Literal["names", "dates", "contact", "ids", "health"]
+DisclosureCeilingRequest = TypedDict("DisclosureCeilingRequest", {"connection": str, "class": NotRequired[DisclosureDataClass | None]})
+DisclosureBand = Literal["public", "private", "sensitive", "restricted"]
+DisclosureCeilingView = TypedDict("DisclosureCeilingView", {"connection": str, "class": NotRequired[DisclosureDataClass | None], "ceiling": NotRequired[DisclosureBand | None]})
+DisclosureCeilingSet = TypedDict("DisclosureCeilingSet", {"connection": str, "class": NotRequired[DisclosureDataClass | None], "ceiling": DisclosureBand})
+class RevealAsksRequest(TypedDict):
+    pending: NotRequired[bool]
+    limit: NotRequired[int | None]
+RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None]})
+class RevealAskView(TypedDict):
+    receipt: RevealReceipt
+    state: str
+    expires_at: int
+    disclosure: NotRequired[str | None]
+    expected_digest: NotRequired[str | None]
+    grant_ref: NotRequired[str | None]
+RevealOutcome = Literal["once", "standing", "deny"]
+class RevealAnswerRequest(TypedDict):
+    reveal: str
+    expected_digest: str
+    outcome: RevealOutcome
+class RevealAnsweredView(TypedDict):
+    reveal: str
+    outcome: str
+    receipt_ref: str
+    grant_ref: NotRequired[str | None]
 class RevealRequest(TypedDict):
     handle: str
     why: str
@@ -8970,7 +8996,6 @@ class RevealPending(TypedDict):
 class RevealWaitRequest(TypedDict):
     reveal: str
 RevealDecision = Literal["pending", "granted", "denied", "expired"]
-RevealReceipt = TypedDict("RevealReceipt", {"reveal": str, "handle": str, "class": str, "why": str, "connection": NotRequired[str | None], "provider": NotRequired[str | None], "project": NotRequired[str | None], "run": NotRequired[str | None], "answered_by": NotRequired[str | None], "decision": NotRequired[str | None], "lease": NotRequired[str | None], "asked_at": int, "delivered_at": NotRequired[int | None]})
 class RevealWaitAnswer(TypedDict):
     decision: RevealDecision
     value: NotRequired[str | None]
@@ -8982,7 +9007,8 @@ class RevealProvenance(TypedDict):
     record: str
     place: str
     kind: str
-    masked_at: int
+    masked_at: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
 RevealHandleCard = TypedDict("RevealHandleCard", {"handle": str, "label": str, "class": str, "status": str, "band": str, "provenance": NotRequired[RevealProvenance | None], "reveal": str, "grant_ref": NotRequired[str | None], "refusal": NotRequired[str | None]})
 class SecretUseRequest(TypedDict):
     handle: str

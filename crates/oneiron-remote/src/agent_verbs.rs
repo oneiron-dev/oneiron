@@ -1596,6 +1596,21 @@ impl OneironClient {
                 "vault.disclosure.offer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DisclosureOffered,
                 >(client, verb, &input),
+                "vault.disclosure.ceiling.get" => remote_agent_verb_output::<
+                    oneiron::disclosure::DisclosureCeilingView,
+                >(client, verb, &input),
+                "vault.disclosure.ceiling.set" => remote_agent_verb_output::<
+                    oneiron::disclosure::DisclosureCeilingView,
+                >(client, verb, &input),
+                "vault.disclosure.ceiling.clear" => remote_agent_verb_output::<
+                    oneiron::disclosure::DisclosureCeilingView,
+                >(client, verb, &input),
+                "vault.disclosure.reveals" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::RevealAskView>,
+                >(client, verb, &input),
+                "vault.disclosure.reveals.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::RevealAnsweredView,
+                >(client, verb, &input),
                 "reveal" => remote_agent_verb_output::<oneiron::task_verb::sdk::RevealPending>(
                     client, verb, &input,
                 ),
@@ -9415,6 +9430,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.disclosure.offer", value)
+    }
+    pub fn vault_disclosure_ceiling_get(
+        &self,
+        input: &oneiron::disclosure::DisclosureCeilingRequest,
+    ) -> Result<oneiron::disclosure::DisclosureCeilingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.disclosure.ceiling.get", value)
+    }
+    pub fn vault_disclosure_ceiling_set(
+        &self,
+        input: &oneiron::disclosure::DisclosureCeilingSet,
+    ) -> Result<oneiron::disclosure::DisclosureCeilingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.disclosure.ceiling.set", value)
+    }
+    pub fn vault_disclosure_ceiling_clear(
+        &self,
+        input: &oneiron::disclosure::DisclosureCeilingRequest,
+    ) -> Result<oneiron::disclosure::DisclosureCeilingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.disclosure.ceiling.clear", value)
+    }
+    pub fn vault_disclosure_reveals(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealAsksRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::RevealAskView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.disclosure.reveals", value)
+    }
+    pub fn vault_disclosure_reveals_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::RevealAnswerRequest,
+    ) -> Result<oneiron::task_verb::sdk::RevealAnsweredView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.disclosure.reveals.answer", value)
     }
     pub fn reveal(
         &self,

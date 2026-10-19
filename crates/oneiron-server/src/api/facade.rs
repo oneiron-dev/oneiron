@@ -69,6 +69,7 @@ mod critic_review_doors;
 mod critical_confirm_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
+mod disclosure_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
 mod dispatch;
