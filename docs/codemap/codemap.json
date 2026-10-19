@@ -7119,7 +7119,7 @@
      "path": "src/bm25/index.rs",
      "purpose": "Index/deindex mutation paths plus the missing-posting repair proof",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -43490,6 +43490,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/write_estimate.rs",
+     "purpose": "The bound a restore's copy claims ahead for what it writes past its bodies and rows (FIX 5613), worked out…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -50347,7 +50357,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 1,
       "re-export": 13
      }
@@ -50468,6 +50478,16 @@
      "purpose": "Outbound gate bindings, durable send receipts, and the delivered-send idempotency index",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/page_bound.rs",
+     "purpose": "The pages LMDB lays rows out in, bounded before an environment exists (FIX 5613): what a restore's copy…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -60648,7 +60668,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 5,
       "struct": 6
      }
@@ -60963,7 +60983,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "EscrowRetirement",
@@ -60993,7 +61013,8 @@
      "path": "src/world_keys/vault_key/kit.rs",
      "purpose": "The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his…",
      "surface": {
-      "fn": 1,
+      "crate-vis": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -62936,7 +62957,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63181,7 +63202,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 78,
+     "files": 79,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63407,7 +63428,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3898,
+   "source_files": 3900,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82674,7 +82695,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -84006,7 +84027,7 @@
      "path": "src/owner/backup/write_budget.rs",
      "purpose": "The floor uploads keep, lent to this vault's backups and rehearsals (FIX 5479)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 16
      }
     },
     {
