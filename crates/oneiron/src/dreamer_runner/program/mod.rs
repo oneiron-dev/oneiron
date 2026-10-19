@@ -12,18 +12,22 @@
 //!
 //! PR2 runs it: the Dreamer's program runtime (`dreamer_wake::program`)
 //! binds each attempt to its live authority and its code run (`run`), runs
-//! the pinned entry there, and settles each effect into its step. A run cut
-//! before it settled parks; its resume lands with PR3.
+//! the pinned entry there, and settles each effect into its step. PR3b
+//! resumes it: a run cut before it settled re-enters its pinned entry as the
+//! same try, each settled call answered from its checkpoint, and a run the
+//! runtime holds resumes once its hold's condition is met (`resume`).
 //!
 //! PR3a reads it (`read`): what a turn's wakes admitted, where a program's
 //! run stands and a settled step's exact result, each for the program's
-//! waking actor or the verified owner, on the caller's own read lane.
+//! waking actor or the verified owner, on the caller's own read lane; PR3b
+//! adds the checkpoint its restarter resumes from.
 
 mod admit;
 mod arm;
 mod authority;
 mod lease;
 mod read;
+mod resume;
 mod run;
 mod types;
 mod wake;
@@ -41,13 +45,16 @@ pub(crate) use self::authority::{
     program_milestone_envelope, require_program_actor_in_txn, stamp_program_attempt,
 };
 pub use self::read::{
-    ProgramAdmissionOutcomeView, ProgramFrontierView, ProgramHeldView, ProgramQueueView,
-    ProgramResultAvailability, ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView,
-    ProgramRunView, ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
+    ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView,
+    ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView,
+    ProgramFrontierView, ProgramHeldView, ProgramQueueView, ProgramResultAvailability,
+    ProgramRunLifecycle, ProgramRunRequest, ProgramRunStateView, ProgramRunView,
+    ProgramStepIssueView, ProgramStepState, ProgramStepView, ProgramTryView,
     SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionItem,
-    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_run, settled_program_step,
-    turn_program_admission,
+    TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
+    settled_program_step, turn_program_admission,
 };
+pub(crate) use self::resume::ProgramHold;
 pub(crate) use self::run::{
     ProgramWrite, TurnProgramEntered, bind_program_write_in_txn, join_program_checkpoint_in_txn,
     note_program_write_uncertain, settle_program_outbound_in_txn, settle_program_write_in_txn,

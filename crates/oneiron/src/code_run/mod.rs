@@ -124,6 +124,11 @@ pub(crate) use self::storage::{
     ReceiptSource, ReceiptTree,
 };
 pub(crate) use self::storage::{
+    ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
+    ProgramResumeWait, load_program_checkpoint_tail, program_resume_call,
+    program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
+};
+pub(crate) use self::storage::{
     StoredRunContinuation, capsule_start_body, put_run_continuation_row_in_txn,
     run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
 };

@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::write_envelope::WriteEnvelope;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
+use super::resume::ProgramHold;
 use super::types::{ProgramRecipePin, TurnProgramAttemptStamp};
 use super::{ADMISSION, ATTEMPT};
 
@@ -302,22 +303,32 @@ impl Vault {
         attempt: AttemptId,
     ) -> Result<TurnProgramBound> {
         let txn = self.store.env.read_txn()?;
-        let stamp = ATTEMPT.get(self, &txn, &attempt)?.ok_or_else(invalid)?;
+        self.bind_turn_program_in_txn(&txn, attempt)
+    }
+
+    /// [`Self::bind_turn_program_execution`] at `txn`'s revision: the
+    /// program runtime's resumer judges a lapsed hold here (DOOR-141 PR3b).
+    pub(super) fn bind_turn_program_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+    ) -> Result<TurnProgramBound> {
+        let stamp = ATTEMPT.get(self, txn, &attempt)?.ok_or_else(invalid)?;
         if stamp.attempt_id != *attempt.as_bytes() {
             return Err(invalid());
         }
         let row = ADMISSION
-            .get(self, &txn, &stamp.admission)?
+            .get(self, txn, &stamp.admission)?
             .ok_or_else(invalid)?;
         if row.refused.is_some() || row.wake.authority.actor() != stamp.actor {
             return Err(invalid());
         }
         let pin = row.definition.ok_or_else(invalid)?;
-        if !row.wake.authority.stands_in_txn(self, &txn)? {
-            return Ok(TurnProgramBound::Lapsed(AUTHORITY_LAPSED));
+        if !row.wake.authority.stands_in_txn(self, txn)? {
+            return Ok(TurnProgramBound::Lapsed(ProgramHold::AuthorityLapsed));
         }
-        if !super::arm::pin_stands_in_txn(self, &txn, &pin)? {
-            return Ok(TurnProgramBound::Lapsed(PIN_MOVED));
+        if !super::arm::pin_stands_in_txn(self, txn, &pin)? {
+            return Ok(TurnProgramBound::Lapsed(ProgramHold::PinMoved));
         }
         Ok(TurnProgramBound::Bound(TurnProgramBinding {
             actor: WriteActor::new(stamp.actor, row.wake.authority.class()?),
@@ -327,11 +338,6 @@ impl Vault {
         }))
     }
 }
-
-/// Why a bound program runs nothing new: its waking actor's authority.
-const AUTHORITY_LAPSED: &str = "the waking actor's authority no longer stands";
-/// Why a bound program runs nothing new: its pinned program.
-const PIN_MOVED: &str = "the pinned program changed since it was admitted";
 
 /// One program attempt bound for one entry: the waking actor it runs as,
 /// the code run its admission fixed, and the pinned program it runs.
@@ -345,8 +351,9 @@ pub(crate) struct TurnProgramBinding {
 /// What binding one program attempt for an entry found.
 pub(crate) enum TurnProgramBound {
     Bound(TurnProgramBinding),
-    /// The waking actor's authority, or the pin, no longer stands.
-    Lapsed(&'static str),
+    /// The waking actor's authority, or the pin, no longer stands: the hold
+    /// it takes.
+    Lapsed(ProgramHold),
 }
 
 /// The actor `id`'s stamp names, in `txn`.
