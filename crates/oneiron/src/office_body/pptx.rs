@@ -40,7 +40,7 @@ pub use verbs::{
 
 use super::{
     FORKS, ForkState, OfficeBodyEdit, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, bounded_ops,
-    check_made_by, invalid, source, writer,
+    check_made_by, invalid, writer,
 };
 use crate::Vault;
 use crate::edit_roundtrip::VaultAssets;
@@ -61,7 +61,6 @@ use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
     HeldAssets, Landing, LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt,
     PreflightReport, StampedOp, attach_evidence, check_picture, effect_receipt, land, preflight,
-    project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
