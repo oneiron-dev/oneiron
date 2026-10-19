@@ -214,7 +214,8 @@ oneiron import folder detach ~/notes       # rescans stop; the notes stay
 
 `attach` records the folder and lands its notes the way `import notes` lands
 them. From then on `oneiron serve` rescans every attached folder when it starts
-and every five minutes (a local vault only). Each rescan:
+and every five minutes, whatever its privacy posture; a vault our cloud hosts
+(managed serve) starts no import yet. Each rescan:
 
 - lands a new file as a new note, with its title and links;
 - supersedes what a changed file landed: when the note still holds that text,
