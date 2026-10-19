@@ -1,6 +1,7 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
 use super::cancel::StepCancellation;
+use super::program_entry::{InjectedAnswer, PROGRAM_RESUME_HELD, ProgramInjection};
 use super::stack_floor::below_stack_floor;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
@@ -94,6 +95,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// kept no set): what a callable's answer stands on, counted in
     /// [`Self::result_rows`].
     pub(super) callable_rows: (Vec<EntityId>, Option<Vec<EntityId>>),
+    /// A turn program's pinned entry only (DOOR-141 PR3b): the calls an
+    /// earlier entry settled, answered in their place instead of issued.
+    pub(super) injection: Option<ProgramInjection>,
 }
 
 /// The name a reader child reads its parent's source by.
@@ -159,6 +163,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             callable_depth: 0,
             admitted_skill_seq: None,
             callable_rows: (Vec::new(), Some(Vec::new())),
+            injection: None,
         }
     }
 
@@ -408,6 +413,28 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         call: SelfCall,
         runtime: Option<(&mut dyn JsCodeModeRuntime, &StepCancellation)>,
     ) -> Result<SelfDispatchResponse> {
+        // A resumed turn program's settled calls answer from the rows that
+        // settled them, before a position is taken or anything dispatched
+        // (DOOR-141 PR3b). Only a pinned entry binds an injection.
+        if let Some(injection) = self.injection.as_mut() {
+            match injection.answer(&call) {
+                InjectedAnswer::Live => {}
+                InjectedAnswer::Settled { outcome, view } => {
+                    return Ok(self.respond(*outcome, view));
+                }
+                InjectedAnswer::Hold => {
+                    if self.hard_failure.is_none() {
+                        self.hard_failure =
+                            Some(Error::InvalidConfig(PROGRAM_RESUME_HELD.to_owned()));
+                    }
+                    let outcome = SelfDispatchOutcome::Failed(SelfFailedResult {
+                        effect: call.effect(),
+                        error: PROGRAM_RESUME_HELD.to_owned(),
+                    });
+                    return Ok(self.respond(outcome, None));
+                }
+            }
+        }
         let seq = self.next_seq;
         self.next_seq += 1;
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
