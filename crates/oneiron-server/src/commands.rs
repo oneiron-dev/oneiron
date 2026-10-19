@@ -82,10 +82,23 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     config.hooks = !args.no_hooks;
     init_tracing(&config.log_level);
     #[cfg(unix)]
-    let config_file = local_servers::config_file(&args);
+    let files = Some(ConfigFiles {
+        config: local_servers::config_file(&args),
+        settings_file: args.settings_file.clone(),
+    });
     #[cfg(not(unix))]
-    let config_file = None;
-    serve_with_config(config, config_file).await
+    let files = None;
+    serve_with_config(config, files).await
+}
+
+/// The files a plain `serve` read its config from, as its runtime file names
+/// them, so an import queued to it reads the same layers (FIX 5602): the
+/// config file, and the owner's settings file layered over it. Each is
+/// carried as it is, never merged into the other.
+#[derive(Default)]
+struct ConfigFiles {
+    config: Option<PathBuf>,
+    settings_file: Option<PathBuf>,
 }
 
 mod history_import;

@@ -12,8 +12,8 @@
 //!    proof of no login, and a session that starts local because of it says
 //!    so in one line naming the pins ([`HOSTED_DISCOVERY_UNAVAILABLE`]);
 //! 4. a local server, started from the config every command reads when none
-//!    is named. With no config there is no vault to start, and the line
-//!    names the setup step.
+//!    is named, with the hook's `--settings-file` over it. With no config
+//!    there is no vault to start, and the line names the setup step.
 //!
 //! The session's first line names the vault bound. A prompt takes steps 1 to
 //! 3 exactly as a session does ([`choose`]), so it never recalls from a vault
@@ -30,6 +30,7 @@ use std::time::{Duration, Instant};
 use oneiron::authority::PairingDescriptor;
 use serde::Deserialize;
 
+use crate::commands::ConfigFiles;
 use crate::commands::local_servers::{self, LocalServer};
 use crate::config::{ServeArgs, resolve_serve_config};
 
@@ -117,8 +118,14 @@ fn choose(flag: Option<&str>, deadline: Instant) -> Choice {
     }
 }
 
-/// Binds a vault for a session, in the order above.
-pub(super) fn session(flag: Option<&str>, oneiron: &Path, deadline: Instant) -> Bound {
+/// Binds a vault for a session, in the order above. A server it starts
+/// layers `settings_file` over its config.
+pub(super) fn session(
+    flag: Option<&str>,
+    oneiron: &Path,
+    settings_file: Option<&Path>,
+    deadline: Instant,
+) -> Bound {
     match choose(flag, deadline) {
         Choice::Pinned {
             pin,
@@ -152,7 +159,7 @@ pub(super) fn session(flag: Option<&str>, oneiron: &Path, deadline: Instant) -> 
         }
         Choice::NoHosted(HostedDiscovery::Unavailable) => {
             // Local start stays; the session is told why it is local.
-            let mut bound = start(oneiron, deadline);
+            let mut bound = start(oneiron, settings_file, deadline);
             if bound.url.is_some() {
                 bound.lines.push(HOSTED_DISCOVERY_UNAVAILABLE.to_owned());
             }
@@ -175,8 +182,9 @@ pub(super) fn quietly(flag: Option<&str>, deadline: Instant) -> Option<String> {
 /// The config of the running local vault a hand-over queues to: with a pin,
 /// the one a runtime file names at the pin, and none when no runtime file
 /// does (a pin is never swapped for another vault); with no pin, the newest.
-/// A hand-over only writes a file, so it asks no server.
-pub(super) fn running_config() -> Option<PathBuf> {
+/// Its config file and its settings file both come from that one server. A
+/// hand-over only writes a file, so it asks no server.
+pub(super) fn running_config() -> Option<ConfigFiles> {
     let pinned = pin(None).map(|pin| pin.url);
     let mut alive: Vec<LocalServer> = local_servers::listed()
         .into_iter()
@@ -189,7 +197,11 @@ pub(super) fn running_config() -> Option<PathBuf> {
         Some(url) => alive.find(|server| server.url == url),
         None => alive.next(),
     };
-    chosen?.config
+    let chosen = chosen?;
+    Some(ConfigFiles {
+        config: chosen.config,
+        settings_file: chosen.settings_file,
+    })
 }
 
 #[derive(Deserialize)]
@@ -284,12 +296,13 @@ fn uses(server: &LocalServer, running: usize) -> String {
 }
 
 /// Step 4: starts `serve` from the config every command reads when none is
-/// named, on loopback, in a process group of its own, and waits for it to
-/// answer until `deadline`. It runs on after the hook exits; the next
+/// named, with `settings_file` over it as the preflight reads them, on
+/// loopback, in a process group of its own, and waits for it to answer
+/// until `deadline`. It runs on after the hook exits; the next
 /// session finds it by its runtime file. When it cannot open the vault
 /// because another process holds it, the session binds the server there
 /// once one answers.
-fn start(oneiron: &Path, deadline: Instant) -> Bound {
+fn start(oneiron: &Path, settings_file: Option<&Path>, deadline: Instant) -> Bound {
     let Some(config) = local_servers::config_file(&ServeArgs::default()) else {
         return Bound::none(NO_VAULT.to_owned());
     };
@@ -297,6 +310,7 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
     // that is (no vault is made without `oneiron init`).
     let Some(vault) = resolve_serve_config(&ServeArgs {
         config: Some(config.clone()),
+        settings_file: settings_file.map(Path::to_path_buf),
         ..ServeArgs::default()
     })
     .ok()
@@ -324,10 +338,12 @@ fn start(oneiron: &Path, deadline: Instant) -> Bound {
         Some((stdout, stderr)) => (Stdio::from(stdout), Stdio::from(stderr)),
         None => (Stdio::null(), Stdio::null()),
     };
-    let spawned = oneiron_spawn::command(oneiron)
-        .arg("serve")
-        .arg("--config")
-        .arg(&config)
+    let mut command = oneiron_spawn::command(oneiron);
+    command.arg("serve").arg("--config").arg(&config);
+    if let Some(settings_file) = settings_file {
+        command.arg("--settings-file").arg(settings_file);
+    }
+    let spawned = command
         .args(["--host", "127.0.0.1"])
         .stdin(Stdio::null())
         .stdout(stdout)
