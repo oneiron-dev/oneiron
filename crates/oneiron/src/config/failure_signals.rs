@@ -27,16 +27,28 @@ pub enum DeploymentTier {
 #[serde(default)]
 pub struct FailureSignalConfig {
     pub deployment: DeploymentTier,
-    /// An OSS/self-host participation choice, for the tier-1 counts and both
-    /// code-fix exports. Managed terms mandate them, so this cannot disable
-    /// export in the managed tier.
-    pub export_opt_in: bool,
+    /// The owner's "Help improve Oneiron" choice, for the tier-1 counts and
+    /// both code-fix exports, in every tier: `Some` is an explicit yes or
+    /// no and stands as given; `None` takes [`default_exports`].
+    pub export_opt_in: Option<bool>,
     /// Explicit, independent permission. Export never grants training rights.
     pub training_opt_in: bool,
 }
+
+/// Whether a deployment exports when its owner has not chosen (owner ruling
+/// 2026-10-19, FIX 4488): on for a vault our cloud hosts, which its owner can
+/// turn off; off on self-host and OSS until the owner turns it on.
+pub const fn default_exports(deployment: DeploymentTier) -> bool {
+    match deployment {
+        DeploymentTier::Managed => true,
+        DeploymentTier::SelfHost | DeploymentTier::Oss => false,
+    }
+}
+
 impl FailureSignalConfig {
     pub fn exports(self) -> bool {
-        self.deployment == DeploymentTier::Managed || self.export_opt_in
+        self.export_opt_in
+            .unwrap_or(default_exports(self.deployment))
     }
     pub fn permits_training(self) -> bool {
         self.training_opt_in

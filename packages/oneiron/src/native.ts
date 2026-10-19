@@ -93,6 +93,7 @@ vaultBudgetsLeaseTopUp(input: unknown): unknown
 vaultBudgetsHold(input: unknown): unknown
 vaultBudgetsHoldResume(input: unknown): unknown
 vaultBudgetsLocal(input: unknown): unknown
+vaultBudgetsReservations(input: unknown): unknown
 vaultBudgetsSettlements(input: unknown): unknown
 vaultBudgetsRsiConfigure(input: unknown): unknown
 vaultBudgetsRsi(input: unknown): unknown
@@ -862,6 +863,8 @@ vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
 vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
+vaultConsolidationHomeGet(input: unknown): unknown
+vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultSieveEvidence(input: unknown): unknown

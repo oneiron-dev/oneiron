@@ -726,16 +726,19 @@
       "RunRungSettlement",
       "RunSettlementsRequest",
       "RunSettlementsView",
+      "RunnerBudgetReservation",
+      "RunnerBudgetReservationsRequest",
+      "RunnerBudgetReservationsView",
       "SelfBudgetRequest",
       "SpendLeaseView",
       "SpendScopeRequest",
       "TopUpSpendLeaseRequest"
      ],
      "path": "src/agent_dispatch/budget_doors.rs",
-     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter",
+     "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter with its reservations",
      "surface": {
-      "fn": 8,
-      "struct": 14
+      "fn": 9,
+      "struct": 17
      }
     },
     {
@@ -12145,6 +12148,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AdmittedLiveFork",
+      "CacheBoundary",
+      "LiveCompactionFork",
+      "LiveForkRung"
+     ],
+     "path": "src/code_run/compaction_fork.rs",
+     "purpose": "The live fork (FIX 4465 C): a run's live request, captured at the breakpoint that seals a self-written…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 11,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12561,7 +12583,7 @@
      "surface": {
       "crate-vis": 19,
       "mod": 6,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -14590,6 +14612,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/compaction/driver/live_fork.rs",
+     "purpose": "The one Frontier-tier binding a compaction may wear (FIX 4465 C, Engine 10-19): an agent whose profile names…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/compaction/driver/log.rs",
      "purpose": "The driver's entries for a host that numbers its own log: an executor run, whose watermark is its own step…",
      "surface": {
@@ -15036,7 +15068,7 @@
      "purpose": "Deployment-tier participation is separate from permission to train",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -20154,7 +20186,7 @@
      "path": "src/dreamer_runner/admission/mod.rs",
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 22
      }
     },
@@ -20934,7 +20966,7 @@
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
       "mod": 4,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -20952,6 +20984,25 @@
      "surface": {
       "fn": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConsolidationHomeNode",
+      "ConsolidationHomeView",
+      "ConsolidationLineageRequest",
+      "ConsolidationLineageView",
+      "ConsolidationStepRef",
+      "ConsolidationTryView"
+     ],
+     "path": "src/dreamer_runner/owner_doors.rs",
+     "purpose": "The owner's reads of the private Dreamer runner (DOOR-101): which node this runner holds as the elected…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 6
      }
     },
     {
@@ -23375,11 +23426,21 @@
      "path": "src/engine_executor/compaction.rs",
      "purpose": "The compaction host in the executor (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "enum": 1,
       "fn": 5,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/compaction/live_fork.rs",
+     "purpose": "The live fork's flight transport (FIX 4465 C): the capture a breakpoint sealed rides its flight, the run's…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -31652,7 +31713,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
       "re-export": 5
      }
@@ -31735,6 +31796,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 2
      }
@@ -33346,7 +33408,7 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "mod": 23,
       "re-export": 50
      }
@@ -52874,7 +52936,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 985
+      "fn": 988
      }
     },
     {
@@ -59295,7 +59357,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59372,7 +59434,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -59561,7 +59623,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59617,7 +59679,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60578,7 +60640,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3694,
+   "source_files": 3698,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67791,11 +67853,21 @@
       "crate-vis": 2,
       "fn": 3
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/wire/cache.rs",
+     "purpose": "Prompt-cache boundaries on the Messages wire (FIX 4465 C): the host's descriptor, rendered as…",
+     "surface": {
+      "crate-vis": 1
+     }
     }
    ],
    "modules": {
     "lib": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67804,7 +67876,7 @@
    },
    "over_bar": 0,
    "purpose": "Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 1
   },
   "oneiron-llm-gemini": {
@@ -69200,7 +69272,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 956
+      "fn": 959
      }
     },
     {
@@ -70294,7 +70366,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 957
+      "fn": 960
      }
     },
     {
@@ -71800,7 +71872,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/code_mode.rs",
@@ -71816,17 +71888,27 @@
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/compaction/live_fork.rs",
+     "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/compaction/self_writer.rs",
      "purpose": "The agent's own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -71836,7 +71918,7 @@
      "path": "src/ai_host/compaction/serve.rs",
      "purpose": "The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -73318,7 +73400,7 @@
      "path": "src/api/facade/budget_doors.rs",
      "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -73548,7 +73630,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -77823,7 +77905,7 @@
      "path": "src/connector_call_settle.rs",
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -77912,7 +77994,7 @@
      "purpose": "The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed…",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 25,
       "struct": 1
      }
@@ -78995,7 +79077,7 @@
      "path": "src/managed/isolation.rs",
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -79159,7 +79241,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -79749,6 +79831,16 @@
       "crate-vis": 18,
       "fn": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/live_fork.rs",
+     "purpose": "The live fork's rung (FIX 4465 C): the one rung a run's live request is bound to at a compaction breakpoint…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -80869,7 +80961,7 @@
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -81022,7 +81114,7 @@
      "path": "src/server/resident_pump.rs",
      "purpose": "The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -81869,7 +81961,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -82163,7 +82255,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82305,7 +82397,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 774,
+   "source_files": 776,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -83240,10 +83332,16 @@
       "ConsolidationEvidenceLocator",
       "ConsolidationEvidenceRequest",
       "ConsolidationEvidenceSource",
+      "ConsolidationHomeNode",
+      "ConsolidationHomeView",
+      "ConsolidationLineageRequest",
+      "ConsolidationLineageView",
       "ConsolidationMessageEvidence",
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConsolidationStepRef",
+      "ConsolidationTryView",
       "ConstraintContinuation",
       "ConstraintObject",
       "ConstraintTimeRangeWire",
@@ -84951,6 +85049,9 @@
       "RunTreeRepair",
       "RunTreeStatus",
       "RunTreeTimestamps",
+      "RunnerBudgetReservation",
+      "RunnerBudgetReservationsRequest",
+      "RunnerBudgetReservationsView",
       "SavedIntentState",
       "SavedResumeStep",
       "ScheduledBackfill",
@@ -85722,7 +85823,7 @@
      "purpose": "—",
      "surface": {
       "enum": 783,
-      "struct": 2435
+      "struct": 2444
      }
     },
     {

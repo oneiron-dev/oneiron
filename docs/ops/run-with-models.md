@@ -581,12 +581,34 @@ admitted as exactly that model, on its own one-model ladder. Whether the
 agent runs on this device, on a hosted server or in the resident pump does
 not matter: the same run is served the same way.
 
+With `live_fork`, the step that crosses the threshold (or asks to compact)
+captures the run's live request as the rung that admits it sends it: the
+step's own admission on the chat role, bound to the rung its walk would send
+it to now, the rung's prompt first. That one copy rides the flight; each of
+its calls sends the prefix unchanged on that same rung, with no fallback to
+another rung or model, then the house compaction's instruction, the agent's
+home and the span's input after it. The span is sized on the live model,
+after the prefix and the reply's reserve, and the home takes what is left;
+the prefix is never cut and the home never goes into it. The prefix's end is
+marked as a prompt-cache boundary in the request's own `oneiron` provider
+options (`cache_boundaries`): an Anthropic rung sends it as `cache_control`
+`ephemeral` on that block, on the provider's own cache lifetime, and any
+other provider sends a plain call. The receipt names the live rung's model,
+and its cached-read and cache-write counters say whether the provider reused
+the prefix. The calls file, land and are checked as any other self-written
+pass, and the flight lets go of the capture when it ends.
+
 A pass that cannot be written as the agent keeps its raw window for the turn
 and says why; it never falls back to the Dreamer or to the plain cheap
 writer. The run's `compaction` object carries `self_unavailable`:
-`live_fork_not_built` (the row selects `live_fork`, which needs the live fork
-this host does not cut yet), `no_identity` (the actor is not an agent
-anchored to a PERSON), `identity_unreadable`, `policy_unreadable`,
+`live_fork_not_captured` (the row selects `live_fork` and the flight carries
+no capture from its breakpoint), `live_rung_unbound` (the live route refused
+the step's request, or no rung of its ladder could take it then),
+`live_prefix_too_long` (the live request and the reply leave the live model
+no room for the span), `live_fork_not_admitted` (the profile's writer is not
+`self`, or the capture is not the run's own), `live_fork_stale` (the live
+route no longer admits the captured rung), `no_identity` (the actor is not an
+agent anchored to a PERSON), `identity_unreadable`, `policy_unreadable`,
 `model_not_served`, or `route_wider_than_policy`. A run bound to a room is
 written as the agent too, on the route the run captured at entry.
 

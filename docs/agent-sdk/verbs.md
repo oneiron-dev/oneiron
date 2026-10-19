@@ -69,6 +69,7 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.hold`
 - `vault.budgets.hold.resume`
 - `vault.budgets.local`
+- `vault.budgets.reservations`
 - `vault.budgets.settlements`
 - `vault.budgets.rsi.configure`
 - `vault.budgets.rsi`
@@ -775,6 +776,10 @@ both bindings and their export-census tests in one change.
 - `vault.claims.read_filtered`
 - `vault.claims.history`
 - `vault.delete`
+- `vault.writes.critical_confirm.pending`
+- `vault.writes.critical_confirm.clear`
+- `vault.writes.critical_confirm.decline`
+- `vault.writes.critical_confirm.receipt`
 - `vault.writes.pending`
 - `vault.hydrate`
 - `vault.get`
@@ -834,6 +839,8 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.status`
 - `vault.runs.step`
 - `vault.runs.checkpoint`
+- `vault.consolidation.home.get`
+- `vault.consolidation.lineage`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
 - `vault.sieve.evidence`
