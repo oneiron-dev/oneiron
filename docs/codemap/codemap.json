@@ -198,6 +198,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/actor_claims/craft_read.rs",
+     "purpose": "A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -237,7 +247,7 @@
      "purpose": "ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR…",
      "surface": {
       "crate-vis": 8,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -21517,8 +21527,8 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 21,
-      "fn": 16,
+      "crate-vis": 22,
+      "fn": 17,
       "struct": 1
      }
     },
@@ -60221,7 +60231,7 @@
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -61749,7 +61759,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3765,
+   "source_files": 3766,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82548,6 +82558,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/resident_pump/craft.rs",
+     "purpose": "A resident's own craft in its run's task (OF-490): every lesson and failure mode it keeps, learned or…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -83755,7 +83775,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 44,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83827,7 +83847,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 804,
+   "source_files": 805,
    "test_files": 182
   },
   "oneiron-spawn": {
