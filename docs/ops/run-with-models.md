@@ -1778,6 +1778,22 @@ more than 61 candidates asks its decider in pages of 61, moving to the next
 page on NONE; a step is never refused for its count, and a batch or a
 library program holds one or more steps, never refused for their count.
 
+A browser or desktop `screenshot({trigger})` has its secret fields blacked
+out before it is held, and answers the held image by its content ref
+(`image`), never a caption, with its `capture_id` (`c<token>:<n>`, from one
+counter for the whole session, never reused). Name an earlier capture the
+program still holds as `since_capture`: the screenshot is still taken, held
+and answered whole, and `unchanged_from` names that capture when the new
+image is the same masked PNG, byte for byte, taken in the same scope (the
+same documents and URL, or the same desktop window; the same viewport or
+window rectangle, scroll, dimensions and scale; the same masking). It means
+the same PNG, not that the page did nothing; equal pixels encoded otherwise
+read as changed. A capture the session no longer holds (it holds its last
+16 images), of another scope, or never its own answers as any screenshot
+does, never a refusal. A crop or zoom is no capture. Each effect receipt's
+screenshot is a capture of its own (the receipt's `capture_id`), never
+compared, and kept as the receipt's evidence even when its pixels repeat.
+
 ## 11. When a provider refuses for a limit
 
 A rung refused for a limit hands the call to the next rung of its ladder, and

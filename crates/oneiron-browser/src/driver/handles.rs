@@ -69,6 +69,19 @@ impl Documents {
             format!("{target}/{frame}/{loader}")
         }
     }
+
+    /// Every document the tab shows, as one name: the main one's, then each
+    /// frame's loader.
+    fn shown(&self, target: &str) -> String {
+        let main = self.of(target, None);
+        let frames: Vec<String> = self
+            .loaders
+            .iter()
+            .map(|(frame, loader)| format!("{frame}/{loader}"))
+            .collect();
+        let frames = frames.join("|");
+        format!("{main}|{frames}")
+    }
 }
 
 impl Handles {
@@ -172,6 +185,12 @@ impl Handles {
 }
 
 impl CdpDriver {
+    /// Every document the front tab shows now, as one name, for a
+    /// screenshot's scope (AB-004).
+    pub(super) fn shown_documents(&self) -> Result<String, BrowserError> {
+        Ok(self.documents()?.shown(&self.target))
+    }
+
     /// The front tab's documents as they stand.
     fn documents(&self) -> Result<Documents, BrowserError> {
         let tree = self.page("Page.getFrameTree", json!({}))?;

@@ -5096,7 +5096,7 @@ class Oneiron:
             """Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
             return json.loads(_translate(lambda: self._client.self_browser_expect(json.dumps(spec))))
         def screenshot(self, spec):
-            """Takes a screenshot the session holds, by image ref and never captioned."""
+            """Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope."""
             return json.loads(_translate(lambda: self._client.self_browser_screenshot(json.dumps(spec))))
         def view(self, spec):
             """Reads back a held image by its ref."""

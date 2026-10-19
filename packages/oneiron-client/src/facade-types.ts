@@ -7027,7 +7027,7 @@ export type Rebound = { old: string; new: string; old_scope?: string | null; new
 /** `oneiron_browser::receipt_evidence::ReceiptEvidence` */
 export type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string }
 /** `oneiron_browser::EffectReceipt` */
-export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null }
+export type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null }
 /** `oneiron_browser::library::LibraryCard` */
 export type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number }
 /** `oneiron_browser::PartialTree` */
@@ -7063,9 +7063,9 @@ export type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTr
 /** `oneiron_browser::ScreenshotTrigger` */
 export type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt"
 /** `oneiron_browser::ScreenshotInput` */
-export type ScreenshotInput = { trigger: ScreenshotTrigger }
+export type ScreenshotInput = { trigger: ScreenshotTrigger; since_capture?: string | null }
 /** `oneiron_browser::ScreenshotOutput` */
-export type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string }
+export type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string; capture_id: string; unchanged_from?: string | null }
 /** `oneiron_browser::ViewInput` */
 export type ViewInput = { image: string }
 /** `oneiron_browser::ImageOutput` */

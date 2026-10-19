@@ -3188,7 +3188,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.browser.select": { description: "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.browser.wait_for": { description: "Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.expect": { description: "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "self.browser.screenshot": { description: "Takes a screenshot the session holds, by image ref and never captioned.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "self.browser.screenshot": { description: "Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.view": { description: "Reads back a held image by its ref.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.crop": { description: "Crops a held image to a rectangle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "self.browser.zoom": { description: "Zooms into a rectangle of a held image.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -5746,7 +5746,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         wait_for: (input: Facade.LiveRunRequest<Facade.WaitForInput>, options?: O): FacadeReturns<"self.browser.wait_for">[K] => invoke("self.browser.wait_for", input, options, newInvocation()),
         /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
         expect: (input: Facade.LiveRunRequest<Facade.ExpectInput>, options?: O): FacadeReturns<"self.browser.expect">[K] => invoke("self.browser.expect", input, options, newInvocation()),
-        /** Takes a screenshot the session holds, by image ref and never captioned. */
+        /** Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
         screenshot: (input: Facade.LiveRunRequest<Facade.ScreenshotInput>, options?: O): FacadeReturns<"self.browser.screenshot">[K] => invoke("self.browser.screenshot", input, options, newInvocation()),
         /** Reads back a held image by its ref. */
         view: (input: Facade.LiveRunRequest<Facade.ViewInput>, options?: O): FacadeReturns<"self.browser.view">[K] => invoke("self.browser.view", input, options, newInvocation()),

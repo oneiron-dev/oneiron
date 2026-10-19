@@ -23,6 +23,7 @@
 mod handles;
 pub(crate) mod pages;
 
+use crate::capture::{self, Capture, Captures};
 use crate::cdp::Pipe;
 use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
 use crate::outline::{self, Line};
@@ -76,6 +77,8 @@ pub(crate) struct CdpDriver {
     ignored: HashSet<String>,
     seq: u64,
     media: VecDeque<Held>,
+    /// The session's screenshot capture ids.
+    captures: Captures,
     /// The observations a later one may edit, and the paged answers.
     pages: Observations,
     /// Every live handle the session minted.
@@ -113,12 +116,13 @@ pub(crate) struct Target {
     rebound: Option<Rebound>,
 }
 
-/// An image the driver holds: its content ref, its PNG bytes and what of
-/// the page it shows.
+/// An image the driver holds: its content ref, its PNG bytes, what of the
+/// page it shows, and, for a screenshot, its capture.
 struct Held {
     image: String,
     png: Vec<u8>,
     frame: Frame,
+    capture: Option<Capture>,
 }
 
 /// What a held image shows: a viewport rectangle in CSS pixels, on the page
@@ -169,6 +173,7 @@ impl CdpDriver {
         )?;
         let target = str_field(&created, "targetId")?;
         let session = attach_tab(&pipe, &target)?;
+        let token = session_token();
         let driver = Self {
             pipe,
             session: session.clone(),
@@ -181,8 +186,9 @@ impl CdpDriver {
             ignored,
             seq: 0,
             media: VecDeque::new(),
+            captures: Captures::new(&token),
             pages: Observations::default(),
-            handles: Handles::new(session_token()),
+            handles: Handles::new(token),
             wait_cap,
             switched: None,
             agent_known: HashSet::from([target.clone()]),
@@ -496,12 +502,13 @@ impl CdpDriver {
             .map(|held| held.png.as_slice())
     }
 
-    /// Holds `png`, showing `frame`, under its content ref; returns ref,
-    /// width, height, bytes.
+    /// Holds `png`, showing `frame`, under its content ref, with its
+    /// `capture` when it is a screenshot; returns ref, width, height, bytes.
     fn remember(
         &mut self,
         png: Vec<u8>,
         frame: Frame,
+        capture: Option<Capture>,
     ) -> Result<(String, u32, u32, u64), BrowserError> {
         let (width, height) = png_dimensions(&png)
             .ok_or_else(|| BrowserError::Protocol("image is not a PNG".to_owned()))?;
@@ -511,6 +518,7 @@ impl CdpDriver {
             image: image.clone(),
             png,
             frame,
+            capture,
         });
         if self.media.len() > MEDIA {
             self.media.pop_front();
@@ -524,6 +532,14 @@ impl CdpDriver {
             .find(|held| held.image == image)
             .map(|held| (held.png.clone(), held.frame.clone()))
             .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
+    }
+
+    /// The held screenshot capture `id` names, with its content ref.
+    fn held_capture(&self, id: &str) -> Option<(String, Capture)> {
+        self.media.iter().find_map(|held| {
+            let capture = held.capture.as_ref().filter(|capture| capture.id == id)?;
+            Some((held.image.clone(), capture.clone()))
+        })
     }
 
     /// The page's scroll offset as it is now, in CSS pixels.
@@ -1298,12 +1314,18 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
+        // The capture it names, read before this one can age it out.
+        let base = capture::compared(&input).and_then(|id| self.held_capture(id));
         let scroll = self.scroll_offset()?;
+        // The documents shown before and after: a capture the page moved
+        // under never compares. A sample that fails costs only that.
+        let before = self.shown_documents().ok();
         self.mask_secrets(true)?;
         let captured = self.page("Page.captureScreenshot", json!({"format": "png"}));
         let restored = self.mask_secrets(false);
         let shot = captured?;
         restored?;
+        let after = self.shown_documents().ok();
         let data = shot.get("data").and_then(Value::as_str).unwrap_or("");
         let png = base64::engine::general_purpose::STANDARD
             .decode(data)
@@ -1317,8 +1339,21 @@ impl BrowserDriver for CdpDriver {
             scroll,
             url: url.clone(),
         };
-        let (image, width, height, bytes) = self.remember(png, frame)?;
+        let size = png_dimensions(&png).unwrap_or_default();
+        let scope = before
+            .filter(|before| after.as_ref() == Some(before))
+            .map(|documents| capture::Scope {
+                shows: format!("page:{documents}|{url}"),
+                rect: [frame.left, frame.top, frame.width, frame.height],
+                scroll: Some(scroll),
+                size,
+                scale: f64::from(size.0) / frame.width,
+                masking: capture::MASKING,
+            });
+        let taken = self.captures.next(scope);
+        let (image, width, height, bytes) = self.remember(png, frame, Some(taken.clone()))?;
         Ok(ScreenshotOutput {
+            unchanged_from: capture::unchanged_from(base, &image, &taken),
             image,
             media_type: "image/png".to_owned(),
             width,
@@ -1327,6 +1362,7 @@ impl BrowserDriver for CdpDriver {
             trigger: input.trigger,
             url,
             title,
+            capture_id: taken.id,
         })
     }
 
@@ -1355,7 +1391,7 @@ impl BrowserDriver for CdpDriver {
             input.width,
             input.height,
         );
-        let (image, width, height, bytes) = self.remember(encode_png(&region)?, frame)?;
+        let (image, width, height, bytes) = self.remember(encode_png(&region)?, frame, None)?;
         Ok(ImageOutput {
             image,
             media_type: "image/png".to_owned(),
@@ -1388,7 +1424,7 @@ impl BrowserDriver for CdpDriver {
         let width = ((input.width as f32 * scale).round() as u32).clamp(1, 4096);
         let height = ((input.height as f32 * scale).round() as u32).clamp(1, 4096);
         let zoomed = region.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
-        let (image, width, height, bytes) = self.remember(encode_png(&zoomed)?, frame)?;
+        let (image, width, height, bytes) = self.remember(encode_png(&zoomed)?, frame, None)?;
         Ok(ImageOutput {
             image,
             media_type: "image/png".to_owned(),
