@@ -245,7 +245,11 @@ impl<'a, 'v> OpRefs<'a, 'v> {
         let readable = match self.readable.get(&id).copied() {
             Some(readable) => readable,
             None => {
-                let readable = self.memory.get_entity_tolerant(&id.to_hex())?.value.is_some();
+                let readable = self
+                    .memory
+                    .get_entity_tolerant(&id.to_hex())?
+                    .value
+                    .is_some();
                 if readable {
                     self.memory.produced_from([id]);
                 }
