@@ -313,7 +313,17 @@ pub(super) fn release_born_stamps(
                 &vault.store,
                 &rtxn,
                 src,
-                |raw| Ok(raw != blob.as_slice()),
+                // A file-plane ASSET stores the same body as a manifest (FIX 5393).
+                |raw| {
+                    Ok(raw != blob.as_slice()
+                        && !crate::sync::asset_body::file_echo_equal(
+                            &vault.store,
+                            &rtxn,
+                            src,
+                            raw,
+                            blob,
+                        )?)
+                },
             )?
             .unwrap_or(true)
         {
