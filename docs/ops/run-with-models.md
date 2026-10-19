@@ -1722,22 +1722,61 @@ a front tab that closes while the agent drives it gives way to the tab that
 opened it, else the newest. The next answer names the move as `switched`
 (`{tab, url, title, from, why}`, `why` being `opened` or `closed`).
 
-A browser or desktop observation comes in pages: an answer whose outline
-does not fit one page (256 KiB of rows) carries `next`, and
-`observe({cursor: next})` reads the next page of the same observation. The
+Each row of a browser observation carries `ref`, a live handle
+(`h<token>:<n>`), and `locator`, its semantic name built from its role,
+its accessible name and its named ancestors. A handle is bound to one DOM
+node of one document (the tab, the frame, the frame's loader and the
+document root, as CDP reports them when the page is read) and is never
+reused within the session: not after navigation, a hand-back or a tab
+switch. An act takes the handle's own node while it is still in its
+document. Once that node is gone (detached, replaced, or its document
+navigated away), the act runs once, through the same press and payment
+checks, on the first row its locator names now, and the answer and its
+receipt carry `rebound` (`{old, new, old_scope, new_scope, locator}`); a
+locator that names several rows takes the first and adds `ambiguous` and
+`candidates`. A handle the session never minted, or one whose locator
+names no row, refuses `browser_stale_ref` as before. `wait_for`, `expect`
+and batch steps list such matches as `rebindings`. A replay program (the
+library) stores locators only: a proposal's handles are put back to their
+locators before the program is checked, and each step resolves its
+locators as it runs. A desktop row has no live handle: its `ref` is its
+locator.
+
+An observation names its `seq` and its `scope` (`page:` and the documents
+it read, or `window:` and the desktop window). It is whole (`full: true`),
+or an ordered edit of an earlier observation of the same scope that the
+caller holds whole: `base_seq` names that one, and `splice`
+(`{start, delete_count}`) names its rows that give way to `rows`, so the
+rows read now are the base's rows before `start`, then `rows`, then the
+base's rows from `start + delete_count` on. A row that only moved changes
+the splice. An effect or `observe` edits the base its input names
+(`base: {scope, seq}`), or else the last observation the caller read whole,
+every page of it; reads the caller never sees (a routine step's looks, a
+library check, a batch's steps before its last) never move that base.
+`observe({full: true})` reads whole, as `open` does. A base the session no
+longer holds, of another scope, or partial gives a whole observation, never
+a refusal. Of the two valid forms the answer carries the one whose pages
+take fewer JSON bytes, the whole one on a tie.
+
+A browser or desktop observation comes in pages: an answer whose rows do
+not fit one page (256 KiB of rows) carries `next`, and
+`observe({cursor: next})` reads the next page of the same observation.
+Every page repeats its `seq`, `scope`, `base_seq` and `splice`, with the
+`offset` its rows start at; apply an edit once every page is read. The
 pages of the last 8 observations stay readable. `find` and `wait_for` page
 their rows the same way, read on with `find({cursor: next})`. A desktop
 window's tree is read whole: a walk cua-driver cuts at its node budget is
 read again with a larger one, and a walk cut at its time budget with a
 longer one, up to 12 s. A walk still cut there answers what it reached,
 marked `partial` (`{reason, visited, pending, walk_ms}`), as a whole
-observation, never a diff; its last page still carries `next`, and that
-cursor walks the window again at four times the time, up to cua-driver's
-120 s ceiling, and reads on with the rows past those already answered.
-`find`, `wait_for` and `expect` carry the same `partial` when the tree
-they read was cut. A routine `decide` step with more than 61 candidates
-asks its decider in pages of 61, moving to the next page on NONE; a step
-is never refused for its count.
+observation that no later one edits; its last page carries `walk_next`,
+and `observe({cursor: walk_next})` walks the window again at four times
+the time, up to cua-driver's 120 s ceiling, as a new whole observation
+with its own `seq`. `find`, `wait_for` and `expect` carry the same
+`partial` when the tree they read was cut. A routine `decide` step with
+more than 61 candidates asks its decider in pages of 61, moving to the next
+page on NONE; a step is never refused for its count, and a batch or a
+library program holds one or more steps, never refused for their count.
 
 ## 11. When a provider refuses for a limit
 

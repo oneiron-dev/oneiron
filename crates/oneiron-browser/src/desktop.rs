@@ -5,9 +5,10 @@
 //! The desktop runs only inside the guest (an X display, its accessibility
 //! bus, a window manager and a fixed app set), never on the host, so no call
 //! reaches the owner's own desktop. The session reads one window at a time
-//! as rows from its accessibility tree. A row's ref is built from its role,
-//! its name and its named ancestors, as a page's is, so a ref read once
-//! still names the element after the window changes around it; the driver's
+//! as rows from its accessibility tree. A row's locator is built from its
+//! role, its name and its named ancestors, as a page's is, and is its ref
+//! too: a desktop row has no live handle, and its observations' scope names
+//! the session and the window, never a page's document. The driver's
 //! element tokens, which each newer read retires, never leave the session.
 //! A window an action opens in front (a dialog, a document) is where the
 //! next step reads.
@@ -29,9 +30,8 @@
 //! outline is: `next` names the cursor `observe` reads the rest from, and
 //! `find` and `wait_for` page their rows the same way. A walk still cut at
 //! the longest time a read asks for answers what it reached, marked
-//! `partial`, and is never a silent cut: the cursor of its last page walks
-//! the window again, longer, and reads on with the rows past those already
-//! answered.
+//! `partial`, and is never a silent cut: its last page's `walk_next` walks
+//! the window again, longer, as a new whole observation with its own seq.
 //!
 //! A person can take the desktop over (CUA-001), asked by the agent's
 //! `handover` or not. While the agent waits on its ask, and while a person
@@ -40,8 +40,12 @@
 //! through the same driver. Handing it back ends the takeover with its
 //! record, which is its receipt.
 
-use crate::driver::{Pages, crop_region, encode_png, find_cursor, png_dimensions, wait_cursor};
+use crate::driver::pages::{
+    Base, Observations, Read, find_cursor, is_walk, session_token, wait_cursor,
+};
+use crate::driver::{crop_region, encode_png, png_dimensions};
 use crate::mcp::{Mcp, ToolError, ToolReply};
+use crate::observation::match_target;
 use crate::session::{effect_class, press_for, receipt_class};
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
@@ -83,8 +87,6 @@ const WALK_MS_MOST: u64 = 12_000;
 /// asks four times its last walk's time, up to this; one cut here still
 /// walks on at this.
 const WALK_ON_MS_MOST: u64 = 120_000;
-/// Observations a `since` diff can name.
-const HISTORY: usize = 8;
 /// Screenshots the session holds for a later image read.
 const MEDIA: usize = 16;
 /// The longest reason a `handover` ask may give, in characters.
@@ -211,10 +213,12 @@ pub struct DesktopSession {
     /// The window the session reads and acts on.
     window: Option<WindowKey>,
     seq: u64,
-    history: VecDeque<(u64, WindowKey, HashMap<String, Row>)>,
+    /// This session's token, in its observations' scopes.
+    token: String,
     media: VecDeque<Held>,
-    /// The paged answers a cursor may still read on.
-    pages: Pages,
+    /// The observations a later one may edit, and the paged answers a
+    /// cursor may still read on.
+    pages: Observations,
     wait_cap: Duration,
     /// Who has the desktop now.
     takeover: Takeover,
@@ -484,9 +488,9 @@ impl DesktopSession {
             receipt_sink: None,
             window: None,
             seq: 0,
-            history: VecDeque::new(),
+            token: session_token(),
             media: VecDeque::new(),
-            pages: Pages::default(),
+            pages: Observations::default(),
             wait_cap: config.wait_cap,
             takeover: Takeover::Agent,
             returned: None,
@@ -924,99 +928,58 @@ impl DesktopSession {
         }
     }
 
-    fn observation(&mut self, since: Option<u64>) -> Result<Observation, BrowserError> {
+    /// The session's window as it is now, whole or as an edit of `base`.
+    fn observation(&mut self, base: &Base) -> Result<Observation, BrowserError> {
         let snapshot = self.snapshot(false)?;
-        let rows: Vec<Row> = snapshot.lines.into_iter().map(|line| line.row).collect();
-        self.seq += 1;
-        let current: HashMap<String, Row> = rows
-            .iter()
-            .map(|row| (row.target.clone(), row.clone()))
-            .collect();
-        // A diff only against an observation of the same window, and only
-        // from a walk that reached the tree's end: a partial one cannot
-        // tell a ref gone from a ref past its cut.
-        let before = since
-            .filter(|_| snapshot.partial.is_none())
-            .and_then(|since| {
-                self.history
-                    .iter()
-                    .find(|(seq, key, _)| *seq == since && *key == snapshot.key)
-            })
-            .map(|(_, _, rows)| rows);
-        let (full, shown, removed) = match before {
-            None => (true, rows, Vec::new()),
-            Some(before) => {
-                let shown = rows
-                    .into_iter()
-                    .filter(|row| before.get(&row.target) != Some(row))
-                    .collect();
-                let removed = before
-                    .keys()
-                    .filter(|r| !current.contains_key(*r))
-                    .cloned()
-                    .collect();
-                (false, shown, removed)
-            }
-        };
-        self.history.push_back((self.seq, snapshot.key, current));
-        if self.history.len() > HISTORY {
-            self.history.pop_front();
-        }
-        Ok(Observation {
-            seq: self.seq,
-            url: url_of(&snapshot.app, snapshot.key),
-            title: snapshot.title,
-            full,
-            rows: shown,
-            removed,
-            receipt: None,
-            library: Vec::new(),
-            no_tree: snapshot.no_tree,
-            partial: snapshot.partial,
-        })
+        Ok(self.observed(snapshot, base))
     }
 
-    /// Walks on from a partial observation (Rule 5) when `cursor` reads on
-    /// at its end, or, with `anywhere`, at any place in it: its window is
-    /// walked again, longer, and the rows the walk reached past those it
-    /// held join the observation for the cursor to read, under the new
-    /// walk's cut, or none once it reached the tree's end. The walk reads
-    /// the window as it is now.
-    fn walk_on(&mut self, cursor: &str, anywhere: bool) -> Result<(), BrowserError> {
-        let Some((seq, url, cut)) = self.pages.walk_on(cursor, anywhere)? else {
-            return Ok(());
+    /// `snapshot` as the next observation, whole or as an edit of `base`:
+    /// only of an observation of the same window, and only from a walk that
+    /// reached the tree's end, since a partial one cannot tell a row gone
+    /// from a row past its cut.
+    fn observed(&mut self, snapshot: Snapshot, base: &Base) -> Observation {
+        self.seq += 1;
+        let read = Read {
+            seq: self.seq,
+            scope: format!(
+                "window:{}.{}.{}",
+                self.token, snapshot.key.pid, snapshot.key.id
+            ),
+            url: url_of(&snapshot.app, snapshot.key),
+            title: snapshot.title,
+            rows: snapshot.lines.into_iter().map(|line| line.row).collect(),
+            no_tree: snapshot.no_tree,
+            partial: snapshot.partial,
         };
+        self.pages.observe(read, base)
+    }
+
+    /// A longer walk of a partial observation's window (Rule 5): `cursor` is
+    /// its `walk_next`. The window is walked again at four times the cut's
+    /// time, and read as a new whole observation with its own seq, partial
+    /// again when still cut. The walk reads the window as it is now.
+    fn walk_next(&mut self, cursor: &str) -> Result<Observation, BrowserError> {
+        let (url, cut) = self.pages.walk_of(cursor)?;
         let key = url
             .rsplit_once('#')
             .and_then(|(_, key)| WindowKey::parse(key))
             .ok_or_else(|| BrowserError::Input(format!("{cursor} names no window")))?;
         let snapshot = self.walk(key, false, Some(&cut))?;
-        let rows: Vec<Row> = snapshot.lines.into_iter().map(|line| line.row).collect();
-        // A later diff against the observation knows these rows too.
-        if let Some((_, _, held)) = self
-            .history
-            .iter_mut()
-            .find(|(at, window, _)| *at == seq && *window == key)
-        {
-            for row in &rows {
-                held.entry(row.target.clone())
-                    .or_insert_with(|| row.clone());
-            }
-        }
-        self.pages.walked_on(seq, rows, snapshot.partial);
-        Ok(())
+        Ok(self.observed(snapshot, &Base::Whole))
     }
 
     /// Runs `act` on the desktop as `read` saw it, then returns the settled
-    /// window as a diff, or whole when the act opened a window in front:
-    /// that window is where the next step reads. No read comes between
-    /// `read` and the act, since each read retires the last one's tokens.
+    /// window as an edit of `base`, or whole when the act opened a window in
+    /// front: that window is where the next step reads. No read comes
+    /// between `read` and the act, since each read retires the last one's
+    /// tokens.
     fn act(
         &mut self,
         read: &Snapshot,
+        base: &Base,
         act: impl FnOnce(&Self) -> Result<(), BrowserError>,
     ) -> Result<Observation, BrowserError> {
-        let since = self.seq;
         let windows: Vec<WindowKey> = self.listed()?.into_iter().map(|w| w.key).collect();
         let before = print_of(read)?;
         let start = Instant::now();
@@ -1027,7 +990,7 @@ impl DesktopSession {
             let before = self.fingerprint()?;
             self.settle(before, Instant::now())?;
         }
-        self.observation(Some(since))
+        self.observation(base)
     }
 
     fn press(&mut self, class: Option<&str>, row: &Row) -> Result<PressMode, BrowserError> {
@@ -1062,6 +1025,8 @@ impl DesktopSession {
             title: observation.title.clone(),
             target: target.map(|row| row.target.clone()),
             target_name: target.map(|row| row.name.clone()),
+            target_locator: target.map(|row| row.locator.clone()),
+            rebound: None,
             effect_class: effect_class.map(str::to_owned),
             press: press.as_str().to_owned(),
             screenshot,
@@ -1214,6 +1179,7 @@ fn is_activation(key: &str) -> bool {
 fn key_row(key: &str) -> Row {
     Row {
         target: String::new(),
+        locator: String::new(),
         role: "key".to_owned(),
         name: key.to_owned(),
         value: None,
@@ -1362,9 +1328,13 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
                     .filter(|value| !value.is_empty())
                     .map(clip)
             };
+            // A desktop row's ref is its locator: the window has no live
+            // handles.
+            let locator = format!("d{}", &hash[..12]);
             out.push(Line {
                 row: Row {
-                    target: format!("d{}", &hash[..12]),
+                    target: locator.clone(),
+                    locator,
                     role: role.clone(),
                     name: name.clone(),
                     value,
@@ -1510,21 +1480,21 @@ impl BrowserDriver for DesktopSession {
         self.window = Some(key);
         let before = self.fingerprint()?;
         self.settle(before, Instant::now())?;
-        let mut observation = self.observation(None)?;
+        let mut observation = self.observation(&Base::Whole)?;
         self.receipt("open", None, None, PressMode::None, &mut observation);
         Ok(observation)
     }
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?;
+        let base = Base::of_observe(&input)?;
         match input.cursor.as_deref() {
-            // Unpaged, a cursor reads the whole rest of its observation,
-            // walking on first from a partial one.
-            Some(cursor) => {
-                self.walk_on(cursor, true)?;
-                self.pages.rest(cursor)
-            }
-            None => self.observation(input.since),
+            // A partial observation's `walk_next` walks the window again,
+            // longer, as a new observation.
+            Some(cursor) if is_walk(cursor) => self.walk_next(cursor),
+            // Unpaged, a page cursor reads the whole rest of its observation.
+            Some(cursor) => self.pages.rest(cursor),
+            None => self.observation(&base),
         }
     }
 
@@ -1534,18 +1504,18 @@ impl BrowserDriver for DesktopSession {
 
     fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
         self.live()?;
-        let Some(cursor) = input.cursor.as_deref() else {
-            let observation = self.observation(input.since)?;
-            return Ok(self.pages.first(observation));
-        };
-        if input.since.is_some() {
-            return Err(BrowserError::Input(
-                "observe reads since or a cursor, not both".to_owned(),
-            ));
+        let base = Base::of_observe(&input)?;
+        match input.cursor.as_deref() {
+            Some(cursor) if is_walk(cursor) => {
+                let observation = self.walk_next(cursor)?;
+                Ok(self.pages.first(observation))
+            }
+            Some(cursor) => self.pages.next(cursor),
+            None => {
+                let observation = self.observation(&base)?;
+                Ok(self.pages.first(observation))
+            }
         }
-        // The cursor at a partial observation's end walks on first.
-        self.walk_on(cursor, false)?;
-        self.pages.next(cursor)
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
@@ -1575,7 +1545,7 @@ impl BrowserDriver for DesktopSession {
         let class = effect_class(&line.row.name);
         let press = self.press(class, &line.row)?;
         let pid = snapshot.key.pid;
-        let mut observation = self.act(&snapshot, |session| {
+        let mut observation = self.act(&snapshot, &Base::of(input.base), |session| {
             session
                 .input("click", json!({"pid": pid, "element_token": token}))
                 .map_err(|e| refusal(e, Some(input.target.as_str())))
@@ -1632,7 +1602,7 @@ impl BrowserDriver for DesktopSession {
             _ => PressMode::None,
         };
         let key = snapshot.key;
-        let mut observation = self.act(&snapshot, |session| {
+        let mut observation = self.act(&snapshot, &Base::of(input.base), |session| {
             session
                 .input(
                     "click",
@@ -1656,7 +1626,8 @@ impl BrowserDriver for DesktopSession {
             .then_some(EFFECT_SEND);
         let press = self.press(class, &line.row)?;
         let pid = snapshot.key.pid;
-        let mut observation = self.act(&snapshot, |session| {
+        let base = Base::of(input.base);
+        let mut observation = self.act(&snapshot, &base, |session| {
             let refused = |error: ToolError| refusal(error, Some(input.target.as_str()));
             if input.clear {
                 for (key, modifiers) in [("a", vec!["ctrl"]), ("backspace", Vec::new())] {
@@ -1687,7 +1658,8 @@ impl BrowserDriver for DesktopSession {
         let snapshot = self.snapshot(false)?;
         let (line, token) = Self::token(&snapshot, &input.target)?;
         let pid = snapshot.key.pid;
-        let mut observation = self.act(&snapshot, |session| {
+        let base = Base::of(input.base);
+        let mut observation = self.act(&snapshot, &base, |session| {
             session
                 .input(
                     "set_value",
@@ -1715,6 +1687,7 @@ impl BrowserDriver for DesktopSession {
                 waited_ms: 0,
                 next,
                 partial: None,
+                rebindings: Vec::new(),
             });
         }
         let wanted = input
@@ -1734,6 +1707,7 @@ impl BrowserDriver for DesktopSession {
                     waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
                     next,
                     partial,
+                    rebindings: Vec::new(),
                 });
             }
             std::thread::sleep(POLL * 2);
@@ -1744,10 +1718,11 @@ impl BrowserDriver for DesktopSession {
         self.live()?;
         let snapshot = self.snapshot(false)?;
         let partial = snapshot.partial;
-        let rows = snapshot.lines.into_iter().map(|line| line.row);
+        let rows: Vec<Row> = snapshot.lines.into_iter().map(|line| line.row).collect();
         let query = input.query();
+        // A desktop row's ref is its locator: a target matches it either way.
         let row = match &input.target {
-            Some(target) => rows.into_iter().find(|row| &row.target == target),
+            Some(target) => match_target(target, &rows, "", None).map(|(at, _)| rows[at].clone()),
             None => rows.into_iter().find(|row| query.matches(row)),
         };
         let met = match (&row, input.absent) {
@@ -1758,7 +1733,12 @@ impl BrowserDriver for DesktopSession {
                 .as_ref()
                 .is_none_or(|want| row.value.as_ref() == Some(want)),
         };
-        Ok(ExpectOutput { met, row, partial })
+        Ok(ExpectOutput {
+            met,
+            row,
+            partial,
+            rebindings: Vec::new(),
+        })
     }
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
@@ -1899,7 +1879,8 @@ impl BrowserDriver for DesktopSession {
             Some((_, token)) => arguments["element_token"] = Value::from(token.as_str()),
             None => arguments["window_id"] = Value::from(key.id),
         }
-        let mut observation = self.act(&snapshot, |session| {
+        let base = Base::of(input.base);
+        let mut observation = self.act(&snapshot, &base, |session| {
             session
                 .input("press_key", arguments)
                 .map_err(|e| refusal(e, input.target.as_deref()))
@@ -1924,7 +1905,8 @@ impl BrowserDriver for DesktopSession {
             .any(|k| is_return(k))
             .then_some(EFFECT_SEND);
         let press = self.press(class, &key_row(&input.keys.join("+")))?;
-        let mut observation = self.act(&snapshot, |session| {
+        let base = Base::of(input.base);
+        let mut observation = self.act(&snapshot, &base, |session| {
             session
                 .input(
                     "hotkey",
@@ -1952,7 +1934,8 @@ impl BrowserDriver for DesktopSession {
             }
             None => arguments["window_id"] = Value::from(snapshot.key.id),
         }
-        self.act(&snapshot, |session| {
+        let base = Base::of(input.base);
+        self.act(&snapshot, &base, |session| {
             session
                 .input("scroll", arguments)
                 .map_err(|e| refusal(e, input.target.as_deref()))
@@ -1992,7 +1975,7 @@ impl BrowserDriver for DesktopSession {
             return Err(BrowserError::StaleRef(input.window));
         }
         self.window = Some(key);
-        self.observation(None)
+        self.observation(&Base::Whole)
     }
 
     fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {

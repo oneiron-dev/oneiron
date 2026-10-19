@@ -14,13 +14,18 @@
 //!
 //! A program's `{{name}}` slots take the run's arguments as data, in the
 //! batch's own fields; nothing is spliced into code.
+//!
+//! A program names elements by locator only, never by a live handle (a
+//! handle names one node of one session's page). A proposal's handles the
+//! session minted are put back to their rows' locators before the program
+//! is checked; each step resolves its locators on the page as it runs.
 
-use crate::{
-    BATCH_MAX_STEPS, BatchOutput, BatchStep, BrowserError, EffectReceipt, ExpectInput,
-    SubgoalStatus,
-};
 #[cfg(feature = "driver")]
 use crate::{BatchInput, BrowserDriver, ObserveInput, RoutineDecider};
+use crate::{
+    BatchOutput, BatchStep, BrowserError, EffectReceipt, ExpectInput, ObservationBase,
+    SubgoalStatus, is_live_handle,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -136,6 +141,10 @@ pub struct LibraryRunInput {
     pub workflow: String,
     #[serde(default)]
     pub args: BTreeMap<String, String>,
+    /// The observation the run's last observation edits, as `observe`'s
+    /// `base`; by default the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 /// A library run: its batch, and the postcondition checks the page missed.
@@ -222,10 +231,44 @@ pub trait WorkflowLibrary: Send {
     }
 }
 
+impl BatchStep {
+    /// Every element the step names, by handle or locator.
+    fn targets(&self) -> Vec<&String> {
+        match self {
+            Self::Click { target } | Self::Type { target, .. } | Self::Select { target, .. } => {
+                vec![target]
+            }
+            Self::WaitFor { targets, .. } => targets.iter().collect(),
+            Self::Expect { target, .. }
+            | Self::Key { target, .. }
+            | Self::Scroll { target, .. } => target.iter().collect(),
+            Self::Decide(step) => step.targets.iter().collect(),
+            Self::Open { .. } | Self::Screenshot { .. } | Self::Hotkey { .. } => Vec::new(),
+        }
+    }
+
+    /// The same, to put back to locators.
+    #[cfg(feature = "driver")]
+    fn targets_mut(&mut self) -> Vec<&mut String> {
+        match self {
+            Self::Click { target } | Self::Type { target, .. } | Self::Select { target, .. } => {
+                vec![target]
+            }
+            Self::WaitFor { targets, .. } => targets.iter_mut().collect(),
+            Self::Expect { target, .. }
+            | Self::Key { target, .. }
+            | Self::Scroll { target, .. } => target.iter_mut().collect(),
+            Self::Decide(step) => step.targets.iter_mut().collect(),
+            Self::Open { .. } | Self::Screenshot { .. } | Self::Hotkey { .. } => Vec::new(),
+        }
+    }
+}
+
 impl WorkflowProgram {
     /// The site the program runs on, once its shape holds: a subgoal, named
-    /// parameters, 1 to [`BATCH_MAX_STEPS`] steps opening with a page whose
-    /// host takes no slot, and 1 to [`WORKFLOW_MAX_CHECKS`] checks.
+    /// parameters, one or more steps opening with a page whose host takes no
+    /// slot, 1 to [`WORKFLOW_MAX_CHECKS`] checks, and no live handle among
+    /// the elements they name (a program names elements by locator).
     pub fn site(&self) -> Result<String, BrowserError> {
         let invalid = |why: &str| Err(BrowserError::Input(why.to_owned()));
         if self.subgoal.trim().is_empty() || self.subgoal.len() > WORKFLOW_SUBGOAL_BYTES {
@@ -239,11 +282,27 @@ impl WorkflowProgram {
                 "a program names at most 16 distinct parameters, each a-z, 0-9 and _ from a letter",
             );
         }
-        if self.steps.is_empty() || self.steps.len() > BATCH_MAX_STEPS {
-            return invalid("a program holds 1 to 64 steps");
+        if self.steps.is_empty() {
+            return invalid("a program holds one or more steps");
         }
         if self.postcondition.is_empty() || self.postcondition.len() > WORKFLOW_MAX_CHECKS {
             return invalid("a program's postcondition holds 1 to 16 checks");
+        }
+        let live = self
+            .steps
+            .iter()
+            .flat_map(BatchStep::targets)
+            .chain(
+                self.postcondition
+                    .iter()
+                    .filter_map(|check| check.target.as_ref()),
+            )
+            .map(String::as_str)
+            .any(is_live_handle);
+        if live {
+            return invalid(
+                "a program names its elements by locator; a live handle this session did not mint never joins the library",
+            );
         }
         match &self.steps[0] {
             BatchStep::Open { url } => site_of(url).map_or_else(
@@ -360,19 +419,50 @@ fn unmet<D: BrowserDriver + ?Sized>(
 }
 
 #[cfg(feature = "driver")]
+/// Puts every live handle `driver` minted among `steps` and `checks` back to
+/// its row's locator.
+fn by_locator<D: BrowserDriver + ?Sized>(
+    driver: &D,
+    steps: &mut [BatchStep],
+    checks: &mut [ExpectInput],
+) {
+    let targets = steps
+        .iter_mut()
+        .flat_map(BatchStep::targets_mut)
+        .chain(checks.iter_mut().filter_map(|check| check.target.as_mut()));
+    for target in targets {
+        if let Some(info) = driver.handle_info(target.as_str()) {
+            *target = info.locator;
+        }
+    }
+}
+
+#[cfg(feature = "driver")]
+/// A read the caller never sees: whole, and never its base.
+fn hidden_look() -> ObserveInput {
+    ObserveInput {
+        full: true,
+        ..ObserveInput::default()
+    }
+}
+
+#[cfg(feature = "driver")]
 /// Offers a solved run's program: the solved page first, then one no-model
-/// replay, then the library files it.
+/// replay, then the library files it. The live handles the proposal names
+/// are put back to their locators first.
 pub(crate) fn propose<D: BrowserDriver + ?Sized>(
     driver: &mut D,
     library: &mut dyn WorkflowLibrary,
     decider: &mut dyn RoutineDecider,
     input: ProposeInput,
 ) -> Result<ProposeOutput, BrowserError> {
+    let (mut steps, mut postcondition) = (input.steps, input.postcondition);
+    by_locator(&*driver, &mut steps, &mut postcondition);
     let program = WorkflowProgram {
         subgoal: input.subgoal,
         params: input.params,
-        steps: input.steps,
-        postcondition: input.postcondition,
+        steps,
+        postcondition,
     };
     let site = program.site()?;
     let (steps, checks) = program.fill(&input.args)?;
@@ -384,7 +474,7 @@ pub(crate) fn propose<D: BrowserDriver + ?Sized>(
         replay,
     };
     // The independent check: the host reads the solved run's page itself.
-    let solved = driver.observe(ObserveInput::default())?;
+    let solved = driver.observe(hidden_look())?;
     let missed = unmet(driver, &checks)?;
     if !missed.is_empty() {
         return Ok(refused(WorkflowCheck::Solved, missed, None));
@@ -393,6 +483,7 @@ pub(crate) fn propose<D: BrowserDriver + ?Sized>(
         BatchInput {
             subgoal: Some(program.subgoal.clone()),
             steps,
+            base: None,
             until_ms: None,
             no_model: true,
         },
@@ -405,7 +496,7 @@ pub(crate) fn propose<D: BrowserDriver + ?Sized>(
     if !missed.is_empty() {
         return Ok(refused(WorkflowCheck::Replay, missed, Some(replay)));
     }
-    let replayed = driver.observe(ObserveInput::default())?;
+    let replayed = driver.observe(hidden_look())?;
     let proof = WorkflowProof {
         args: input.args,
         solved_url: solved.url,
@@ -440,6 +531,7 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
         BatchInput {
             subgoal: Some(program.subgoal.clone()),
             steps,
+            base: input.base.clone(),
             until_ms: None,
             no_model: false,
         },
@@ -454,7 +546,10 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
         // A missed postcondition goes back to the planner, with the page.
         batch.status = SubgoalStatus::NeedsAgent;
         batch.error = Some("postcondition_unmet".to_owned());
-        batch.observation = Some(driver.observe(ObserveInput::default())?);
+        batch.observation = Some(driver.observe(ObserveInput {
+            base: input.base,
+            ..ObserveInput::default()
+        })?);
     }
     library.record_run(&input.workflow, batch.status == SubgoalStatus::Done)?;
     Ok(LibraryRunOutput {
