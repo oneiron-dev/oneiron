@@ -68,8 +68,9 @@ pub enum ActSurface {
     HostedConsole,
 }
 
-/// What an owner act changes. Closed: every kind the mesh contract names,
-/// so no lane adds a variant.
+/// What an owner act changes: every kind the mesh contract names, and the
+/// kinds an Engine ruling added since (each says which on its variant). A
+/// new kind needs such a ruling.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]

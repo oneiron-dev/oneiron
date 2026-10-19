@@ -1,6 +1,7 @@
 //! The owner's doors over the private Dreamer runner (DOOR-101): which node
-//! this runner holds as the elected MACRO home, with the owner's home pick as
-//! every linked machine folds it, and one consolidation job's retry chain
+//! this runner holds as the elected MACRO home, the host's last candidate
+//! set it elected over, the owner's home pick as every linked machine folds
+//! it, and one consolidation job's retry chain
 //! with a page of its committed steps; and the owner's pick of the home node
 //! (PR2a), a signed act on the vault's main authority log. Each read
 //! revalidates the owner in its one read transaction and reads everything in
@@ -16,7 +17,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use super::store::{DreamerRunnerStore, PARKED, decode_dreamer_attempt_status};
-use super::types::DreamerHomeNodeDesignation;
+use super::types::{DreamerHomeNodeCandidate, DreamerHomeNodeDesignation};
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptRecord, AttemptResultRef, AttemptResumePoint, AttemptState,
@@ -51,9 +52,14 @@ pub struct ConsolidationHomeView {
     /// This install's stable sync client id as a decimal string, read
     /// without minting one: `None` before this install has an id.
     pub this_node: Option<String>,
-    /// Whether the candidate set the election ranked is reported. `false`:
-    /// this read reports none, and none is inferred from the winner.
+    /// Whether this node keeps a candidate set: the host's last one, which
+    /// its last election ranked. `false`: no election has run here, and
+    /// `candidates` is empty; none is inferred from the winner or the pick.
     pub candidates_available: bool,
+    /// The host's last candidates, in the order it supplied them. A pick
+    /// of a node outside them is recorded all the same; only this node's
+    /// election passes over it.
+    pub candidates: Vec<ConsolidationHomeCandidate>,
     /// The owner's pick (a decimal node id) the last unconflicted pick
     /// names: what he recorded, not the node elected. `None` for no pick or
     /// a clear.
@@ -65,6 +71,22 @@ pub struct ConsolidationHomeView {
     /// The live picks in conflict, empty when none: while any conflict, the
     /// election passes over the pick, which stays recorded.
     pub conflict: Vec<ConsolidationHomePickHead>,
+}
+
+/// One node the host offered this node's election.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsolidationHomeCandidate {
+    /// The node's stable sync client id, as a decimal string.
+    pub node_id: String,
+    /// The election class it is eligible for now (`cloud_attached`,
+    /// `always_on_local` or `primary_device`); `None` when it is not
+    /// eligible (a detached cloud, or a device neither always-on nor
+    /// primary), so the election passes over it even when picked.
+    pub class: Option<String>,
+    pub cloud: bool,
+    pub attached: bool,
+    pub always_on_local: bool,
+    pub primary_device: bool,
 }
 
 /// One signed home pick as the owner's surface shows it.
@@ -88,6 +110,11 @@ pub struct ConsolidationHomePickRequest {
     /// zero; `null` clears the pick, so the default election order holds
     /// again. A node this machine does not know is recorded all the same.
     pub node_id: Option<String>,
+    /// The 64-hex `revision` the owner's surface showed him, as
+    /// `vault.consolidation.home.get` reads it: the pick refuses when the
+    /// live picks moved since. Absent: the pick takes the current ones.
+    #[serde(default)]
+    pub seen: Option<String>,
 }
 
 /// One landed home pick, and this machine's home after its own re-election.
@@ -113,15 +140,7 @@ impl ConsolidationHomePickReceipt {
     /// The AUTHORITY_LOG row the pick landed as, which its listing names.
     #[must_use]
     pub fn act_row(&self) -> Option<EntityId> {
-        let text = self.act_ref.as_bytes();
-        if text.len() != 64 {
-            return None;
-        }
-        let mut hash = [0; 32];
-        for (byte, pair) in hash.iter_mut().zip(text.chunks_exact(2)) {
-            *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-        }
-        crate::authority::authority_log_entity_id_from_hash(&hash).ok()
+        crate::authority::authority_log_entity_id_from_hash(&hex32(&self.act_ref)?).ok()
     }
 }
 
@@ -196,9 +215,9 @@ pub struct ConsolidationStepRef {
     pub claim_ref: EntityId,
 }
 
-/// Reads, as the vault owner, this node's MACRO home designation and this
-/// install's sync client id in one read transaction. It elects, mints and
-/// wakes nothing.
+/// Reads, as the vault owner, this node's MACRO home designation, the
+/// host's last candidate set and this install's sync client id in one read
+/// transaction. It elects, mints and wakes nothing.
 ///
 /// # Errors
 ///
@@ -209,14 +228,19 @@ pub fn consolidation_home_as(
 ) -> MemoryResult<ConsolidationHomeView> {
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     owner.revalidate_in_txn(vault, &txn)?;
-    let home = DreamerRunnerStore::new(vault)
-        .home_node_designation_in_txn(&txn)?
-        .map(home_node);
+    let runner = DreamerRunnerStore::new(vault);
+    let home = runner.home_node_designation_in_txn(&txn)?.map(home_node);
+    let candidates = runner.home_candidates_in_txn(&txn)?;
     let picks = PickView::of(&crate::authority::home_pick_in_txn(vault, &txn)?);
     Ok(ConsolidationHomeView {
         home,
         this_node: crate::identity::read_client_id_in_txn(vault, &txn)?.map(|id| id.to_string()),
-        candidates_available: false,
+        candidates_available: candidates.is_some(),
+        candidates: candidates
+            .unwrap_or_default()
+            .into_iter()
+            .map(home_candidate)
+            .collect(),
         pick: picks.pick,
         revision: picks.revision,
         heads: picks.heads,
@@ -230,13 +254,16 @@ pub fn consolidation_home_as(
 /// own host's candidates. `surface` is where he said so, for audit only. The
 /// pick is recorded whether or not this machine knows the node; its landing
 /// re-elects this machine's home in the same transaction. No admitted call,
-/// lease or budget moves.
+/// lease or budget moves. A `seen` revision makes the pick land only over
+/// the live picks the owner was shown.
 ///
 /// # Errors
 ///
 /// `BAD_REQUEST` for a node id that is not a nonzero decimal string of ASCII
-/// digits within `u64`; a stale owner proof; an install that cannot carry
-/// the act; storage errors.
+/// digits within `u64`, or a `seen` that is not 64 hex; a concurrent-write
+/// refusal when `seen` is no longer the live picks' revision (read
+/// `vault.consolidation.home.get` again); a stale owner proof; an install
+/// that cannot carry the act; storage errors.
 pub fn consolidation_home_pick_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -244,8 +271,9 @@ pub fn consolidation_home_pick_as(
     input: ConsolidationHomePickRequest,
 ) -> MemoryResult<ConsolidationHomePickReceipt> {
     let node_id = input.node_id.as_deref().map(parse_node_id).transpose()?;
+    let seen = input.seen.as_deref().map(parse_revision).transpose()?;
     let authority = ActAuthority::Owner(owner.clone(), surface);
-    let landed = vault.set_home_pick_as(&authority, node_id, None)?;
+    let landed = vault.set_home_pick_as(&authority, node_id, seen)?;
     let picks = PickView::of(&landed.state);
     Ok(ConsolidationHomePickReceipt {
         pick: picks.pick,
@@ -269,6 +297,34 @@ fn parse_node_id(text: &str) -> MemoryResult<u64> {
         return Err(refused());
     }
     text.parse().map_err(|_| refused())
+}
+
+/// A pick revision as the home doors show it: 64 hex digits.
+fn parse_revision(text: &str) -> MemoryResult<[u8; 32]> {
+    hex32(text).ok_or_else(|| MemoryError::bad_request("seen is a 64-hex home pick revision"))
+}
+
+/// 32 bytes from 64 ASCII hex digits of either case.
+fn hex32(text: &str) -> Option<[u8; 32]> {
+    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0; 32];
+    for (byte, pair) in out.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(out)
+}
+
+fn home_candidate(candidate: DreamerHomeNodeCandidate) -> ConsolidationHomeCandidate {
+    ConsolidationHomeCandidate {
+        node_id: candidate.node_id.to_string(),
+        class: candidate.designation_class().map(|class| class.as_str().to_owned()),
+        cloud: candidate.cloud,
+        attached: candidate.attached,
+        always_on_local: candidate.always_on_local,
+        primary_device: candidate.primary_device,
+    }
 }
 
 fn home_node(home: DreamerHomeNodeDesignation) -> ConsolidationHomeNode {

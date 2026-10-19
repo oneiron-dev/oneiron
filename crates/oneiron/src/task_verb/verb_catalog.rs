@@ -12045,10 +12045,10 @@ impl AgentVerb {
                 "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultConsolidationHomeGet => {
-                "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+                "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."
             }
             Self::VaultConsolidationHomePick => {
-                "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."
+                "The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease."
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."
