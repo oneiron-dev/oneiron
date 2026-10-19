@@ -21,6 +21,7 @@ use super::support::{
 };
 use crate::error::GateError;
 
+mod lineage;
 mod person_credential;
 
 // ---------------------------------------------------------------------------
@@ -324,32 +325,6 @@ impl AuthenticatedOwner {
         self.credential
             .as_deref()
             .or(self.person_credential.as_deref())
-    }
-
-    /// The credential slip this proof was carried under, and that slip's
-    /// parent, or the host root a host action acts under (FIX 2222). An
-    /// offer refuses an answer from the lineage that opened it.
-    pub(crate) fn credential_lineage(&self) -> Vec<[u8; 32]> {
-        let mut lineage = self.carried_slip().map_or_else(Vec::new, |credential| {
-            let claims = credential.claims();
-            std::iter::once(claims.slip_id)
-                .chain(claims.parent_id)
-                .collect()
-        });
-        lineage.extend(
-            self.host_action
-                .as_ref()
-                .and_then(|action| action.root_slip_id()),
-        );
-        lineage
-    }
-
-    /// Whether this proof answers from `slip`'s own lineage: carried under
-    /// that very slip, or under one minted directly from it. A code consent
-    /// wait (DOOR-079) refuses such an answer: the opener never settles its
-    /// own wait. A proof no credential carried shares no slip lineage.
-    pub(crate) fn answers_from_slip_lineage(&self, slip: &[u8; 32]) -> bool {
-        self.credential_lineage().contains(slip)
     }
 
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {

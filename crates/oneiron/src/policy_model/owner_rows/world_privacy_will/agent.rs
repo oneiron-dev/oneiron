@@ -30,7 +30,7 @@ impl Vault {
     /// ([`crate::authority::ActAuthority::Agent`]); otherwise a tighten lands
     /// as a proposal and a widen as an ask, and no settings change. Every
     /// request it opens, a Grant's widen included, carries `opener_lineage`
-    /// (FIX 4705): no answer from that lineage settles it.
+    /// (FIX 4705): no answer from that lineage or a fork of it settles it.
     ///
     /// # Errors
     /// [`Error::InvalidConfig`] when `agent` is no agent, or the world is a
@@ -77,7 +77,8 @@ impl Vault {
     /// applies as `by: Agent`, its Grant checked again in the same writer,
     /// and tells every holder with the receipt and a one-tap undo; a widen
     /// opens an ask to the holders, carrying `opener_lineage`, the credential
-    /// lineage that opened the agent's run (FIX 4705).
+    /// lineage that opened the agent's run (FIX 4705): neither it nor a fork
+    /// of it settles the ask (FIX 5064).
     pub(super) fn granted_world_privacy(
         &self,
         granted: &GrantedAct,

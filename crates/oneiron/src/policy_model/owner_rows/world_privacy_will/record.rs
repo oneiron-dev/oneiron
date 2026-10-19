@@ -69,8 +69,8 @@ pub struct WorldPrivacyRequest {
     /// waits for the other owners.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
-    /// The credential lineage that opened it, as hex slip ids: none of it
-    /// settles the request.
+    /// The credential lineage that opened it, as hex slip ids: neither it
+    /// nor a fork of it settles the request (FIX 5064).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub opener_lineage: Vec<String>,
     /// Who opened it, as hex: the agent, or the holder.

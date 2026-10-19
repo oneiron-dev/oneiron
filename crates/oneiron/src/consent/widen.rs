@@ -73,8 +73,8 @@ struct StoredProposal {
     /// The terminal answer that resolved this proposal.
     #[serde(default)]
     settlement: Option<StoredSettlement>,
-    /// The credential slips the proposal was filed under. None of them, and
-    /// no slip they parent, may settle it.
+    /// The credential slips the proposal was filed under. Neither their
+    /// lineage nor any fork of it may settle it (FIX 5064).
     #[serde(default)]
     opener_lineage: Vec<[u8; 32]>,
 }
@@ -612,7 +612,7 @@ impl Vault {
     /// The open contact-disclosure offer `reference` names, checked in the
     /// settling transaction: this owner's, unexpired, unsettled,
     /// byte-identical to what the owner saw, and not answered from the
-    /// lineage that opened it.
+    /// lineage that opened it or a fork of it (FIX 5064).
     pub(super) fn open_contact_disclosure_offer_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -635,10 +635,7 @@ impl Vault {
             )));
         }
         if proposal.proposer == actor.to_hex()
-            || owner
-                .credential_lineage()
-                .iter()
-                .any(|slip| row.opener_lineage.contains(slip))
+            || owner.answers_from_slip_lineage_in_txn(self, txn, &row.opener_lineage)?
         {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "the lineage that opened an offer cannot settle it",

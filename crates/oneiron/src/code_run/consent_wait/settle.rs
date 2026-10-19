@@ -263,8 +263,8 @@ fn answer_in_txn(
 
 /// Who may answer a code consent wait (CALLS: owner-only holder subset):
 /// the vault's owner, revalidated in the answering writer, from any surface
-/// the owner is authenticated on, but never from the opener's own lineage,
-/// the slip the held call was admitted on or one minted directly under it.
+/// the owner is authenticated on, but never from the opener's lineage, that
+/// of the slip the held call was admitted on, or a fork of it (FIX 5064).
 /// Canon lets a settlement-policy row name other holders; no gate here can
 /// prove one yet, so none is accepted.
 fn code_consent_answerer_in_txn(
@@ -274,10 +274,8 @@ fn code_consent_answerer_in_txn(
     owner: &AuthenticatedOwner,
 ) -> Result<EntityId> {
     let answerer = owner.revalidate_in_txn(vault, txn)?;
-    if binding
-        .original
-        .opener_slip
-        .is_some_and(|slip| owner.answers_from_slip_lineage(&slip))
+    if let Some(slip) = binding.original.opener_slip
+        && owner.answers_from_slip_lineage_in_txn(vault, txn, &[slip])?
     {
         return Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
             "the opener lineage never settles its own code consent wait",

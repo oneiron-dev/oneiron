@@ -99,7 +99,8 @@ impl HostActionGuard {
     }
 
     /// The host root this action acts under, by slip id; `None` for the
-    /// dev mode. An offer refuses an answer from the lineage that opened it.
+    /// dev mode. An offer refuses an answer from the lineage that opened it
+    /// or a fork of it (FIX 5064).
     pub(crate) fn root_slip_id(&self) -> Option<[u8; 32]> {
         self.root.as_ref().map(|root| root.claims().slip_id)
     }
