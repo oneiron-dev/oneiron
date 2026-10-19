@@ -49,8 +49,10 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// each row summary marks whether its body is required (FIX 2988). 6: a
 /// machine revision carries its owner say-so's causal past (FIX 4610). 7:
 /// the fold keeps each machine's home candidacy (FIX 4898). 8: the owner
-/// work fold keeps the owner's cancels of root requests (FIX 4739).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 8;
+/// work fold keeps the owner's cancels of root requests (FIX 4739). 9: the
+/// fold admits the owner's device key enrollments and an image carries
+/// their bodies, and the retired multi-device entry quorum is gone (FIX 4920).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 9;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

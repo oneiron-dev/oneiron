@@ -17,7 +17,11 @@ pub(super) fn apply_op(
 ) {
     match op {
         AuthorityOp::Genesis { .. } => {}
-        AuthorityOp::EnrollDevice { device } => {
+        // An owner key enrollment's judge in `fold_entry_state` admitted its
+        // primary signer as the predecessor root that admits the key (FIX
+        // 4920).
+        AuthorityOp::EnrollDevice { device }
+        | AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. }) => {
             upsert_device(state, device, Some(signer));
             if state
                 .roster
