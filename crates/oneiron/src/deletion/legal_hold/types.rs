@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
+use crate::error::LegalHoldNotice;
 
 /// The title of the owner's one confirm.
 pub const LIFT_AND_ERASE_TITLE: &str = "Lift the hold and erase?";
@@ -13,9 +14,14 @@ pub const LIFT_AND_ERASE_TITLE: &str = "Lift the hold and erase?";
 /// The prompt the owner's one confirm shows (C7).
 pub const LIFT_AND_ERASE_PROMPT: &str = "This lifts your hold and erases these records. It does not end any legal duty to keep them. This choice is recorded.";
 
-/// What an owner erase shows where Oneiron hosts the bytes until the
-/// deletion receipt completes, and while a secret order keeps them (C2, C4).
+/// What an owner erase shows until its deletion receipt completes, wherever
+/// the bytes live, and while a secret order keeps them (C2, C4).
 pub const ERASE_COMPLETION_PENDING: &str = "erase confirmed; completion pending";
+
+/// What a legal order's refusal says self-hosting changes (WILL-PLAN L01 row
+/// 01): the act works on bytes the owner hosts that no hold covers, never on
+/// the copy Oneiron must preserve, and the owner's own legal duties stand.
+pub const LEGAL_HOLD_SELF_HOSTED_NOTE: &str = "The same delete works on owner-hosted bytes that no hold covers; it cannot erase the copy we must preserve, or end your own legal duties.";
 
 /// The named refusal a delete of a held record fails with.
 pub const LEGAL_HOLD_REFUSAL: &str = "legal hold: a hold names this record, so it is not deleted";
@@ -107,14 +113,24 @@ pub struct LegalHold {
     /// Until when an order forbids telling the owner. While it runs the
     /// owner-visible log shows nothing of this hold (C2).
     pub secret_until: Option<u64>,
-    /// Opaque matter or order reference. A host order's never leaves the
-    /// host-only log and rows.
+    /// Opaque matter or order reference. The owner sees a host order's
+    /// unless its silence runs ([`Self::owner_may_see`]).
     pub matter_ref: Option<String>,
+    /// A host order's law, as an opaque ref ([`HostOrderHold`]).
+    pub legal_basis_ref: Option<String>,
+    /// Where a host order's law binds, as an opaque code.
+    pub jurisdiction: Option<String>,
+    /// Who issued a host order, as an opaque ref.
+    pub issuing_authority_ref: Option<String>,
     pub lifted_at: Option<u64>,
     /// A host order's owner-visible notice was written (at placement, or
     /// when its silence ended).
     #[serde(default)]
     pub owner_told: bool,
+    /// A host order also forbids using what it keeps (C6). Never set on a
+    /// customer hold.
+    #[serde(default)]
+    pub requires_non_use: bool,
 }
 
 impl LegalHold {
@@ -128,6 +144,16 @@ impl LegalHold {
     #[must_use]
     pub fn secret_at(&self, now: u64) -> bool {
         self.kind == LegalHoldKind::HostOrder && self.secret_until.is_some_and(|until| now < until)
+    }
+
+    /// THE owner's permitted view of this hold at `now` (WILL-PLAN L01 row
+    /// 02): the whole row, its matter ref, operator and terms, and its
+    /// events' actors and reasons, unless an order's silence runs
+    /// (`secret_until`), when nothing of it. The list, the log and every
+    /// refusal read it.
+    #[must_use]
+    pub fn owner_may_see(&self, now: u64) -> bool {
+        !self.secret_at(now)
     }
 }
 
@@ -213,22 +239,48 @@ pub struct HostOrderHold {
     pub secret_until: Option<u64>,
     /// Opaque ref of the host operator placing it.
     pub placed_by: String,
+    /// The law the order is made under, as an opaque ref (a statute or
+    /// provision id). Its refusals name it.
+    pub legal_basis_ref: Option<String>,
+    /// Where that law binds, as an opaque code.
+    pub jurisdiction: Option<String>,
+    /// Who issued the order, as an opaque ref.
+    pub issuing_authority_ref: Option<String>,
+    /// The order also forbids using what it keeps: a refused privacy
+    /// erasure keeps the record under a use limit while the order stands
+    /// (C6). `false` keeps the bytes only.
+    pub requires_non_use: bool,
 }
 
-/// What the owner's one confirm did to one record.
+/// What the owner's one confirm did to one record. One rule wherever the
+/// bytes live (WILL-PLAN L01 row 04).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiftAndEraseStatus {
-    /// Self-hosted: the hold is lifted and the record erased.
+    /// The hold is lifted and the record erased: its deletion receipt is
+    /// complete, hard purge and historical sweep both (C4). No receipt when
+    /// nothing was there to erase.
     Erased { receipt_ref: Option<String> },
     /// "Erase confirmed; completion pending" ([`ERASE_COMPLETION_PENDING`]):
-    /// where Oneiron hosts the bytes, until the deletion receipt completes,
-    /// or while a secret order keeps the bytes.
-    CompletionPending,
-    /// A legal order Oneiron must obey keeps the bytes; the erase runs when
-    /// it lifts.
-    KeptByLegalOrder,
+    /// the erase ran and `reason` is still outstanding on its receipt, or,
+    /// with neither, an order the owner may not be told of keeps the bytes.
+    CompletionPending {
+        receipt_ref: Option<String>,
+        reason: Option<ErasePendingReason>,
+    },
+    /// A legal order binding Oneiron's hosting keeps the bytes; the notice
+    /// names its bound. The erase runs when the order lifts.
+    RetainedForLaw(LegalHoldNotice),
     /// The hold was lifted, then the erase failed; a plain delete retries it.
     Failed { message: String },
+}
+
+/// What an erase that ran still waits on (C4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErasePendingReason {
+    /// Its historical sweep is queued: the receipt has no
+    /// `sweep_complete_at` yet.
+    HistoricalSweep,
 }
 
 /// The owner's one confirm's result.
@@ -240,8 +292,9 @@ pub struct LiftAndEraseOutcome {
 }
 
 /// A record kept after a refused privacy erasure: it serves only the legal
-/// reason that kept it (C6, hosted only). Read enforcement is the scope
-/// checks' (L02).
+/// reason that kept it (C6, hosted only), while a standing host order that
+/// forbids its use ([`HostOrderHold::requires_non_use`]) still names it. Read
+/// enforcement is the scope checks' (L02).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldUseLimit {

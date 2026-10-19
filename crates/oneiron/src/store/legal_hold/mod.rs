@@ -5,13 +5,15 @@
 //! the transaction that destroys ([`Store::reject_legal_holds_in_txn`]).
 //! Several holds may name one record; each lifts on its own.
 //!
-//! Customer holds, the owner-visible log, confirmed-erase links and use
-//! limits are canonical rows a restore keeps live. Host-order holds and the
-//! host-only log sit under `legal_hold:host:`, a runtime prefix no
-//! checkpoint image carries, so an owner backup or export never holds an
-//! order or its reference (C2).
+//! Customer holds, their log, confirmed-erase links and use limits are
+//! canonical rows a restore keeps live. Host-order holds and their log sit
+//! under `legal_hold:host:`, a runtime prefix no checkpoint image carries, so
+//! an owner backup or export never holds an order or its reference (C2). The
+//! owner reads a host order's rows through the one permitted view
+//! (`LegalHold::owner_may_see`), never a copy.
 
 mod events;
+mod notice;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -20,11 +22,11 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 pub(crate) use events::{host_events_in_txn, log_in_txn, owner_events_in_txn};
+pub(crate) use notice::law_notice;
 
 use crate::deletion::{
-    LEGAL_HOLD_DEFERRAL, LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LegalHold,
-    LegalHoldActorKind, LegalHoldEventKind, LegalHoldKind, LegalHoldReason, LegalHoldTarget,
-    LegalHoldUseLimit,
+    LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
+    LegalHoldKind, LegalHoldReason, LegalHoldTarget, LegalHoldUseLimit,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -326,11 +328,14 @@ pub(crate) fn put_hold_in_txn(
 impl Store {
     /// THE legal-hold check (C7). Every byte-destroying path calls it inside
     /// the transaction that destroys, for every id it destroys, whoever acts:
-    /// agent, timer, member or owner. A held id fails with the named refusal
-    /// [`LEGAL_HOLD_REFUSAL`], or with [`LEGAL_HOLD_DEFERRAL`] when only a
-    /// secret order holds it. The owner lifts a customer hold only through
-    /// `Vault::confirm_lift_legal_hold_and_erase`. The refusal is queued for
-    /// the hold log, since the refusing transaction rolls back.
+    /// agent, timer, member or owner. A held id fails with
+    /// `Error::LegalHold` (`retained_for_law`, naming the law bound) when a
+    /// host order the owner may see holds it; else with the named refusal
+    /// [`crate::deletion::LEGAL_HOLD_REFUSAL`], or with
+    /// [`crate::deletion::LEGAL_HOLD_DEFERRAL`] when only a secret order holds
+    /// it (WILL-PLAN L01 row 01). The owner lifts a customer hold only
+    /// through `Vault::confirm_lift_legal_hold_and_erase`. The refusal is
+    /// queued for the hold log, since the refusing transaction rolls back.
     pub(crate) fn reject_legal_holds_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -367,9 +372,9 @@ impl Store {
             return Ok(());
         }
         let now = self.clock.now_recorded_at();
-        let mut only_secret = true;
+        let mut rows = Vec::with_capacity(holds.len());
         for id in holds {
-            only_secret &= standing_row_in_txn(self, txn, &id)?.secret_at(now);
+            rows.push(standing_row_in_txn(self, txn, &id)?);
             if let Some(target) = target {
                 let note = RefusalNote {
                     hold: id,
@@ -380,12 +385,7 @@ impl Store {
                 self.legal_hold_refusals.note(note);
             }
         }
-        let refusal = if only_secret {
-            LEGAL_HOLD_DEFERRAL
-        } else {
-            LEGAL_HOLD_REFUSAL
-        };
-        Err(Error::InvalidConfig(refusal.to_owned()))
+        Err(notice::held_refusal(&rows, now))
     }
 
     /// Writes the queued refusals to their hold logs in one raw write of its
@@ -438,7 +438,9 @@ fn hosts_bytes(store: &Store) -> bool {
 
 /// Writes queued refusals to their hold logs. A refused privacy erasure keeps
 /// the held record for that legal reason only: where Oneiron hosts the bytes
-/// it gets a use limit (C5, C6). Returns how many were written.
+/// and a standing host order's own terms forbid its use, it gets a use limit
+/// (C5, C6, WILL-PLAN L01 row 03). A customer hold keeps bytes, never use.
+/// Returns how many were written.
 pub(crate) fn flush_refusals_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -470,6 +472,7 @@ pub(crate) fn flush_refusals_in_txn(
         if let LegalHoldTarget::Record(record) = note.target
             && note.actor.privacy_erase
             && hosted
+            && notice::restricts_use(&hold)
         {
             keep_use_limited_in_txn(dbs, txn, record, note.at)?;
         }
@@ -502,7 +505,8 @@ fn keep_use_limited_in_txn(
 /// A privacy erasure request over `records` (C5): returns the records no
 /// hold names, for the caller to erase, and the held ones it keeps. Each
 /// held record logs a refusal with its reason; where Oneiron hosts the bytes
-/// it is kept under a use limit (C6). It never lifts or skips a hold.
+/// and an order forbids its use it is kept under a use limit (C6). It never
+/// lifts or skips a hold.
 pub(crate) fn split_privacy_erase_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -536,13 +540,21 @@ pub(crate) fn split_privacy_erase_in_txn(
 }
 
 /// The C6 use limit on `record`, if it was kept after a refused privacy
-/// erasure.
+/// erasure and a standing host order that forbids its use still names it
+/// (WILL-PLAN L01 row 03). A marker no such order backs, the order released
+/// or ended, restricts nothing.
 pub(crate) fn use_limit_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<LegalHoldUseLimit>> {
-    USE_LIMITS.get(dbs, txn, record)
+    let Some(limit) = USE_LIMITS.get(dbs, txn, record)? else {
+        return Ok(None);
+    };
+    if notice::non_use_orders_in_txn(dbs, txn, record)?.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(limit))
 }
 
 /// Records that an owner confirmed erasing `record` while a host order keeps
@@ -693,8 +705,12 @@ pub(crate) fn set_partition_hold_in_txn(
                 ends_at: None,
                 secret_until: None,
                 matter_ref: None,
+                legal_basis_ref: None,
+                jurisdiction: None,
+                issuing_authority_ref: None,
                 lifted_at: None,
                 owner_told: true,
+                requires_non_use: false,
             };
             put_hold_in_txn(dbs, txn, &hold)?;
             log_in_txn(

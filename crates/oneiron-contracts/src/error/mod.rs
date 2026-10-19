@@ -9,6 +9,7 @@ mod claim;
 mod code;
 mod gate;
 mod hook;
+mod legal_hold;
 mod maintenance;
 mod off_record;
 mod record;
@@ -23,6 +24,9 @@ pub use self::claim::ClaimError;
 pub use self::code::CodeError;
 pub use self::gate::{GateDenial, GateDenialOutcome, GateDenialReason, GateError};
 pub use self::hook::VerbHookStop;
+pub use self::legal_hold::{
+    LEGAL_HOLD_SUGGESTION, LegalHoldBound, LegalHoldBoundKind, LegalHoldNotice, LegalHoldState,
+};
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
 pub use self::record::{RecordError, RoomLiveSpeakersHold};
@@ -204,6 +208,9 @@ pub enum ErrorKind {
     ProviderUnavailable,
     /// A refusal that names its bound; its message is the whole answer.
     Refused,
+    /// A legal order binding the host keeps the record, or keeps it from
+    /// use; the error names its bound (WILL-PLAN L01 rows 01 and 03).
+    LegalHold,
     #[cfg(feature = "sync")]
     CrdtDecodeError,
     #[cfg(feature = "sync")]
@@ -476,6 +483,13 @@ pub enum Error {
     /// whole answer.
     #[error("{0}")]
     Refused(String),
+    /// A binding legal order where Oneiron hosts the bytes keeps the record
+    /// a delete, erase, read or write named, or keeps it from use (OF-470,
+    /// WILL-PLAN L01 rows 01 and 03). The notice names the order's bound,
+    /// the law, and what self-hosting changes. Never raised while the
+    /// order's silence runs.
+    #[error("{0}")]
+    LegalHold(Box<LegalHoldNotice>),
     /// A host credential asked to act as the vault's owner where no host
     /// acts as a person: a hosted operator's root, or any vault that is not
     /// self-hosted (FIX 2222). The operator keeps its own admin commands;
@@ -636,6 +650,7 @@ impl Error {
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
             Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
             Self::Refused(_) => ErrorKind::Refused,
+            Self::LegalHold(_) => ErrorKind::LegalHold,
             Self::HostActionRequiresSupportGrant => ErrorKind::HostActionRequiresSupportGrant,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
