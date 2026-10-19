@@ -11,6 +11,12 @@
 //!   this install that have no result yet (`Vault::pending_root_requests`).
 //! - The material a change needs goes to the target's own call alone,
 //!   `POST /roots/requests/run` (`recovery_kit_target_routes`).
+//! - `POST /roots/requests/cancel` records his cancel of one root request on
+//!   this install (`Vault::cancel_root_request`, FIX 4739): ids only, and it
+//!   takes effect on the target whenever it syncs, offline or not. The
+//!   target never runs a request it holds cancelled, or superseded by a
+//!   newer request on it; one it answered first keeps that answer, and the
+//!   cancel says it came too late. Nothing is undone.
 //!
 //! Each answer is the request's owner work receipt (`owner_work_routes`),
 //! polled at `GET /v1/owner/owner-work/{request}`. Where he spoke from is
@@ -23,12 +29,12 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::authority::{RecoveryRootId, RootChange};
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
-use super::owner_work_routes::OwnerWorkView;
+use super::owner_work_routes::{OwnerWorkView, request_entry};
 use super::{OwnerReply, blocking, owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
@@ -36,7 +42,9 @@ use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/roots/requests", get(pending).post(request))
+    Router::new()
+        .route("/roots/requests", get(pending).post(request))
+        .route("/roots/requests/cancel", post(cancel))
 }
 
 /// One root change as a surface shows it: its kind, and the ids it binds,
@@ -108,6 +116,14 @@ impl From<RootChange> for RootChangeWire {
     }
 }
 
+/// The owner's cancel of one root request.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CancelRootRequest {
+    /// The request, 64 hex: its receipt's `request`.
+    request: String,
+}
+
 /// One root request pending on this install, as its target's surface shows
 /// it.
 #[derive(Debug, Serialize)]
@@ -141,8 +157,35 @@ async fn request(
     Ok(Json(receipt))
 }
 
+/// `POST /v1/owner/roots/requests/cancel`: records the owner's cancel of one
+/// root request (FIX 4739). Its answer is the request's receipt: cancelled,
+/// or the answer its target gave before it had the cancel, which stands,
+/// with the cancel marked "already enacted" or "already refused". A request
+/// this install does not fold as a root request is refused, and nothing is
+/// written.
+async fn cancel(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<CancelRootRequest>, JsonRejection>,
+) -> OwnerReply<OwnerWorkView> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface(&server, &auth, &headers);
+    let body = json_payload(payload)?;
+    let receipt = blocking(move || -> OwnerResult<OwnerWorkView> {
+        let request = request_entry("request", &body.request)?;
+        Ok(server
+            .vault()
+            .cancel_root_request(&owner, surface, request)?
+            .into())
+    })
+    .await?;
+    Ok(Json(receipt))
+}
+
 /// `GET /v1/owner/roots/requests`: the root requests naming this install
-/// with no result yet, ascending by entry. Ids only.
+/// with no result yet, ascending by entry, but those the owner cancelled or
+/// a newer request superseded. Ids only.
 async fn pending(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

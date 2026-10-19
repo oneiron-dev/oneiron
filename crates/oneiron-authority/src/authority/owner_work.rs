@@ -33,7 +33,12 @@
 //! [`OwnerWorkBody`] variant with its [`OwnerWorkKind`], the [`OwnerActKind`]
 //! its act carries and the wire map it states under `work`; the request and
 //! result envelopes stay as they are.
+//!
+//! The owner may cancel a pending root request from any surface he is
+//! authenticated on ([`OwnerWorkCancel`], FIX 4739): ids only, carried by an
+//! install like the request, never a result.
 
+mod cancel;
 mod custody;
 mod result;
 
@@ -42,6 +47,8 @@ use rmpv::Value;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CANCEL_CONTEXT};
+pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENTS_MAX, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange, CustodyRecipientPermit,
 };

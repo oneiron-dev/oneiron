@@ -9,6 +9,13 @@
 //! through its root door's own transaction body and appends the enacted
 //! result beside it. No writer nests in another, and every check the root
 //! door makes before its transaction runs here too.
+//!
+//! The target decides at execution (FIX 4739): a request its fold holds
+//! cancelled by the owner, or superseded by a newer request on this install,
+//! is pending no longer, at the door's first read or at the recheck. It
+//! never runs, the call is refused with which of the two it is, and nothing
+//! is written: no result is signed for it, and its receipt, derived from the
+//! fold, says the same (CALLS ROOT_WORK_CANCEL, ROOT_WORK_SUPERSESSION).
 
 use std::collections::BTreeSet;
 
@@ -71,6 +78,30 @@ struct Enrolment<'a> {
 /// and nothing is written.
 fn no_request() -> Error {
     refused("no pending root request with this id names this install")
+}
+
+/// Why the root request signed as entry `hash` is not pending on `me`: the
+/// owner cancelled it, or a newer request on this install superseded it,
+/// before it ran here, and it never runs (CALLS ROOT_WORK_CANCEL,
+/// ROOT_WORK_SUPERSESSION); else [`no_request`]. A call refusal, and nothing
+/// is written.
+fn not_pending(fold: &AuthorityFold, me: EntityId, hash: AuthorityEntryHash) -> Error {
+    let mine = fold
+        .owner_work_request(&hash)
+        .is_some_and(|request| request.executor == me);
+    if mine && fold.root_request_cancelled(&hash) {
+        refused(
+            "the owner cancelled this root request before it ran here; it never runs, and \
+             nothing was written",
+        )
+    } else if mine && fold.root_request_superseded(&hash) {
+        refused(
+            "a newer root request on this install superseded this one before it ran here; it \
+             never runs, and nothing was written",
+        )
+    } else {
+        no_request()
+    }
 }
 
 /// The counted root request signed as entry `hash` that names `me` and has
@@ -175,7 +206,8 @@ impl Vault {
         let me = crate::identity::read_machine_id_in_txn(self, &txn)?.ok_or_else(no_request)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let vault_id = fold.vault_id.ok_or_else(no_request)?;
-        let (_, change) = pending_root(&fold, me, hash).ok_or_else(no_request)?;
+        let (_, change) =
+            pending_root(&fold, me, hash).ok_or_else(|| not_pending(&fold, me, hash))?;
         Ok(Asked {
             me,
             hash,
@@ -187,7 +219,9 @@ impl Vault {
     /// One writer transaction for `asked`: its recheck, then `effect` and,
     /// for [`Answer::Enacted`], the enacted result beside it. A request that
     /// fails the recheck is answered refused in this commit and `effect`
-    /// never runs: `Ok(Err(reason))`.
+    /// never runs: `Ok(Err(reason))`. One this fold holds cancelled or
+    /// superseded is pending no longer: `effect` never runs, no result is
+    /// signed, and the call is refused ([`not_pending`]).
     fn answer_root_request<T>(
         &self,
         asked: Asked,
@@ -196,8 +230,8 @@ impl Vault {
     ) -> Result<std::result::Result<T, OwnerWorkRefusal>> {
         self.with_write_txn(|txn| {
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            let (request, change) =
-                pending_root(&fold, asked.me, asked.hash).ok_or_else(no_request)?;
+            let (request, change) = pending_root(&fold, asked.me, asked.hash)
+                .ok_or_else(|| not_pending(&fold, asked.me, asked.hash))?;
             if let Some(reason) = self.root_work_refusal(txn, &fold, &request, change)? {
                 let outcome = OwnerWorkOutcome::Refused { reason };
                 self.append_owner_work_result_in_txn(txn, asked.hash, asked.me, outcome)?;
