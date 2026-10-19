@@ -185,8 +185,9 @@ impl Vault {
         }
 
         super::proposal::authorize(self, &request, proposal, &repo_root, stack)?;
-        let prepared =
-            self.prepare_repo_mutation_with_proposal(&repo_ref, &request, &repo_root, proposal)?;
+        let prepared = self.prepare_repo_mutation_with_proposal(
+            &repo_ref, &request, &repo_root, proposal, stack,
+        )?;
         #[cfg(test)]
         if take_repo_mutation_crash(RepoMutationCrashPoint::AfterPreparedBeforeAction) {
             let _ = prepared.execution.cleanup(&repo_root);
@@ -269,7 +270,7 @@ impl Vault {
         request: &RepoMutationRequest,
         repo_root: &Path,
     ) -> Result<PreparedRepoMutationAction> {
-        self.prepare_repo_mutation_with_proposal(repo_ref, request, repo_root, None)
+        self.prepare_repo_mutation_with_proposal(repo_ref, request, repo_root, None, None)
     }
 
     fn prepare_repo_mutation_with_proposal(
@@ -278,6 +279,7 @@ impl Vault {
         request: &RepoMutationRequest,
         repo_root: &Path,
         proposal: Option<EntityId>,
+        stack: Option<&super::reviewed_stack::StackStep>,
     ) -> Result<PreparedRepoMutationAction> {
         let (fork_hash, snapshot_bytes) = capture_repo_snapshot(self, repo_root)?;
         let pre_action_snapshot = decode_snapshot(&snapshot_bytes)?;
@@ -352,6 +354,10 @@ impl Vault {
                 &repo_mutation_oplog_key(&repo_key_hash, seq),
                 &stored,
             )?;
+            // An erase can end the stack between steps (FIX 5219).
+            if let Some(step) = stack {
+                step.require_open_in_txn(self, &wtxn)?;
+            }
             super::proposal::bind_prepared(self, &mut wtxn, proposal, repo_ref, seq)?;
             wtxn.commit()?;
             Ok(PreparedRepoMutation { repo_key_hash, seq })

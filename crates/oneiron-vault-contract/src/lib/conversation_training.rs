@@ -41,7 +41,7 @@
 //! that wrote it, not to a person's cloud account: the account binding is
 //! the uploader's (managed mode binds the registry vault id and the node's
 //! bearer outside these files). Each chunk is an `ONEV` envelope sealed to
-//! the intake recipient under purpose `ExportBundle` (5), recipient
+//! the intake recipient under purpose `PublisherTrainingOffer` (19), recipient
 //! [`TRAINING_SEAL_RECIPIENT`], key id the submission id's 16 bytes then the
 //! part as a big-endian `u32`, and vault id the engine vault id's 32 bytes.
 //! The text is the chunks' plaintexts joined in part order, then decoded as
