@@ -17,7 +17,12 @@
 //! - Free problem/proposal reports, durable ISSUE identity, maker routing and
 //!   entity-local review through [`ReportRequest`] and [`ReportIssue`].
 //! - A redaction seam ([`FeedbackRedactor`]) and preview
-//!   ([`prepare_feedback_preview`]).
+//!   ([`prepare_feedback_preview`]), and the engine text filter it runs free
+//!   text through ([`TextFilter`], [`apply_recognised_spans`],
+//!   [`FilteredFeedback`]).
+//! - The "Learn from my conversations" egress check ([`eligible`]) and the
+//!   only door that hands conversation text toward training the models
+//!   Oneiron ships ([`share_for_publisher_training`]).
 //! - Per-bundle, per-destination consent over the existing
 //!   [`ConsentAskCard`](crate::genui::ConsentAskCard) surface ([`feedback_approval_card`],
 //!   [`validate_feedback_approval`]).
@@ -33,13 +38,14 @@
 //! exposes review items. Triage prompts and digest policy remain agent-authored;
 //! they are not engine policy. The bundle bytes stay the transport contract.
 //!
-//! The [`FeedbackRedactor`] seam is exposed informationally so a later
-//! entity-recognition redactor can be dropped in behind it. No model, no
-//! weights, and no model runtime ship in this module, and no redaction does
-//! either: [`UnredactedFeedback`] is the only implementation, and it leaves
-//! the bundle as built. Telemetry and crash reports never carry world text
-//! (owner ruling 2026-10-14), so the engine attaches none to a bundle; text in
-//! one is a note the owner wrote and approved.
+//! The [`FeedbackRedactor`] seam takes [`FilteredFeedback`], which runs every
+//! free text a bundle carries through an in-vault [`TextFilter`] the host
+//! supplies (the server's Oneironer tagger) and refuses the bundle when that
+//! filter cannot run. No model, no weights, and no model runtime ship in this
+//! module. [`UnredactedFeedback`] leaves the bundle as built. Telemetry and
+//! crash reports never carry world text (owner ruling 2026-10-14), so the
+//! engine attaches none to a bundle; text in one is a note the owner wrote and
+//! approved.
 //!
 //! # Wire stability
 //!
@@ -92,10 +98,12 @@
 
 mod bundle;
 mod consent;
+mod conversation_training;
 mod dispatch;
 mod error;
 mod inbox;
 pub mod intake;
+mod redaction;
 mod report;
 
 pub use self::bundle::{
@@ -115,6 +123,11 @@ pub use self::consent::{
     feedback_approval_component_id, feedback_approval_disclosure, feedback_content_ref,
     feedback_logical_send_ref, prepare_feedback_preview, validate_feedback_approval,
 };
+pub use self::conversation_training::{
+    ConversationSource, ConversationText, ConversationTrainingChoice, Eligibility,
+    NO_PUBLISHER_TRAINING_INTAKE, NoChoicesYet, PublisherTrainingSink, ShareOutcome, ShareWithheld,
+    Withheld, eligible, share_for_publisher_training,
+};
 pub use self::dispatch::{
     FEEDBACK_RECEIPT_FIELD_APPROVAL_RECEIPT_REF, FEEDBACK_RECEIPT_FIELD_BUNDLE_DIGEST,
     FEEDBACK_RECEIPT_FIELD_BUNDLE_ENCODING, FEEDBACK_RECEIPT_FIELD_VERB, FeedbackExportOutcome,
@@ -123,6 +136,10 @@ pub use self::dispatch::{
 };
 pub use self::error::FeedbackError;
 pub use self::inbox::{FeedbackInboxNote, FeedbackInboxVia};
+pub use self::redaction::{
+    FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity,
+    apply_recognised_spans,
+};
 pub use self::report::{
     IssueCategory, REPORT_VERB, ReportDisclosure, ReportDisclosureChoice, ReportIssue, ReportKind,
     ReportReceipt, ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,

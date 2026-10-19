@@ -974,7 +974,11 @@ async fn preview_feedback(
     let host = feedback_host(&server)?;
     let request = json_payload(payload)?;
     Ok(Json(
-        blocking(move || feedback::preview(server.vault(), &host, &owner, &request)).await?,
+        blocking(move || {
+            let redactor = crate::feedback_redaction::feedback_redactor(&server);
+            feedback::preview(server.vault(), &host, &owner, &request, &redactor)
+        })
+        .await?,
     ))
 }
 
@@ -986,7 +990,11 @@ async fn send_feedback(
     let owner = owner(&auth, &server)?;
     let host = feedback_host(&server)?;
     let request = json_payload(payload)?;
-    let sent = blocking(move || feedback::send(server.vault(), &host, &owner, &request)).await?;
+    let sent = blocking(move || {
+        let redactor = crate::feedback_redaction::feedback_redactor(&server);
+        feedback::send(server.vault(), &host, &owner, &request, &redactor)
+    })
+    .await?;
     Ok(Json(sent))
 }
 

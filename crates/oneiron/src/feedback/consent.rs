@@ -211,6 +211,8 @@ pub trait FeedbackRedactor {
 /// category, versions, a whitelisted config snapshot and diagnosis
 /// references), and that a note is the owner's own writing, sent only after
 /// they preview and approve these exact bytes for this exact destination.
+/// The server's feedback doors run [`FilteredFeedback`](super::FilteredFeedback)
+/// first, and come back to this only when the in-vault filter cannot run.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UnredactedFeedback;
 

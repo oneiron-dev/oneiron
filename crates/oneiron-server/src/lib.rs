@@ -52,6 +52,7 @@ pub mod embedded;
 mod embedder;
 pub mod error;
 pub mod feedback_delivery;
+mod feedback_redaction;
 mod handler;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod hook_verdict;

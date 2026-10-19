@@ -9,15 +9,19 @@
 //! #proposals), sent under its own encoding token. Proposal text is shown in
 //! the preview byte for byte and leaves only on this owner's send of exactly
 //! that preview, so a proposal that quotes vault text has asked the owner
-//! first. A written note waits for in-vault redaction, which the engine does
-//! not ship yet, so a request with one is refused.
+//! first. When this server's on-device tagger can filter, every written
+//! text, a note or a proposal's problem and fix, runs through the in-vault
+//! filter before the preview is made (OF-420, `crate::feedback_redaction`),
+//! and the preview shows it as filtered. When it cannot, a request with a
+//! note is refused, and one without leaves as built, as it did before the
+//! filter.
 
 use oneiron::Vault;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::feedback::{
     FEEDBACK_APPROVE_ONCE_ACTION, FeedbackApprovalScope, FeedbackBundle, FeedbackCategory,
-    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal, UnredactedFeedback,
-    feedback_approval_card, prepare_feedback_preview,
+    FeedbackInboxNote, FeedbackPlatform, FeedbackPreview, FeedbackProposal, feedback_approval_card,
+    prepare_feedback_preview,
 };
 use oneiron::genui::{
     ConsentActionKind, ConsentActionRequest, ConsentActorIdentity, ConsentSurface,
@@ -26,6 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{OwnerError, OwnerResult};
 use crate::feedback_delivery::{FeedbackHost, SendFeedbackError, send_approved_feedback};
+use crate::feedback_redaction::{ServerFeedbackRedactor, Unfiltered};
 
 /// How long a preview stays good to send.
 const PREVIEW_LIFETIME_SECS: u64 = 3_600;
@@ -37,7 +42,8 @@ const PREVIEW_CLOCK_SKEW_SECS: u64 = 60;
 pub(crate) struct FeedbackRequest {
     /// `bug`, `papercut`, `confusion` or `feature-wish`.
     pub(crate) category: FeedbackCategory,
-    /// Refused until the engine redacts notes in the vault.
+    /// The owner's note; it leaves only as the in-vault filter returns it,
+    /// and is refused while that filter cannot run.
     #[serde(default)]
     pub(crate) note: Option<String>,
     /// A suggested fix beside the problem; makes this a proposal.
@@ -97,8 +103,9 @@ pub(crate) fn preview(
     host: &FeedbackHost,
     owner: &AuthenticatedOwner,
     request: &FeedbackRequest,
+    redactor: &ServerFeedbackRedactor,
 ) -> OwnerResult<Preview> {
-    preview_view(vault, host, owner, &bundle_preview(request)?)
+    preview_view(vault, host, owner, &bundle_preview(request, redactor)?)
 }
 
 /// The preview of one built bundle, for every door that builds its own:
@@ -128,12 +135,16 @@ pub(crate) fn send(
     host: &FeedbackHost,
     owner: &AuthenticatedOwner,
     request: &SendRequest,
+    redactor: &ServerFeedbackRedactor,
 ) -> OwnerResult<Sent> {
-    let preview = bundle_preview(&FeedbackRequest {
-        category: request.category,
-        note: request.note.clone(),
-        proposal: request.proposal.clone(),
-    })?;
+    let preview = bundle_preview(
+        &FeedbackRequest {
+            category: request.category,
+            note: request.note.clone(),
+            proposal: request.proposal.clone(),
+        },
+        redactor,
+    )?;
     send_previewed(
         vault,
         host,
@@ -223,22 +234,33 @@ pub(crate) fn send_previewed(
     })
 }
 
-fn bundle_preview(request: &FeedbackRequest) -> OwnerResult<FeedbackPreview> {
-    if request.note.is_some() {
-        return Err(OwnerError::Refused(
-            "a written note waits for in-vault redaction (OF-420); send the category alone"
-                .to_owned(),
-        ));
-    }
+/// The bundle as it would leave: built from the request, every free text in
+/// it run through `redactor`, this server's in-vault filter, when it runs.
+fn bundle_preview(
+    request: &FeedbackRequest,
+    redactor: &ServerFeedbackRedactor,
+) -> OwnerResult<FeedbackPreview> {
     let mut bundle = FeedbackBundle::new(
         request.category,
         env!("CARGO_PKG_VERSION"),
         FeedbackPlatform::current(),
     );
+    if let Some(note) = &request.note {
+        bundle = bundle.with_user_note(note.clone());
+    }
     if let Some(proposal) = &request.proposal {
         bundle = bundle.with_proposal(proposal.clone());
     }
-    prepare_feedback_preview(bundle, &UnredactedFeedback).map_err(feedback_error)
+    prepare_feedback_preview(bundle, &redactor.door(Unfiltered::RefuseNote)).map_err(|error| {
+        match error {
+            // The filter could not run, and a note leaves only filtered.
+            oneiron::feedback::FeedbackError::Redaction(_) => OwnerError::Refused(
+                "a written note waits for in-vault redaction (OF-420); send the category alone"
+                    .to_owned(),
+            ),
+            error => feedback_error(error),
+        }
+    })
 }
 
 fn feedback_error(error: oneiron::feedback::FeedbackError) -> OwnerError {
