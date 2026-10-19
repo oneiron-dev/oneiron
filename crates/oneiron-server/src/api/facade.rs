@@ -968,6 +968,11 @@ pub(super) fn owner_authorship(
 /// proof rather than only the owner's (OF-417).
 const PERSON_PROOF_VERB: &str = "vault.workspace.work_companion.set";
 
+/// The delete whose direct owner request also binds the host's own slip
+/// issuer: deleting a Connect guest's PERSON withdraws its grants and
+/// disconnects their pacts first (FIX 3875).
+const GUEST_REVOKING_DELETE_VERB: &str = "vault.delete";
+
 /// The proof a direct request (outside any room turn) binds onto its
 /// caller's surface for `verb`. `vault.workspace.work_companion.set` takes
 /// the person's own proof ([`shared_act_doors::person`]): the owner's, or a
@@ -1051,7 +1056,19 @@ fn facade_invoke_in_turn(
                     Some(owner) => memory.with_owner_authorship(&owner),
                     None => memory,
                 };
-                oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+                if verb == GUEST_REVOKING_DELETE_VERB {
+                    // With no host key the delete runs as before (FIX 3875).
+                    super::pairing::with_host_issuer(server, |issuer| match issuer {
+                        Some(issuer) => oneiron::task_verb::sdk::invoke(
+                            &memory.with_host_slip_issuer(issuer),
+                            verb,
+                            value,
+                        ),
+                        None => oneiron::task_verb::sdk::invoke(&memory, verb, value),
+                    })?
+                } else {
+                    oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+                }
             }
         })
     })

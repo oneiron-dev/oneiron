@@ -7,6 +7,7 @@ use super::{AnchoredEdit, EntityDoc, invalid, storage};
 use crate::batch::secret_scan::secret_scan_mode_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{ArtifactError, Error, Result};
+use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
 use crate::side_table::{self, HexId, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
@@ -635,9 +636,23 @@ fn settle_one(
             // a full live scratch doc before switching, retaining pinned history.
             merge_into(&live, &fork, &record.base)?;
             let old_document = h.document.clone();
+            // The live history keeps the old document's purge floor, so the new
+            // slot carries it too; drop_document removes the old slot's row.
+            let floor = vault.store.port_document_row(
+                txn,
+                DocumentSlot::from_hex(&old_document)?,
+                DocumentRow::ShallowSince,
+            )?;
             h.document = record.fork.clone();
             storage::move_pointer(&vault.store, txn, &entity, &h.document)?;
             storage::persist(vault, txn, &entity, &mut h, &live, None)?;
+            if let Some(floor) = floor {
+                vault.store.port_document_shallow_since_put(
+                    txn,
+                    DocumentSlot::from_hex(&h.document)?,
+                    &floor,
+                )?;
+            }
             storage::drop_document(&vault.store, txn, &old_document)?;
             record.status = ForkStatus::Switched;
             live.frontier()

@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use loro::LoroDoc;
 use rmpv::Value;
 
+use super::document::{map_get_bytes, map_insert_bytes};
 use super::{DocAuthorization, EntityDoc, TextField, invalid, storage};
-use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::{EntityId, Result, Vault, WriteActor};
 
 /// One attributed metadata mutation. `None` removes the field.
