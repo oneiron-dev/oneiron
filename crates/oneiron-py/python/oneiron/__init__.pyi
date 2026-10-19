@@ -2203,10 +2203,23 @@ class Oneiron:
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
     class _VaultCodeOriginVerbs:
+        def register(self, spec: Facade.OriginRegisterRequest) -> Facade.OriginRegistered:
+            """Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."""
+        @property
+        def mirror(self) -> "Oneiron._VaultCodeOriginMirrorVerbs": ...
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
         def publications(self, spec: Facade.OriginPublicationsRequest) -> Facade.OriginPublicationsView:
             """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
+    class _VaultCodeOriginMirrorVerbs:
+        def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorView:
+            """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
+        def set(self, spec: Facade.OriginMirrorSetRequest) -> Facade.OriginMirrorTarget:
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."""
+        def clear(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorCleared:
+            """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
+        def push(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorRun:
+            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."""
     class _VaultCodeOriginAuthorityVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginAuthorityView:
             """Read one served origin authority and this host identity under the owner credential."""

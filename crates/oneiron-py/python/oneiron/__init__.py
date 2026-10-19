@@ -3392,12 +3392,33 @@ class Oneiron:
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def register(self, spec):
+            """Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_register(json.dumps(spec))))
+        @property
+        def mirror(self) -> "Oneiron._VaultCodeOriginMirrorVerbs":
+            return Oneiron._VaultCodeOriginMirrorVerbs(self._client)
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs":
             return Oneiron._VaultCodeOriginAuthorityVerbs(self._client)
         def publications(self, spec):
             """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
             return json.loads(_translate(lambda: self._client.vault_code_origin_publications(json.dumps(spec))))
+    class _VaultCodeOriginMirrorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_get(json.dumps(spec))))
+        def set(self, spec):
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_set(json.dumps(spec))))
+        def clear(self, spec):
+            """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_clear(json.dumps(spec))))
+        def push(self, spec):
+            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."""
+            return json.loads(_translate(lambda: self._client.vault_code_origin_mirror_push(json.dumps(spec))))
     class _VaultCodeOriginAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

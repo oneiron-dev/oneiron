@@ -1828,6 +1828,21 @@ impl OneironClient {
                 "vault.code.export" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CodeExportResult,
                 >(client, verb, &input),
+                "vault.code.origin.register" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginRegistered,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.get" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginMirrorView,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.set" => remote_agent_verb_output::<
+                    oneiron::origin::mirror::OriginMirrorTarget,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.clear" => remote_agent_verb_output::<
+                    oneiron::memory::origin_doors::OriginMirrorCleared,
+                >(client, verb, &input),
+                "vault.code.origin.mirror.push" => remote_agent_verb_output::<
+                    oneiron::origin::mirror::OriginMirrorRun,
+                >(client, verb, &input),
                 "vault.code.origin.authority.get" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginAuthorityView,
                 >(client, verb, &input),
@@ -10368,6 +10383,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.export", value)
+    }
+    pub fn vault_code_origin_register(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRegisterRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginRegistered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.register", value)
+    }
+    pub fn vault_code_origin_mirror_get(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRepoRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginMirrorView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.get", value)
+    }
+    pub fn vault_code_origin_mirror_set(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginMirrorSetRequest,
+    ) -> Result<oneiron::origin::mirror::OriginMirrorTarget, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.set", value)
+    }
+    pub fn vault_code_origin_mirror_clear(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRepoRequest,
+    ) -> Result<oneiron::memory::origin_doors::OriginMirrorCleared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.clear", value)
+    }
+    pub fn vault_code_origin_mirror_push(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginRepoRequest,
+    ) -> Result<oneiron::origin::mirror::OriginMirrorRun, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.push", value)
     }
     pub fn vault_code_origin_authority_get(
         &self,

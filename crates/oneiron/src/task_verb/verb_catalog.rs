@@ -587,6 +587,11 @@ pub enum AgentVerb {
     VaultResultsSlice,
     VaultCodeRepoDiff,
     VaultCodeExport,
+    VaultCodeOriginRegister,
+    VaultCodeOriginMirrorGet,
+    VaultCodeOriginMirrorSet,
+    VaultCodeOriginMirrorClear,
+    VaultCodeOriginMirrorPush,
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
@@ -1639,6 +1644,11 @@ impl AgentVerb {
         Self::VaultResultsSlice,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
+        Self::VaultCodeOriginRegister,
+        Self::VaultCodeOriginMirrorGet,
+        Self::VaultCodeOriginMirrorSet,
+        Self::VaultCodeOriginMirrorClear,
+        Self::VaultCodeOriginMirrorPush,
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
@@ -2712,6 +2722,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => "vault.results.slice",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
+            Self::VaultCodeOriginRegister => "vault.code.origin.register",
+            Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
+            Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
+            Self::VaultCodeOriginMirrorClear => "vault.code.origin.mirror.clear",
+            Self::VaultCodeOriginMirrorPush => "vault.code.origin.mirror.push",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
@@ -3774,6 +3789,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -4853,6 +4873,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -6022,6 +6047,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -6808,6 +6838,10 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -7701,6 +7735,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginRegister => &["spec"],
+            Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorClear => &["spec"],
+            Self::VaultCodeOriginMirrorPush => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -8754,6 +8793,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginRegister => &["spec"],
+            Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorClear => &["spec"],
+            Self::VaultCodeOriginMirrorPush => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -10941,6 +10985,21 @@ impl AgentVerb {
             }
             Self::VaultCodeExport => {
                 "Export one already-finalized and reviewed document revision through the existing origin publication protocol."
+            }
+            Self::VaultCodeOriginRegister => {
+                "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."
+            }
+            Self::VaultCodeOriginMirrorGet => {
+                "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."
+            }
+            Self::VaultCodeOriginMirrorSet => {
+                "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."
+            }
+            Self::VaultCodeOriginMirrorClear => {
+                "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."
+            }
+            Self::VaultCodeOriginMirrorPush => {
+                "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."
             }
             Self::VaultCodeOriginAuthorityGet => {
                 "Read one served origin authority and this host identity under the owner credential."

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1029 facade rows, 3489 declarations.
-Inputs: 966 of 1029 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 920 of 1029 fully typed, 109 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1034 facade rows, 3496 declarations.
+Inputs: 971 of 1034 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 925 of 1034 fully typed, 109 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -10076,8 +10076,40 @@ class CodeExportResult(TypedDict):
     ref_was_already_applied: bool
     wire_replayed: bool
     wire_rejected: bool
+class OriginRegisterRequest(TypedDict):
+    repo: str
+    default_branch: str
+class OriginRegistered(TypedDict):
+    repo: str
+    repo_id: EntityId
+    default_branch: str
 class OriginRepoRequest(TypedDict):
     repo: str
+class OriginMirrorRun(TypedDict):
+    at: int
+    refs: int
+    deleted: int
+    failure: NotRequired[str | None]
+class OriginMirrorTarget(TypedDict):
+    repo: str
+    url: str
+    secret_ref: str
+    user: str
+    every_secs: int
+    last: NotRequired[OriginMirrorRun | None]
+    pushed: list[str]
+class OriginMirrorView(TypedDict):
+    repo: str
+    mirror: NotRequired[OriginMirrorTarget | None]
+class OriginMirrorSetRequest(TypedDict):
+    repo: str
+    url: str
+    secret_ref: str
+    user: NotRequired[str | None]
+    every_secs: int
+class OriginMirrorCleared(TypedDict):
+    repo: str
+    cleared: bool
 OriginResidence = Literal["local-vault", "cloud-vault"]
 class OriginAuthority(TypedDict):
     epoch: int

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1029 facade rows, 3461 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 981.
+// UniFFI census: 1034 facade rows, 3468 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 986.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -31353,12 +31353,99 @@ pub struct CodeExportResult {
     pub wire_rejected: bool,
 }
 
+/// `oneiron::memory::origin_doors::types::OriginRegisterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginRegisterRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "default_branch")]
+    pub default_branch: String,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginRegistered`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginRegistered {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "repo_id")]
+    pub repo_id: String,
+    #[serde(rename = "default_branch")]
+    pub default_branch: String,
+}
+
 /// `oneiron::memory::origin_doors::types::OriginRepoRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OriginRepoRequest {
     #[serde(rename = "repo")]
     pub repo: String,
+}
+
+/// `oneiron::origin::mirror::OriginMirrorRun`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginMirrorRun {
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "refs")]
+    pub refs: u64,
+    #[serde(rename = "deleted")]
+    pub deleted: u64,
+    #[serde(rename = "failure", default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+}
+
+/// `oneiron::origin::mirror::OriginMirrorTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginMirrorTarget {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "url")]
+    pub url: String,
+    #[serde(rename = "secret_ref")]
+    pub secret_ref: String,
+    #[serde(rename = "user")]
+    pub user: String,
+    #[serde(rename = "every_secs")]
+    pub every_secs: u64,
+    #[serde(rename = "last", default, skip_serializing_if = "Option::is_none")]
+    pub last: Option<OriginMirrorRun>,
+    #[serde(rename = "pushed")]
+    pub pushed: Vec<String>,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginMirrorView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginMirrorView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "mirror", default, skip_serializing_if = "Option::is_none")]
+    pub mirror: Option<OriginMirrorTarget>,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginMirrorSetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OriginMirrorSetRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "url")]
+    pub url: String,
+    #[serde(rename = "secret_ref")]
+    pub secret_ref: String,
+    #[serde(rename = "user", default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(rename = "every_secs")]
+    pub every_secs: u64,
+}
+
+/// `oneiron::memory::origin_doors::types::OriginMirrorCleared`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OriginMirrorCleared {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "cleared")]
+    pub cleared: bool,
 }
 
 /// `oneiron::origin::residence::OriginResidence`.
