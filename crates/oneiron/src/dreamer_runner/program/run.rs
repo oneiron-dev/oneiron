@@ -32,7 +32,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::outbound_intent_ledger::IntentLedgerRecord;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 
 use super::ATTEMPT;
 use super::types::code_run_bytes;
@@ -607,39 +607,90 @@ fn put_admitted_step_savepoint(
 /// attempt stamps, which a disarm leaves, and every try of one admission
 /// runs its one code run. A settled step keeps its key, try, issuing
 /// binding, digest and time; an issued or uncertain step stays as it is,
-/// and nothing is sent again.
+/// and nothing is sent again. The erase never fails on a row that does not
+/// decode (FIX 5736): a step under one of its code runs whose row does not
+/// decode goes whole by key, and a stamp that does not decode names no
+/// actor, so its run stays out of reach. Returns how many steps went whole.
 pub(super) fn scrub_actor_step_bodies_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
-) -> Result<()> {
+) -> Result<usize> {
+    let ActorSteps {
+        bodied,
+        undecodable,
+    } = actor_steps_in_txn(vault, wtxn, actor)?;
+    for (key, mut step) in bodied {
+        if let StepState::Settled { result, .. } = &mut step.state {
+            *result = None;
+        }
+        STEP.put(vault, wtxn, &key, &step)?;
+    }
+    for key in &undecodable {
+        STEP.delete(vault, wtxn, key)?;
+    }
+    Ok(undecodable.len())
+}
+
+/// How many of `actor`'s programs' steps an erase would remove whole on
+/// `txn`, because their rows do not decode (FIX 5736).
+pub(super) fn undecodable_actor_steps_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<usize> {
+    Ok(actor_steps_in_txn(vault, txn, actor)?.undecodable.len())
+}
+
+/// The steps an erase of one actor reaches: each settled step that keeps a
+/// body, and each step whose row does not decode.
+struct ActorSteps {
+    bodied: Vec<((EntityId, EntityId), TurnProgramStep)>,
+    undecodable: Vec<(EntityId, EntityId)>,
+}
+
+/// The steps under each code run `actor`'s attempt stamps name, read on
+/// `txn`. A key that does not decode names no step and is left as it is.
+fn actor_steps_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<ActorSteps> {
     let mut code_runs = BTreeSet::new();
-    for row in ATTEMPT.iter_from(vault, &*wtxn, &[])? {
-        let (_, stamp) = row?;
-        if stamp.actor == *actor {
+    for row in ATTEMPT.iter_raw_from(vault, txn, &[])? {
+        let (_, bytes) = row?;
+        if let Ok(stamp) = ATTEMPT.decode_value(&bytes)
+            && stamp.actor == *actor
+        {
             code_runs.insert(turn_program_code_run(&stamp.admission)?);
         }
     }
+    let mut steps = ActorSteps {
+        bodied: Vec::new(),
+        undecodable: Vec::new(),
+    };
     for code_run in code_runs {
-        let mut bodied = Vec::new();
-        for row in STEP.iter_from(vault, &*wtxn, code_run.as_bytes())? {
-            let (key, step) = row?;
-            if matches!(
-                step.state,
-                StepState::Settled {
-                    result: Some(_),
-                    ..
+        for row in STEP.iter_raw_from(vault, txn, code_run.as_bytes())? {
+            let (key, bytes) = row?;
+            let Some(key) = <(EntityId, EntityId) as SideKey>::decode_key(&key) else {
+                continue;
+            };
+            match STEP.decode_value(&bytes) {
+                Ok(step)
+                    if matches!(
+                        step.state,
+                        StepState::Settled {
+                            result: Some(_),
+                            ..
+                        }
+                    ) =>
+                {
+                    steps.bodied.push((key, step));
                 }
-            ) {
-                bodied.push((key, step));
+                Ok(_) => {}
+                Err(_) => steps.undecodable.push(key),
             }
-        }
-        for (key, mut step) in bodied {
-            if let StepState::Settled { result, .. } = &mut step.state {
-                *result = None;
-            }
-            STEP.put(vault, wtxn, &key, &step)?;
         }
     }
-    Ok(())
+    Ok(steps)
 }

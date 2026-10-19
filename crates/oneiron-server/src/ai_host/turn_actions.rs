@@ -22,13 +22,15 @@ use std::sync::Arc;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
+    ManifestEntry,
 };
 use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt};
 use oneiron::memory::{MessageWriteMode, WitnessAuthor};
-use oneiron::{LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteActor};
+use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteActor};
 use tokio::sync::{broadcast, watch};
 
 use super::payer_funding::room_launch_funding;
+use super::resident_craft::{join_craft, queue_craft, snapshot_craft};
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
     Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, TurnCredential, after_turn,
@@ -155,6 +157,23 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         .into_iter()
         .map(|text| text_message(LlmMessageRole::System, text))
         .collect();
+    // OF-490: the answering agent is shown its own craft after its
+    // instructions, and its action's attempt names what it was shown. A call
+    // that runs as it always did loads today's craft on the attempt. Beside a
+    // reused prefix, which shows and stamps the craft it captured, today's
+    // call reads one snapshot and is stamped only if it answers.
+    let at = vault.now_recorded_at();
+    let today_craft = if matches!(reuse, ChatReuse::Reused(_)) {
+        blocking(|| snapshot_craft(vault, &context.agent, at)).map(|craft| {
+            join_craft(&mut messages, craft.message);
+            craft.entries
+        })
+    } else {
+        if let Some(craft) = blocking(|| queue_craft(vault, attempt.id, &context.agent, at)) {
+            join_craft(&mut messages, craft);
+        }
+        None
+    };
     for line in context.history {
         let role = if line.author == WitnessAuthor::User {
             LlmMessageRole::User
@@ -189,6 +208,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
     let (admitted, today, breakpoint) = match reuse {
         ChatReuse::Reused(reused) => {
             let reused = *reused;
+            stamp_craft(vault, attempt, context.agent, &reused.craft);
             (reused.live, Some(admitted), Some(reused.breakpoint))
         }
         ChatReuse::Unavailable(reason) => {
@@ -258,6 +278,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
             mark,
             breakpoint,
             today,
+            craft: None,
         },
     )
     .map_err(|refusal| match refusal {
@@ -271,6 +292,12 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         .outcome
         .await
         .map_err(|_| "the producer stopped".to_owned())?;
+    // Today's call answered for the reused prefix: what it showed is named.
+    if outcome.fell_back
+        && let Some(entries) = &today_craft
+    {
+        stamp_craft(vault, attempt, context.agent, entries);
+    }
     // A failure that saved the reply cut short still failed: the reply
     // stays incomplete, and nothing runs it again unasked.
     outcome.result?;
@@ -278,6 +305,16 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         return Err("the reply was not recorded".into());
     }
     Ok(())
+}
+
+/// Stamps craft `agent`'s call on `attempt` was shown without a load on the
+/// attempt's manifest (OF-490). A stamp that fails leaves the reply as it
+/// runs, logged.
+fn stamp_craft(vault: &Vault, attempt: &AttemptRecord, agent: EntityId, entries: &[ManifestEntry]) {
+    if let Err(error) = blocking(|| vault.record_resident_craft_exposure(attempt, &agent, entries))
+    {
+        tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a turn action's craft was not stamped on its attempt");
+    }
 }
 
 /// Completes or fails the attempt; either is terminal.

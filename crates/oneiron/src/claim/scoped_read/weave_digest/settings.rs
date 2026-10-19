@@ -261,6 +261,32 @@ pub(super) fn erase_owner_weave_digest_settings_in_txn(
     Ok(())
 }
 
+/// The owner's settings row as the Coach and his own answers read it: an
+/// absent row reads as new, and a row that no longer decodes is rebuilt
+/// with its generation restarted above every generation his changes name,
+/// so no stale change matches it (FIX 5633). The caller's next put writes
+/// the rebuilt row; what the damaged row held (his feedback, the Coach's
+/// last evaluation) is gone with it.
+pub(super) fn settings_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    owner: EntityId,
+) -> Result<SettingsRow> {
+    if !SETTINGS.contains(store, txn, &owner)? {
+        return Ok(SettingsRow::default());
+    }
+    if let Some(row) = SETTINGS.get_lenient(store, txn, &owner)? {
+        return Ok(row);
+    }
+    tracing::warn!(owner = %owner.to_hex(), "an owner's digest settings row did not decode; it is rebuilt");
+    Ok(SettingsRow {
+        generation: newest_change_generation_in_txn(store, txn, owner)?
+            .checked_add(1)
+            .ok_or_else(invalid)?,
+        ..SettingsRow::default()
+    })
+}
+
 /// The highest generation any of the owner's changes names, so a settings
 /// row that no longer decodes restarts above them all.
 fn newest_change_generation_in_txn(
@@ -324,6 +350,8 @@ impl Vault {
                     change.status = WeaveDigestSettingChangeStatus::Superseded;
                     change.settled_at = Some(now);
                     CHANGES.put(&self.store, txn, &(owner, id), &change)?;
+                    // Its ask no longer waits for him (FIX 5631).
+                    self.settle_weave_setting_ask_in_txn(txn, owner, &change)?;
                 }
             }
         }
