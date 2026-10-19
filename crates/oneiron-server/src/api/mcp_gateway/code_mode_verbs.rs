@@ -955,6 +955,25 @@ impl McpCodeModeVerbs {
         let unauthenticated = || AgentVerbRefusal {
             code: "mcp_auth_required".to_owned(),
         };
+        // A managed vault's attested owner carries no slip: he reads with his
+        // own key, held to this request's owner proof, as a direct MCP read
+        // does (`mcp_scoped_read`, FIX 5237).
+        if let Some(auth) = self
+            .actor
+            .auth
+            .as_ref()
+            .filter(|auth| auth.managed_owner().is_some())
+        {
+            return crate::api::scoped_read_for_core_auth(&self.server.vault, auth)
+                .map(|read| read.actor_key().clone())
+                .map_err(|error| AgentVerbRefusal {
+                    code: match error.code() {
+                        crate::error::ErrorCode::Forbidden => "forbidden",
+                        _ => "engine_error",
+                    }
+                    .to_owned(),
+                });
+        }
         let proof = self
             .actor
             .auth
