@@ -3474,7 +3474,7 @@
      "path": "src/authority/pinned_root.rs",
      "purpose": "This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -60787,6 +60787,7 @@
      "notable": [
       "ConfirmedWorldKit",
       "IssuedWorldKit",
+      "IssuingRequest",
       "StoredCost",
       "StoredKit",
       "WorldKitRestore",
@@ -60798,7 +60799,7 @@
       "const": 1,
       "crate-vis": 11,
       "fn": 5,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -61058,7 +61059,7 @@
      "path": "src/world_keys/root_work/mod.rs",
      "purpose": "Root work (WILL L04 row 02): the owner decides a change to one install's recovery root on any surface he is…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 3,
       "fn": 4
      }
@@ -65961,6 +65962,16 @@
   "oneiron-browser": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/capture.rs",
+     "purpose": "Repeat screenshots (AB-004)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -66006,7 +66017,7 @@
      "path": "src/driver/handles.rs",
      "purpose": "Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -66016,7 +66027,7 @@
      "path": "src/driver/pages.rs",
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -66188,6 +66199,13 @@
     }
    ],
    "modules": {
+    "capture": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Repeat screenshots (AB-004)"
+    },
     "cdp": {
      "files": 1,
      "impl_vault": false,
@@ -66254,7 +66272,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 12,
+   "source_files": 13,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -79134,6 +79152,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/secret_control_routes/sealed_spool.rs",
+     "purpose": "The sealed custody change's body, spooled (FIX 5674, Rule 5)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/secret_found_routes.rs",
      "purpose": "`/v1/owner/secrets/found*`: the owner's side of the found-key notice (OF-560)",
      "surface": {
@@ -85906,7 +85934,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 458,
+     "files": 459,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86356,7 +86384,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 845,
+   "source_files": 846,
    "test_files": 182
   },
   "oneiron-spawn": {

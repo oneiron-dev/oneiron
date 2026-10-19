@@ -2857,7 +2857,7 @@ export class Oneiron {
       wait_for: (input: Facade.LiveRunRequest<Facade.WaitForInput>): Facade.WaitForOutput => this.#call(() => this.#client.selfBrowserWaitFor(input) as Facade.WaitForOutput),
       /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
       expect: (input: Facade.LiveRunRequest<Facade.ExpectInput>): Facade.ExpectOutput => this.#call(() => this.#client.selfBrowserExpect(input) as Facade.ExpectOutput),
-      /** Takes a screenshot the session holds, by image ref and never captioned. */
+      /** Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
       screenshot: (input: Facade.LiveRunRequest<Facade.ScreenshotInput>): Facade.ScreenshotOutput => this.#call(() => this.#client.selfBrowserScreenshot(input) as Facade.ScreenshotOutput),
       /** Reads back a held image by its ref. */
       view: (input: Facade.LiveRunRequest<Facade.ViewInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserView(input) as Facade.ImageOutput),

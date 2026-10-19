@@ -313,8 +313,8 @@ pub(crate) use log_budget::{
 };
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
-    read_pin_and_earlier_in_txn, read_pin_row_in_txn, write_awaited_root_in_txn,
-    write_pinned_root_in_txn,
+    end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
+    write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;

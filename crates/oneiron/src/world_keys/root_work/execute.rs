@@ -247,8 +247,9 @@ impl Vault {
     }
 
     /// An activation's first step: a kit for a fresh root, drawn before the
-    /// transaction, and its pending row listed in it. The pieces go to this
-    /// caller only, and the request stays pending.
+    /// transaction, and its pending row listed in it, naming the request
+    /// (FIX 5585). The pieces go to this caller only, and the request stays
+    /// pending.
     fn run_kit_issue(
         &self,
         owner: &AuthenticatedOwner,
@@ -257,7 +258,7 @@ impl Vault {
     ) -> Result<RootWorkDone> {
         let kit = self.draw_world_kit(owner, issue)?;
         let listed = self.answer_root_request(asked, Answer::Pending, |txn| {
-            self.list_issued_kit_in_txn(txn, owner, &kit)
+            self.list_issued_kit_in_txn(txn, owner, &kit, Some(asked.hash))
         })?;
         Ok(match listed {
             Ok(()) => RootWorkDone::KitIssued(Box::new(kit)),

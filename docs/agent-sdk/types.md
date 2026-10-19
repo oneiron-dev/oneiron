@@ -3721,7 +3721,7 @@ class Oneiron:
         def expect(self, spec: Facade.LiveRunRequest[Facade.ExpectInput]) -> Facade.ExpectOutput:
             """Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
         def screenshot(self, spec: Facade.LiveRunRequest[Facade.ScreenshotInput]) -> Facade.ScreenshotOutput:
-            """Takes a screenshot the session holds, by image ref and never captioned."""
+            """Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope."""
         def view(self, spec: Facade.LiveRunRequest[Facade.ViewInput]) -> Facade.ImageOutput:
             """Reads back a held image by its ref."""
         def crop(self, spec: Facade.LiveRunRequest[Facade.CropInput]) -> Facade.ImageOutput:

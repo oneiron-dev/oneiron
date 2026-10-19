@@ -187,8 +187,10 @@ impl Observations {
     }
 
     /// The caller read observation `seq` whole: a later observation edits it
-    /// unless the caller names another base.
-    fn deliver(&mut self, seq: u64) {
+    /// unless the caller names another base. Every answer that gives the
+    /// caller an observation's last rows delivers it: its last page, the
+    /// unpaged rest a cursor reads, or a longer walk read unpaged.
+    pub(crate) fn deliver(&mut self, seq: u64) {
         if self.delivered.as_ref().is_some_and(|held| held.seq == seq) {
             return;
         }
@@ -231,15 +233,18 @@ impl Observations {
         Ok(page)
     }
 
-    /// The whole rest of a held observation from `cursor`, unpaged.
-    pub(crate) fn rest(&self, cursor: &str) -> Result<Observation, BrowserError> {
+    /// The whole rest of a held observation from `cursor`, unpaged: the
+    /// caller has then read it whole, so it is the caller's.
+    pub(crate) fn rest(&mut self, cursor: &str) -> Result<Observation, BrowserError> {
         let (held, from) = self.continued(cursor)?;
-        Ok(part(
+        let rest = part(
             held,
             held.rows.get(from..).unwrap_or_default().to_vec(),
             Some(from),
             true,
-        ))
+        );
+        self.deliver(rest.seq);
+        Ok(rest)
     }
 
     /// The window and the cut of the held partial observation that `cursor`
