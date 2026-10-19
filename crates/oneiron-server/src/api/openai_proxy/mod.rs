@@ -28,7 +28,7 @@ use oneiron::claim::CallerLocality;
 use oneiron::connector_key::PROXY_CONNECTOR;
 use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::memory::RecallEffort;
-use oneiron::settings::ReadDestination;
+use oneiron::settings::{ReadDestination, ReleaseHold};
 use oneiron::task_verb::sdk::RecallRequest;
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ClaimInput, ContentPart, EntityId, LlmMessage,
@@ -380,13 +380,18 @@ async fn recall(
     };
     let text = format!("{MEMORY_PREAMBLE}\n\n{rendered}");
     // A backstop past the read itself: no row a world withheld from where
-    // the prompt goes leaves in it.
-    if crate::device_local::withholds_retained(&server.vault, reads_for, &listed, text.as_bytes())
-        .unwrap_or(true)
+    // the prompt goes leaves in it, and the refusal says why, content-free
+    // (FIX 4939). A check that cannot be read is an integrity hold.
+    if let Some(hold) =
+        crate::device_local::retained_hold(&server.vault, reads_for, &listed, text.as_bytes())
+            .unwrap_or(Some(ReleaseHold::Placement))
     {
         return Err(forbidden(
             "memory_withheld",
-            "recalled memory for this call stays on this device",
+            &format!(
+                "recalled memory for this call stays on this device: {}",
+                hold.reason()
+            ),
         ));
     }
     Ok(Some(LlmMessage {

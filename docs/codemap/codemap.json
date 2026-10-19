@@ -4388,7 +4388,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/world_refold.rs",
-     "purpose": "A world edit, a world key record or a grant travel choice above a main-log row the fold did not keep, folded…",
+     "purpose": "A world edit, a world key record, a grant travel choice, or a root request or the owner's cancel of one…",
      "surface": {
       "crate-vis": 2
      }
@@ -11630,7 +11630,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 10,
+      "re-export": 11,
       "struct": 1
      }
     },
@@ -11641,7 +11641,9 @@
      "path": "src/claim/scoped_read/named_reads.rs",
      "purpose": "Named point reads (FIX 5226): a read whose caller named each target says when a legal non-use order keeps a…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1,
+      "fn": 1,
+      "type": 1
      }
     },
     {
@@ -13755,7 +13757,7 @@
      "path": "src/code_run/vault_read/error.rs",
      "purpose": "The vault-read error vocabulary and its stable engine codes",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "re-export": 1
      }
     },
@@ -18487,6 +18489,16 @@
       "crate-vis": 3,
       "fn": 8,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/reply/thread_reads.rs",
+     "purpose": "What a scoped read reaches of a DAG thread (FIX 5545): a record of a private thread its caller stands in now…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -46922,7 +46934,7 @@
      "path": "src/settings/destination.rs",
      "purpose": "Where an off-device read's rows go, and the one verdict every door asks about them (mesh PR2b, CALLS `mesh…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 14,
       "struct": 2
@@ -46936,7 +46948,7 @@
      "purpose": "Which rows a device-local world keeps from a caller (DEC-0005): every judge a door asks, built on…",
      "surface": {
       "crate-vis": 4,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -51322,15 +51334,16 @@
      "kind": "src",
      "notable": [
       "ChunkSyncRequest",
-      "ChunkSyncResponse"
+      "ChunkSyncResponse",
+      "LfsHold"
      ],
      "path": "src/sync/chunks.rs",
      "purpose": "Authenticated manifest-scoped have/want exchange",
      "surface": {
       "const": 3,
       "crate-vis": 2,
-      "enum": 1,
-      "fn": 9,
+      "enum": 2,
+      "fn": 11,
       "re-export": 1,
       "struct": 1
      }
@@ -60071,7 +60084,7 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 22,
       "fn": 1
      }
     },
@@ -60100,7 +60113,7 @@
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1
      }
     },
@@ -60217,7 +60230,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "enum": 2,
       "fn": 6,
       "re-export": 13,
@@ -60373,6 +60386,16 @@
      "purpose": "A trunk's or thread's reply selection from the room's own index (OF-460): every room thread anchored on a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/thread_reads.rs",
+     "purpose": "A room's threads as one reader reaches them (FIX 5545, Engine ruling 2026-10-19)",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -62252,7 +62275,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63351,7 +63374,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 99,
+     "files": 100,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63374,7 +63397,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3895,
+   "source_files": 3897,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76175,6 +76198,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/core/hydrate/use_restricted.rs",
+     "purpose": "A named short ref whose row a legal order keeps from use (FIX 5226): the single hydrate answers the order's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/core/mod.rs",
      "purpose": "—",
      "surface": {
@@ -76242,7 +76275,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/entity.rs",
@@ -77902,7 +77935,7 @@
      "path": "src/api/git_lfs/support.rs",
      "purpose": "LFS size, href, time, and JSON helpers",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -83294,6 +83327,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/cooldown/world_hold.rs",
+     "purpose": "Whether a fallback may take a call's world where the offer it falls back to sends it, and why not (FIX 4938…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -83744,7 +83787,7 @@
      "path": "src/models/walk.rs",
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -85637,7 +85680,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 456,
+     "files": 457,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -85945,7 +85988,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86087,7 +86130,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 841,
+   "source_files": 843,
    "test_files": 182
   },
   "oneiron-spawn": {

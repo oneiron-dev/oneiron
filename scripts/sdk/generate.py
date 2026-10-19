@@ -767,13 +767,13 @@ def mcp_input_dispatch(row):
                  '// Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).\n'
                  'let surface = crate::api::facade::owner_binding::act_surface(auth);\n'
                  'let output = match (auth.verified_slip(), action) {\n'
-                 '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, surface, actor.destination()).map(|(output, listed)| { served.extend(listed); output }),\n'
                  '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),\n'
-                 '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, surface, actor.destination()).map(|(output, listed)| { served.extend(listed); output }),\n'
                  '    // A managed vault\'s attested owner carries no slip: the request\'s own owner proof, which the export revalidates in its snapshot, as the facade takes it (FIX 5202).\n'
                  '    (None, None) if auth.managed_owner().is_some() => {\n'
                  '        let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
-                 '        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output })\n'
+                 '        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, actor.destination()).map(|(output, listed)| { served.extend(listed); output })\n'
                  '    }\n'
                  '    (None, None) => return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority")),\n'
                  '}.map_err(mcp_facade_error)?;\n')
@@ -799,7 +799,7 @@ def mcp_input_dispatch(row):
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
         home_door = HOME_SERVER_DOORS.get(name)
-        door_call = (f'{home_door}(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input, actor.home_caller())'
+        door_call = (f'{home_door}(actor.actor_ref, actor.actor_class, proof, actor.destination(), None, input, actor.home_caller())'
                      if home_door else f'{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)')
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
@@ -1343,28 +1343,29 @@ def facade_dispatch(facade_rows):
                 }}
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
                 let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
-                // Beside the archive, the rows its snapshot read past the
-                // caller's locality: every owner path lists them. A slip keeps
-                // its own path; a host action with no slip (the dev mode)
-                // takes the engine's host-action export; the attested owner
-                // takes the engine's request-proof export, at its own
-                // locality. Each arm's receipt records the owner's act, with
-                // where he spoke from as this request proved it (audit only;
-                // FIX 4625, 4626).
+                // Beside the archive, the rows its snapshot read past where
+                // the caller's rows go (its locality, with the machine its
+                // connection proved; FIX 4937): every owner path lists them.
+                // A slip keeps its own path; a host action with no slip (the
+                // dev mode) takes the engine's host-action export; the
+                // attested owner takes the engine's request-proof export,
+                // toward its own destination. Each arm's receipt records the
+                // owner's act, with where he spoke from as this request proved
+                // it (audit only; FIX 4625, 4626).
                 let surface = call.surface();
                 let (output, rows) = match (proof, action, owner) {{
                     (Some(proof), _, _) if proof.claims().holder_ref == "host" => {{
-                        server.vault.export_with_verified_host_owner_listing(&input, proof, surface, auth.locality())?
+                        server.vault.export_with_verified_host_owner_listing(&input, proof, surface, auth.destination())?
                     }}
                     (Some(proof), _, _) => {{
                         let (actor, class) = facade_actor(server, auth)?;
                         let producers = oneiron::memory::ProducerRows::default();
-                        let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof, surface)?;
+                        let output = server.vault.memory(actor, class).for_destination(&auth.destination()).listing_producers(&producers).export_with_verified_owner(&input, proof, surface)?;
                         (output, producers.take())
                     }}
-                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, surface, auth.locality())?,
+                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, surface, auth.destination())?,
                     (None, None, Some(owner)) => {{
-                        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.locality())?
+                        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.destination())?
                     }}
                     (None, None, None) => {{
                         return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
@@ -1461,7 +1462,7 @@ def facade_dispatch(facade_rows):
         # rows its answer is derived from without naming them.
         if r.get('server_door'):
             home_door = HOME_SERVER_DOORS.get(name)
-            door_call = (f'{home_door}(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?, call.home_caller())'
+            door_call = (f'{home_door}(actor, class, auth.verified_slip().cloned(), auth.destination(), call.room_turn()?, facade_input(value)?, call.home_caller())'
                          if home_door else f'{r["server_door"]}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)')
             result = (f'let (output, listed) = server.{door_call}.await;\n'
                       'let output = facade_output(output?)?;\nlet rows = Some(listed);')

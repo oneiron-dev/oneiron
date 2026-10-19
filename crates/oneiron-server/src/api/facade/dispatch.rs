@@ -2545,7 +2545,7 @@ async fn vault_recall(
             actor,
             class,
             auth.verified_slip().cloned(),
-            auth.locality(),
+            auth.destination(),
             call.room_turn()?,
             facade_input(value)?,
             call.home_caller(),
@@ -3990,26 +3990,27 @@ async fn vault_export(
     }
     let hooks = facade_hooks_pre(server, call, "vault.export", value).await?;
     let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
-    // Beside the archive, the rows its snapshot read past the
-    // caller's locality: every owner path lists them. A slip keeps
-    // its own path; a host action with no slip (the dev mode)
-    // takes the engine's host-action export; the attested owner
-    // takes the engine's request-proof export, at its own
-    // locality. Each arm's receipt records the owner's act, with
-    // where he spoke from as this request proved it (audit only;
-    // FIX 4625, 4626).
+    // Beside the archive, the rows its snapshot read past where
+    // the caller's rows go (its locality, with the machine its
+    // connection proved; FIX 4937): every owner path lists them.
+    // A slip keeps its own path; a host action with no slip (the
+    // dev mode) takes the engine's host-action export; the
+    // attested owner takes the engine's request-proof export,
+    // toward its own destination. Each arm's receipt records the
+    // owner's act, with where he spoke from as this request proved
+    // it (audit only; FIX 4625, 4626).
     let surface = call.surface();
     let (output, rows) = match (proof, action, owner) {
         (Some(proof), _, _) if proof.claims().holder_ref == "host" => server
             .vault
-            .export_with_verified_host_owner_listing(&input, proof, surface, auth.locality())?,
+            .export_with_verified_host_owner_listing(&input, proof, surface, auth.destination())?,
         (Some(proof), _, _) => {
             let (actor, class) = facade_actor(server, auth)?;
             let producers = oneiron::memory::ProducerRows::default();
             let output = server
                 .vault
                 .memory(actor, class)
-                .at(auth.locality())
+                .for_destination(&auth.destination())
                 .listing_producers(&producers)
                 .export_with_verified_owner(&input, proof, surface)?;
             (output, producers.take())
@@ -4018,13 +4019,13 @@ async fn vault_export(
             &input,
             &action,
             surface,
-            auth.locality(),
+            auth.destination(),
         )?,
         (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(
             &input,
             &owner,
             surface,
-            auth.locality(),
+            auth.destination(),
         )?,
         (None, None, None) => {
             return Err(FacadeApiError::forbidden(

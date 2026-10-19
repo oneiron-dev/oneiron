@@ -18,7 +18,10 @@ mod models;
 pub use destination::{
     ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
 };
-pub(crate) use destination::{machine_recipient_hold_in, recipient_limits_in, withheld_worlds_in};
+pub(crate) use destination::{
+    machine_recipient_hold_in, recipient_limits_in, withheld_row_hold_in, withheld_worlds_in,
+    worlds_hold_in,
+};
 pub(crate) use device_local::{
     device_local_keeps_among, device_local_worlds_at, device_local_worlds_for,
 };

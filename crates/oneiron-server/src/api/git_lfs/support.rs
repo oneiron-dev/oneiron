@@ -19,6 +19,26 @@ use serde::Serialize;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
+/// Why the next piece of `oid` stays on this device for the machine `peer`
+/// (FIX 4937, 4939): the body's error, naming the hold's content-free
+/// reason; a check that cannot be read is an integrity hold. `None` while the
+/// piece may go.
+pub(super) fn lfs_piece_hold(
+    vault: &oneiron::Vault,
+    oid: oneiron::origin::lfs::LfsOid,
+    peer: oneiron::authority::PeerMachine,
+) -> Option<std::io::Error> {
+    let reason = match oneiron::sync::chunks::lfs_object_hold_for(vault, oid, peer) {
+        Ok(None) => return None,
+        Ok(Some(hold)) => hold.reason(),
+        Err(_) => oneiron::settings::ReleaseHold::Placement.reason(),
+    };
+    Some(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        format!("lfs object kept on this device: {reason}"),
+    ))
+}
+
 /// The media type a downloaded object body carries. LFS bytes are opaque: this
 /// origin never guesses a content type for content it stores as a digest.
 pub(super) const LFS_OBJECT_MEDIA_TYPE: &str = "application/octet-stream";
