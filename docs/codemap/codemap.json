@@ -51603,8 +51603,8 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
-      "fn": 4,
+      "crate-vis": 6,
+      "fn": 5,
       "struct": 1
      }
     },
