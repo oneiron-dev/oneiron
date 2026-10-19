@@ -12890,6 +12890,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/workflow_dispatch.rs",
+     "purpose": "`self.workflows.dispatch_bound` (FIX 5316): a leased agent run binds one run of a saved workflow to a TASK…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/world_privacy_set.rs",
      "purpose": "`vault.worlds.privacy.set` (FIX 4480): the run's agent asks to change a world's settings through the vault's…",
      "surface": {
@@ -53667,7 +53677,17 @@
      "path": "src/task_verb/highway_runner/workflow_try.rs",
      "purpose": "A saved workflow's wrapper as the try that realizes a TASK (FIX 4391)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_runner/workflow_try/binder.rs",
+     "purpose": "Who binds a saved workflow's run to a TASK, as the door that took the request proved them (FIX 5316): the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -55587,9 +55607,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "WorkflowBoundDispatchRequest",
       "WorkflowDispatchRequest",
       "WorkflowRequest",
       "WorkflowRunRequest",
@@ -55603,8 +55624,9 @@
      "path": "src/task_verb/sdk_workflows.rs",
      "purpose": "Typed saved workflows: ordered AGENT_DEF compositions the owner keeps",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -61108,7 +61130,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62221,7 +62243,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 190,
+     "files": 191,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62391,7 +62413,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3815,
+   "source_files": 3817,
    "test_files": 902
   },
   "oneiron-android": {
