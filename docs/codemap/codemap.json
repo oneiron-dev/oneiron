@@ -5973,6 +5973,102 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeckDesignRequest",
+      "DeckDesignView",
+      "DeckEmissionNames",
+      "DeckEmissionOutcome",
+      "DeckEmissionRequest",
+      "DeckKeepBinding",
+      "DeckOutlineDeclined",
+      "DeckOutlineProposeRequest",
+      "DeckOutlineRefRequest",
+      "DeckOutlineSettleRequest",
+      "DeckOutlineView"
+     ],
+     "path": "src/blob_artifact/deck_creation/mod.rs",
+     "purpose": "Typed outline approval, design and emission doors over the native deck engine",
+     "surface": {
+      "enum": 1,
+      "mod": 2,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/deck_creation/operations.rs",
+     "purpose": "Credential-bound admission; every write rechecks its inputs in its writer",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeckOutline",
+      "OutlineAsset",
+      "OutlineAssetKind",
+      "OutlineBlock",
+      "OutlineCarrier",
+      "OutlineCell",
+      "OutlineColumn",
+      "OutlineColumnKind",
+      "OutlineCommunication",
+      "OutlineDataset",
+      "OutlineDivision",
+      "OutlineMerge",
+      "OutlineNumberFormat",
+      "OutlinePage",
+      "OutlinePin",
+      "OutlinePriority"
+     ],
+     "path": "src/blob_artifact/deck_creation/outline.rs",
+     "purpose": "The closed outline wire grammar",
+     "surface": {
+      "enum": 7,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DeckAssetBinding",
+      "DeckAssetMedia",
+      "DeckDesignDecision",
+      "DeckDesignOption",
+      "DeckDesignShortfall",
+      "DeckDestination",
+      "DeckFallback",
+      "DeckFit",
+      "DeckFitPolicy",
+      "DeckNewPart",
+      "DeckPackagePlan",
+      "DeckPlacement",
+      "DeckPlanView",
+      "DeckPlannedContent",
+      "DeckPlannedRelationship",
+      "DeckPlannedSlide",
+      "DeckRect",
+      "DeckShortfallReason",
+      "DeckTraceEntry",
+      "DeckTraceOutcome",
+      "DeckVisualChoices"
+     ],
+     "path": "src/blob_artifact/deck_creation/plan.rs",
+     "purpose": "An owned wire view of a validated plan",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 8,
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DeckCommentInspection",
       "DeckInspectRequest",
       "DeckInspectionView",
@@ -6573,7 +6669,7 @@
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
       "crate-vis": 13,
-      "mod": 1,
+      "mod": 2,
       "re-export": 10
      }
     },
@@ -22622,10 +22718,20 @@
      "purpose": "Deck creation from an approved outline (ARCH-0077, \"Create: an approved argument, then a design\")",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 10,
       "enum": 4,
       "fn": 7,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_roundtrip/deck_create/store.rs",
+     "purpose": "Transaction-bound outline and version inputs shared by the engine and public doors",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -34987,7 +35093,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 38,
+      "crate-vis": 40,
       "enum": 3,
       "fn": 4,
       "re-export": 16,
@@ -35157,7 +35263,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 9
      }
     },
@@ -52988,7 +53094,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 996
+      "fn": 1002
      }
     },
     {
@@ -59255,7 +59361,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 55,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59710,7 +59816,7 @@
      "purpose": "ED-00 (ARCH-0056 §2–3): the proposal-artifact substrate the edit-distance feedback loop replays, plus the…"
     },
     "edit_roundtrip": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60692,7 +60798,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3701,
+   "source_files": 3706,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65594,7 +65700,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 11
      }
     },
@@ -69324,7 +69430,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 967
+      "fn": 973
      }
     },
     {
@@ -70418,7 +70524,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 968
+      "fn": 974
      }
     },
     {
@@ -73786,6 +73892,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/deck_creation_doors.rs",
+     "purpose": "The person's outline Keep and Decline use the same proof as other owner doors",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -73952,7 +74068,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 156
+      "crate-vis": 157
      }
     },
     {
@@ -82030,7 +82146,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 421,
+     "files": 422,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82459,7 +82575,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 777,
+   "source_files": 778,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82808,6 +82924,7 @@
       "ArtifactUnitsRequest",
       "ArtifactUnitsView",
       "ArtifactUnpublished",
+      "ArtifactVersionRef",
       "ArtifactVersionView",
       "ArtifactView",
       "AskAct",
@@ -83484,6 +83601,8 @@
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
       "CreateStandingGrantRequest",
+      "CreatedEstimate",
+      "CreatedSlide",
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
       "CredentialCaveat",
@@ -83534,28 +83653,58 @@
       "DecisionReceipt",
       "DecisionRung",
       "DecisionTime",
+      "DeckAssetBinding",
+      "DeckAssetMedia",
       "DeckBodyView",
       "DeckCommentInspection",
+      "DeckCreationRecord",
+      "DeckDesignDecision",
+      "DeckDesignOption",
+      "DeckDesignRequest",
+      "DeckDesignShortfall",
+      "DeckDesignView",
+      "DeckDestination",
       "DeckDiff",
       "DeckEditContext",
+      "DeckEmissionNames",
+      "DeckEmissionOutcome",
+      "DeckEmissionRequest",
       "DeckExportRequest",
       "DeckExportView",
+      "DeckFallback",
+      "DeckFit",
+      "DeckFitPolicy",
       "DeckForkMergeRequest",
       "DeckGateRequest",
       "DeckGateView",
       "DeckIdentityAmbiguity",
       "DeckInspectRequest",
       "DeckInspectionView",
+      "DeckKeepBinding",
       "DeckNativeRefusal",
+      "DeckNewPart",
       "DeckNodeView",
       "DeckOp",
       "DeckOracleRequest",
+      "DeckOutline",
+      "DeckOutlineDeclined",
+      "DeckOutlineProposeRequest",
+      "DeckOutlineRefRequest",
+      "DeckOutlineSettleRequest",
+      "DeckOutlineView",
+      "DeckPackagePlan",
+      "DeckPlacement",
+      "DeckPlanView",
+      "DeckPlannedContent",
+      "DeckPlannedRelationship",
+      "DeckPlannedSlide",
       "DeckPreview",
       "DeckPreviewRequest",
       "DeckPreviewSlide",
       "DeckProposeOutcome",
       "DeckProposeRejection",
       "DeckProposeRequest",
+      "DeckRect",
       "DeckRejectionCheck",
       "DeckRejectionReport",
       "DeckRejectionSheet",
@@ -83566,11 +83715,15 @@
       "DeckReviewView",
       "DeckShapeInspection",
       "DeckShapeKind",
+      "DeckShortfallReason",
       "DeckSlideInspection",
       "DeckStep",
       "DeckStepRefusal",
+      "DeckTraceEntry",
+      "DeckTraceOutcome",
       "DeckTransaction",
       "DeckTransactionRefusal",
+      "DeckVisualChoices",
       "DeclaredMaximum",
       "DelegatedGrant",
       "DelegatedGrantScope",
@@ -83595,6 +83748,8 @@
       "DenyConsentRequest",
       "DerivationEnvelopeView",
       "DerivationKind",
+      "DesignDirection",
+      "DesignSpec",
       "DeterministicFallback",
       "DiagnosticEventView",
       "DiagnosticsGetRequest",
@@ -83610,6 +83765,8 @@
       "DiaryReadsView",
       "DiaryReviewAnswer",
       "DiaryReviewState",
+      "DirectionOutcome",
+      "DirectionSlide",
       "DiscardedProposal",
       "DisclosureBoundRequest",
       "DisclosureEnvelopeRequest",
@@ -84104,6 +84261,7 @@
       "JoinRequest",
       "JoinSubject",
       "KeepUndo",
+      "KeptOutline",
       "KeptProposal",
       "KeyValueAddress",
       "KeyValueDeleteReceipt",
@@ -84609,6 +84767,22 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OutlineAsset",
+      "OutlineAssetKind",
+      "OutlineBlock",
+      "OutlineCarrier",
+      "OutlineCell",
+      "OutlineColumn",
+      "OutlineColumnKind",
+      "OutlineCommunication",
+      "OutlineDataset",
+      "OutlineDivision",
+      "OutlineFreshness",
+      "OutlineMerge",
+      "OutlineNumberFormat",
+      "OutlinePage",
+      "OutlinePin",
+      "OutlinePriority",
       "OwnStandingBlockRequest",
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
@@ -85901,8 +86075,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 786,
-      "struct": 2458
+      "enum": 804,
+      "struct": 2498
      }
     },
     {
