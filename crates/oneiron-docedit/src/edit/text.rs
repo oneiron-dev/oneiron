@@ -22,7 +22,7 @@ use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
 
 /// U+000B: an `a:br` in paragraph text, as PowerPoint writes it.
-pub(super) const BREAK: char = '\u{b}';
+pub(crate) const BREAK: char = '\u{b}';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -110,11 +110,45 @@ pub(super) fn set_text(
     shape: &ShapeView,
     text: &str,
 ) -> Result<Written, EditRefusal> {
+    write_body(next, slide, shape, || split(text))
+}
+
+/// The whole body as paragraphs of characters, given whole rather than
+/// split from one string: a line feed inside a paragraph is text in its
+/// run, never a paragraph break. U+000B is an `a:br`, as in `set_text`,
+/// whose mapping, refusals and animation checks this shares.
+pub(super) fn set_paragraphs(
+    next: &mut Package,
+    slide: &SlideView,
+    shape: &ShapeView,
+    paragraphs: &[Vec<char>],
+) -> Result<Written, EditRefusal> {
+    write_body(next, slide, shape, || {
+        for paragraph in paragraphs {
+            let text: String = paragraph.iter().filter(|c| **c != BREAK).collect();
+            if text.contains('\r') || !xml::writable(&text) {
+                return Err(EditRefusal::Invalid(
+                    "text holds a character XML cannot carry",
+                ));
+            }
+        }
+        Ok(paragraphs.to_vec())
+    })
+}
+
+/// One whole-body write: the requested paragraphs mapped onto the body,
+/// checked against its animation, and written.
+fn write_body(
+    next: &mut Package,
+    slide: &SlideView,
+    shape: &ShapeView,
+    requested: impl FnOnce() -> Result<Vec<Vec<char>>, EditRefusal>,
+) -> Result<Written, EditRefusal> {
     let id = shape.id.ok_or(EditRefusal::Missing("shape id"))?;
     let (bytes, tree) = xml::read(next, &slide.part)?;
     let body = xml::child(&tree, shape.node.index, P, "txBody")
         .ok_or(EditRefusal::Missing("text body"))?;
-    let new = split(text)?;
+    let new = requested()?;
     let (edits, structure) = rewrite_body(&bytes, &tree, body, &new)?;
     let old = paragraphs(&tree, body);
     let lengths = structure.is_some()

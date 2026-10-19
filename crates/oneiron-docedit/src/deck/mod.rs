@@ -14,7 +14,7 @@ mod template;
 
 pub use animation::{AnimationIndex, AnimationTarget, Connection, TargetRole, TextRange};
 pub use colour::{Colour, ColourSpec, ColourTransform, Rgba};
-pub(crate) use shapes::{group_matrix, guid};
+pub(crate) use shapes::{group_matrix, guid, soft_breaks};
 pub use template::{LayoutView, MasterView, Spacing, TemplateView, TextStyle};
 
 use crate::ooxml::{DOCUMENT_RELATIONSHIPS, XmlError};

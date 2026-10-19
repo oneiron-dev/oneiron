@@ -52,18 +52,21 @@ use crate::edit::geometry::{glue_of, preset_of};
 use crate::edit::transaction::StepAssetKind;
 use crate::edit::xml::next_part;
 use crate::edit::{
-    AssetRef, Assets, ConnectorPreset, Digest, EditRefusal, Effect, IdMarks, NewConnector,
+    AssetRef, Assets, BREAK, ConnectorPreset, Digest, EditRefusal, Effect, IdMarks, NewConnector,
     NewGroup, NewPicture, NewShape, NoAssets, Picture, Preset, RunProps, StructureEdit, Target,
     ValueEdit, Xfrm, edit, structure_patch,
 };
 use crate::graphic::{AssetRecord, GraphicLimits};
 use crate::native_patch::{ChartFamily, Frame, NativeEdit, native_patch};
+use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
+use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/6";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/7";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -187,7 +190,11 @@ const STALE: LiveError = LiveError::Invalid("a live binding does not match the r
 /// The projection in progress: the working package and where each live
 /// node sits in it.
 struct Work {
-    next: Package,
+    /// The working package. Read it as `package`; write it only through
+    /// [`Work::next_mut`], which drops what was read from it.
+    package: Package,
+    /// What `package` reads as, until its next write.
+    reads: Reads,
     document: String,
     marks: IdMarks,
     /// Live node -> its slide part and native id (`p:sldId/@id` for a
@@ -198,9 +205,43 @@ struct Work {
     effects: Vec<Effect>,
 }
 
+/// One revision of the working package as read: its deck view and slide
+/// trees, each read once and shared until the package is written.
+#[derive(Default)]
+struct Reads {
+    view: OnceCell<Rc<DeckView>>,
+    slides: RefCell<BTreeMap<String, Rc<XmlTree>>>,
+}
+
 impl Work {
-    fn view(&self) -> Result<DeckView, LiveError> {
-        Ok(DeckView::read(&self.next)?)
+    /// The working package as it now reads; reused until the next write,
+    /// so every fingerprint it gives is current.
+    fn view(&self) -> Result<Rc<DeckView>, LiveError> {
+        if let Some(view) = self.reads.view.get() {
+            return Ok(Rc::clone(view));
+        }
+        let view = Rc::new(DeckView::read(&self.package)?);
+        Ok(Rc::clone(self.reads.view.get_or_init(|| view)))
+    }
+
+    /// The slide part's XML as it now reads; reused until the next write.
+    fn slide_tree(&self, part: &str) -> Result<Rc<XmlTree>, LiveError> {
+        if let Some(tree) = self.reads.slides.borrow().get(part) {
+            return Ok(Rc::clone(tree));
+        }
+        let tree = Rc::new(held::slide_tree(&self.package, part)?);
+        self.reads
+            .slides
+            .borrow_mut()
+            .insert(part.to_owned(), Rc::clone(&tree));
+        Ok(tree)
+    }
+
+    /// The working package, to write: every write, by any verb or writer,
+    /// takes it here, so no later read sees the revision before it.
+    fn next_mut(&mut self) -> &mut Package {
+        self.reads = Reads::default();
+        &mut self.package
     }
 
     /// The deterministic creation-id seed for `node`'s `role`.
@@ -212,13 +253,13 @@ impl Work {
     }
 
     fn structure(&mut self, op: &StructureEdit<'_>) -> Result<Vec<Effect>, LiveError> {
-        let report = structure_patch(&mut self.next, op)?;
+        let report = structure_patch(self.next_mut(), op)?;
         self.changed.extend(report.changed_parts);
         Ok(report.effects)
     }
 
     fn value(&mut self, op: &ValueEdit<'_>) -> Result<(), LiveError> {
-        let report = edit(&mut self.next, op)?;
+        let report = edit(self.next_mut(), op)?;
         self.changed.extend(report.changed_parts);
         self.effects.extend(report.effects);
         Ok(())
@@ -327,11 +368,15 @@ pub fn project(
             }
         }
     }
-    let view = DeckView::read(package)?;
+    let view = Rc::new(DeckView::read(package)?);
     let mut marks = deck.id_marks.clone();
     marks.join(&IdMarks::of_deck(&view));
     let mut work = Work {
-        next: package.clone(),
+        package: package.clone(),
+        reads: Reads {
+            view: OnceCell::from(Rc::clone(&view)),
+            slides: RefCell::default(),
+        },
         document: document.to_owned(),
         marks,
         at: BTreeMap::new(),
@@ -651,10 +696,16 @@ pub fn project(
             flip_h: changed(node.geometry.flip_h, held.flip_h),
             flip_v: changed(node.geometry.flip_v, held.flip_v),
         };
-        let held_text = shape
-            .text
-            .as_ref()
-            .map(|text| text_body(text, || NodeId(0)).plain());
+        // The held text as the text mapping reads it: soft breaks as
+        // U+000B, and a line feed inside a run as text.
+        let held_text = match (&shape.text, deck.texts.get(id)) {
+            (Some(text), Some(_)) => Some(paragraph_chars(&text_body(
+                text,
+                &work.slide_tree(&part)?,
+                || NodeId(0),
+            ))),
+            _ => None,
+        };
         if xfrm != Xfrm::default() {
             work.value(&ValueEdit::SetXfrm {
                 target: Target {
@@ -666,16 +717,18 @@ pub fn project(
             })?;
         }
         if let Some(body) = deck.texts.get(id) {
-            let plain = body.plain();
-            if held_text.as_deref() != Some(plain.as_str()) {
+            // The paragraphs go to the writer whole, never through one
+            // string split at line feeds.
+            let wanted = paragraph_chars(body);
+            if held_text.as_ref() != Some(&wanted) {
                 let (_, _, expected) = work.target(*id)?;
-                work.value(&ValueEdit::SetText {
+                work.value(&ValueEdit::SetParagraphs {
                     target: Target {
                         slide: &part,
                         shape: native,
                         expected,
                     },
-                    text: &plain,
+                    paragraphs: &wanted,
                 })?;
             }
             project_marks(&mut work, *id, &part, native, body)?;
@@ -689,7 +742,7 @@ pub fn project(
     // this export wrote.
     let output = work.view()?;
     if !work.changed.is_empty()
-        && let Some(props) = crate::edit::recount_slide_text(&mut work.next, &output)?
+        && let Some(props) = crate::edit::recount_slide_text(work.next_mut(), &output)?
     {
         work.changed.insert(props);
     }
@@ -722,11 +775,11 @@ pub fn project(
     }
     let slide_parts: BTreeSet<&str> = output.slides.iter().map(|s| s.part.as_str()).collect();
     let mut opaque_parts = BTreeMap::new();
-    for name in work.next.names() {
+    for name in work.package.names() {
         if slide_parts.contains(name) {
             continue;
         }
-        if let Some(bytes) = work.next.part(name)? {
+        if let Some(bytes) = work.package.part(name)? {
             opaque_parts.insert(name.to_owned(), *blake3::hash(&bytes).as_bytes());
         }
     }
@@ -734,7 +787,7 @@ pub fn project(
     id_marks.join(&IdMarks::of_deck(&output));
     let changed_parts: Vec<String> = work.changed.into_iter().collect();
     let noop = changed_parts.is_empty();
-    let bytes = work.next.export()?;
+    let bytes = work.package.export()?;
     Ok(ExportOutcome {
         bytes,
         key,
@@ -932,7 +985,7 @@ fn project_payload(
         .ok_or(LiveError::UnknownNode)?
         .node
         .index;
-    let tree = held::slide_tree(&work.next, part)?;
+    let tree = work.slide_tree(part)?;
     let preset = match (&node.payload, node.preset) {
         (Some(NodePayload::Connector { preset, .. }), _) => preset.map(ConnectorPreset::name),
         (_, Some(preset)) if node.kind == NodeKind::Shape => Some(preset.name()),
@@ -975,7 +1028,7 @@ fn project_payload(
             }
         }
         Some(NodePayload::Picture { image }) => {
-            if held::picture_media(&work.next, part, &tree, at).map(|media| media.hash)
+            if held::picture_media(&work.package, part, &tree, at).map(|media| media.hash)
                 != Some(image.hash)
             {
                 let (record, bytes) = resolved(image, assets)?;
@@ -1013,7 +1066,7 @@ fn project_payload(
                     .any(|(was, now)| was.len() != now.len())
             {
                 let fit = node.geometry.extent.is_none();
-                if let Some(extent) = reshape::table(&mut work.next, part, native, &wanted, fit)? {
+                if let Some(extent) = reshape::table(work.next_mut(), part, native, &wanted, fit)? {
                     work.converted(id, [Conversion::TableFrameFitted { extent }]);
                 }
                 work.changed.insert(part.to_owned());
@@ -1022,7 +1075,7 @@ fn project_payload(
                     .ok_or(LiveError::UnknownNode)?
                     .node
                     .index;
-                held::table_cells(&held::slide_tree(&work.next, part)?, at)
+                held::table_cells(&work.slide_tree(part)?, at)
                     .ok_or(LiveError::Invalid(WRITTEN_FRAME))?
             } else {
                 have
@@ -1033,7 +1086,7 @@ fn project_payload(
                         continue;
                     }
                     let report = native_patch(
-                        &mut work.next,
+                        work.next_mut(),
                         &NativeEdit::SetTableCell {
                             slide: part,
                             table: native,
@@ -1048,9 +1101,10 @@ fn project_payload(
             }
         }
         Some(payload @ NodePayload::Chart { source, .. }) => {
-            let chart = held::chart_part(&work.next, part, &tree, at)
+            let chart = held::chart_part(&work.package, part, &tree, at)
                 .ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-            let have = held::chart(&work.next, &chart).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
+            let have =
+                held::chart(&work.package, &chart).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
             // Data that lived outside the chart's own workbook moves into a
             // new one, as PowerPoint's Edit Data embeds it.
             let moved = matches!(&have, NodePayload::Chart { source: from, .. } if from != source);
@@ -1059,10 +1113,10 @@ fn project_payload(
                 // they suffice; a shape or type change, moved data, a literal
                 // sequence or a refused write rewrites the chart whole.
                 let in_place = !moved
-                    && reshape::plan(&work.next, &chart, &have, payload).is_some_and(|writes| {
+                    && reshape::plan(&work.package, &chart, &have, payload).is_some_and(|writes| {
                         writes.iter().all(|(series, target, values)| {
                             native_patch(
-                                &mut work.next,
+                                work.next_mut(),
                                 &NativeEdit::SetSeries {
                                     chart: &chart,
                                     series: *series,
@@ -1076,14 +1130,20 @@ fn project_payload(
                     });
                 if !in_place {
                     let mut done = Vec::new();
-                    let changed = reshape::chart(&mut work.next, &chart, payload, &mut done)?;
+                    let changed = reshape::chart(work.next_mut(), &chart, payload, &mut done)?;
                     work.changed.extend(changed);
                     work.converted(id, done);
                 }
             }
         }
         Some(NodePayload::HeldPicture { media }) => {
-            if convert::show_held_media(&mut work.next, part, native, media)? {
+            // A picture already showing exactly this part and hash is kept as
+            // it is, bytes and blip, whatever its format: only a retarget to
+            // other media goes through the admission below.
+            let shown = held::picture_media(&work.package, part, &tree, at);
+            if shown.as_ref() != Some(media)
+                && convert::show_held_media(work.next_mut(), part, native, media)?
+            {
                 work.changed.insert(part.to_owned());
                 work.converted(
                     id,
@@ -1094,7 +1154,7 @@ fn project_payload(
             }
         }
         Some(NodePayload::SmartArt { nodes }) => {
-            let (changed, written) = convert::smart_art_text(&mut work.next, part, native, nodes)?;
+            let (changed, written) = convert::smart_art_text(work.next_mut(), part, native, nodes)?;
             if written > 0 {
                 work.changed.extend(changed);
                 work.converted(id, [Conversion::SmartArtTextWritten { nodes: written }]);
@@ -1177,7 +1237,7 @@ fn native_frame(
             ));
             let name = node.name.clone().unwrap_or_else(|| "Table".to_owned());
             native_patch(
-                &mut work.next,
+                work.next_mut(),
                 &NativeEdit::CreateTable {
                     frame: Frame {
                         slide: part,
@@ -1244,14 +1304,14 @@ fn native_frame(
             let data = dataset(columns, rows);
             let (cx, cy) = node.geometry.extent.unwrap_or(CHART_EXTENT);
             let name = node.name.clone().unwrap_or_else(|| "Chart".to_owned());
-            let chart = next_part(&work.next, "ppt/charts/chart", ".xml")?;
+            let chart = next_part(&work.package, "ppt/charts/chart", ".xml")?;
             let workbook = next_part(
-                &work.next,
+                &work.package,
                 "ppt/embeddings/Microsoft_Excel_Worksheet",
                 ".xlsx",
             )?;
             let report = native_patch(
-                &mut work.next,
+                work.next_mut(),
                 &NativeEdit::CreateChart {
                     frame: Frame {
                         slide: part,
@@ -1268,10 +1328,10 @@ fn native_frame(
                 },
             )?;
             work.changed.extend(report.changed_parts);
-            if held::chart(&work.next, &chart)
+            if held::chart(&work.package, &chart)
                 .is_none_or(|read| !reshape::same_data(&read, payload))
             {
-                let changed = reshape::chart(&mut work.next, &chart, payload, &mut Vec::new())?;
+                let changed = reshape::chart(work.next_mut(), &chart, payload, &mut Vec::new())?;
                 work.changed.extend(changed);
             }
             return Ok(id);
@@ -1295,10 +1355,33 @@ fn native_frame(
     Ok(id)
 }
 
+/// A text body as the text mapping takes it: each paragraph's characters,
+/// U+000B for a soft break; a body with no paragraph is one empty one.
+fn paragraph_chars(body: &TextBody) -> Vec<Vec<char>> {
+    let mut paragraphs: Vec<Vec<char>> = body
+        .paragraphs
+        .iter()
+        .map(|paragraph| {
+            paragraph
+                .runs
+                .iter()
+                .flat_map(|run| run.text.chars())
+                .collect()
+        })
+        .collect();
+    if paragraphs.is_empty() {
+        paragraphs.push(Vec::new());
+    }
+    paragraphs
+}
+
 /// The live run marks over the package's runs: a live run whose declared
 /// marks the package's characters under it do not read is written as one
 /// `SetRunProps` over its range, which splits package runs at its edges.
 /// A paragraph the package does not read as the live text is left as it is.
+/// Ranges count characters over runs and fields as `SetRunProps` does: a
+/// soft break (U+000B in live text) holds none, so a break's run writes
+/// nothing.
 fn project_marks(
     work: &mut Work,
     id: NodeId,
@@ -1306,11 +1389,12 @@ fn project_marks(
     native: u32,
     body: &TextBody,
 ) -> Result<(), LiveError> {
+    let characters = |text: &str| text.chars().filter(|c| *c != BREAK).count();
     for (index, paragraph) in body.paragraphs.iter().enumerate() {
-        let live_text = paragraph.text();
+        let live_text = paragraph.text().replace(BREAK, "");
         let mut from = 0;
         for run in &paragraph.runs {
-            let range = (from, from + run.text.chars().count());
+            let range = (from, from + characters(&run.text));
             from = range.1;
             if range.0 == range.1 {
                 continue;
