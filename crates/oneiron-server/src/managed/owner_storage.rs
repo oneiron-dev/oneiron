@@ -3,12 +3,13 @@
 //! data directory, as plain serve keeps backups beside its vault. In the
 //! vault VM they are `/vault/data.backups` and `/vault/data.rehearsals`:
 //! never the system temp directory, `/run`, the read-only `/config` or the
-//! key directory `/vault/keys`.
+//! key directory `/vault/keys`. A direct Linear mirror's response custody
+//! lies beside them, in `/vault/data.linear-responses`.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use crate::config::ServeConfig;
+use crate::config::{LinearMode, ServeConfig};
 use crate::owner::schedule::OwnerHost;
 
 /// The owner host over the vault `config` serves. `rehearsal_config` is the
@@ -43,13 +44,49 @@ pub(super) fn owner_host(
     host
 }
 
+/// Makes the direct Linear mirror's response custody `[linear]` names, the
+/// host's [`linear_response_dir`], private when missing, and checks it with a
+/// write as [`owner_host`] checks its storage. One it cannot make is said
+/// with its reason; the mirror then refuses to start without it.
+pub(super) fn linear_responses(config: &ServeConfig) {
+    let Some(dir) = config
+        .linear
+        .as_ref()
+        .filter(|linear| linear.mode == Some(LinearMode::Direct))
+        .and_then(|linear| linear.response_dir.as_deref())
+    else {
+        return;
+    };
+    if let Err(error) = prepare(dir, false) {
+        tracing::warn!(
+            reason = "owner_storage_unavailable",
+            storage = "linear-responses",
+            dir = %dir.display(),
+            error = %format!("{error:#}"),
+            "owner storage is not usable; the Linear mirror fails until it is"
+        );
+    }
+}
+
 /// `<data_dir>.rehearsals`, beside the data directory as its backups are.
 fn rehearsal_dir(data_dir: &Path) -> PathBuf {
+    beside(data_dir, "rehearsals")
+}
+
+/// `<data_dir>.linear-responses`: the direct Linear mirror's response
+/// custody, beside the data directory as its backups are, never under the
+/// read-only `/config`.
+pub(super) fn linear_response_dir(data_dir: &Path) -> PathBuf {
+    beside(data_dir, "linear-responses")
+}
+
+/// `<data_dir>.<suffix>`, a sibling of the data directory.
+fn beside(data_dir: &Path, suffix: &str) -> PathBuf {
     let name = data_dir.file_name().map_or_else(
         || "vault".into(),
         |name| name.to_string_lossy().into_owned(),
     );
-    data_dir.with_file_name(format!("{name}.rehearsals"))
+    data_dir.with_file_name(format!("{name}.{suffix}"))
 }
 
 /// Makes `dir` owner-only when it is missing, and proves a file can be
