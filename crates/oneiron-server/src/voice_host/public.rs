@@ -42,8 +42,10 @@ pub(super) enum Command {
         LiveVoiceAckRequest,
         oneshot::Sender<MemoryResult<LiveVoiceProcessed>>,
     ),
+    /// A delivered tool result, beside the rows its connector call listed.
     Tool(
         oneiron::task_verb::sdk::ConnectorToolResult,
+        Vec<oneiron::EntityId>,
         oneshot::Sender<MemoryResult<LiveVoiceProcessed>>,
     ),
     Usage(u64, oneshot::Sender<MemoryResult<LiveVoiceUsage>>),
@@ -151,13 +153,16 @@ impl PublicSession {
         receive.await.map_err(|_| unavailable())?
     }
 
+    /// `rows` are the ones the connector call that delivered `result`
+    /// listed: each later turn that hears it is made from them (FIX 4778).
     pub(crate) async fn tool(
         &self,
         result: ConnectorToolResult,
+        rows: Vec<oneiron::EntityId>,
     ) -> MemoryResult<LiveVoiceProcessed> {
         let (reply, receive) = oneshot::channel();
         self.commands
-            .send(Command::Tool(result, reply))
+            .send(Command::Tool(result, rows, reply))
             .await
             .map_err(|_| unavailable())?;
         receive.await.map_err(|_| unavailable())?
@@ -181,7 +186,12 @@ impl PublicSession {
         receive.await.map_err(|_| unavailable())?
     }
 
-    pub(crate) fn events(&self, input: LiveVoiceEventsRequest) -> MemoryResult<LiveVoiceEvents> {
+    /// The page, beside the rows its served events were made from (FIX
+    /// 4778), `None` when one of them is unknown.
+    pub(crate) fn events(
+        &self,
+        input: LiveVoiceEventsRequest,
+    ) -> MemoryResult<super::public_events::ListedPage> {
         self.journal.lock().map_err(|_| unavailable())?.page(input)
     }
 }

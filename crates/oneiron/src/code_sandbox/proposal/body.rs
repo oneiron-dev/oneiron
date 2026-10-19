@@ -33,6 +33,16 @@ impl SandboxProposalBody {
         })
     }
 
+    /// Starts a body like [`Self::spool`], its unnamed temp file made in
+    /// `dir`: a host that keeps a free-space floor on one disk spools there.
+    pub fn spool_in(dir: &std::path::Path) -> Result<SandboxProposalBodyWriter> {
+        Ok(SandboxProposalBodyWriter {
+            file: tempfile::tempfile_in(dir)?,
+            len: 0,
+            hasher: blake3::Hasher::new(),
+        })
+    }
+
     /// A body holding `bytes`, spooled like a streamed one.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let mut writer = Self::spool()?;

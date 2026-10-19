@@ -1011,6 +1011,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
     let mut server_config = config.sync_server_config();
     server_config.lease_vault_id = super::vault_gates::managed_lease_scope(&vault)?;
+    // The supervisor authenticates ingress on the socket it owns, and this
+    // process attests the owner on each route: a request with no credential
+    // is anonymous. The Linear mirror checks this declaration, not a secret.
+    server_config.ingress = crate::config::IngressAuth::Supervisor;
     // Stable, domain-separated custody from the verified vault DEK, not the
     // per-spawn callback token or caller-controlled HTTP identity headers.
     // A fresh spawn with the same DEK must recover the same logged host root.
@@ -1036,6 +1040,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // The owner's backups and restore rehearsals, on the tenant's own disk
     // beside the data directory, as plain serve keeps them beside its vault.
     let owner_host = super::owner_storage::owner_host(&config, rehearsal_config);
+    // A direct `[linear]` mirror's response custody, private beside them.
+    super::owner_storage::linear_responses(&config);
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
@@ -1178,6 +1184,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         sync_server.vault().suppress_verb_hooks();
     }
 
+    // The owner's `[linear]` mirror and webhook mapping, as plain serve
+    // starts them, each pass admitted like a served write and holding it
+    // through its sends and settlement. Settings it cannot use stop the
+    // start here, before ctl serves or the supervisor hears ready.
+    let linear = crate::linear_host::spawn_configured(
+        Arc::clone(&sync_server),
+        state.background_admission(),
+    )
+    .await?;
+
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
         let ctl_shutdown = shutdown.triggered();
@@ -1234,6 +1250,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // The Linear mirror started before ready stops with the ladder.
+    ladder_workers.extend(linear);
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
     ladder_workers.extend(crate::decision_host::spawn_person_threshold_admitted(
         &sync_server,

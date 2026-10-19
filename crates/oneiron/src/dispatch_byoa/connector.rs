@@ -16,6 +16,7 @@ use super::error::{
     ERR_PAYLOAD_ENCODE, ERR_PAYLOAD_SCHEMA, ERR_UNKNOWN_MODEL_SLUG,
 };
 use super::official_seats::OfficialSeatStamp;
+use super::staged_input::StagedInputPin;
 use super::validate::validate_connector;
 use crate::error::ArtifactError;
 /// Wire version of every connector payload this module encodes.
@@ -283,6 +284,12 @@ pub struct CliSandboxSpec {
     pub egress_profile_ref: String,
     #[serde(with = "credential_handle_vec_wire")]
     pub credential_handles: Vec<SandboxCredentialHandle>,
+    /// The job this run reads from a file in its checkout, pinned to the
+    /// artifact that holds it whole; staged there before the run, and never
+    /// carried in `argv`. A run with none is not serialized with one, so its
+    /// encoding is what it was before staged inputs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged_input: Option<StagedInputPin>,
 }
 
 impl CliSandboxSpec {

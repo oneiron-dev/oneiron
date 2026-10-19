@@ -64,6 +64,7 @@ mod dispatcher;
 mod error;
 mod exhaust;
 pub mod official_seats;
+mod staged_input;
 mod stream;
 mod validate;
 
@@ -95,6 +96,7 @@ pub use self::exhaust::{
     byoa_exhaust_artifact_id, byoa_result_ref, decode_byoa_exhaust, parse_byoa_result_ref,
     read_checkpoint_frontier,
 };
+pub use self::staged_input::{ByoaInputStager, StagedInputPin};
 pub use self::stream::{ByoaStream, ByoaStreamWriter};
 pub use self::validate::validate_connector;
 

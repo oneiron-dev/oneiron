@@ -230,6 +230,18 @@ pub(super) fn page_event_type_configs_engine(
     vault: &Vault,
     page_ref: EntityId,
 ) -> Result<Vec<EventTypeConfig>, BookingError> {
+    Ok(page_event_type_configs_listed(vault, page_ref)?
+        .into_iter()
+        .map(|(config, _)| config)
+        .collect())
+}
+
+/// [`page_event_type_configs_engine`], each configuration beside the live
+/// `booking.event_type` claim it was decoded from (FIX 4777).
+pub(super) fn page_event_type_configs_listed(
+    vault: &Vault,
+    page_ref: EntityId,
+) -> Result<Vec<(EventTypeConfig, EntityId)>, BookingError> {
     let claim_ids = vault
         .claims_for_subject(&page_ref)
         .map_err(|_| BookingError::SlotOracle("booking page claim read failed".to_owned()))?;
@@ -248,7 +260,7 @@ pub(super) fn page_event_type_configs_engine(
         // malformed body is a typed failure rather than a silent skip.
         let decoded = decode_event_type_claim_value(&body.value)?;
         if decoded.page_ref == page_ref {
-            configs.push(decoded.config);
+            configs.push((decoded.config, claim_id));
         }
     }
     Ok(configs)
