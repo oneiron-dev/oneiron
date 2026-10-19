@@ -50,6 +50,7 @@ use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
+pub(crate) use super::deck_creation_doors::*;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
@@ -1381,6 +1382,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.artifacts.keep_outline"
+        | "vault.artifacts.decline_outline"
         | "vault.artifacts.publish_approval"
         | "vault.artifacts.publish"
         | "vault.artifacts.repoint"

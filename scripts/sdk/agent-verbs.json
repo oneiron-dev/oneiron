@@ -7395,6 +7395,99 @@
       "section": false
     },
     {
+      "name": "vault.artifacts.propose_outline",
+      "description": "Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineProposeRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckOutlineView",
+      "call": "memory.artifacts_propose_outline(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.artifacts.outline",
+      "description": "Reads a typed deck outline, its current NOTE frontier, its keep and its freshness.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineRefRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckOutlineView",
+      "call": "memory.artifacts_outline(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "refs": [
+        "/outline_ref"
+      ]
+    },
+    {
+      "name": "vault.artifacts.keep_outline",
+      "description": "The owner keeps the exact outline frontier, freezing its version and content hash.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineSettleRequest",
+      "output": "crate::edit_roundtrip::deck_create::KeptOutline",
+      "call": "memory.artifacts_keep_outline(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.artifacts.decline_outline",
+      "description": "The owner declines the exact outline frontier, clearing its keep and design directions.",
+      "input": "crate::blob_artifact::deck_creation::DeckOutlineSettleRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckOutlineDeclined",
+      "call": "memory.artifacts_decline_outline(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.artifacts.design_deck",
+      "description": "Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions.",
+      "input": "crate::blob_artifact::deck_creation::DeckDesignRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckDesignView",
+      "call": "memory.artifacts_design_deck(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "refs": [
+        "/outline_ref"
+      ]
+    },
+    {
+      "name": "vault.artifacts.create_deck",
+      "description": "Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit.",
+      "input": "crate::blob_artifact::deck_creation::DeckEmissionRequest",
+      "output": "crate::blob_artifact::deck_creation::DeckEmissionOutcome",
+      "call": "memory.artifacts_create_deck(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "refs": [
+        "/outline_ref"
+      ]
+    },
+    {
       "name": "vault.artifacts.inspect_deck",
       "description": "Inspects one PPTX version for native edit targets and comment identities without minting ids.",
       "refs": [

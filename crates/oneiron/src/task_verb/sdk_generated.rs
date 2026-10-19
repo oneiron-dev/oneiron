@@ -2614,6 +2614,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.propose_outline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::deck_creation::DeckOutlineProposeRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.outline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::deck_creation::DeckOutlineRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.keep_outline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.decline_outline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.design_deck",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::deck_creation::DeckDesignRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.create_deck",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::deck_creation::DeckEmissionRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.inspect_deck",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::DeckInspectRequest,
@@ -4622,6 +4658,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
+    "vault.artifacts.propose_outline",
+    "vault.artifacts.outline",
+    "vault.artifacts.keep_outline",
+    "vault.artifacts.decline_outline",
+    "vault.artifacts.design_deck",
+    "vault.artifacts.create_deck",
     "vault.artifacts.inspect_deck",
     "vault.artifacts.propose_deck",
     "ai.steps.submit",
@@ -5618,6 +5660,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
             Vec<crate::workspace_roster::WorkspaceRosterEntry>,
+        >(),
+        "vault.artifacts.propose_outline" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::deck_creation::DeckOutlineView,
+        >(),
+        "vault.artifacts.outline" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::deck_creation::DeckOutlineView,
+        >(),
+        "vault.artifacts.keep_outline" => crate::code_run::vault_read::request_schema::<
+            crate::edit_roundtrip::deck_create::KeptOutline,
+        >(),
+        "vault.artifacts.decline_outline" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::deck_creation::DeckOutlineDeclined,
+        >(),
+        "vault.artifacts.design_deck" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::deck_creation::DeckDesignView,
+        >(),
+        "vault.artifacts.create_deck" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::deck_creation::DeckEmissionOutcome,
         >(),
         "vault.artifacts.inspect_deck" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::DeckInspectionView,
@@ -9401,6 +9461,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.propose_outline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.outline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.keep_outline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.decline_outline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.design_deck" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.create_deck" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.inspect_deck" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13093,6 +13195,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.critic.review" => {
             let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
         }
+        "vault.artifacts.propose_outline" => {
+            let _input: crate::blob_artifact::deck_creation::DeckOutlineProposeRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.outline" => {
+            let _input: crate::blob_artifact::deck_creation::DeckOutlineRefRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.keep_outline" => {
+            let _input: crate::blob_artifact::deck_creation::DeckOutlineSettleRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.decline_outline" => {
+            let _input: crate::blob_artifact::deck_creation::DeckOutlineSettleRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.design_deck" => {
+            let _input: crate::blob_artifact::deck_creation::DeckDesignRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.create_deck" => {
+            let _input: crate::blob_artifact::deck_creation::DeckEmissionRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.inspect_deck" => {
             let _input: crate::blob_artifact::DeckInspectRequest = decode(value.clone())?;
         }
@@ -15135,6 +15261,22 @@ pub fn invoke(
         }
         "vault.artifacts.ask" => encode(vault_artifacts_ask(memory, decode(value)?)?),
         "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
+        "vault.artifacts.propose_outline" => {
+            encode(vault_artifacts_propose_outline(memory, decode(value)?)?)
+        }
+        "vault.artifacts.outline" => encode(vault_artifacts_outline(memory, decode(value)?)?),
+        "vault.artifacts.keep_outline" => {
+            encode(vault_artifacts_keep_outline(memory, decode(value)?)?)
+        }
+        "vault.artifacts.decline_outline" => {
+            encode(vault_artifacts_decline_outline(memory, decode(value)?)?)
+        }
+        "vault.artifacts.design_deck" => {
+            encode(vault_artifacts_design_deck(memory, decode(value)?)?)
+        }
+        "vault.artifacts.create_deck" => {
+            encode(vault_artifacts_create_deck(memory, decode(value)?)?)
+        }
         "vault.artifacts.inspect_deck" => {
             encode(vault_artifacts_inspect_deck(memory, decode(value)?)?)
         }
@@ -19780,6 +19922,60 @@ pub fn vault_critic_review(
     input: crate::critic::review::CriticReviewSubmit,
 ) -> MemoryResult<crate::critic::review::CriticReviewOutcome> {
     crate::task_verb::sdk::host_only(memory, "vault.critic.review", &input)
+}
+pub fn vault_artifacts_propose_outline(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::deck_creation::DeckOutlineProposeRequest,
+) -> MemoryResult<crate::blob_artifact::deck_creation::DeckOutlineView> {
+    memory.artifacts_propose_outline(&input)
+}
+pub fn vault_artifacts_outline(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::deck_creation::DeckOutlineRefRequest,
+) -> MemoryResult<crate::blob_artifact::deck_creation::DeckOutlineView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.outline",
+        &input,
+        &["/outline_ref"],
+    )?;
+    memory.artifacts_outline(&input)
+}
+pub fn vault_artifacts_keep_outline(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+) -> MemoryResult<crate::edit_roundtrip::deck_create::KeptOutline> {
+    memory.artifacts_keep_outline(&input)
+}
+pub fn vault_artifacts_decline_outline(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+) -> MemoryResult<crate::blob_artifact::deck_creation::DeckOutlineDeclined> {
+    memory.artifacts_decline_outline(&input)
+}
+pub fn vault_artifacts_design_deck(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::deck_creation::DeckDesignRequest,
+) -> MemoryResult<crate::blob_artifact::deck_creation::DeckDesignView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.design_deck",
+        &input,
+        &["/outline_ref"],
+    )?;
+    memory.artifacts_design_deck(&input)
+}
+pub fn vault_artifacts_create_deck(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::deck_creation::DeckEmissionRequest,
+) -> MemoryResult<crate::blob_artifact::deck_creation::DeckEmissionOutcome> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.create_deck",
+        &input,
+        &["/outline_ref"],
+    )?;
+    memory.artifacts_create_deck(&input)
 }
 pub fn vault_artifacts_inspect_deck(
     memory: &Memory<'_>,

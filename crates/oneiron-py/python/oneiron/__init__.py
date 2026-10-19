@@ -2320,6 +2320,24 @@ class Oneiron:
         def ask(self, spec):
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_ask(json.dumps(spec))))
+        def propose_outline(self, spec):
+            """Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_propose_outline(json.dumps(spec))))
+        def outline(self, spec):
+            """Reads a typed deck outline, its current NOTE frontier, its keep and its freshness."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_outline(json.dumps(spec))))
+        def keep_outline(self, spec):
+            """The owner keeps the exact outline frontier, freezing its version and content hash."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_keep_outline(json.dumps(spec))))
+        def decline_outline(self, spec):
+            """The owner declines the exact outline frontier, clearing its keep and design directions."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_decline_outline(json.dumps(spec))))
+        def design_deck(self, spec):
+            """Compiles one to three template directions from the exact fresh keep into validated plans or typed design decisions."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_design_deck(json.dumps(spec))))
+        def create_deck(self, spec):
+            """Emits one checked deck from a fresh kept outline and a planned template, retaining born-from and unverified fit."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_create_deck(json.dumps(spec))))
         def inspect_deck(self, spec):
             """Inspects one PPTX version for native edit targets and comment identities without minting ids."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_inspect_deck(json.dumps(spec))))
