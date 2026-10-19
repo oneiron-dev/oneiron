@@ -209,13 +209,14 @@ impl AgentVerbDoor for SkillCredentialDoor {
                 super::action_routes::require_action_scope(&self.auth, effect.as_str())
                     .map_err(FacadeApiError::into_memory_error)?;
             }
-            // A search, an edge's target and a consult's refs are read on
-            // the credential's lane.
+            // A search, an edge's target, a consult's refs and a TASK
+            // binding's TASK and workflow are read on the credential's lane.
             Ok(match call {
                 RunCall::Bridge(
                     SelfEffect::MemorySearch
                     | SelfEffect::MemoryPutEdge
-                    | SelfEffect::ConsultResult,
+                    | SelfEffect::ConsultResult
+                    | SelfEffect::WorkflowDispatch,
                 ) => Some(key),
                 _ => None,
             })

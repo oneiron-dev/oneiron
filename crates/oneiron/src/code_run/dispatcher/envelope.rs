@@ -362,6 +362,9 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // A team's members are the run's own children and its receipt a
         // vault row: nothing of it leaves the vault.
         SelfEffect::Team => false,
+        // A bound workflow run queues the vault's own agents under the
+        // run's own lease and takes the vault's own TASK (FIX 5316).
+        SelfEffect::WorkflowDispatch => false,
     }
 }
 

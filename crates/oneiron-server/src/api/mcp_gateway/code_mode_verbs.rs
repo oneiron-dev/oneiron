@@ -1049,11 +1049,15 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         }
         mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
         // A search reads on the credential's lane, a facet stamp places only
-        // a row that lane reads, and a consult lands only refs it reads.
+        // a row that lane reads, a consult lands only refs it reads, and a
+        // TASK binding reads its TASK and workflow there (FIX 5316).
         if !matches!(
             call,
             RunCall::Bridge(
-                SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge | SelfEffect::ConsultResult
+                SelfEffect::MemorySearch
+                    | SelfEffect::MemoryPutEdge
+                    | SelfEffect::ConsultResult
+                    | SelfEffect::WorkflowDispatch
             )
         ) {
             return Ok(None);

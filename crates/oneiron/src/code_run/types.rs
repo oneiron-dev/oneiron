@@ -103,6 +103,10 @@ pub enum SelfCall {
     /// `self.team.submit` (OF-540): the bound leader submits one pinned
     /// output of its team for the owner's acceptance review.
     TeamSubmit(super::TeamSubmitInput),
+    /// `self.workflows.dispatch_bound` (FIX 5316): the run's agent binds one
+    /// run of a saved workflow to a TASK it owns. The actor, the parent, the
+    /// run and the spend come from the host binding's live lease.
+    WorkflowDispatch(Box<crate::task_verb::sdk::WorkflowBoundDispatchRequest>),
     /// `tasks.wait({tasks, ...})`: one wait over the run's reader children.
     TasksWaitSet(super::reader::TaskWaitSetCall),
     /// `summarize(r, {effort?, group?, defer?})`: one summary of the run's
@@ -156,6 +160,7 @@ impl SelfCall {
             Self::Leader(SelfLeaderCall::Split { .. }) => SelfEffect::LeaderSplit,
             Self::Leader(_) => SelfEffect::Leader,
             Self::Team(_) | Self::TeamSubmit(_) => SelfEffect::Team,
+            Self::WorkflowDispatch(_) => SelfEffect::WorkflowDispatch,
         }
     }
 
@@ -248,6 +253,9 @@ pub enum SelfEffect {
     LeaderSplit,
     /// A team run the bound agent leads: its start or its receipt.
     Team,
+    /// A saved workflow's run the leased agent binds to a TASK it owns,
+    /// under its own lease (FIX 5316).
+    WorkflowDispatch,
 }
 
 impl SelfEffect {
@@ -290,6 +298,7 @@ impl SelfEffect {
             Self::Leader => "self.leader",
             Self::LeaderSplit => "self.leader.split",
             Self::Team => "self.team",
+            Self::WorkflowDispatch => "self.workflows.dispatch_bound",
         }
     }
 
@@ -332,7 +341,7 @@ impl SelfEffect {
             | Self::Fold => None,
             Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
             Self::Leader | Self::LeaderSplit => None,
-            Self::Team => None,
+            Self::Team | Self::WorkflowDispatch => None,
         }
     }
 

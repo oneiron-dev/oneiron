@@ -18,6 +18,7 @@ pub enum RunVerb {
     TasksRefuse,
     SelfReportBlocked,
     SelfAgentsSpawn,
+    SelfWorkflowsDispatchBound,
     SelfLeaderAdvice,
     SelfLeaderPattern,
     SelfLeaderSplit,
@@ -45,6 +46,7 @@ impl RunVerb {
         Self::TasksRefuse,
         Self::SelfReportBlocked,
         Self::SelfAgentsSpawn,
+        Self::SelfWorkflowsDispatchBound,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
         Self::SelfLeaderSplit,
@@ -75,6 +77,7 @@ impl RunVerb {
             Self::TasksRefuse => "tasks.refuse",
             Self::SelfReportBlocked => "self.report_blocked",
             Self::SelfAgentsSpawn => "self.agents.spawn",
+            Self::SelfWorkflowsDispatchBound => "self.workflows.dispatch_bound",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
             Self::SelfLeaderSplit => "self.leader.split",
@@ -102,6 +105,7 @@ impl RunVerb {
                 | Self::TasksRefuse
                 | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
+                | Self::SelfWorkflowsDispatchBound
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
                 | Self::SelfTeamStart
@@ -127,6 +131,7 @@ impl RunVerb {
             Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
             Self::SelfReportBlocked => crate::code_run::SelfEffect::ReportBlocked,
             Self::SelfAgentsSpawn => crate::code_run::SelfEffect::AgentsSpawn,
+            Self::SelfWorkflowsDispatchBound => crate::code_run::SelfEffect::WorkflowDispatch,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderSplit => crate::code_run::SelfEffect::LeaderSplit,

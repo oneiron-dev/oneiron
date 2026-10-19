@@ -4,9 +4,11 @@
 //!
 //! Only the wrapper carries the TASK backlink; its leaves stay TASK-less.
 //! The binding is part of the stored intent, so the same intent key naming
-//! another TASK, or none, is another intent. A TASK-less run never reaches
-//! any of this. The TASK's own gate, take, fence and settlement are the
-//! task highway's (`task_verb::highway_runner::workflow_try`).
+//! another TASK, or none, is another intent. An owner's bound run is a root;
+//! an agent's has the try its lease holds as its real parent (FIX 5316). A
+//! TASK-less run never reaches any of this. The TASK's own gate, take, fence
+//! and settlement are the task highway's
+//! (`task_verb::highway_runner::workflow_try`).
 
 use crate::agent_dispatch::widen_record::invalid;
 use crate::agent_dispatch::workflow_record::{
@@ -21,6 +23,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::task_verb::highway_runner::workflow_try::{self, WorkflowRunEnd};
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
+use crate::write_envelope::WriteActor;
 
 impl AgentDispatcher<'_> {
     /// Whether a queue row's type is an inert workflow wrapper's, for a read
@@ -29,12 +32,16 @@ impl AgentDispatcher<'_> {
         attempt_type == WORKFLOW_ATTEMPT_TYPE
     }
 
-    /// The checks a TASK-bound run takes before its writer: a root run with
-    /// no spawn plan, its descriptor normalized once, and the project depth.
+    /// The checks a TASK-bound run takes before its writer: no spawn plan,
+    /// its parent, its descriptor normalized once, and the project depth.
+    /// An owner's run is a root. An agent's has `leased`, the try its lease
+    /// holds, as its real parent, under the checks every workflow with a
+    /// parent takes (FIX 5316).
     pub(crate) fn prepare_bound_workflow(
         &self,
         input: &DispatchAgent,
         spawn: AgentSpawnContext,
+        leased: Option<AttemptId>,
     ) -> Result<AgentSpawnContext> {
         if !matches!(input.target, AgentDispatchTarget::Workflow(_)) {
             return Err(invalid("workflow dispatch requires a workflow target"));
@@ -42,29 +49,45 @@ impl AgentDispatcher<'_> {
         if spawn.plan.is_some() {
             return Err(invalid("a spawn plan seats an agent, not a workflow"));
         }
-        // A wrapper is inert: the run that realizes a TASK has no parent.
-        if input.parent_attempt.is_some() {
-            return Err(invalid("a workflow that realizes a TASK is a root run"));
+        match (input.parent_attempt, leased) {
+            (None, None) => {}
+            // A wrapper is inert: the owner's run that realizes a TASK has
+            // no parent.
+            (Some(_), None) => {
+                return Err(invalid("a workflow that realizes a TASK is a root run"));
+            }
+            (Some(parent), Some(leased)) if parent == leased => {
+                self.parent_dispatch_input(parent)?
+                    .ok_or_else(|| invalid("workflow requires an actual agent parent"))?;
+                self.child_depth_remaining(parent)?;
+            }
+            (_, Some(_)) => {
+                return Err(invalid(
+                    "an agent's bound workflow has the try its lease holds as its parent",
+                ));
+            }
         }
         let spawn = AgentSpawnContext {
             context_spec: spawn.context_spec.map(normalize_context_spec),
             ..spawn
         };
         let txn = self.vault.store.env.read_txn()?;
-        self.project_depth_limit_in_txn(&txn, None, spawn.project_ref)?;
+        self.project_depth_limit_in_txn(&txn, input.parent_attempt, spawn.project_ref)?;
         Ok(spawn)
     }
 
     /// The run an identical bound request already started, read before its
     /// TASK is: the same workflow, intent key, request and binding. The same
-    /// key with another TASK, no TASK or another request is refused.
+    /// key with another TASK, no TASK or another request is refused with
+    /// `refusal`, given the key and the run it names.
     pub(crate) fn bound_workflow_existing_in(
         &self,
         txn: &heed::RoTxn<'_>,
         input: &DispatchAgent,
         spawn: &AgentSpawnContext,
         task: EntityId,
-        bound_by: EntityId,
+        bound_by: WriteActor,
+        refusal: impl Fn(&str, AttemptId) -> Error,
     ) -> Result<Option<AgentDispatchOutcome>> {
         let Some(key) = input.dedupe_key.as_deref() else {
             return Ok(None);
@@ -79,10 +102,7 @@ impl AgentDispatcher<'_> {
         let (_, mut expected) = self.workflow_intent(txn, input, spawn)?;
         expected.task = Some(WorkflowTaskBinding::new(task, bound_by));
         if record.intent != expected {
-            return Err(Error::Refused(format!(
-                "{key} already names a run with another TASK, no TASK or another request; \
-                 repeat that request or use a new intent key"
-            )));
+            return Err(refusal(key, root));
         }
         Ok(Some(AgentDispatchOutcome::WorkflowExisting(Box::new(
             self.workflow_status_from(row, &record)?,
@@ -98,19 +118,20 @@ impl AgentDispatcher<'_> {
         input: DispatchAgent,
         spawn: AgentSpawnContext,
         task: EntityId,
-        bound_by: EntityId,
+        bound_by: WriteActor,
     ) -> Result<AgentDispatchOutcome> {
         let binding = WorkflowTaskBinding::new(task, bound_by);
         self.dispatch_workflow_bound_in_txn(txn, input, spawn, None, Some(&binding))
     }
 
-    /// The TASK a registered wrapper realizes and the owner who bound it, in
-    /// `txn`. `None` for any other row and for a TASK-less run.
+    /// The TASK a registered wrapper realizes and the actor who bound it,
+    /// under its class, in `txn`. `None` for any other row and for a
+    /// TASK-less run.
     pub(crate) fn workflow_task_source_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         row: &AttemptRecord,
-    ) -> Result<Option<(EntityId, EntityId)>> {
+    ) -> Result<Option<(EntityId, WriteActor)>> {
         if !is_wrapper(row) || RECORD.get(&self.vault.store, txn, &row.id)?.is_none() {
             return Ok(None);
         }

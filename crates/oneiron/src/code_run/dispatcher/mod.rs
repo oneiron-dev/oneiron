@@ -16,6 +16,7 @@ mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
+mod workflow_dispatch;
 mod world_privacy_set;
 
 use std::cell::{Cell, RefCell};
@@ -594,6 +595,9 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::Leader(call) => self.dispatch_leader(call),
             SelfCall::Team(call) => self.dispatch_team(call),
             SelfCall::TeamSubmit(input) => self.dispatch_team_submit(input),
+            // The binding reads its TASK and workflow under the key its door
+            // admitted it with.
+            SelfCall::WorkflowDispatch(call) => self.dispatch_workflow_bound(*call, read_as),
         }
     }
 }

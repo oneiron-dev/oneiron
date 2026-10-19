@@ -169,6 +169,11 @@ impl CodeRunBridgeCall {
             // `tasks.consult.result`'s answer is the landed consult's terminal
             // register, as a verb answer (DOOR-063).
             SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::ConsultResult => Ok(()),
+            // `self.workflows.dispatch_bound`'s answer is the bound run's
+            // view, as a verb answer (FIX 5316).
+            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::WorkflowDispatch => {
+                Ok(())
+            }
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),
@@ -797,13 +802,14 @@ impl CodeRunReplayRecord {
 /// The served rows of the verb answers among `calls`, as
 /// [`CodeRunReplayRecord::agent_verb_rows`] reads them; `None` when any answer
 /// has no row set or does not decode. A consult landing's answer lists the
-/// refs it read (DOOR-063).
+/// refs it read (DOOR-063), and a bound workflow run's the TASK, workflow,
+/// definitions and attempts it served (FIX 5316).
 pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
     let verb_calls = calls.iter().filter(|call| {
         matches!(
             call.effect,
-            SelfEffect::AgentVerb | SelfEffect::ConsultResult
+            SelfEffect::AgentVerb | SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch
         )
     });
     for call in verb_calls {
