@@ -8,13 +8,16 @@ use axum::http::{HeaderMap, request::Parts};
 use oneiron::claim::CallerLocality;
 use oneiron::runtime_hooks::verb::{VerbAskCredentialSource, VerbAskInstrument};
 
-/// Gates the legacy `/api/*` routes on an owner-grade bearer.
+/// Gates the legacy `/api/*` routes on an owner-grade bearer, from the
+/// request's headers alone.
 ///
 /// These routes read the whole vault under one actor ref, so they stay a
 /// trust-root surface: scoped `/v1` delegation tokens do not reach them.
 /// On a managed vault a request with no slip is the host's root as before,
 /// and a caller's own forwarded slip keeps its own grade: a narrower one is
-/// refused, named, never served as the host (WILL-PLAN L14 row 01).
+/// refused, named, never served as the host (WILL-PLAN L14 row 01). It never
+/// names a managed vault's attested owner: a door that may take him asks
+/// [`check_request_auth`].
 pub(super) fn check_api_auth(
     headers: &HeaderMap,
     server: &SyncServer,
@@ -75,25 +78,13 @@ pub(crate) fn require_live_managed_owner(
         .ok_or_else(|| ApiError::forbidden_scope("owner"))
 }
 
-/// [`check_api_auth`] for an OWNER ACT door (FIX 2222): the grade it
+/// [`check_request_auth`] for an OWNER ACT door (FIX 2222): the grade it
 /// authenticates, then the owner-act admission
 /// ([`super::host_action::require_host_owner_act`]) before the door reads,
 /// writes or answers anything. On a self-hosted vault the host root and the
 /// dev mode act as the owner; a hosted operator's root gets the typed 403
 /// (`required_scope: support_grant`). A ROOT ADMIN door keeps
-/// [`check_api_auth`] alone.
-pub(super) fn check_api_owner_act(
-    headers: &HeaderMap,
-    server: &SyncServer,
-) -> Result<CoreAuth, ApiError> {
-    let auth = check_api_auth(headers, server)?;
-    super::host_action::require_host_owner_act(server, &auth)?;
-    Ok(auth)
-}
-
-/// [`check_api_owner_act`] for a door a managed vault's supervisor may
-/// attest the owner on: [`check_request_auth`]'s caller, then the same
-/// owner-act admission.
+/// [`check_request_auth`] alone.
 pub(super) fn check_request_owner_act(
     parts: &Parts,
     server: &SyncServer,

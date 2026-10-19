@@ -463,6 +463,16 @@ side_tables! {
     /// Disposable cache: the newest active actor.confidence_prior claim id for one provider key. Key:
     /// bytes32 (sha256 of provider key).
     PROVIDER_PRIOR_HEAD_INDEX: VaultMeta b"provider_confidence/prior_head/v1\0" Raw;
+    /// Publisher training custody (OF-420): ids, revisions and states of each submission and
+    /// control, never text. Key: b"s" or b"c" + id16.
+    PUBLISHER_TRAINING_CUSTODY: VaultMeta b"publisher_training:custody:v1:" Named
+        => crate::Vault::erase_publisher_training_custody_in_txn;
+    /// The scope the publisher training outbox last delivered for one person (OF-420). Key: id16
+    /// (PERSON).
+    PUBLISHER_TRAINING_PERSON: VaultMeta b"publisher_training:person:v1:" Named
+        => crate::Vault::erase_publisher_training_scope_in_txn;
+    /// The publisher training outbox's next event number and receipt cursor (OF-420). Key: `()`.
+    PUBLISHER_TRAINING_STATE: VaultMeta b"publisher_training:state:v1" Named;
     /// Scope self-demotion log. Key: u64be + id16.
     RAMP_DEMOTION: VaultMeta b"ramp_demote:v1:" Named;
     /// Clean-streak floor override. Key: id16.

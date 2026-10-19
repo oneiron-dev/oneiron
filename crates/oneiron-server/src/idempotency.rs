@@ -437,7 +437,11 @@ async fn idempotent(
     // A replay goes to the machine the request's connection proved (mesh PR2b).
     let peer = crate::auth::proved_peer(request.headers(), request.extensions());
     let revoked = state.server.vault().as_ref();
-    let core_auth = if is_core_auth_route {
+    // A managed vault's legacy keyed route keys on its own caller too (FIX
+    // 5123), the one its handler's owner-grade gate takes, never a principal
+    // every caller shares.
+    let legacy_caller = !is_core_auth_route && state.server.managed_issuer.is_some();
+    let core_auth = if is_core_auth_route || legacy_caller {
         // The route's own caller (FIX 5201): on a managed vault, the owner
         // its supervisor attested reads and replays under his own partition.
         let (parts, body) = request.into_parts();
@@ -448,6 +452,7 @@ async fn idempotent(
         None
     };
     let auth_ok = match &core_auth {
+        Some(Ok(auth)) if legacy_caller => auth.is_owner_grade(),
         Some(Ok(auth)) => !auth.principal().is_empty(),
         Some(Err(_)) => false,
         None => require_owner_auth(request.headers(), &state.server.config, revoked).is_ok(),
@@ -487,7 +492,12 @@ async fn idempotent(
     let _guard = state.store.lock_for(&store_key).await;
     match state.store.lookup(&store_key, &target, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => {
-            let auth = core_auth.as_ref().and_then(|auth| auth.as_ref().ok());
+            // A legacy route's caller keys its partition alone; its replay
+            // stays the legacy one.
+            let auth = core_auth
+                .as_ref()
+                .filter(|_| is_core_auth_route)
+                .and_then(|auth| auth.as_ref().ok());
             // Every keyed core route is an owner act: a cached one replays
             // only to a caller that may act now, so a hosted operator's root
             // is refused before any cached success (FIX 2222).
