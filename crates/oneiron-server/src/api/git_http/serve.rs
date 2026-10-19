@@ -16,7 +16,9 @@ use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_LENGTH;
 use axum::response::Response;
-use oneiron::origin::residence::{OriginAuthority, OriginHostAuthority, OriginResidence};
+use oneiron::origin::residence::{
+    ORIGIN_WRITER_ERASED_REFUSAL, OriginAuthority, OriginHostAuthority, OriginResidence,
+};
 use oneiron::origin::smart_http;
 use oneiron::origin::smart_http::{AtDiskFloor, HeldBytes, SpillFloor};
 use std::io::{self, Read, Write};
@@ -55,7 +57,8 @@ pub(super) async fn run_serve(
     // A push runs under the lease this host holds over the repository, read
     // from the vault's own authority row and this install's machine, never
     // from the request. A mirror, or a repository another host writes, is
-    // told so before it queues; a repository that does not resolve leaves the
+    // told so before it queues, as is one whose writer was erased: it names
+    // the owner's cutover. A repository that does not resolve leaves the
     // answer to the exchange.
     let authority = if request.is_push() {
         let vault = Arc::clone(server.vault());
@@ -64,6 +67,9 @@ pub(super) async fn run_serve(
             Ok(Ok(OriginHostAuthority::Held(lease))) => Some(lease),
             Ok(Ok(OriginHostAuthority::Mirror(row))) => return not_the_writer(&row, true),
             Ok(Ok(OriginHostAuthority::Elsewhere(row))) => return not_the_writer(&row, false),
+            Ok(Ok(OriginHostAuthority::WriterErased(_))) => {
+                return text_response(StatusCode::FORBIDDEN, ORIGIN_WRITER_ERASED_REFUSAL);
+            }
             Ok(Ok(OriginHostAuthority::Unconfigured) | Err(_)) | Err(_) => None,
         }
     } else {

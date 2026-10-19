@@ -3,7 +3,9 @@ use crate::checkout::lease::CheckoutRepoOps;
 use crate::git_wire::{GitOid, GitRefName, GitWireRepo};
 use crate::origin::export::EngineCommitExport;
 use crate::origin::publication::{OriginPublicationRecord, OriginPublicationStatus};
-use crate::origin::residence::{OriginAuthorityLease, OriginHostAuthority};
+use crate::origin::residence::{
+    ORIGIN_WRITER_ERASED_REFUSAL, OriginAuthorityLease, OriginHostAuthority,
+};
 use crate::origin::smart_http::push_queue_key;
 
 impl Memory<'_> {
@@ -202,7 +204,8 @@ impl Memory<'_> {
 
     /// The host authority an export publishes under, read positively: a held
     /// epoch passes its lease, an unconfigured origin passes none, a mirror or
-    /// another writer refuses. A read failure is an error, never unconfigured.
+    /// another writer refuses, and an erased writer names the owner's cutover.
+    /// A read failure is an error, never unconfigured.
     fn origin_export_authority(&self, repo: &str) -> MemoryResult<Option<OriginAuthorityLease>> {
         match self.vault.origin_host_authority(repo)? {
             OriginHostAuthority::Unconfigured => Ok(None),
@@ -214,6 +217,13 @@ impl Memory<'_> {
                     &["Read vault.code.origin.authority.get, then export from the writer host."],
                 ))
             }
+            OriginHostAuthority::WriterErased(_) => Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                ORIGIN_WRITER_ERASED_REFUSAL,
+                &[
+                    "The owner cuts over with vault.code.origin.authority.set; export from the writer it names.",
+                ],
+            )),
         }
     }
 

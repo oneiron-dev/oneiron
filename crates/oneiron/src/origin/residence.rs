@@ -28,6 +28,10 @@ const AUTHORITY_PERMIT: SideTable<EntityId, u64, Raw> =
 /// unconfigured origin. The repository and epoch stay; no host holds the
 /// repository until the owner's explicit cutover, and nothing fails over.
 pub(crate) const ORIGIN_ERASED_WRITER: &str = ERASED_CALL_IDENTITY;
+/// What a write against an origin whose writer was erased is told (FIX 5024;
+/// a call): it names the owner's cutover, never another host. A live writer
+/// elsewhere keeps its own refusal.
+pub const ORIGIN_WRITER_ERASED_REFUSAL: &str = "this origin's writer was erased; it takes no write until the owner's cutover names its next writer";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum OriginResidence {
@@ -62,6 +66,9 @@ pub enum OriginHostAuthority {
     Mirror(OriginAuthority),
     /// Another host writes the current epoch, or this host names none.
     Elsewhere(OriginAuthority),
+    /// An erase took the current epoch's writer (FIX 3877): no host writes
+    /// the repository until the owner's cutover names one (FIX 5024).
+    WriterErased(OriginAuthority),
 }
 /// The owner's cutover: the epoch it expects and the authority it installs.
 struct Cutover {
@@ -150,9 +157,9 @@ impl OriginAuthorityStamp {
 
 /// Erasing `actor` from the origin authority rows (FIX 3877): a row whose
 /// writer is that machine keeps its epoch, residence and mirror flag and
-/// names [`ORIGIN_ERASED_WRITER`], so the repository reads `Elsewhere` until
-/// the owner's explicit cutover. One-way, in the erase's own transaction. An
-/// id whose entity is no actor scans nothing.
+/// names [`ORIGIN_ERASED_WRITER`], so the repository reads `WriterErased`
+/// until the owner's explicit cutover. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -283,6 +290,9 @@ impl Vault {
         if row.mirror {
             return Ok(OriginHostAuthority::Mirror(row));
         }
+        if row.writer == ORIGIN_ERASED_WRITER {
+            return Ok(OriginHostAuthority::WriterErased(row));
+        }
         if host.is_none_or(|host| row.writer != host.to_hex()) {
             return Ok(OriginHostAuthority::Elsewhere(row));
         }
@@ -351,6 +361,10 @@ impl Vault {
         writer: EntityId,
     ) -> Result<OriginAuthorityLease> {
         let row = self.origin_authority(repo)?.ok_or(Error::EntityNotFound)?;
+        // An erased writer waits for the owner's cutover (FIX 5024).
+        if !row.mirror && row.writer == ORIGIN_ERASED_WRITER {
+            return Err(Error::Refused(ORIGIN_WRITER_ERASED_REFUSAL.to_owned()));
+        }
         if row.mirror || row.writer != writer.to_hex() {
             return Err(Error::InvariantViolation(
                 "origin is read-only or another host owns authority",
