@@ -152,21 +152,24 @@ pub struct ServeArgs {
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
 
-    /// Managed mode: the vault's settings, an absolute path to one TOML
-    /// file in the server's own config schema, `[models]`, `[embedder]` and
-    /// `[gpu]` included. The owner's feature settings are read from it and
-    /// settled once; a leaf the supervisor owns (the listener, ingress and
-    /// auth, tenant identity, custody, sockets, the key directory), a key
-    /// named by an environment variable, and an owner path outside the
-    /// vault's data directory and this file's own directory are refused.
-    /// Without it a managed vault runs on the defaults.
+    /// The vault's owner settings, one TOML file in the server's own config
+    /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
+    /// over it. On a plain serve it is read as a config file layered over
+    /// `--config`, beneath the environment (FIX 5016). Managed mode: an
+    /// absolute path, the one layer settings are read from, settled once; a
+    /// leaf the supervisor owns (the listener, ingress and auth, tenant
+    /// identity, custody, sockets, the key directory), a key named by an
+    /// environment variable, and an owner path outside the vault's data
+    /// directory and this file's own directory are refused. Without it a
+    /// managed vault runs on the defaults.
     #[arg(long = "settings-file")]
     pub settings_file: Option<PathBuf>,
 
-    /// Managed mode: where the server's own voice loop listens, an absolute
-    /// path the supervisor chose in an owner-only directory. The settings
-    /// file's `[models.voice]` turns the loop on; this names its socket,
-    /// which the settings file never does (FIX 2391).
+    /// Where the server's own voice loop listens, an absolute path in an
+    /// owner-only directory, over `[models.voice].socket`. The config's
+    /// `[models.voice]` turns the loop on; this names its socket, and names
+    /// none where no voice is configured. Managed mode: the path the
+    /// supervisor chose, which the settings file never names (FIX 2391).
     #[arg(long = "voice-socket")]
     pub voice_socket: Option<PathBuf>,
 

@@ -290,7 +290,7 @@ async fn call(
     let stop: ShutdownSignal = Box::pin(async move {
         tokio::select! {
             () = stopping => {}
-            () = call_revoked(&auth, &server, device) => {
+            () = revoked(&auth, &server, device) => {
                 tracing::info!("voice: the call's credential was revoked; ending the call");
             }
         }
@@ -590,36 +590,21 @@ fn bind_room(
     })
 }
 
-/// Resolves once the call's credential is no longer live: its slip, or for
-/// a managed owner, the person's standing as the vault's live owner.
-pub(super) async fn revoked(auth: &CoreAuth, server: &SyncServer) {
+/// Resolves once a call's caller no longer stands as it did when admitted:
+/// its slip is revoked, its person is no longer the vault's live owner (the
+/// owner door the call was admitted through, asked again), or, for a call
+/// from an enrolled device (FIX 1949 = B), `device` no longer stands here as
+/// his own. A managed owner's attestation carries no slip; the owner door
+/// alone answers for him. Every call and public session is checked so (FIX
+/// 5323).
+pub(super) async fn revoked(auth: &CoreAuth, server: &SyncServer, device: Option<PeerMachine>) {
     let mut every = tokio::time::interval(LIVENESS_EVERY);
     loop {
         every.tick().await;
-        let live = if auth.managed_owner().is_some() {
-            crate::api::owner(auth, server).is_ok()
-        } else {
-            auth.credential_is_live(server.vault())
-        };
-        if !live {
-            return;
-        }
-    }
-}
-
-/// [`revoked`], for one call: an enrolled device's call (FIX 1949 = B) also
-/// ends once its slip is revoked, its person is no longer the vault's live
-/// owner, or its machine no longer stands here as his own.
-async fn call_revoked(auth: &CoreAuth, server: &SyncServer, device: Option<PeerMachine>) {
-    let Some(device) = device else {
-        return revoked(auth, server).await;
-    };
-    let mut every = tokio::time::interval(LIVENESS_EVERY);
-    loop {
-        every.tick().await;
-        let live = auth.credential_is_live(server.vault())
+        let live = (auth.managed_owner().is_some() || auth.credential_is_live(server.vault()))
             && crate::api::owner(auth, server).is_ok()
-            && crate::auth::owned_machine_stands(server.vault(), device);
+            && device
+                .is_none_or(|device| crate::auth::owned_machine_stands(server.vault(), device));
         if !live {
             return;
         }

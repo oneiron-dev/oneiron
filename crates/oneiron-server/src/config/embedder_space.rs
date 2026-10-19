@@ -20,7 +20,7 @@ pub(super) struct SpaceNaming {
 }
 
 impl SpaceNaming {
-    pub(super) fn of(layers: [Option<&EmbedderConfigOverride>; 3]) -> Self {
+    pub(super) fn of<const N: usize>(layers: [Option<&EmbedderConfigOverride>; N]) -> Self {
         layers
             .into_iter()
             .flatten()

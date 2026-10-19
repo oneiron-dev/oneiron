@@ -9,13 +9,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Router;
-use oneiron_vault_contract::{CtlRequest, CtlResponse, MAX_CTL_LINE, READY_BYTE};
+use oneiron_vault_contract::{
+    CtlRequest, CtlResponse, MAX_CTL_LINE, READY_BYTE, REAP_PAUSE_REFUSAL,
+};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tracing_subscriber::EnvFilter;
 
 use super::args::{ManagedArgs, ManagedError};
-use super::state_serve::ManagedState;
+use super::state_serve::{ManagedState, WRITES_FROZEN_TAG};
 
 /// The one environment value managed mode uses. When set, it names an
 /// already-bound listening unix socket the supervisor passed across spawn.
@@ -397,6 +399,17 @@ async fn dispatch_ctl_line(line: &str, state: &ManagedState) -> CtlResponse {
     };
     match state.handle_request(request).await {
         Ok(response) => response,
+        // A reap pause answers typed (contract v3), so the supervisor tells it
+        // from a refused or failed request and knows what lifts it.
+        Err(ManagedError::WritesFrozen) => {
+            tracing::info!(
+                reason = WRITES_FROZEN_TAG,
+                "ctl request refused: the vault is paused for reap"
+            );
+            CtlResponse::Refused {
+                refused: REAP_PAUSE_REFUSAL,
+            }
+        }
         Err(_) => {
             tracing::warn!(reason = "ctl_request_refused", "ctl request refused");
             CtlResponse::Ok { ok: false }

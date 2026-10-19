@@ -724,8 +724,9 @@ impl ServeConfig {
 
     /// Maps posture and custody without repairing invalid direct caller input.
     ///
-    /// The resolver clears only lower-precedence references when self-host/local
-    /// wins. A reference still present here must survive conversion so
+    /// The resolver clears only lower-precedence references when a relay
+    /// wins; a self-hosted vault keeps one as its own KMS key's custody. A
+    /// reference still present here must survive conversion so
     /// `VaultPrivacyConfig::validate` refuses contradictory custody before any
     /// store opens. No reference is an owner-held key on any posture.
     fn vault_privacy_config(&self) -> VaultPrivacyConfig {
