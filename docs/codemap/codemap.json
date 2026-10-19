@@ -36503,6 +36503,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/actor_erase.rs",
+     "purpose": "An erased actor out of origin's claim bodies (FIX 3877)",
+     "surface": {
+      "crate-vis": 27
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -36512,7 +36522,7 @@
      "purpose": "Commit-hash keyed LEDGER change identities",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -36748,6 +36758,7 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
+      "crate-vis": 1,
       "mod": 11,
       "re-export": 1
      }
@@ -36877,7 +36888,7 @@
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -37008,7 +37019,7 @@
      "path": "src/origin/smart_http/evidence.rs",
      "purpose": "Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "fn": 1,
       "struct": 4
      }
@@ -37081,10 +37092,20 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/intent_erase.rs",
+     "purpose": "An erased actor out of the receive-pack intent journal (FIX 3877)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -37158,7 +37179,7 @@
      "path": "src/origin/smart_http/mod.rs",
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "re-export": 12
      }
     },
@@ -50696,7 +50717,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 24,
       "re-export": 16
      }
@@ -50749,6 +50770,16 @@
      "purpose": "Remove active NOTE carriers in the same window commit as a tombstone",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/origin_claims.rs",
+     "purpose": "Origin claim carriers under an erase (FIX 3877)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -60851,7 +60882,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 63,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61292,7 +61323,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 192,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61490,7 +61521,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3746,
+   "source_files": 3749,
    "test_files": 902
   },
   "oneiron-android": {
