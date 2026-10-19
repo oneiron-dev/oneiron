@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-napi](codemap/oneiron-napi.md) | — | 22 | 1 | 2 |
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 27 | 4 | 1 |
 | [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 7 | 2 | 0 |
-| [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 4 | 0 | 1 |
+| [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 1 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 18 | 8 | 1 |
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
@@ -609,6 +609,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `embedded_engine` | file | 1 | s | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
+| `host_root` | file | 1 | s | `NativeClient.open_with_host_root` (FIX 5342, the Python half of FIX 4730): `open`, then this install's own… |
 | `pairing` | file | 1 | s | What the native `pair` hands the Python wrapper (OF-469, FIX 3376): the origin, the credential, the… |
 
 ## oneiron-remote
