@@ -598,7 +598,21 @@ fn map_delta_export_err(e: oneiron::Error) -> ProtocolError {
 
 /// Maps a peer window update's admission error: an update that does not
 /// import stays the peer's refused frame (`LoroImport`), as before FIX 5570.
+/// A fault reading the vault's own admission state is the server's
+/// (`AdmissionReadFailed`, FIX 5850), told only by the engine's typed
+/// context, never by its text.
 fn map_update_admission_err(e: oneiron::Error) -> ProtocolError {
+    if protocol::ADMISSION_READ_FAULTS_ARE_INTERNAL
+        && matches!(
+            e,
+            oneiron::Error::Sync(oneiron::error::SyncError::SyncEngineError {
+                context: oneiron::SyncEngineContext::WindowAdmissionRead,
+                ..
+            })
+        )
+    {
+        return ProtocolError::AdmissionReadFailed(e.to_string());
+    }
     map_sync_err(e, ProtocolError::LoroImport)
 }
 

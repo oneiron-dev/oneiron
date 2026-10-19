@@ -300,6 +300,19 @@ pub(crate) fn encode_root_update(update_bytes: &[u8]) -> Vec<u8> {
 
 // ─── Protocol Error ───────────────────────────────────────────────────────────
 
+/// FIX 5849: the root lane's own export faults (the snapshot a new socket is
+/// sent, the delta a root version vector asks for) close
+/// `close_codes::INTERNAL_ERROR` as [`ProtocolError::ExportFailed`], with no
+/// receipt. False keeps the snapshot fault's bare return and the delta
+/// fault's unanswered request on a socket left open.
+pub(crate) const ROOT_EXPORT_FAULT_CLOSES: bool = true;
+
+/// FIX 5850: a store fault reading the state a peer window update's
+/// admission judges it by closes as the server's own
+/// ([`ProtocolError::AdmissionReadFailed`]). False keeps it the peer's
+/// refused frame: `close_codes::DECODE_ERROR` and its decode receipt.
+pub(crate) const ADMISSION_READ_FAULTS_ARE_INTERNAL: bool = true;
+
 /// Protocol-level errors specific to Oneiron's custom sync protocol.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ProtocolError {
@@ -321,6 +334,12 @@ pub(crate) enum ProtocolError {
     /// `close_codes::INTERNAL_ERROR` and no refused-call receipt (FIX 5570).
     #[error("server export error: {0}")]
     ExportFailed(String),
+    /// The server could not read its own vault state to admit a peer's
+    /// window update (FIX 5850): a store fault, never the peer's update.
+    /// Closed with `close_codes::INTERNAL_ERROR` and no refused-frame
+    /// receipt, as [`Self::ExportFailed`] is.
+    #[error("server admission read error: {0}")]
+    AdmissionReadFailed(String),
     /// Inbound version-vector bytes failed Loro binary decoding.
     /// Fail-closed: the connection is dropped, NEVER answered with a
     /// full export as if the VV were empty (ONE-1127).
@@ -355,6 +374,7 @@ impl ProtocolError {
             Self::FrameTooLarge { .. } => "frame_too_large",
             Self::LoroImport(_) => "loro_import_failed",
             Self::ExportFailed(_) => "server_export_failed",
+            Self::AdmissionReadFailed(_) => "admission_read_failed",
             Self::VvDecode(_) => "version_vector_decode_failed",
             Self::Persistence(_) => "sync_persistence_failed",
             Self::ReplacementUnsupported => "replacement_unsupported",
@@ -391,9 +411,13 @@ pub(crate) mod close_codes {
     /// deadline (rule 5); nothing was applied, and it may be sent again.
     pub(crate) const TRY_AGAIN_LATER: u16 = 1013;
     /// RFC 6455 "Internal Error": the server met a fault of its own while
-    /// serving a frame (an export it could not make, FIX 5570). No peer
-    /// refusal, so no refused-call receipt.
+    /// serving a frame (an export it could not make, FIX 5570 and 5849; an
+    /// admission state it could not read, FIX 5850). No peer refusal, so no
+    /// refused-call receipt.
     pub(crate) const INTERNAL_ERROR: u16 = 1011;
     /// The reason an [`INTERNAL_ERROR`] close for an export fault states.
     pub(crate) const EXPORT_FAULT_REASON: &str = "server could not export this state";
+    /// The reason an [`INTERNAL_ERROR`] close for an admission read fault
+    /// states (FIX 5850).
+    pub(crate) const ADMISSION_FAULT_REASON: &str = "server could not read admission state";
 }

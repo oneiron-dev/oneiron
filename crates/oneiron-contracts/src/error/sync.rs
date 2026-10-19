@@ -264,6 +264,9 @@ pub enum SyncEngineContext {
     DreamerProgressTransport,
     FederationReplayStartup,
     CustodyResealAfterMachineAdmission,
+    /// A window update's admission could not read this vault's own state
+    /// (FIX 5850): the server's store fault, never the peer's update.
+    WindowAdmissionRead,
 }
 
 #[cfg(feature = "sync")]
@@ -285,6 +288,7 @@ impl SyncEngineContext {
             Self::CustodyResealAfterMachineAdmission => {
                 "custody re-seal after a committed machine admission; the admission stands"
             }
+            Self::WindowAdmissionRead => "window admission read",
         }
     }
 }

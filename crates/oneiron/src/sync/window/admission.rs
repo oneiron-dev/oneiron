@@ -7,7 +7,7 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 
 use crate::EntityId;
 use crate::batch::EntityMetadataHeader;
-use crate::error::SyncError;
+use crate::error::{SyncEngineContext, SyncError};
 use crate::registry::{
     ENTITY_TYPE_DIAGNOSTIC, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
 };
@@ -157,16 +157,13 @@ fn validate_window_update(
                     ));
                 };
                 let id = EntityId::from_hex(&raw).map_err(|_| Error::InvalidKey)?;
-                let txn = vault.store.env.read_txn()?;
-                if !crate::sync::types::retained_world_shell_belongs_to_window(
+                if !retained_shell_in_window(
                     vault,
-                    &txn,
                     &candidate,
                     &candidate_tombstones,
                     &id,
                     &blob,
                     key,
-                    false,
                 )? {
                     return Err(Error::InvalidConfig("unproven world shell".into()));
                 }
@@ -426,30 +423,24 @@ fn validate_window_update(
                     if let Some(error) = carrier_refusal(&blob) {
                         return Err(error);
                     }
-                    if key.is_some_and(|key| {
-                        !(crate::sync::types::entity_belongs_to_window(&blob, key)
-                            || (blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
-                                && key.world().is_some()
-                                && vault.is_some_and(|vault| {
-                                    let Ok(id) = EntityId::from_hex(&map_key) else {
-                                        return false;
-                                    };
-                                    let Ok(txn) = vault.store.env.read_txn() else {
-                                        return false;
-                                    };
-                                    crate::sync::types::retained_world_shell_belongs_to_window(
-                                        vault,
-                                        &txn,
-                                        &candidate,
-                                        &candidate_tombstones,
-                                        &id,
-                                        &blob,
-                                        key,
-                                        false,
-                                    )
-                                    .unwrap_or(false)
-                                })))
-                    }) {
+                    // FIX 5850: a fault reading the shell's history is the
+                    // server's, returned as one, never read as "outside".
+                    if let Some(key) = key
+                        && !crate::sync::types::entity_belongs_to_window(&blob, key)
+                        && !(blob.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
+                            && key.world().is_some()
+                            && match (vault, EntityId::from_hex(&map_key)) {
+                                (Some(vault), Ok(id)) => retained_shell_in_window(
+                                    vault,
+                                    &candidate,
+                                    &candidate_tombstones,
+                                    &id,
+                                    &blob,
+                                    key,
+                                )?,
+                                _ => false,
+                            })
+                    {
                         return Err(Error::InvalidConfig(
                             "entity outside window residence".into(),
                         ));
@@ -502,8 +493,9 @@ fn check_edge_residence(
             Err(Error::InvalidKey)
         };
     };
-    let txn = vault.store.env.read_txn()?;
-    if crate::sync::types::edge_belongs_to_window_in(vault, &txn, doc, tombstones, &src, &tgt, key)?
+    let txn = vault.store.env.read_txn().map_err(read_fault)?;
+    if crate::sync::types::edge_belongs_to_window_in(vault, &txn, doc, tombstones, &src, &tgt, key)
+        .map_err(read_fault)?
     {
         return Ok(());
     }
@@ -514,12 +506,13 @@ fn check_edge_residence(
     let mut worlds = [None, None];
     let mut learned = [None, None];
     for (index, id) in [src, tgt].iter().enumerate() {
-        let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &txn, id)?;
+        let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(&vault.store, &txn, id)
+            .map_err(read_fault)?;
         let live = map_get_bytes(&entities, &id.to_hex());
         let old = historical.get(id);
         let raw = if let Some(stored) = stored.as_deref().map(Vec::as_slice) {
             let header = EntityMetadataHeader::parse(stored)
-                .ok_or(Error::CorruptedIndex("entity metadata"))?;
+                .ok_or_else(|| read_fault(Error::CorruptedIndex("entity metadata")))?;
             if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && stored.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
             {
@@ -582,8 +575,8 @@ fn check_tombstone_residence(
             Err(Error::InvalidKey)
         };
     };
-    let txn = vault.store.env.read_txn()?;
-    if crate::sync::types::tombstone_residence_in(vault, &txn, &id, key)?
+    let txn = vault.store.env.read_txn().map_err(read_fault)?;
+    if crate::sync::types::tombstone_residence_in(vault, &txn, &id, key).map_err(read_fault)?
         == crate::sync::types::TombstoneResidence::Wrong
     {
         return Err(Error::InvalidConfig(
@@ -661,6 +654,32 @@ fn late_pad(vault: &crate::Vault, blob: &[u8]) -> Option<Error> {
         Ok(true) => Some(Error::InvalidConfig(
             "a destroyed world's key pad cannot rejoin a window".into(),
         )),
-        Err(error) => Some(error),
+        Err(error) => Some(read_fault(error)),
     }
+}
+
+/// Whether the retained world shell `id` (`blob`) belongs to `key`'s window
+/// by this vault's own deletion record. A fault reading that record is the
+/// server's ([`read_fault`]), never a refusal of the peer's update.
+fn retained_shell_in_window(
+    vault: &crate::Vault,
+    candidate: &LoroDoc,
+    tombstones: &TombstoneIndex,
+    id: &EntityId,
+    blob: &[u8],
+    key: &crate::sync::WindowKey,
+) -> Result<bool> {
+    let txn = vault.store.env.read_txn().map_err(read_fault)?;
+    crate::sync::types::retained_world_shell_belongs_to_window(
+        vault, &txn, candidate, tombstones, id, blob, key, false,
+    )
+    .map_err(read_fault)
+}
+
+/// A failure reading this vault's own state for an admission (FIX 5850):
+/// the server's store fault, typed with its engine context so the server
+/// closes it as its own, never as the peer's refused update. Only reads of
+/// this vault are wrapped; a judgment of the peer's bytes never is.
+fn read_fault(error: impl Into<Error>) -> Error {
+    Error::sync_engine(SyncEngineContext::WindowAdmissionRead, error.into())
 }

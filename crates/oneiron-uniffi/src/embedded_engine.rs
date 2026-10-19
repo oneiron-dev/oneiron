@@ -139,26 +139,35 @@ impl EmbeddedEngine {
     /// Opens the vault at `path` and serves it in this process.
     ///
     /// The config is the one `oneiron serve --config <config_file>` would
-    /// resolve, for this path, with `options.dimensions` when given. A relay
-    /// host's config is refused before anything opens. `limits` absent, or
-    /// either field absent, is unbounded. Returns once `host.ready` has run.
+    /// resolve, for this path, with `options.dimensions` when given. A
+    /// `device_class` given (`Oneiron.open`'s, FIX 5577) stands in for the
+    /// config's before the vault opens, and every `local_client` handle
+    /// names it; omitted, the config's own class stands. A relay host's
+    /// config is refused before anything opens. `limits` absent, or either
+    /// field absent, is unbounded. Returns once `host.ready` has run.
     /// Installs the engine panic hook first.
-    #[uniffi::constructor]
+    #[uniffi::constructor(default(device_class = None))]
     pub fn start(
         path: String,
         options: Option<OpenOptions>,
         config_file: Option<String>,
         host: Arc<dyn AppHostCallbacks>,
         limits: Option<EngineLimits>,
+        device_class: Option<String>,
     ) -> Result<Arc<Self>, OneironError> {
         // Crash output never carries world text: the engine's hook goes in
         // before any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
         let dimensions: Option<usize> = options.and_then(|options| options.dimensions).lower()?;
+        let device_class = crate::host_device_class(device_class.as_deref())?;
         let path = PathBuf::from(path);
-        let config =
+        let mut config =
             embedded_serve_config(&path, dimensions, config_file.as_deref().map(Path::new))
                 .map_err(engine_failure)?;
+        // An absent class never overwrites the one the config declares.
+        if let Some(device_class) = device_class {
+            config.device_class = device_class;
+        }
         let limits = limits.unwrap_or_default();
         let limits = host_limits(limits.memory_bytes, limits.cpu_millis_per_second);
         let engine =
@@ -167,7 +176,7 @@ impl EmbeddedEngine {
             engine,
             options: oneiron_remote::OpenOptions {
                 dimensions,
-                device_class: None,
+                device_class,
             },
         }))
     }
