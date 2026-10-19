@@ -516,6 +516,9 @@ class Oneiron:
         def shared(self) -> "Oneiron._VaultSharedVerbs":
             return Oneiron._VaultSharedVerbs(self._client)
         @property
+        def org_admin(self) -> "Oneiron._VaultOrgAdminVerbs":
+            return Oneiron._VaultOrgAdminVerbs(self._client)
+        @property
         def members(self) -> "Oneiron._VaultMembersVerbs":
             return Oneiron._VaultMembersVerbs(self._client)
         @property
@@ -1955,9 +1958,27 @@ class Oneiron:
         def change(self, spec):
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
             return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
+    class _VaultOrgAdminVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."""
+            return json.loads(_translate(lambda: self._client.vault_org_admin_configure(json.dumps(spec))))
+        def powers(self, spec):
+            """The caller reads only the organization's fixed named Admin powers that their own credential carries."""
+            return json.loads(_translate(lambda: self._client.vault_org_admin_powers(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def reset_project_access(self, spec):
+            """An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."""
+            return json.loads(_translate(lambda: self._client.vault_members_reset_project_access(json.dumps(spec))))
+        def delegate(self, spec):
+            """A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."""
+            return json.loads(_translate(lambda: self._client.vault_members_delegate(json.dumps(spec))))
+        def projection(self, spec):
+            """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
+            return json.loads(_translate(lambda: self._client.vault_members_projection(json.dumps(spec))))
         def add(self, spec):
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
@@ -2176,6 +2197,9 @@ class Oneiron:
         @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs":
             return Oneiron._VaultOffRecordClaimsVerbs(self._client)
+        @property
+        def rooms(self) -> "Oneiron._VaultOffRecordRoomsVerbs":
+            return Oneiron._VaultOffRecordRoomsVerbs(self._client)
     class _VaultOffRecordNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2188,6 +2212,36 @@ class Oneiron:
         def upsert(self, spec):
             """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_claims_upsert(json.dumps(spec))))
+    class _VaultOffRecordRoomsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_status(json.dumps(spec))))
+        def start(self, spec):
+            """A person starts an off-record stretch in a room they belong to, on their own credential."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_start(json.dumps(spec))))
+        def witness(self, spec):
+            """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_witness(json.dumps(spec))))
+        def save(self, spec):
+            """A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save(json.dumps(spec))))
+        def save_from_here(self, spec):
+            """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save_from_here(json.dumps(spec))))
+        def export(self, spec):
+            """A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_export(json.dumps(spec))))
+        def suggest_save(self, spec):
+            """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_suggest_save(json.dumps(spec))))
+        def confirm_save(self, spec):
+            """A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_confirm_save(json.dumps(spec))))
+        def decline_save(self, spec):
+            """A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits."""
+            return json.loads(_translate(lambda: self._client.vault_off_record_rooms_decline_save(json.dumps(spec))))
     class _VaultRecordsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

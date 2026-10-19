@@ -281,6 +281,11 @@ vaultSharedExecute(input: unknown): unknown
 vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
+vaultOrgAdminConfigure(input: unknown): unknown
+vaultOrgAdminPowers(input: unknown): unknown
+vaultMembersResetProjectAccess(input: unknown): unknown
+vaultMembersDelegate(input: unknown): unknown
+vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
@@ -346,6 +351,15 @@ vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
+vaultOffRecordRoomsStatus(input: unknown): unknown
+vaultOffRecordRoomsStart(input: unknown): unknown
+vaultOffRecordRoomsWitness(input: unknown): unknown
+vaultOffRecordRoomsSave(input: unknown): unknown
+vaultOffRecordRoomsSaveFromHere(input: unknown): unknown
+vaultOffRecordRoomsExport(input: unknown): unknown
+vaultOffRecordRoomsSuggestSave(input: unknown): unknown
+vaultOffRecordRoomsConfirmSave(input: unknown): unknown
+vaultOffRecordRoomsDeclineSave(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultRecordsEraseSweep(input: unknown): unknown

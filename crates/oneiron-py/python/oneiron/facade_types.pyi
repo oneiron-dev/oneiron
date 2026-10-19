@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 942 facade rows, 3212 declarations.
-Inputs: 886 of 942 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 844 of 942 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 956 facade rows, 3239 declarations.
+Inputs: 899 of 956 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 858 of 956 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -5208,6 +5208,147 @@ class SharedVaultDeletion(TypedDict):
     receipt_id: str
     deleted_at: int
     backup_retain_until: int
+OrgAdminPower = Literal["add_member", "remove_member", "assign_role", "reset_shared_project_access"]
+class OrgAdminPolicy(TypedDict):
+    org_ref: ScopeId
+    admin_refs: list[ScopeId]
+    powers: list[OrgAdminPower]
+class OrgAdminConfigureRequest(TypedDict):
+    policy: OrgAdminPolicy
+class OrgAdminConfigured(TypedDict):
+    org_ref: EntityId
+    configured: bool
+class OrgAdminPowersRequest(TypedDict):
+    org_ref: EntityId
+class OrgAdminPowers(TypedDict):
+    powers: list[OrgAdminPower]
+ProjectRole = Literal["project", "corpus"]
+ProjectRevisionHash = list[int]
+class ProjectParentWitness(TypedDict):
+    project: EntityId
+    head: ProjectRevisionHash
+    leader: EntityId
+class ScopeResourceBucket(TypedDict):
+    kind: Literal["bucket"]
+    key: str
+class ScopeResourceDocumentVersion(TypedDict):
+    kind: Literal["document_version"]
+    document: str
+    version: str
+class ScopeResourceProjection(TypedDict):
+    kind: Literal["projection"]
+    key: str
+ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResourceProjection
+class ScopeScope(TypedDict):
+    world: str | None
+    facet: str | None
+    relationship: str | None
+    project: str | None
+    readable: list[ScopeResource]
+    writable: list[ScopeResource]
+class ProjectAuthority(TypedDict):
+    parents: list[str]
+    parent_heads: NotRequired[list[ProjectParentWitness]]
+    claims_scope_ref: str
+    slice: ScopeScope
+    depth_limit: int
+    depth_remaining: int
+    leader: str
+    board: list[str]
+    roster: NotRequired[list[str] | None]
+class ProjectAnchor(TypedDict):
+    authority: ProjectAuthority
+    proof: NotRequired[ProjectWriteProof | None]
+ProjectProofVersion = Literal["v2", "v3"]
+class ProjectWriteProof(TypedDict):
+    slip_wire: str
+    holder_signature: list[int]
+    signed_at: int
+    anchor: NotRequired[ProjectAnchor | None]
+    version: NotRequired[ProjectProofVersion]
+class ProjectGoalRecord(TypedDict):
+    project_id: str
+    goal: str
+    why: str
+    axes: list[str]
+class ProjectBudgetShare(TypedDict):
+    project_id: str
+    parent_id: str
+    share_bps: int
+class ProjectRecord(TypedDict):
+    role: ProjectRole
+    schema_version: int
+    depth: NotRequired[int]
+    parents: list[str]
+    parent_heads: NotRequired[list[ProjectParentWitness]]
+    claims_scope_ref: str
+    slice: NotRequired[ScopeScope]
+    depth_limit: NotRequired[int]
+    depth_remaining: NotRequired[int]
+    write_proof: NotRequired[ProjectWriteProof | None]
+    leader: str
+    board: list[str]
+    roster: list[str]
+    sessions: list[str]
+    tasks: list[str]
+    branches: list[str]
+    skill_forks: list[str]
+    goal: NotRequired[str | None]
+    goal_record: NotRequired[ProjectGoalRecord | None]
+    why: NotRequired[str | None]
+    born_from: NotRequired[str | None]
+    budget: NotRequired[str | None]
+    budget_share: NotRequired[ProjectBudgetShare | None]
+    asks: list[str]
+    home_room: str
+    origin_room: NotRequired[str | None]
+    origin_thread: NotRequired[str | None]
+    origin_at: NotRequired[int | None]
+    wrapper_task: NotRequired[str | None]
+class ProjectRosterWriteRequest(TypedDict):
+    project: EntityId
+    record: ProjectRecord
+class SharedProjectAccessResetRequest(TypedDict):
+    vault_id: str
+    roster: ProjectRosterWriteRequest
+class SharedProjectAccessReset(TypedDict):
+    project: EntityId
+    installed: bool
+    invitations: list[str]
+class FederationDelegateRequest(TypedDict):
+    parent_grant: EntityId
+    member_ref: EntityId
+    authority_scope: Scope
+    expires_at: int
+class FederationMemberGrant(TypedDict):
+    grant_ref: EntityId
+    vault_id: str
+    member_ref: EntityId
+    role: FederationGrantRole
+    authority_scope: Scope
+    delegated_by: NotRequired[EntityId | None]
+    expires_at: NotRequired[int | None]
+    active: bool
+class SharedMemberRequest(TypedDict):
+    vault_id: str
+    member: str
+RelationshipTrustClass = Literal["Intimate", "Family", "Friend", "Professional", "Client", "Unlabeled"]
+class MemberRelationshipContext(TypedDict):
+    person: EntityId
+    label: str
+    label_claim: EntityId
+    trust_class: RelationshipTrustClass
+class MemberRelationshipLabeled(TypedDict):
+    Labeled: MemberRelationshipContext
+class MemberRelationshipUnlabeledBody(TypedDict):
+    person: EntityId
+class MemberRelationshipUnlabeled(TypedDict):
+    Unlabeled: MemberRelationshipUnlabeledBody
+MemberRelationship = Literal["Unbound"] | MemberRelationshipLabeled | MemberRelationshipUnlabeled
+class MemberProjection(TypedDict):
+    member_ref: EntityId
+    grants: list[FederationMemberGrant]
+    relationship: MemberRelationship
 class SharedMemberAddRequest(TypedDict):
     vault_id: str
     member: str
@@ -5229,9 +5370,6 @@ class SharedMemberRoleRequest(TypedDict):
     vault_id: str
     member: str
     role: FederationGrantRole
-class SharedMemberRequest(TypedDict):
-    vault_id: str
-    member: str
 class SharedInvitationStateAcceptedBody(TypedDict):
     at: int
 class SharedInvitationStateAccepted(TypedDict):
@@ -5864,6 +6002,77 @@ class OffRecordExecuted(TypedDict):
     next_step_seq: NotRequired[int | None]
     steps_run: int
     bridge_calls: int
+class OffRecordRoomRequest(TypedDict):
+    room: str
+    session_ref: str
+OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
+class OffRecordRoomNotice(TypedDict):
+    act: OffRecordNoticeAct
+    by: str
+    at: str
+class OffRecordRoomSuggestion(TypedDict):
+    by: str
+    at: str
+class OffRecordRoomView(TypedDict):
+    session_ref: str
+    room: NotRequired[str | None]
+    started_by: NotRequired[str | None]
+    mode: OffRecordMode
+    backend: OffRecordBackendClass
+    entered_at: str
+    closing: bool
+    notices: list[OffRecordRoomNotice]
+    waiting_suggestions: list[OffRecordRoomSuggestion]
+class OffRecordRoomStartRequest(TypedDict):
+    room: str
+    session_ref: str
+    backend: OffRecordBackendClass
+class OffRecordRoomWitnessRequest(TypedDict):
+    room: str
+    session_ref: str
+    turn: WitnessTurn
+    summary: NotRequired[str | None]
+class OffRecordRoomShortIdPair(TypedDict):
+    room: str
+    vault: str
+class OffRecordRoomSavedTurn(TypedDict):
+    turn: str
+    replayed: list[str]
+    short_ids: list[OffRecordRoomShortIdPair]
+class OffRecordRoomSaved(TypedDict):
+    saved: list[OffRecordRoomSavedTurn]
+class MessageResultSource(TypedDict):
+    run_id: EntityId
+    occurrence: EntityId
+    path: str
+ResultFacet = Literal["slice", "search", "query", "chunks"]
+class MessageResultAttachment(TypedDict):
+    source: MessageResultSource
+    handle: str
+    bytes: int
+    kind: str
+    lines: int
+    complete: bool
+    preview: str
+    preview_truncated: bool
+    more: list[ResultFacet]
+class OffRecordTalkMessage(TypedDict):
+    author: str
+    message_type: str
+    content: str
+    order: int
+    result: NotRequired[MessageResultAttachment | None]
+class OffRecordRoomExportTurn(TypedDict):
+    turn: str
+    speaker: NotRequired[str | None]
+    occurred_at: str
+    saved: bool
+    messages: list[OffRecordTalkMessage]
+class OffRecordRoomExport(TypedDict):
+    session_ref: str
+    room: NotRequired[str | None]
+    exported_at: str
+    turns: list[OffRecordRoomExportTurn]
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -9209,7 +9418,6 @@ class ResultRunStatus(TypedDict):
 class ResultOccurrenceRequest(TypedDict):
     run_id: EntityId
     occurrence: EntityId
-ResultFacet = Literal["slice", "search", "query", "chunks"]
 class ResultCard(TypedDict):
     handle: str
     bytes: int
@@ -11037,92 +11245,6 @@ class ProjectMintReceipt(TypedDict):
     card_id: str
     grant_decision_id: GateDecisionId
     grant_ref: str
-ProjectRole = Literal["project", "corpus"]
-ProjectRevisionHash = list[int]
-class ProjectParentWitness(TypedDict):
-    project: EntityId
-    head: ProjectRevisionHash
-    leader: EntityId
-class ScopeResourceBucket(TypedDict):
-    kind: Literal["bucket"]
-    key: str
-class ScopeResourceDocumentVersion(TypedDict):
-    kind: Literal["document_version"]
-    document: str
-    version: str
-class ScopeResourceProjection(TypedDict):
-    kind: Literal["projection"]
-    key: str
-ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResourceProjection
-class ScopeScope(TypedDict):
-    world: str | None
-    facet: str | None
-    relationship: str | None
-    project: str | None
-    readable: list[ScopeResource]
-    writable: list[ScopeResource]
-class ProjectAuthority(TypedDict):
-    parents: list[str]
-    parent_heads: NotRequired[list[ProjectParentWitness]]
-    claims_scope_ref: str
-    slice: ScopeScope
-    depth_limit: int
-    depth_remaining: int
-    leader: str
-    board: list[str]
-    roster: NotRequired[list[str] | None]
-class ProjectAnchor(TypedDict):
-    authority: ProjectAuthority
-    proof: NotRequired[ProjectWriteProof | None]
-ProjectProofVersion = Literal["v2", "v3"]
-class ProjectWriteProof(TypedDict):
-    slip_wire: str
-    holder_signature: list[int]
-    signed_at: int
-    anchor: NotRequired[ProjectAnchor | None]
-    version: NotRequired[ProjectProofVersion]
-class ProjectGoalRecord(TypedDict):
-    project_id: str
-    goal: str
-    why: str
-    axes: list[str]
-class ProjectBudgetShare(TypedDict):
-    project_id: str
-    parent_id: str
-    share_bps: int
-class ProjectRecord(TypedDict):
-    role: ProjectRole
-    schema_version: int
-    depth: NotRequired[int]
-    parents: list[str]
-    parent_heads: NotRequired[list[ProjectParentWitness]]
-    claims_scope_ref: str
-    slice: NotRequired[ScopeScope]
-    depth_limit: NotRequired[int]
-    depth_remaining: NotRequired[int]
-    write_proof: NotRequired[ProjectWriteProof | None]
-    leader: str
-    board: list[str]
-    roster: list[str]
-    sessions: list[str]
-    tasks: list[str]
-    branches: list[str]
-    skill_forks: list[str]
-    goal: NotRequired[str | None]
-    goal_record: NotRequired[ProjectGoalRecord | None]
-    why: NotRequired[str | None]
-    born_from: NotRequired[str | None]
-    budget: NotRequired[str | None]
-    budget_share: NotRequired[ProjectBudgetShare | None]
-    asks: list[str]
-    home_room: str
-    origin_room: NotRequired[str | None]
-    origin_thread: NotRequired[str | None]
-    origin_at: NotRequired[int | None]
-    wrapper_task: NotRequired[str | None]
-class ProjectRosterWriteRequest(TypedDict):
-    project: EntityId
-    record: ProjectRecord
 ConsentPart = Literal["subject", "spend", "membership", "admission"]
 class RequiredPartySubject(TypedDict):
     subject: JoinSubject
@@ -16241,20 +16363,6 @@ class LensFrameEventReplyCallback(TypedDict):
 LensFrameEventReply = LensFrameEventReplyLocal | LensFrameEventReplyTool | LensFrameEventReplyCallback
 class CloseLensFrameReply(TypedDict):
     closed: bool
-class MessageResultSource(TypedDict):
-    run_id: EntityId
-    occurrence: EntityId
-    path: str
-class MessageResultAttachment(TypedDict):
-    source: MessageResultSource
-    handle: str
-    bytes: int
-    kind: str
-    lines: int
-    complete: bool
-    preview: str
-    preview_truncated: bool
-    more: list[ResultFacet]
 class TranscriptMessage(TypedDict):
     id: str
     short_id: NotRequired[str | None]

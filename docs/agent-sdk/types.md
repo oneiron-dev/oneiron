@@ -936,6 +936,8 @@ class Oneiron:
         @property
         def shared(self) -> "Oneiron._VaultSharedVerbs": ...
         @property
+        def org_admin(self) -> "Oneiron._VaultOrgAdminVerbs": ...
+        @property
         def members(self) -> "Oneiron._VaultMembersVerbs": ...
         @property
         def federation(self) -> "Oneiron._VaultFederationVerbs": ...
@@ -1795,7 +1797,18 @@ class Oneiron:
             """A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."""
         def change(self, spec: Facade.SharedActPolicyChangeRequest) -> Facade.SharedActPolicyChange:
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
+    class _VaultOrgAdminVerbs:
+        def configure(self, spec: Facade.OrgAdminConfigureRequest) -> Facade.OrgAdminConfigured:
+            """The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."""
+        def powers(self, spec: Facade.OrgAdminPowersRequest) -> Facade.OrgAdminPowers:
+            """The caller reads only the organization's fixed named Admin powers that their own credential carries."""
     class _VaultMembersVerbs:
+        def reset_project_access(self, spec: Facade.SharedProjectAccessResetRequest) -> Facade.SharedProjectAccessReset:
+            """An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."""
+        def delegate(self, spec: Facade.FederationDelegateRequest) -> Facade.FederationMemberGrant:
+            """A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."""
+        def projection(self, spec: Facade.SharedMemberRequest) -> Facade.MemberProjection:
+            """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
         def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
@@ -1928,12 +1941,33 @@ class Oneiron:
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs": ...
         @property
         def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs": ...
+        @property
+        def rooms(self) -> "Oneiron._VaultOffRecordRoomsVerbs": ...
     class _VaultOffRecordNotesVerbs:
         def create(self, spec: Facade.OffRecordNoteRequest) -> Facade.EntityRefReceipt:
             """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
     class _VaultOffRecordClaimsVerbs:
         def upsert(self, spec: Facade.OffRecordClaimRequest) -> Facade.CommitReceipt:
             """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
+    class _VaultOffRecordRoomsVerbs:
+        def status(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."""
+        def start(self, spec: Facade.OffRecordRoomStartRequest) -> Facade.OffRecordRoomView:
+            """A person starts an off-record stretch in a room they belong to, on their own credential."""
+        def witness(self, spec: Facade.OffRecordRoomWitnessRequest) -> Facade.WitnessReceipt:
+            """Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."""
+        def save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
+            """A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."""
+        def save_from_here(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
+        def export(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomExport:
+            """A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."""
+        def suggest_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
+        def confirm_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
+            """A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits."""
+        def decline_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
+            """A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits."""
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
