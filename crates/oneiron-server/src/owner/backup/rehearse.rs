@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use oneiron::recovery::checkpoint::{CheckpointKey, SideRestoreSource};
 use serde::Serialize;
 
-use super::super::stamp::{file_stamp, now_unix_ms};
+use super::super::stamp::now_unix_ms;
 use super::{RestoreTarget, kind_counts, restore_target_seal, write_budget};
 use crate::machine::DiskFloor;
 
@@ -116,11 +116,7 @@ pub(super) fn rehearse_in_with(
 ) -> anyhow::Result<Rehearsal> {
     let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
-        None => temp.join(format!(
-            "oneiron-rehearse-{}-{}",
-            file_stamp(now_unix_ms()),
-            oneiron::EntityId::now().to_hex()
-        )),
+        None => temp.join(super::scratch::generated_name()),
     };
     // Checked before the scratch directory is made in it.
     #[cfg(unix)]
@@ -129,7 +125,12 @@ pub(super) fn rehearse_in_with(
             .parent()
             .unwrap_or(Path::new("/")),
     )?;
-    let scratch = Owned::create(scratch)?;
+    let mut scratch = Owned::create(scratch)?;
+    // A copy deleted afterwards is marked so, and a start after a stop
+    // midway sweeps it; a kept one never is (FIX 5677).
+    if keep_at.is_none() {
+        scratch.mark_disposable();
+    }
     let outcome = rehearse_into(backup, config, &scratch.vault(), source, key, floors);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
@@ -202,6 +203,10 @@ pub(super) struct Owned {
     /// through it, so a directory moved in under its name is never removed.
     #[cfg(unix)]
     held: std::fs::File,
+    /// Its disposable mark, locked until it is removed (`scratch`); `None`
+    /// for a kept copy and a restore's staging.
+    #[cfg(unix)]
+    mark: Option<std::fs::File>,
 }
 
 impl Owned {
@@ -246,7 +251,27 @@ impl Owned {
             dir,
             #[cfg(unix)]
             held,
+            #[cfg(unix)]
+            mark: None,
         })
+    }
+
+    /// Marks the directory disposable, holding the mark's lock until it is
+    /// removed, so a start after this process stops sweeps it (`scratch`,
+    /// FIX 5677). A mark that cannot be made is logged and the rehearsal goes
+    /// on unmarked: a stop midway then leaves it, as before.
+    pub(super) fn mark_disposable(&mut self) {
+        #[cfg(unix)]
+        match super::scratch::mark(&self.held) {
+            Ok(mark) => self.mark = Some(mark),
+            Err(error) => tracing::warn!(
+                dir = %self.dir.display(),
+                %error,
+                "rehearsal scratch not marked disposable; a stop midway leaves it"
+            ),
+        }
+        #[cfg(not(unix))]
+        let _ = self;
     }
 
     pub(super) fn vault(&self) -> PathBuf {
@@ -254,10 +279,13 @@ impl Owned {
     }
 
     /// Removes the directory with everything in it, only while its name still
-    /// holds it; otherwise both are left where they are.
+    /// holds it; otherwise both are left where they are. Its mark's lock is
+    /// given back after.
     pub(super) fn remove(self) {
         #[cfg(unix)]
         let _ = oneiron::store::remove_held_directory(&self.dir, &self.held);
+        #[cfg(unix)]
+        drop(self.mark);
         #[cfg(not(unix))]
         let _ = std::fs::remove_dir_all(&self.dir);
     }

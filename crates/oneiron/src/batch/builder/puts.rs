@@ -151,6 +151,30 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// FIX 5489: [`Self::put_replicated`] of ASSET `id` whose body is the
+    /// body file `file` names, published before this batch, as
+    /// [`Self::put_asset_file`] puts a local one: the row keeps `manifest`,
+    /// and the put binds the file to the row in its transaction. The import
+    /// tier and its federation check are the replicated door's own.
+    #[cfg(feature = "sync")]
+    pub(crate) fn put_replicated_asset_file(
+        mut self,
+        id: &EntityId,
+        occurred: TimeRange,
+        learned_at: u64,
+        manifest: &[u8],
+        file: crate::store::AssetBodyFacts,
+    ) -> Self {
+        self.asset_files.insert(*id, file);
+        self.put_replicated(
+            id,
+            crate::registry::ENTITY_TYPE_ASSET,
+            occurred,
+            learned_at,
+            manifest,
+        )
+    }
+
     /// The ONE-1686 witness MESSAGE put: the only door that stages an
     /// `ENTITY_TYPE_MESSAGE` row.
     ///
