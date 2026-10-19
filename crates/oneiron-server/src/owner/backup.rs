@@ -33,6 +33,9 @@ use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
 use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
+use crate::machine::DiskFloor;
+
+pub(crate) mod write_budget;
 
 const FILE_SUFFIX: &str = ".oneiron-backup";
 const PARTIAL_SUFFIX: &str = ".partial";
@@ -44,6 +47,10 @@ pub(crate) struct BackupPlan {
     /// File-name prefix scoping listing and pruning to this vault.
     pub(crate) label: String,
     pub(crate) keep: usize,
+    /// The free-space floor a serving host keeps under its uploads, lent so
+    /// this vault's backups and rehearsals claim their writes on it
+    /// ([`write_budget`], FIX 5479); `None` on a stopped vault.
+    floor: Option<DiskFloor>,
 }
 
 impl BackupPlan {
@@ -52,6 +59,7 @@ impl BackupPlan {
             dir,
             label: vault_label(vault_path),
             keep,
+            floor: None,
         }
     }
 }
@@ -136,9 +144,12 @@ pub(crate) fn take_as(
     let partial = plan
         .dir
         .join(format!(".{}-{stamp}{PARTIAL_SUFFIX}", plan.label));
-    let snapshot = vault
-        .ensure_vault_key()
-        .and_then(|()| vault.snapshot_backup(&partial, vault.now_recorded_at(), owner));
+    // The artifact claims its room on the floor the plan was lent, and gives
+    // it back once written or refused (FIX 5479).
+    let snapshot = vault.ensure_vault_key().and_then(|()| {
+        let room = write_budget::WriteClaim::on(plan.floor.as_ref());
+        vault.snapshot_backup_within(&partial, vault.now_recorded_at(), owner, &room)
+    });
     let checkpoint_id = match snapshot {
         Ok(id) => id,
         Err(error) => {
@@ -330,6 +341,7 @@ pub(crate) fn rehearse_keyed(
         keep_at,
         source,
         Some(key),
+        None,
     )
 }
 
@@ -341,9 +353,11 @@ pub(crate) fn rehearse_in(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
 ) -> anyhow::Result<Rehearsal> {
-    rehearse_in_with(temp, backup, config, keep_at, source, None)
+    rehearse_in_with(temp, backup, config, keep_at, source, None, None)
 }
 
+/// [`rehearse_in`], the copy's writes claiming their room on `floor` when a
+/// serving host lent one ([`write_budget`], FIX 5479).
 fn rehearse_in_with(
     temp: &Path,
     backup: &Path,
@@ -351,6 +365,7 @@ fn rehearse_in_with(
     keep_at: Option<&Path>,
     source: &SideRestoreSource,
     key: Option<CheckpointKey>,
+    floor: Option<&DiskFloor>,
 ) -> anyhow::Result<Rehearsal> {
     let scratch = match keep_at {
         Some(path) => path.to_path_buf(),
@@ -368,7 +383,7 @@ fn rehearse_in_with(
             .unwrap_or(Path::new("/")),
     )?;
     let scratch = Owned::create(scratch)?;
-    let outcome = rehearse_into(backup, config, &scratch.vault(), source, key);
+    let outcome = rehearse_into(backup, config, &scratch.vault(), source, key, floor);
     // A failed rehearsal leaves nothing behind, even where it was told to keep.
     if keep_at.is_none() || outcome.is_err() {
         scratch.remove();
@@ -385,6 +400,7 @@ fn rehearse_into(
     scratch: &Path,
     source: &SideRestoreSource,
     key: Option<CheckpointKey>,
+    floor: Option<&DiskFloor>,
 ) -> anyhow::Result<Rehearsal> {
     let key = match key {
         Some(key) => key,
@@ -396,16 +412,23 @@ fn rehearse_into(
     // in a plain scratch vault.
     config.page_seal = restore_target_seal(RestoreTarget::Beside(source.page_seal()))?;
     // The copy sits beside the live vault, so its key custody forks: an erase
-    // in a kept scratch copy never reaches the live vault's keys.
-    let (restored, report) = oneiron::Vault::restore_checkpoint_beside(
+    // in a kept scratch copy never reaches the live vault's keys. Its writes
+    // claim their room on the floor, given back once it is made or refused;
+    // the engine's error stays the source, so capacity is named (FIX 5479).
+    let room = write_budget::WriteClaim::on(floor);
+    let (restored, report) = oneiron::Vault::restore_checkpoint_beside_within(
         backup,
         &key,
         scratch,
         config,
         source,
         now_unix_ms() / 1_000,
+        &room,
     )
-    .map_err(|error| anyhow::anyhow!("backup {} does not restore: {error}", backup.display()))?;
+    .map_err(|error| {
+        anyhow::Error::new(error).context(format!("backup {} does not restore", backup.display()))
+    })?;
+    drop(room);
     let unreadable_fields = restored.doctor()?.unreadable_fields;
     let kinds = kind_counts(&restored)?;
     Ok(Rehearsal {

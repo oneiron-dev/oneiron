@@ -1,6 +1,7 @@
 //! Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped
-//! vault (OF-173). Pieces go in and out through owner-only files, and the
-//! passphrase comes from stdin or `--secret-file`; none is ever an argument.
+//! vault (OF-173), and the data-key kit's issue (FIX 4532). Pieces go in and
+//! out through owner-only files, and the passphrase comes from stdin or
+//! `--secret-file`; none is ever an argument.
 
 use std::path::PathBuf;
 
@@ -17,6 +18,10 @@ pub enum RecoveryKitCommand {
     /// Issue a kit: its pieces are written to `--out`, and nothing is
     /// published until `confirm`.
     Issue(Box<RecoveryKitIssueArgs>),
+    /// Issue a kit of the vault data key, a copy for you to keep: its pieces
+    /// are written to `--out` as `issue` writes them. No key is minted or
+    /// rotated, and the world kit and its escrow wrap stay as they are.
+    IssueVaultKey(Box<RecoveryKitIssueArgs>),
     /// Confirm a kit by re-entering its saved pieces: its root goes live,
     /// and the vault key gets a `world-kit` escrow wrap to it.
     Confirm(Box<RecoveryKitConfirmArgs>),
@@ -89,12 +94,15 @@ pub struct RecoveryKitRestoreArgs {
 
     /// The root fingerprint, 64 hex digits, read on one of your machines that
     /// pins it: it vouches for a kit opened with one piece.
-    #[arg(long, value_name = "HEX", conflicts_with = "confirm_unverified")]
+    #[arg(long, value_name = "HEX", conflicts_with = "confirm_root")]
     pub fingerprint: Option<String>,
 
-    /// Go ahead with a kit this install cannot verify, after reading why.
-    #[arg(long)]
-    pub confirm_unverified: bool,
+    /// Go ahead with a kit this install cannot verify, after reading why: the
+    /// root id, 64 hex digits, that the refusal showed for this kit's pieces.
+    /// The go-ahead holds for that root alone; pieces that rebuild another
+    /// are refused with the root they do rebuild (FIX 4533).
+    #[arg(long, value_name = "HEX", value_parser = root_id)]
+    pub confirm_root: Option<[u8; 32]>,
 
     /// Restore the vault from its sealed cloud bundle on an install that holds
     /// no copy of it yet: the bundle's file, with `--sealed-pads` and
@@ -157,7 +165,17 @@ pub struct RecoveryKitRestoreArgs {
 
 /// A checkpoint pin's digest: exactly 64 hex digits, either case.
 fn pin_digest(text: &str) -> Result<[u8; 32], String> {
-    let refused = || "a pin digest is 64 hex digits".to_owned();
+    hex32(text, "a pin digest is 64 hex digits")
+}
+
+/// A kit root's id as a refusal showed it: exactly 64 hex digits.
+fn root_id(text: &str) -> Result<[u8; 32], String> {
+    hex32(text, "a root id is 64 hex digits")
+}
+
+/// Exactly 64 hex digits, either case; `what` words any other text.
+fn hex32(text: &str, what: &str) -> Result<[u8; 32], String> {
+    let refused = || what.to_owned();
     if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(refused());
     }

@@ -25,6 +25,7 @@ use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use super::artifact::{ArtifactBody, SealedBodies};
+use super::write_budget::{RestoreRoom, landing_len};
 use super::{CheckpointImage, codec_error};
 use crate::store::{BODY_KEYS, BodyDir, BodyKeyRow, KeyScope, SealedStream, Store};
 use crate::{Error, Result, Vault};
@@ -225,17 +226,19 @@ impl CarriedFiles {
 /// through its sealed chunks and checked, before any row naming them lands.
 /// A result body comes back with its line index, an ASSET's raw. The image's
 /// key rows follow the vault: a plain vault keeps none, a sealed one gains
-/// the row of each plain body it seals.
+/// the row of each plain body it seals. Each body claims what is left of the
+/// copy's room on `room` before it lands (FIX 5479).
 ///
 /// # Errors
 ///
 /// [`Error::CorruptedIndex`] for an envelope with no key row of its own or
 /// a frame that does not check; a key that does not open with the
-/// checkpoint's key; filesystem errors.
+/// checkpoint's key; a claim the disk's floor refuses; filesystem errors.
 pub(super) fn restore(
     vault: &Vault,
     image: &mut CheckpointImage,
     mut bodies: SealedBodies<'_>,
+    room: &mut RestoreRoom<'_>,
 ) -> Result<()> {
     let target = vault.store.body_dir()?;
     let seal = bodies.checkpoint_key().body_seal();
@@ -256,6 +259,7 @@ pub(super) fn restore(
     }
     let mut sealed_here = Vec::new();
     for (index, (digest, len)) in image.bodies.iter().enumerate() {
+        room.landing_body(landing_len(*len, image.sealed_bodies.get(&(index as u64))))?;
         let lines = results.contains(digest);
         let source = bodies.body(index);
         let Some(carried) = image.sealed_bodies.get(&(index as u64)) else {

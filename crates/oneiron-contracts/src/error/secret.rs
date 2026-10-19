@@ -196,6 +196,13 @@ pub enum SecretError {
     /// owner confirmation. Refused before any write; the client words it.
     #[error("the kit restore is not verified (root record {record:?})")]
     UnverifiedKitRestore { root: [u8; 32], record: KitRecord },
+    /// The owner's go-ahead for a kit seed names another root than the
+    /// seed's own (FIX 4533): it was given for the root the owner was shown,
+    /// and `root` is this kit's. Refused before any write; the client shows
+    /// `root`, so the owner confirms it again in one step. Both are public
+    /// root ids.
+    #[error("the owner's go-ahead names another root than this kit's")]
+    KitConfirmationStale { root: [u8; 32], confirmed: [u8; 32] },
 }
 
 /// What the vault records of a kit seed's root.
@@ -242,6 +249,7 @@ impl SecretError {
             Self::WorldKeyRefused(_) | Self::SealedBundleNoCapsule => ErrorKind::WorldKeyRefused,
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
+            Self::KitConfirmationStale { .. } => ErrorKind::KitConfirmationStale,
         }
     }
 }

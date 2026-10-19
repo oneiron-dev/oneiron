@@ -296,6 +296,7 @@ pub enum ErrorKind {
     WorldKeyRefused,
     KeystoreUnavailable,
     UnverifiedKitRestore,
+    KitConfirmationStale,
     MicroVmBackendUnavailable,
     MicroVmBackendError,
     MicroVmOverlayError,

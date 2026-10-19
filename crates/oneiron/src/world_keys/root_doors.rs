@@ -42,8 +42,37 @@ pub enum KitConfirmation {
     /// their machines that pins it, typed or scanned.
     Fingerprint(RecoveryRootId),
     /// The owner's explicit go-ahead after the client showed that the kit was
-    /// not verified.
-    Owner,
+    /// not verified, bound to the root id it showed him (FIX 4533; CALLS:
+    /// ROOT_REPLACEMENT_CONFIRMATION): a go-ahead given for one root never
+    /// stands for a kit whose seed grows into another.
+    Owner(RecoveryRootId),
+}
+
+impl KitConfirmation {
+    /// Refuses a confirmation that names another root than `root`, the kit
+    /// seed's own: a fingerprint as not this seed's root, and the owner's
+    /// go-ahead as [`SecretError::KitConfirmationStale`] carrying `root`, so
+    /// the owner confirms the root he is shown now in one step. A door runs
+    /// it before its first write and again in its transaction. Only public
+    /// root ids go in the refusal.
+    ///
+    /// # Errors
+    ///
+    /// As above, when the confirmation names another root.
+    pub fn check(self, root: RecoveryRootId) -> Result<()> {
+        match self {
+            Self::Fingerprint(id) if id != root => {
+                Err(refused("the fingerprint is not this seed's root"))
+            }
+            Self::Owner(shown) if shown != root => {
+                Err(Error::Secret(SecretError::KitConfirmationStale {
+                    root: root.0,
+                    confirmed: shown.0,
+                }))
+            }
+            Self::Fingerprint(_) | Self::Owner(_) => Ok(()),
+        }
+    }
 }
 
 /// A root activated on this install.
@@ -106,8 +135,8 @@ fn kit_seed_gate(
             "a prepared root is published only by its activation",
         ));
     }
-    if matches!(confirm, Some(KitConfirmation::Fingerprint(id)) if id != root.id) {
-        return Err(refused("the fingerprint is not this seed's root"));
+    if let Some(confirm) = confirm {
+        confirm.check(root.id)?;
     }
     let authenticated =
         seed.authenticated() || (stored && pinned == Some(root.id)) || confirm.is_some();

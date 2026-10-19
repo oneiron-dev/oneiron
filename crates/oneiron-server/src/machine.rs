@@ -114,7 +114,8 @@ pub(crate) fn free_disk_bytes(path: &Path) -> std::io::Result<u64> {
 /// flight has claimed on it. Free space alone is not the floor: two uploads
 /// that each see room for one stored copy would both take it, so each claims
 /// the bytes it has still to write, and every check counts the others' claims.
-#[derive(Clone)]
+/// The owner's backups and rehearsals claim theirs on it too (FIX 5479).
+#[derive(Clone, Debug)]
 pub(crate) struct DiskFloor {
     dir: PathBuf,
     reserve: u64,
