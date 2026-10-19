@@ -1189,6 +1189,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.wire_health.thresholds.get",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.wire_health.thresholds.set",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WireThresholds>(
+                ),
+            ),
+            (
                 "vault.slim.policy",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
@@ -5650,6 +5660,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.connectors.proxy.revoke_write",
     "vault.authority.history.export",
     "vault.authority.history.import",
+    "vault.wire_health.thresholds.get",
+    "vault.wire_health.thresholds.set",
     "vault.slim.policy",
     "vault.slim.state",
     "vault.slim.resume_step",
@@ -6616,6 +6628,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.authority.history.import" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AuthorityHistoryImported,
+        >(),
+        "vault.wire_health.thresholds.get" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WireThresholds>()
+        }
+        "vault.wire_health.thresholds.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::WireThresholdsReceipt,
         >(),
         "vault.slim.policy" => {
             crate::code_run::vault_read::request_schema::<crate::slim::public::SlimIdlePolicy>()
@@ -9795,6 +9813,20 @@ pub fn mcp_arguments_schema_from_input(
         }
         "vault.authority.history.export" => &[],
         "vault.authority.history.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.wire_health.thresholds.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.wire_health.thresholds.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -15712,6 +15744,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.history.import" => {
             let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
         }
+        "vault.wire_health.thresholds.get" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.wire_health.thresholds.set" => {
+            let _input: crate::task_verb::sdk::WireThresholds = decode(value.clone())?;
+        }
         "vault.slim.policy" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
@@ -18771,6 +18809,12 @@ pub fn invoke(
         }
         "vault.authority.history.import" => {
             encode(vault_authority_history_import(memory, decode(value)?)?)
+        }
+        "vault.wire_health.thresholds.get" => {
+            encode(vault_wire_health_thresholds_get(memory, decode(value)?)?)
+        }
+        "vault.wire_health.thresholds.set" => {
+            encode(vault_wire_health_thresholds_set(memory, decode(value)?)?)
         }
         "vault.slim.policy" => encode(vault_slim_policy(memory, decode(value)?)?),
         "vault.slim.state" => encode(vault_slim_state(memory, decode(value)?)?),
@@ -22319,6 +22363,18 @@ pub fn vault_authority_history_import(
         &memory.embedded_owner("vault.authority.history.import")?,
         input,
     )
+}
+pub fn vault_wire_health_thresholds_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::WireThresholds> {
+    crate::task_verb::sdk::host_only(memory, "vault.wire_health.thresholds.get", &input)
+}
+pub fn vault_wire_health_thresholds_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WireThresholds,
+) -> MemoryResult<crate::task_verb::sdk::WireThresholdsReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.wire_health.thresholds.set", &input)
 }
 pub fn vault_slim_policy(
     memory: &Memory<'_>,

@@ -242,6 +242,8 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultWireHealthThresholdsGet,
+    VaultWireHealthThresholdsSet,
     VaultSlimPolicy,
     VaultSlimState,
     VaultSlimResumeStep,
@@ -1238,6 +1240,8 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultWireHealthThresholdsGet,
+        Self::VaultWireHealthThresholdsSet,
         Self::VaultSlimPolicy,
         Self::VaultSlimState,
         Self::VaultSlimResumeStep,
@@ -2237,6 +2241,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultWireHealthThresholdsGet => "vault.wire_health.thresholds.get",
+            Self::VaultWireHealthThresholdsSet => "vault.wire_health.thresholds.set",
             Self::VaultSlimPolicy => "vault.slim.policy",
             Self::VaultSlimState => "vault.slim.state",
             Self::VaultSlimResumeStep => "vault.slim.resume_step",
@@ -3257,6 +3263,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -4280,6 +4288,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -5402,6 +5412,8 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsGet
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
                 | Self::VaultSlimState
                 | Self::VaultSlimResumeStep
@@ -6252,6 +6264,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
                 | Self::VaultSharedProposeDelete
@@ -6978,6 +6991,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultWireHealthThresholdsGet => &["spec"],
+            Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
             Self::VaultSlimState => &["spec"],
             Self::VaultSlimResumeStep => &["spec"],
@@ -7975,6 +7990,8 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultWireHealthThresholdsGet => &["spec"],
+            Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
             Self::VaultSlimState => &["spec"],
             Self::VaultSlimResumeStep => &["spec"],
@@ -9438,6 +9455,12 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultWireHealthThresholdsGet => {
+                "The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."
+            }
+            Self::VaultWireHealthThresholdsSet => {
+                "The owner replaces the serving host's positive wire detection thresholds and window, receiving the previous and installed policy without adding a rate refusal."
             }
             Self::VaultSlimPolicy => {
                 "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."

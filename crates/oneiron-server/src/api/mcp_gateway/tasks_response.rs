@@ -1092,6 +1092,8 @@ fn mcp_agent_verb_input(
         "vault.authority.audit" => a.spec.clone().ok_or_else(invalid),
         "vault.authority.history.export" => Ok(Value::Object(serde_json::Map::new())),
         "vault.authority.history.import" => a.spec.clone().ok_or_else(invalid),
+        "vault.wire_health.thresholds.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.wire_health.thresholds.set" => a.spec.clone().ok_or_else(invalid),
         "vault.slim.policy" => a.spec.clone().ok_or_else(invalid),
         "vault.slim.state" => a.spec.clone().ok_or_else(invalid),
         "vault.slim.resume_step" => a.spec.clone().ok_or_else(invalid),
@@ -2727,6 +2729,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         }
         "vault.authority.history.export" => {}
         "vault.authority.history.import" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.wire_health.thresholds.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.wire_health.thresholds.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.slim.policy" => {
@@ -9018,6 +9026,48 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_authority_history_import(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.wire_health.thresholds.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.wire_health.thresholds.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_wire_health_thresholds_get(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.wire_health.thresholds.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.wire_health.thresholds.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::WireThresholds =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_wire_health_thresholds_set(
+                    server, auth, input,
+                )
+                .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

@@ -141,6 +141,7 @@ pub(crate) use super::secret_lift_doors::*;
 pub(crate) use super::wave_doors::*;
 // The owner's context-widen proposal doors (OF-568), likewise.
 pub(crate) use super::widen_proposal_doors::*;
+pub(crate) use super::wire_health_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
@@ -1290,6 +1291,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.hyde.configure"
         | "vault.retrieval.hyde.get"
         | "vault.affect.claims.consolidate"
+        | "vault.wire_health.thresholds.get"
+        | "vault.wire_health.thresholds.set"
         | "vault.affect.coping.record"
         | "vault.affect.coping.update"
         | "vault.affect.coping.aggregate"
