@@ -8,7 +8,8 @@
 //!   everywhere, each the whole history-free snapshot the export door cuts for a
 //!   machine that may read no private world. It carries no world key pad row
 //!   and no key wrap: pads ride only the pad object, so erase's rewrite reaches
-//!   every kept bundle, and wraps only their world's authority capsule.
+//!   every kept bundle, and wraps only their world's authority capsule. Before
+//!   them rides the checkpoint image the vault adopted, if any (FIX 3583).
 //! - A world section is every window of one carried world, each the whole mirror
 //!   this machine keeps for it. A holder that is a machine of the owner's also
 //!   gets the worlds whose sealed copies go to "My machines"
@@ -55,8 +56,11 @@ use crate::world_keys::{
     refused, world_keys_destroyed_in_txn,
 };
 
+mod checkpoint;
+pub use checkpoint::RecoveryCheckpointTrust;
+
 /// The base section's encoding version.
-const SEALED_BUNDLE_BASE_VERSION: u8 = 1;
+const SEALED_BUNDLE_BASE_VERSION: u8 = 2;
 /// A world section's encoding version.
 const SEALED_BUNDLE_WORLD_VERSION: u8 = 1;
 const BASE_LABEL: &[u8] = b"oneiron/sealed-bundle-base\0";
@@ -277,7 +281,9 @@ impl WindowManager {
     /// each section the kit opens merges into its windows' mirrors and
     /// materializes, for the worlds this machine may read now. The keys report
     /// names the keys usable here, those that need a re-home and those
-    /// withheld.
+    /// withheld. A checkpoint image the base carries is not adopted here: the
+    /// tail imports alone, whole only from a hydrated publisher
+    /// ([`Self::restore_sealed_bundle_with_kit_checkpoint`], FIX 3583).
     pub fn restore_sealed_bundle_with_kit(
         self: &Arc<Self>,
         owner: &AuthenticatedOwner,
@@ -287,6 +293,22 @@ impl WindowManager {
         seed: &RecoveryRootSeed,
         confirm: Option<KitConfirmation>,
     ) -> Result<SealedKitRestore> {
+        self.restore_with_kit(owner, vault_id, bundle, pads, seed, confirm, None)
+    }
+
+    /// [`Self::restore_sealed_bundle_with_kit`], adopting first the image the
+    /// base carries once `trust` fixes its pin ([`checkpoint::adopt`]).
+    #[expect(clippy::too_many_arguments)]
+    fn restore_with_kit(
+        self: &Arc<Self>,
+        owner: &AuthenticatedOwner,
+        vault_id: &[u8; 32],
+        bundle: &SealedVaultBundle,
+        pads: &SealedKeyPads,
+        seed: &RecoveryRootSeed,
+        confirm: Option<KitConfirmation>,
+        trust: Option<RecoveryCheckpointTrust>,
+    ) -> Result<SealedKitRestore> {
         let vault = self.vault();
         refuse_machine_of_the_vault(vault, vault_id)?;
         let opened = bundle.open_with_kit(vault_id, seed)?;
@@ -295,6 +317,8 @@ impl WindowManager {
             return Err(refused("the pad object is another generation's"));
         }
         let base = decode_base(opened.base())?;
+        let carried = base.checkpoint.as_ref();
+        checkpoint::adopt(vault, vault_id, carried, trust, seed, confirm)?;
         let authority =
             with_world_authority(base.authority, opened.authority_history_with_kit(seed)?);
         let mut restore = SealedKitRestore {
@@ -408,7 +432,9 @@ impl WindowManager {
         }
     }
 
-    /// The base section ([`encode_base`]): the signed authority history, then
+    /// The base section ([`encode_base`]): the checkpoint image this vault
+    /// adopted, read after the history so it covers every parent the history
+    /// names that is not held, the signed authority history, then
     /// each of `windows` that is a base window or a window of a world read
     /// everywhere; and the worlds the bundle carries for `holder`
     /// ([`Vault::sealed_bundle_worlds`]), read after the history. A world's side
@@ -425,6 +451,7 @@ impl WindowManager {
         let vault = self.vault();
         // The rows held here: a vault not yet hydrated holds no covered row.
         let history = super::held_authority_history(vault)?;
+        let adopted = checkpoint::carried(vault)?;
         // Read after the history, so a settings edit it holds is judged too.
         let eligible = vault.sealed_bundle_worlds(holder)?;
         let mut sides = WorldSides::new();
@@ -462,7 +489,8 @@ impl WindowManager {
                 snapshots.push((key.clone(), snapshot));
             }
         }
-        Ok((encode_base(&authority, &snapshots)?, eligible, sides))
+        let base = encode_base(adopted.as_ref(), &authority, &snapshots)?;
+        Ok((base, eligible, sides))
     }
 
     /// `key`'s whole state as the export door cuts it for a machine that may
@@ -587,20 +615,26 @@ fn without_key_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
 
 /// What a base section holds.
 struct BundleBase {
+    /// The checkpoint image the publisher adopted, untrusted until a restore
+    /// fixes its pin.
+    checkpoint: Option<checkpoint::CarriedCheckpoint>,
     /// The signed authority entries, parents first.
     authority: Vec<Vec<u8>>,
     windows: Vec<(WindowKey, Vec<u8>)>,
 }
 
-/// label ‖ version (1) ‖ authority entry count (4) ‖ each entry `u32`-length-
-/// prefixed ‖ windows ([`encode_windows`]).
+/// label ‖ version (2) ‖ the adopted image ([`checkpoint::encode`]) ‖
+/// authority entry count (4) ‖ each entry `u32`-length-prefixed ‖ windows
+/// ([`encode_windows`]).
 fn encode_base(
+    adopted: Option<&checkpoint::CarriedCheckpoint>,
     authority: &[Vec<u8>],
     windows: &[(WindowKey, Vec<u8>)],
 ) -> Result<Zeroizing<Vec<u8>>> {
     let mut out = Zeroizing::new(Vec::new());
     out.extend_from_slice(BASE_LABEL);
     out.push(SEALED_BUNDLE_BASE_VERSION);
+    checkpoint::encode(&mut out, adopted)?;
     put_u32(&mut out, authority.len())?;
     for entry in authority {
         put_u32(&mut out, entry.len())?;
@@ -615,6 +649,7 @@ fn decode_base(bytes: &[u8]) -> Result<BundleBase> {
     if reader.take(BASE_LABEL.len())? != BASE_LABEL || reader.u8()? != SEALED_BUNDLE_BASE_VERSION {
         return Err(malformed());
     }
+    let checkpoint = checkpoint::decode(&mut reader)?;
     let mut authority = Vec::new();
     for _ in 0..reader.u32()? {
         let len = reader.u32()? as usize;
@@ -622,7 +657,11 @@ fn decode_base(bytes: &[u8]) -> Result<BundleBase> {
     }
     let windows = decode_windows(&mut reader, None)?;
     reader.finish()?;
-    Ok(BundleBase { authority, windows })
+    Ok(BundleBase {
+        checkpoint,
+        authority,
+        windows,
+    })
 }
 
 /// label ‖ version (1) ‖ world (16) ‖ windows ([`encode_windows`]).

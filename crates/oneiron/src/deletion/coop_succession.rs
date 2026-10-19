@@ -13,10 +13,11 @@
 //!
 //! Canon is silent on four calls (CALLS `FIX 3014 *`): the rows travel
 //! ahead of each try on their own route
-//! ([`COOP_DELETION_SUCCESSION_PEER_PATH`]); only a ReRoot row extends the
-//! walk ([`succession_edge`]); a key a kept row hands on signs no more
-//! courtesy under the pact ([`Vault::courtesy_pact_signer`]); and the pact's
-//! pinned key is never re-pinned, ended or not.
+//! ([`COOP_DELETION_SUCCESSION_PEER_PATH`]); only a ReRoot row or the host
+//! root's own rotation extends the walk ([`succession_edge`]); a key a kept
+//! row hands on signs no more courtesy under the pact
+//! ([`Vault::courtesy_pact_signer`]); and the pact's pinned key is never
+//! re-pinned, ended or not.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -53,14 +54,25 @@ const PAGE_KEYS: [&str; 3] = ["schema_version", "pact_id", "entries"];
 const SUCCESSION: SideTable<([u8; 32], AuthorityEntryHash), Vec<u8>, Named> =
     SideTable::new(&side_table::COOPERATIVE_DELETION_SUCCESSION);
 
-/// Which signed row extends a courtesy succession walk (FIX 3014, a call):
-/// a ReRoot alone, naming an Owner-role successor other than its signer.
-/// An enrolment, an Admin or Owner device add, a rotation and every other
-/// op extend nothing, whatever the peer's roster makes of them.
+/// Which signed row extends a courtesy succession walk (FIX 3014, FIX 3798,
+/// a call): a ReRoot naming an Owner-role successor other than its signer,
+/// or the host root's own RotateKey, signed by the old key it rotates, naming
+/// one. An enrolment, an Admin or Owner device add, a rotation another key
+/// signed and every other op extend nothing, whatever the peer's roster
+/// makes of them.
 fn succession_edge(entry: &AuthorityLogEntry) -> Option<&DeviceAuthority> {
     match &entry.op {
         AuthorityOp::ReRoot { new_device }
             if new_device.roles & ROLE_OWNER != 0 && new_device.key != entry.signer.public_key =>
+        {
+            Some(new_device)
+        }
+        AuthorityOp::RotateKey {
+            old_key,
+            new_device,
+        } if *old_key == entry.signer.public_key
+            && new_device.roles & ROLE_OWNER != 0
+            && new_device.key != *old_key =>
         {
             Some(new_device)
         }

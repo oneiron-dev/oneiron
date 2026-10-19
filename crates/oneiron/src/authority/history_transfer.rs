@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::adopted_evidence::AdoptedEvidence;
 
+#[cfg(feature = "sync")]
+mod handoff;
+
 pub(super) fn history_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -713,7 +716,9 @@ impl Vault {
     /// it leave, and applied as the fold applies one: every key it stood on
     /// is revoked and its successor stands. A row this fold already holds is
     /// skipped while no new row has landed. Nothing is written, and the
-    /// folded roster is only ever extended, never replaced.
+    /// folded roster is only ever extended, never replaced. A handoff that
+    /// carries the rows its edges stand on folds whole with this vault's
+    /// rows instead, in memory ([`handoff::through_closure`], FIX 3797).
     ///
     /// The authority vault id and the roster; `None` when the fold is in
     /// conflict or the handoff does not carry it on: a row out of chain, one
@@ -735,9 +740,13 @@ impl Vault {
         let Some(vault_id) = fold.vault_id else {
             return Ok(None);
         };
+        let handoff = match handoff::through_closure(self, vault_id, handoff)? {
+            handoff::HandoffClosure::Folded(verdict) => return Ok(verdict),
+            handoff::HandoffClosure::Edges(edges) => edges,
+        };
         let mut roster = fold.roster.clone();
         let mut landed = false;
-        for bytes in handoff {
+        for bytes in &handoff {
             let Ok(entry) = decode_authority_log_entry_body(bytes) else {
                 return Ok(None);
             };
@@ -774,11 +783,10 @@ impl Vault {
 /// Whether `entry`, a ReRoot to `new_device`, stands on `roster` as the fold
 /// judges a ReRoot (FIX 2053): well formed and well signed, in this vault,
 /// signed by a live Owner key of `roster` that `fold` never retired, its
-/// cosigners live there too, with the quorum a roster of two or more active
-/// keys asks, a sequence past every row its signer signed in `fold`, and a
-/// successor no wider than its signer and new to the roster. The rows between
-/// `fold`'s heads and the handoff do not ride with it, so its signer's
-/// standing in `roster` is the ancestry it is judged on.
+/// cosigners live there too, a sequence past every row its signer signed in
+/// `fold`, and a successor no wider than its signer and new to the roster.
+/// The rows between `fold`'s heads and the handoff do not ride with it, so
+/// its signer's standing in `roster` is the ancestry it is judged on.
 #[cfg(feature = "sync")]
 fn handoff_row_stands(
     fold: &AuthorityFold,
@@ -817,20 +825,5 @@ fn handoff_row_stands(
         .chain(&entry.cosigns)
         .map(|signature| &signature.public_key)
         .collect();
-    if !participants.iter().all(|&key| live(key)) {
-        return false;
-    }
-    // A machine writer's key is no quorum peer.
-    let active = roster
-        .iter()
-        .filter(|(key, device)| {
-            live(*key)
-                && !(device.roles == ROLE_AGENT
-                    && fold
-                        .actor_bindings
-                        .get(*key)
-                        .is_some_and(|binding| binding.actor_class == "system"))
-        })
-        .count();
-    active < 2 || participants.len() >= 2
+    participants.iter().all(|&key| live(key))
 }
