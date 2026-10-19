@@ -15,6 +15,7 @@ mod legibility;
 pub(crate) mod nightly;
 mod observation;
 mod policy;
+mod program;
 mod projector;
 mod recipe;
 mod recipe_wake;
@@ -41,6 +42,10 @@ pub use self::observation::{
     WakeObservedResume, WakeRef,
 };
 pub use self::policy::*;
+pub use self::program::{
+    TurnProgramExecutor, TurnProgramHost, TurnProgramReactor, TurnProgramRequest,
+    TurnProgramRuntime,
+};
 pub use self::projector::ProjectorPolicy;
 pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
 pub(crate) use self::projector::held_round_members_away_in_txn;

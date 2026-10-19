@@ -64,6 +64,7 @@ mod training_offer;
 pub(crate) mod training_pack;
 mod turn_actions;
 mod turn_program;
+mod turn_program_host;
 mod turns;
 pub(crate) mod waves;
 mod weave_lens;
