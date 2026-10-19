@@ -19,7 +19,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -37,13 +37,22 @@ use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
 use crate::server::SyncServer;
 
+/// The largest sealed change body read: a 4 MiB input envelope, the most
+/// the engine takes, in base64, with its binding fields.
+const SEALED_BODY_LIMIT: usize = 6 << 20;
+
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/secrets/register", post(register_secret))
         .route("/secrets/rotate", post(rotate_secret))
         .route("/secrets/revoke", post(revoke_secret))
         .route("/secrets/rewrap", post(rewrap_secret))
-        .route("/secrets/custody", get(custody_view).post(sealed_change))
+        .route(
+            "/secrets/custody",
+            get(custody_view)
+                .post(sealed_change)
+                .layer(DefaultBodyLimit::max(SEALED_BODY_LIMIT)),
+        )
 }
 
 /// The body is read by `RegisterSecret::read`, as rotation's is: the owner
