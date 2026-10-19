@@ -168,10 +168,11 @@ impl<'v> Memory<'v> {
     /// The room's own reads for this actor: its turn when this handle is
     /// bound to one, else the member's own read of the room. That keeps a
     /// turn's world, audience and peer gates and holds no row to P7, which
-    /// binds a turn: outside one the read stays the member's own, a personal
+    /// binds a turn: outside one a person's read stays its own, a personal
     /// ceiling whose other members stand in each private thread as they are
-    /// now (FIX 5545). A read whose words reach the room takes
-    /// [`RoomTurnHandle::held`].
+    /// now (FIX 5545). An agent's or the system's stays held, as a turn is:
+    /// what it reads it may speak into the room (FIX 5666). A read whose
+    /// words reach the room takes [`RoomTurnHandle::held`].
     pub(crate) fn for_room_projection(&self, room: EntityId) -> MemoryResult<RoomTurnHandle<'v>> {
         let mut handle = self.for_room_turn(room)?;
         if self.room_turn.is_none()
@@ -182,7 +183,7 @@ impl<'v> Memory<'v> {
                 p7: false,
                 ..turn.terms.get()
             });
-            turn.personal = true;
+            turn.personal = self.verified_actor_class()? == crate::EdgeActorClass::Human;
         }
         Ok(handle)
     }
@@ -194,18 +195,19 @@ impl<'v> Memory<'v> {
     /// own Ready receipt reads it this way without a seat, and reads nothing
     /// else of the room. Unlike [`Self::for_room_projection`], P7 binds it
     /// outside a turn too: a thread's reader is no member reading its own.
-    /// Outside a turn its ceiling is still personal, the caller's own read
-    /// (FIX 5545); inside one it is held or personal as the turn is.
+    /// Outside a turn a person's ceiling is still personal, its own read
+    /// (FIX 5545), and an agent's or the system's held (FIX 5666); inside
+    /// one it is held or personal as the turn is.
     pub(crate) fn for_thread_projection(
         &self,
         room: EntityId,
         thread: EntityId,
     ) -> MemoryResult<RoomTurnHandle<'v>> {
-        self.verified_actor_class()?;
+        let class = self.verified_actor_class()?;
         self.require_room_in_facets(room)?;
         let mut ceiling = self.thread_ceiling(room, thread)?;
         if self.room_turn.is_none() {
-            ceiling.personal = true;
+            ceiling.personal = class == crate::EdgeActorClass::Human;
         }
         Ok(RoomTurnHandle {
             memory: Memory {

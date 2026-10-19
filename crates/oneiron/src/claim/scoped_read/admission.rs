@@ -199,14 +199,24 @@ impl<'a> ScopedRead<'a> {
             // A member's contact clearance holds the row to P7 too: it is
             // positively public or sits under the room's Scope (ILDF2). A
             // personal ceiling's roster stands in each private thread as it
-            // is now, a held one's in each turn (FIX 5545, 5636).
+            // is now, a held one's in each turn (FIX 5545, 5636), and a
+            // caller with a seat meets the room's windows by its own alone
+            // (FIX 5667).
             if !room.admits_world(&record)
                 || !room.discloses(self.vault, txn, *id, raw)?
                 || !self
                     .audience_cache
                     .lock()
                     .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-                    .readable_raw(self.vault, txn, *id, raw, &room.roster, room.personal)?
+                    .readable_raw(
+                        self.vault,
+                        txn,
+                        *id,
+                        raw,
+                        &room.roster,
+                        room.personal,
+                        room.personal.then_some(room.caller),
+                    )?
             {
                 return Ok(false);
             }
@@ -436,20 +446,26 @@ impl<'a> ScopedRead<'a> {
     /// The explicit audience this read was opened for, if any. Through a
     /// personal ceiling it stands in each private thread under CURRENT, as
     /// that ceiling's roster does (FIX 5655): a member's own TASK read is
-    /// narrowed to a thread's audience now, never to the turns each reads.
+    /// narrowed to a thread's audience now, never to the turns each reads,
+    /// and a room the ceiling's caller holds a seat in binds by its window
+    /// alone (FIX 5667).
     fn audience_conjunct_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
-        let personal = self.actor_key.room_turn().is_some_and(|turn| turn.personal);
+        let own = self
+            .actor_key
+            .room_turn()
+            .filter(|turn| turn.personal)
+            .map(|turn| turn.caller);
         if let Some(audience) = &self.audience
             && !self
                 .audience_cache
                 .lock()
                 .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-                .readable_raw(self.vault, txn, *id, raw, audience, personal)?
+                .readable_raw(self.vault, txn, *id, raw, audience, own.is_some(), own)?
         {
             return Ok(false);
         }

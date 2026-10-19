@@ -16,15 +16,15 @@ fn spec_thread_ref(body: &super::consult_result::TaskVerbBody) -> Option<EntityI
     })
 }
 
-/// Every turn or claim a TASK body names as its place: its spec's
-/// `thread_ref` and each typed consult ref, not only the first that lands
-/// in a known thread (FIX 3124). The private-thread read walks them all.
-/// An undecodable body names none.
-pub(crate) fn context_refs(bytes: &[u8]) -> Vec<EntityId> {
+/// Every turn or claim a TASK body names: its spec's `thread_ref`, a place
+/// alone (FIX 5872), and each typed consult ref, a source of its words, not
+/// only the first that lands in a known thread (FIX 3124). The
+/// private-thread read walks them all. An undecodable body names none.
+pub(crate) fn context_refs(bytes: &[u8]) -> (Option<EntityId>, Vec<EntityId>) {
     let Ok(body) = super::wire_decode::decode_task_verb_body(bytes) else {
-        return Vec::new();
+        return (None, Vec::new());
     };
-    let mut refs: Vec<EntityId> = spec_thread_ref(&body).into_iter().collect();
+    let mut refs = Vec::new();
     if let Some(consult) = &body.consult {
         refs.extend(
             std::iter::once(consult.question_ref)
@@ -32,7 +32,7 @@ pub(crate) fn context_refs(bytes: &[u8]) -> Vec<EntityId> {
                 .map(super::ConsultPayloadRef::entity_ref),
         );
     }
-    refs
+    (spec_thread_ref(&body), refs)
 }
 
 fn thread_for_body(

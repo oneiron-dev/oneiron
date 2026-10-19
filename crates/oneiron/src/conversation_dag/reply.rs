@@ -32,8 +32,10 @@ pub struct ReplyStrip {
     /// Target's txt field, only when it is still live at the pinned revision
     /// and not `withheld`.
     pub text: Option<String>,
-    /// Target is missing, deleted or no longer at the pinned revision.
-    pub stale: bool,
+    /// Target is missing, deleted or no longer at the pinned revision;
+    /// `None` for a `withheld` target, which reports no stale bit, so its
+    /// reader learns nothing of whether it changed (FIX 5871).
+    pub stale: Option<bool>,
     /// Target has been erased (rather than merely edited or not yet received).
     pub redacted: bool,
     /// Target's words sit in a private-thread turn the reader does not read
@@ -59,7 +61,7 @@ impl Vault {
     /// read keeps its place and revision, never its words, so one added to
     /// a private thread from a later turn on reads a reply to a turn before
     /// its add without that turn's text (FIX 5652). Such a target is
-    /// `withheld`, neither stale nor redacted.
+    /// `withheld`, with no stale bit (FIX 5871) and not redacted.
     pub fn reply_strip(
         &self,
         read: &ScopedRead<'_>,
@@ -135,11 +137,11 @@ impl Vault {
                 {
                     return Err(invalid("reply target is outside conversation"));
                 }
-                if blake3::hash(&body).to_hex().as_str() != revision {
-                    (None, true)
-                } else if !read.private_threads_admit_in(&txn, &target)? {
+                if !read.private_threads_admit_in(&txn, &target)? {
                     withheld = true;
-                    (None, false)
+                    (None, None)
+                } else if blake3::hash(&body).to_hex().as_str() != revision {
+                    (None, Some(true))
                 } else {
                     let value = rmpv::decode::read_value(&mut body.as_slice())
                         .map_err(|_| invalid("invalid reply target body"))?;
@@ -150,10 +152,10 @@ impl Vault {
                         })
                         .and_then(|(_, value)| value.as_str())
                         .map(str::to_owned);
-                    (text, false)
+                    (text, Some(false))
                 }
             }
-            _ => (None, true),
+            _ => (None, Some(true)),
         };
         Ok(Some(ReplyStrip {
             record: target,
