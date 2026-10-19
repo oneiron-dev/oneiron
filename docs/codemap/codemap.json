@@ -51418,6 +51418,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/residence/bundle/attempt.rs",
+     "purpose": "The exact attempt an asked executor makes to publish the vault's sealed bundle for the owner's request (FIX…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/residence/bundle/publication.rs",
      "purpose": "The owner's ask to publish the vault's sealed bundle (WILL L04 row 03), run by the install his counted…",
      "surface": {
@@ -52498,7 +52508,22 @@
       "crate-vis": 11,
       "enum": 1,
       "fn": 12,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBundleCommitReceipt"
+     ],
+     "path": "src/sync/residence/bundle/commit_receipt.rs",
+     "purpose": "The home's commit of a staged generation, and its record of each commit an asked executor made for the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -60447,6 +60472,34 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BundleHomeWarning",
+      "CapsuleRead",
+      "ExecutorObservation",
+      "LatestRead",
+      "OwnerWorkDiagnostics",
+      "PublicationDiagnostics",
+      "PublishAttemptView",
+      "PublishObserved",
+      "PublishReach",
+      "ReassertDiagnostics",
+      "ReassertKey",
+      "ReassertKeyState",
+      "ReassertUnread",
+      "RelayObservation"
+     ],
+     "path": "src/world_keys/owner_work/diagnostics.rs",
+     "purpose": "What blocks one pending owner work request, as its executor observes it (FIX 4686, 4784, 4785, 4786, 4787)…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 8,
+      "fn": 3,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -60459,8 +60512,8 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 2,
-      "re-export": 1,
+      "fn": 3,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -60549,7 +60602,7 @@
      "path": "src/world_keys/reassert/holder.rs",
      "purpose": "A holder's re-assertion of one world's keys (contract §4): the step the re-assert door runs on a holder, and…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -60661,7 +60714,7 @@
      "purpose": "What one vault handle keeps for world privacy P6b, in memory only: this install's keystore, the world keys…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 1,
       "struct": 1
      }
@@ -62932,7 +62985,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 198,
+     "files": 200,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63114,7 +63167,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63130,7 +63183,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3877,
+   "source_files": 3880,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76010,7 +76063,7 @@
      "path": "src/api/facade/action_routes/execution.rs",
      "purpose": "How one action runs (OF-181): the principal its call reads as, and the blocking thread it runs on with its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -77632,7 +77685,7 @@
      "path": "src/api/mcp_gateway/actions.rs",
      "purpose": "`invoke_action` (OF-181): one action of the app's table over MCP, run by the one door `POST…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -81709,7 +81762,7 @@
      "path": "src/handler/protocol_close.rs",
      "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -82020,6 +82073,16 @@
      "purpose": "`residence.bundle.access` (FIX 4271): a late joiner's access to the kept sealed pad objects, one tagged call",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/bundle_commit.rs",
+     "purpose": "`residence.bundle.commit` and `residence.bundle.commit.status`: the end of a sealed bundle upload, and the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -85491,7 +85554,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -85668,7 +85731,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 834,
+   "source_files": 835,
    "test_files": 182
   },
   "oneiron-spawn": {

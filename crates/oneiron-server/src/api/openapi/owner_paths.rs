@@ -1032,6 +1032,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/owner-work/{request}/diagnostics",
+        summary: "What blocks one pending owner work request, as its executor observes it: a re-assertion's keys and their blockers (paged by offset), or a bundle publication's home, relay reach, outer capsules and unresolved attempt. Ids and closed reasons only; any other install answers that the executor's observation is unavailable here.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/pack-drift",
         summary: "Pack drift repairs.",
         row: None,
@@ -1788,8 +1794,44 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/worlds/privacy/asks/confirm",
+        summary: "A holder of the world's settings right says yes to an agent's widen ask (request: 32 hex): the frozen settings land as his own act, or, under \"widen needs every owner\", his yes counts until every owner's is in.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/asks/decline",
+        summary: "A holder of the world's settings right declines an agent's widen ask (request: 32 hex); the settings stay as they are.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/proposals/accept",
+        summary: "A holder of the world's settings right accepts an agent's proposal of stricter settings (request: 32 hex): they land as his own act.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/proposals/decline",
+        summary: "A holder of the world's settings right declines an agent's proposal, or cancels it from its notice (request: 32 hex).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/worlds/privacy/reassert",
         summary: "The owner re-asserts a world's complete settings at its current revision after a pin change: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/worlds/privacy/requests",
+        summary: "The world-privacy requests agents raised, newest first (pending=true for those still waiting): every one for a vault owner, those on the worlds whose settings right he holds for another live holder on his own human slip.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/set",
+        summary: "A holder of the world's settings right changes them as his own act, in either direction: applied, with the receipt, or asked, when his widen falls under \"widen needs every owner\". The body is vault.worlds.privacy.set's input; a stale seen is a conflict.",
         row: None,
     },
     OwnerRoute {
@@ -1802,6 +1844,42 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/worlds/privacy/settings",
         summary: "A holder sets a world's settings as his own act: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/undo",
+        summary: "The notice's one tap: restores the settings before an agent's tighten (receipt: the settings receipt the notice carried), as the holder's own act.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/worlds/privacy/widen-unanimity",
+        summary: "The vault's \"widen needs every owner\" setting and its per-world overrides.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/widen-unanimity",
+        summary: "An owner sets the vault's setting, or a world's override (world: 32 hex; on: true, false or none to clear it). It lands at once (set), unless it turns the setting off somewhere while it is on: then it waits for every owner's yes (pending).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/widen-unanimity/off/confirm",
+        summary: "An owner's yes to a pending turn-off of \"widen needs every owner\" (request: 32 hex); the yes that completes every owner's lands it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/worlds/privacy/widen-unanimity/off/decline",
+        summary: "An owner declines a pending turn-off (request: 32 hex); the setting stays as it is.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/worlds/privacy/widen-unanimity/requests",
+        summary: "The turn-offs of \"widen needs every owner\", newest first (pending=true for those still waiting).",
         row: None,
     },
 ];

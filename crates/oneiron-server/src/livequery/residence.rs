@@ -5,6 +5,7 @@
 pub(super) mod tests;
 
 mod bundle_access;
+mod bundle_commit;
 mod checkpoint_roots;
 mod machine_history;
 
@@ -15,16 +16,15 @@ use oneiron::sync::residence::{
     INDEX_PAGE_MAX, IndexPage, ResidenceAdmission, SealedBundleEntry, SealedBundleObject,
     SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn, authority_append_for,
     authority_checkpoint_part_for, authority_range_for, authority_tail_for, authority_wanted,
-    commit_sealed_bundle, home_search_candidates, index_selection_revision,
-    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_generations,
-    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
-    sealed_generation_hex, selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
+    home_search_candidates, index_selection_revision, promotion_snapshot_with,
+    replace_sealed_bundle_pads, sealed_bundle_generations, sealed_bundle_part,
+    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
+    selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
     window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
-use oneiron::world_keys::RecoveryRootId;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -168,19 +168,6 @@ struct BundlePutRequest {
     part: String,
 }
 
-/// The end of an upload: the home commits the generation whole while its
-/// newest is still `parent`. `root` is the recovery root the machine pins, in
-/// hex, whose kit the home then serves the generation to.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct BundleCommitRequest {
-    generation: String,
-    #[serde(default)]
-    parent: Option<String>,
-    #[serde(default)]
-    root: Option<String>,
-}
-
 /// A list, naming the owner's bundle publication request when the machine is
 /// the install he asked to publish here (WILL L04 row 03): entry hash in hex.
 #[derive(Deserialize)]
@@ -313,7 +300,12 @@ pub(super) fn run(
             "residence.search" => search(server, auth, peer, request.params, budgets),
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
-            "residence.bundle.commit" => bundle_commit(server, auth, peer, request.params),
+            "residence.bundle.commit" => {
+                bundle_commit::bundle_commit(server, auth, peer, request.params)
+            }
+            "residence.bundle.commit.status" => {
+                bundle_commit::bundle_commit_status(server, peer, request.params)
+            }
             "residence.bundle.list" => bundle_list(server, peer, request.params),
             "residence.bundle.get" => bundle_get(server, peer, request.params),
             "residence.bundle.pads.replace" => {
@@ -999,34 +991,6 @@ fn bundle_put(
     server.transfers.reconcile_sealed_stages(&server.vault);
     let staged = staged.map_err(|_| AppError::not_found("sealed bundle", None))?;
     Ok((json!({"staged": staged}), Some(Vec::new())))
-}
-
-/// Commits the generation the machine staged whole as the vault's newest,
-/// while the newest is still the parent it names (FIX 922): one generation per
-/// slot. The root it names is kept for the kit door. A refused machine,
-/// parent, root or upload looks missing.
-fn bundle_commit(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    peer: PeerMachine,
-    params: Value,
-) -> Result<Answer, AppError> {
-    auth.require(CoreScope::Write)?;
-    let input: BundleCommitRequest =
-        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
-    let generation = bundle_generation(&input.generation)?;
-    let parent = input.parent.as_deref().map(bundle_generation).transpose()?;
-    let root = match input.root.as_deref() {
-        Some(root) => Some(RecoveryRootId(
-            sealed_digest_from_hex(root).ok_or_else(AppError::invalid_params)?,
-        )),
-        None => None,
-    };
-    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent, root);
-    // The stages the commit dropped give their room back.
-    server.transfers.reconcile_sealed_stages(&server.vault);
-    let entry = entry.map_err(|_| AppError::not_found("sealed bundle", None))?;
-    Ok((bundle_entry(&entry), Some(Vec::new())))
 }
 
 /// The generations the home keeps, newest first, for a machine of the
