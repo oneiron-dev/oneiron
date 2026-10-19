@@ -167,6 +167,7 @@ pub(in crate::batch) fn apply_put(
     let mut hub_origin_marker = None;
     let mut new_agent_definition = None;
     let mut agent_id_pin = None;
+    let mut new_workflow = None;
     // STO-03: `Some` only when the incoming TASK body named a derived streak
     // counter, i.e. only on the sync door — the body that gets stored instead.
     let mut task_body_without_streaks = None;
@@ -340,7 +341,9 @@ pub(in crate::batch) fn apply_put(
         agent_id_pin = crate::agent_def::agent_id_pin_for_put_in_txn(store, wtxn, &id, &decoded)?;
         new_agent_definition = Some(decoded);
     } else if entity_type == crate::registry::ENTITY_TYPE_WORKFLOW {
-        crate::agent_def::workflow::validate_workflow_put(store, wtxn, &id, data, replicated)?;
+        new_workflow = Some(crate::agent_def::workflow::validate_workflow_put(
+            store, wtxn, &id, data, replicated,
+        )?);
     } else if entity_type == ENTITY_TYPE_TASK {
         // The role's TREE invariants are not judged here: `ChildOf` nesting
         // belongs to the batch's one final-state gate
@@ -848,6 +851,11 @@ pub(in crate::batch) fn apply_put(
         is_lexical_query_hint_claim,
         body_changed,
     )?;
+    // A workflow's `[limits]` rows ask only once every fallible step of its
+    // put is staged (Rule 5).
+    if let Some(definition) = new_workflow.as_ref() {
+        crate::agent_def::workflow::measure_workflow_limits(&store.limit_watch, definition);
+    }
     Ok(AppliedPut {
         portable_agent_source,
         project_revisions,

@@ -51,6 +51,31 @@ Legacy serve flags still work at the top level:
 oneiron-server --vault-path ~/.local/share/oneiron/default --port 9090
 ```
 
+"Learn from my conversations" (OF-420) shares nothing unless the server is
+given an outbox, on the command line only (no config key, no environment
+variable):
+
+```sh
+oneiron-server serve --vault-path ~/.local/share/oneiron/default \
+  --publisher-training-outbox-dir /srv/oneiron/training-outbox
+```
+
+The path must be absolute. The vault makes three owner-only subdirectories in
+it: `offers/` (one JSON manifest per released submission and its sealed chunks
+of filtered text, renamed in only after a release recheck), `controls/` (id-only
+withdrawals and scope changes, written whatever the learning state) and
+`receipts/` (the intake's signed receipts, which the vault applies and then
+removes). An uploader ships `offers/` and `controls/` and writes `receipts/`;
+the file formats are `oneiron_vault_contract::conversation_training`. Offers
+are sealed to the intake's public key in `intake-recipient.v1` in the outbox
+directory, and receipts are checked against the Ed25519 key in
+`intake-receipt-key.v1`. With no recipient key the vault writes no offer and
+logs offers as unavailable, naming the missing file, while withdrawals still
+flow; with no receipt key it applies no receipt. A self-hosted vault also needs
+its account binding to the intake (the device-code registration), which this
+build does not have, so a self-hosted outbox writes withdrawals only for now.
+Without the flag no outbox runs and nothing is shared.
+
 ## Config
 
 `oneiron-server serve` reads `~/.config/oneiron/oneiron.toml` when it exists.
@@ -194,7 +219,8 @@ pack_script_output_rows = 16      # inbound events, verbs or connector events on
 attempt_manifest_entries = 65536  # entries in one attempt's pack manifest; past it the row asks and every entry is kept
 attempt_cancel_receipts = 4096    # receipts in one attempt's cancel protocol history; past it the row asks and every receipt is kept
 attempt_retry_tip_rows = 16384    # attempt rows one retry-tip walk visits along a retry lineage; past it the row asks and the whole lineage is still read
-workflow_steps = 1024             # steps in one saved workflow, at its save, update and dispatch; past it the row asks and every step is kept
+workflow_steps = 1024             # steps in one saved workflow, at every put of it (save, update, fork, raw and batch puts, sync replay) and at dispatch; past it the row asks and every step is kept
+workflow_name_bytes = 256         # bytes of one saved workflow's name, at every put of it (save, update, fork, raw and batch puts, sync replay); past it the row asks and the name is stored whole
 judge_rubric_bytes = 8192         # bytes of the judge rubric (the judge skill's text) one judgment or label re-check reads; past it the rubric is read whole and the row asks
 judge_instructions_bytes = 8192   # bytes of skill instructions one held-out replay judgment reads; past it they are read whole and the row asks
 judge_replay_text_bytes = 40000   # bytes of replay text (runs' tasks and responses) one replay judgment's state carries; past it the replays ride whole and the row asks

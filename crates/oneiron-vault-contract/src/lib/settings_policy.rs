@@ -11,7 +11,8 @@
 /// The leaves the supervisor owns, as dotted fields (`*` is any one key): the
 /// listener, ingress and auth, the tenant's identity, posture and custody,
 /// the machine's declared class, the credential broker's process and roots,
-/// the voice loop's socket and the key directory.
+/// the voice loop's socket, the key directory and the publisher training
+/// outbox.
 pub const SUPERVISOR_OWNED: &[&str] = &[
     "vault_path",
     "host",
@@ -37,6 +38,7 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "models.broker.extra_roots",
     "models.voice.socket",
     "keystore.dir",
+    crate::conversation_training::OUTBOX_DIR_SETTING,
 ];
 
 /// The leaves that name a key by the environment variable holding it.
