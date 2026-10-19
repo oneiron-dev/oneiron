@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use super::backup::{self, BackupOutcome, BackupPlan, BackupRecord, Rehearsal};
+use super::backup::{self, BackupOutcome, BackupPlan, BackupRecord, Rehearsal, write_budget};
 use super::stamp::now_unix_ms;
 use super::{OwnerError, OwnerResult};
 use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
@@ -74,7 +74,8 @@ impl OwnerHost {
     /// Takes a backup now, serialized with every other backup of this vault.
     /// On an owner's request, `owner` is rechecked once the lock is held, in
     /// the snapshot itself: a request queued behind a revocation or an
-    /// ownership change takes and prunes nothing.
+    /// ownership change takes and prunes nothing. A backup stopped at the
+    /// disk's floor is logged and answered as capacity (FIX 5479).
     pub(crate) fn take(
         &self,
         vault: &oneiron::Vault,
@@ -82,6 +83,13 @@ impl OwnerHost {
     ) -> OwnerResult<BackupOutcome> {
         let _one_at_a_time = self.one_at_a_time();
         backup::take_as(vault, &self.backups, owner).map_err(|error| {
+            if write_budget::host_at_floor(&error) {
+                tracing::warn!(
+                    reason = "capacity",
+                    refusal = write_budget::CAPACITY_REFUSAL,
+                    "backup not taken: the vault's disk is at its floor"
+                );
+            }
             match error.downcast::<oneiron::Error>() {
                 Ok(engine) => OwnerError::from(engine),
                 Err(error) => OwnerError::Host(error),
@@ -93,20 +101,23 @@ impl OwnerHost {
     /// newest by default; never a caller-built path. The backup lock is held
     /// from choosing the file until the rehearsal has read it, so retention
     /// cannot prune it in between. `vault` is the open vault the backup is
-    /// of; the rehearsal reads only its key-custody state.
+    /// of; the rehearsal reads only its key-custody state. The copy's writes
+    /// claim their room on the floor this host was lent, and one stopped
+    /// there says capacity (FIX 5479).
     pub(crate) fn rehearse(
         &self,
         vault: &oneiron::Vault,
         file: Option<&str>,
     ) -> OwnerResult<Rehearsal> {
         self.with_chosen(file, |chosen| {
-            Ok(backup::rehearse_in(
+            write_budget::rehearse_claiming(
                 &self.rehearse_temp(),
                 &chosen.path,
                 self.vault_config.clone(),
-                None,
                 &vault.side_restore_source()?,
-            )?)
+                &self.backups,
+            )
+            .map_err(write_budget::rehearsal_error)
         })
     }
 
@@ -195,6 +206,15 @@ impl SyncServer {
                         "scheduled backup taken"
                     ),
                     Ok(Ok(None)) => {}
+                    // Still due, so a later tick with room takes it (FIX 5479).
+                    Ok(Err(error)) if write_budget::host_at_floor(&error) => {
+                        tracing::warn!(
+                            reason = "capacity",
+                            refusal = write_budget::CAPACITY_REFUSAL,
+                            "scheduled backup not taken: the vault's disk is at its floor; a \
+                             later tick with room takes it"
+                        );
+                    }
                     Ok(Err(error)) => {
                         tracing::warn!(
                             kind = ?crate::logging::engine_kind(&error),
