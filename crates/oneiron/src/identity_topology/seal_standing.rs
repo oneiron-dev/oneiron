@@ -104,9 +104,9 @@ pub(super) fn decision_seal_standings_in_txn(
             .authority_heads
             .iter()
             .all(|head| fold.valid_entries.contains(head));
-        let standing = points
-            .standing(act, fold)
-            .ok_or(Error::InvariantViolation("identity topology seal standing digest"))?;
+        let standing = points.standing(act, fold).ok_or(Error::InvariantViolation(
+            "identity topology seal standing digest",
+        ))?;
         standings.insert((act.token, held, standing_tag(standing)));
     }
     Ok(standings)

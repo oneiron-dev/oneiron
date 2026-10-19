@@ -48,8 +48,7 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
                           the owner's home node pick";
 /// The pick would name more rows than one authority entry may: the log's
 /// encoding bound, never a possession test.
-const TOO_MANY_HEADS: &str =
-    "the authority log has more concurrent heads than one home node pick may name; nothing was \
+const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one home node pick may name; nothing was \
      written";
 /// The supplied `seen` is not the vault's current pick revision.
 const STALE: &str = "the home node pick changed since it was read";
