@@ -37,10 +37,9 @@ use oneiron::off_record::{OffRecordSession, OffRecordSessionRecord, OffRecordTal
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     OffRecordRoomExport as Export, OffRecordRoomExportTurn as ExportTurn,
-    OffRecordRoomNotice as Notice, OffRecordRoomRequest as Stretch,
-    OffRecordRoomSaved as Saved, OffRecordRoomStartRequest as Start,
-    OffRecordRoomSuggestion as Suggestion, OffRecordRoomView as Room,
-    OffRecordRoomWitnessRequest as Witness,
+    OffRecordRoomNotice as Notice, OffRecordRoomRequest as Stretch, OffRecordRoomSaved as Saved,
+    OffRecordRoomStartRequest as Start, OffRecordRoomSuggestion as Suggestion,
+    OffRecordRoomView as Room, OffRecordRoomWitnessRequest as Witness,
 };
 use oneiron::{EdgeActorClass, EntityId, ErrorKind, Vault};
 
@@ -103,7 +102,9 @@ async fn save_from_here(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Room> {
-    Ok(Json(room_save_from_here(&server, &auth, json(payload)?).await?))
+    Ok(Json(
+        room_save_from_here(&server, &auth, json(payload)?).await?,
+    ))
 }
 
 async fn export(
@@ -126,7 +127,9 @@ async fn suggest_save(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Room> {
-    Ok(Json(room_suggest_save(&server, &auth, json(payload)?).await?))
+    Ok(Json(
+        room_suggest_save(&server, &auth, json(payload)?).await?,
+    ))
 }
 
 async fn confirm_save(
@@ -134,7 +137,9 @@ async fn confirm_save(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Saved> {
-    Ok(Json(room_confirm_save(&server, &auth, json(payload)?).await?))
+    Ok(Json(
+        room_confirm_save(&server, &auth, json(payload)?).await?,
+    ))
 }
 
 async fn decline_save(
@@ -142,7 +147,9 @@ async fn decline_save(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<Stretch>, JsonRejection>,
 ) -> Reply<Room> {
-    Ok(Json(room_decline_save(&server, &auth, json(payload)?).await?))
+    Ok(Json(
+        room_decline_save(&server, &auth, json(payload)?).await?,
+    ))
 }
 
 fn room_view(record: OffRecordSessionRecord, session_ref: &str) -> Room {
@@ -446,7 +453,9 @@ fn suggesting_agent(auth: &CoreAuth) -> Result<EntityId, ApiError> {
     })?;
     match participant(auth)? {
         (actor, EdgeActorClass::Agent) => Ok(actor),
-        _ => Err(forbidden("only an agent suggests a save; a person saves or exports")),
+        _ => Err(forbidden(
+            "only an agent suggests a save; a person saves or exports",
+        )),
     }
 }
 

@@ -1,7 +1,7 @@
 //! Typed named Admin policy/powers and the one-hop scoped Delegate mint.
 use std::sync::Arc;
 
-use oneiron::memory::{MemoryError, MEMORY_CODE_FORBIDDEN};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use oneiron::task_verb::sdk::{
     self, FederationDelegateRequest, FederationMemberGrant, OrgAdminConfigureRequest,
     OrgAdminConfigured, OrgAdminPowers, OrgAdminPowersRequest,
@@ -19,10 +19,13 @@ pub(crate) async fn vault_org_admin_configure(
     input: OrgAdminConfigureRequest,
 ) -> Listed<OrgAdminConfigured> {
     as_owner_naming(
-        server, auth, "vault.org_admin.configure",
+        server,
+        auth,
+        "vault.org_admin.configure",
         move |server, owner| sdk::configure_org_admin_as_owner(server.vault(), owner, input),
         |_| Vec::new(),
-    ).await
+    )
+    .await
 }
 
 pub(crate) async fn vault_org_admin_powers(
@@ -40,17 +43,22 @@ pub(crate) async fn vault_org_admin_powers(
     }
     let caller = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
-        Err(_) => return refused(MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "organization powers require the credential's registered principal",
-            &["Present your own registered credential."],
-        )),
+        Err(_) => {
+            return refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "organization powers require the credential's registered principal",
+                &["Present your own registered credential."],
+            ));
+        }
     };
     credential_listing(server, auth, caller, VERB, move |_, auth, memory| {
         let mut powers = sdk::read_org_admin_powers(&memory, input)?;
-        powers.powers.retain(|power| auth.has_scope(CoreScope::OrgAdmin(*power)));
+        powers
+            .powers
+            .retain(|power| auth.has_scope(CoreScope::OrgAdmin(*power)));
         Ok(powers)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_members_delegate(
@@ -61,8 +69,11 @@ pub(crate) async fn vault_members_delegate(
     const VERB: &str = "vault.members.delegate";
     let parent = input.parent_grant;
     as_person_naming(
-        server, VERB, person(server, auth, VERB),
+        server,
+        VERB,
+        person(server, auth, VERB),
         move |server, holder| sdk::create_federation_delegate_as(server.vault(), &holder, input),
         move |grant| Some(vec![parent, grant.grant_ref]),
-    ).await
+    )
+    .await
 }
