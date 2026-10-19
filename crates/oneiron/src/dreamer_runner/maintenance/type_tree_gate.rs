@@ -51,7 +51,7 @@ pub(super) struct ReserveWrite {
 }
 
 /// The leader attempt of a led team, from its `team:<hex>:<key>` ref.
-fn team_leader(team_ref: &str) -> Option<AttemptId> {
+pub(super) fn team_leader(team_ref: &str) -> Option<AttemptId> {
     let (hex, _) = team_ref.strip_prefix("team:")?.split_once(':')?;
     let id = EntityId::from_hex(hex).ok()?;
     AttemptId::from_bytes(id.as_bytes()).ok()
@@ -135,7 +135,7 @@ pub(super) fn record_team_shape_outcomes(
 /// The lent judge, with each version's task-type tree read beside its
 /// replay: the judge's own replay reads attempts, never package files, so
 /// without this both versions of a tree revision would read alike.
-struct TreeReplayScorer<'a> {
+pub(super) struct TreeReplayScorer<'a> {
     inner: &'a dyn HeldOutReplayNotes,
     moves: &'static str,
     /// (version, the tree that version places with): the incumbent's and
@@ -146,20 +146,21 @@ struct TreeReplayScorer<'a> {
 }
 
 impl<'a> TreeReplayScorer<'a> {
-    /// The scorer for `proposal`, a revision of `predecessor`. A proposal
-    /// package with no tree file places with the seed tree, as the tree
-    /// loader reads it once in force.
-    fn new(
+    /// The scorer for `proposal`, a revision of `predecessor`, which places
+    /// with `in_force`: the tree the runs' own scope reads while
+    /// `predecessor` is in force. A proposal package with no tree file
+    /// places with the seed tree, as the tree loader reads it once in force.
+    pub(super) fn new(
         vault: &Vault,
         inner: &'a dyn HeldOutReplayNotes,
         proposal: &EntityId,
         predecessor: &EntityId,
+        in_force: TaskTypeTree,
         receipts: &[TeamReceipt],
     ) -> Result<Self> {
         let incumbent = vault
             .get_skill_record(predecessor)?
             .ok_or(Error::EntityNotFound)?;
-        let in_force = load_team_type_tree(vault, None)?;
         let (record, tree) = {
             let txn = vault.store.env.read_txn()?;
             let record = vault.read_skill_record_in_txn(&txn, proposal)?;
@@ -390,7 +391,8 @@ pub(super) fn drive(
     let Some((proposal, predecessor)) = open_revision(vault)? else {
         return Ok(None);
     };
-    let scorer = TreeReplayScorer::new(vault, scorer, &proposal, &predecessor, receipts)?;
+    let in_force = load_team_type_tree(vault, None)?;
+    let scorer = TreeReplayScorer::new(vault, scorer, &proposal, &predecessor, in_force, receipts)?;
     let verdict = match score_gate_skill_edit_in_cycle(
         vault,
         &proposal,

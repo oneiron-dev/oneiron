@@ -682,6 +682,65 @@ impl Vault {
         }
         Ok(ProjectWriteOutcome::Installed(frontier))
     }
+
+    /// Lists `fork` among the visible `project`'s skill forks in the caller's
+    /// write, once: a fork already listed stays where it is. The project's
+    /// authority and proof are untouched, so the write is a content edit.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EntityNotFound`] for a project out of view; the project
+    /// write door's refusals; storage errors.
+    pub(crate) fn append_project_skill_fork_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        project: EntityId,
+        fork: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let mut record = self
+            .visible_project_in_txn(txn, project)?
+            .ok_or(Error::EntityNotFound)?;
+        if record
+            .skill_forks
+            .iter()
+            .any(|listed| EntityId::from_hex(listed).ok() == Some(fork))
+        {
+            return Ok(());
+        }
+        record.skill_forks.push(fork.to_hex());
+        self.write_project_in_txn(txn, project, &record, now)?;
+        Ok(())
+    }
+
+    /// Takes `fork` off the visible `project`'s skill forks in the caller's
+    /// write, leaving every other entry, a later one too, as it stands.
+    /// False, with nothing written, when the project is out of view or no
+    /// longer lists the fork.
+    ///
+    /// # Errors
+    ///
+    /// The project write door's refusals; storage errors.
+    pub(crate) fn detach_project_skill_fork_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        project: EntityId,
+        fork: EntityId,
+        now: u64,
+    ) -> Result<bool> {
+        let Some(mut record) = self.visible_project_in_txn(txn, project)? else {
+            return Ok(false);
+        };
+        let listed = record.skill_forks.len();
+        record
+            .skill_forks
+            .retain(|entry| EntityId::from_hex(entry).ok() != Some(fork));
+        if record.skill_forks.len() == listed {
+            return Ok(false);
+        }
+        self.write_project_in_txn(txn, project, &record, now)?;
+        Ok(true)
+    }
     /// Attach an asset to a project collection with a low-weight `belongs_to`
     /// edge. CLAIMs never link to hubs: their sideways scope is the project id.
     pub fn put_project_member(&self, asset: EntityId, project: EntityId) -> Result<()> {

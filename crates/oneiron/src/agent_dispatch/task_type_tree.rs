@@ -263,7 +263,12 @@ fn project_fork_in_txn(
     Ok(None)
 }
 
-/// Whether `skill`'s fork chain reaches `root`.
+/// Whether `skill`'s ancestry reaches `root`: each skill's fork parent and
+/// each admitted revision it superseded (its outgoing `Supersedes` edges),
+/// walked with one visited set and no depth bound. A fork of an optimizer
+/// revision, which names no fork parent, reaches the root through the
+/// revisions that revision superseded. A revisited skill ends only its own
+/// branch.
 fn in_lineage_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -271,17 +276,29 @@ fn in_lineage_in_txn(
     root: EntityId,
 ) -> Result<bool> {
     let mut seen = BTreeSet::new();
-    let mut cursor = Some(skill);
-    while let Some(id) = cursor {
+    let mut pending = vec![skill];
+    while let Some(id) = pending.pop() {
         if id == root {
             return Ok(true);
         }
         if !seen.insert(id) {
-            return Ok(false);
+            continue;
         }
-        cursor = vault
-            .get_skill_record_in_txn(txn, &id)?
-            .and_then(|record| record.forked_from);
+        let Some(record) = vault.get_skill_record_in_txn(txn, &id)? else {
+            continue;
+        };
+        if let Some(parent) = record.forked_from {
+            pending.push(parent);
+        }
+        for peer in crate::ports::EdgeStoreRead::port_edge_peers(
+            &vault.store,
+            txn,
+            &id,
+            crate::ports::EdgeDirection::Out,
+            EdgeKind::Supersedes,
+        )? {
+            pending.push(peer?);
+        }
     }
     Ok(false)
 }
