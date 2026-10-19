@@ -21,12 +21,13 @@ pub struct TakeoverRecord {
     pub inputs: u64,
 }
 
-/// The desktop's verbs moved to another window (CUA-001): the window they
-/// read is gone (a dialog closed, an app quit), and the session gave way to
-/// the window in front. The next answer carries it once, as `switched`;
-/// moves before that answer join into one, from the window the agent was
-/// last told of. The observations held were of the window before, so the
-/// next observation is whole.
+/// The desktop's verbs moved to another window (CUA-001): an act opened a
+/// window in front (a dialog, a document), or the window they read is gone
+/// (a dialog closed, an app quit) and the session gave way to the window in
+/// front. The next answer carries it once, as `switched`; moves before that
+/// answer join into one, from the window the agent was last told of, with
+/// the last move's `why`. The observations held were of the window before,
+/// so the next observation is whole.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WindowSwitch {
     /// The window the desktop's verbs read now, as `windows` names it.
@@ -34,8 +35,20 @@ pub struct WindowSwitch {
     /// Its app and title when the switch found it.
     pub app: String,
     pub title: String,
-    /// The window they read before, gone since.
+    /// The window they read before.
     pub from: String,
+    pub why: WindowSwitchCause,
+}
+
+/// Why the desktop's verbs moved to another window, as a browser tab's
+/// move says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowSwitchCause {
+    /// An act opened a window in front.
+    Opened,
+    /// The window they read is gone.
+    Closed,
 }
 
 /// A browser verb's answer as the run's door gives it: the verb's own
