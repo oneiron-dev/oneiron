@@ -599,6 +599,32 @@ pub(crate) fn register_custody_in_txn(
     Ok(())
 }
 
+/// The generation a registration under `name` starts at here, before it is
+/// written: zero, or one above the revoked record that held the name, its
+/// high-water (the reclaim rule [`register_custody_in_txn`] stamps). A live
+/// name refuses: a door that hands the registration to another holder
+/// states this generation in the request.
+pub(crate) fn register_generation_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    name: &str,
+) -> Result<u32> {
+    let Some(existing) = NAME_INDEX.get(store, txn, &name.to_owned())? else {
+        return Ok(0);
+    };
+    let Some(held) = read_secret_custody_admission_in_txn(store, txn, &existing)? else {
+        return Ok(0);
+    };
+    if held.status != SecretCustodyStatus::Revoked {
+        return Err(Error::Secret(SecretError::SecretNameInUse {
+            name: name.to_owned(),
+        }));
+    }
+    held.rotation_generation
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("secret rotation generation"))
+}
+
 /// Points the name index at record `id`, which a custody transition writes
 /// (OF-422), unless the name belongs to another record here that is not
 /// revoked, or to a revoked one at `generation` or later (a reclaimed name's

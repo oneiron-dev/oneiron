@@ -284,9 +284,9 @@ impl Once {
 /// a slip mint or consume, a critical-write confirm, a fresh federation
 /// confirm, a world settings edit (it judges only its own world's edits, FIX
 /// 4535), a grant travel choice (only its own grant's choices), a checkpoint
-/// policy choice (only the vault's choices), an owner work request or result
-/// (each judges only its own work). A resumed fold and a fold past an
-/// adopted checkpoint take only these.
+/// policy choice or a home pick (each only the vault's choices of its kind),
+/// an owner work request or result (each judges only its own work). A
+/// resumed fold and a fold past an adopted checkpoint take only these.
 pub(super) fn admits_past(
     merged: &FoldState,
     entry: &AuthorityLogEntry,
@@ -317,6 +317,7 @@ pub(super) fn admits_past(
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::GrantTravelSet(_)
         | AuthorityOp::CheckpointPolicySet(_)
+        | AuthorityOp::HomeNodePick(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_) => true,
         AuthorityOp::FederationConfirm(action) => {

@@ -9,10 +9,13 @@ mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 mount -t tmpfs -o mode=0755 run /run
 mkdir -p /run/oneiron /vault
-# The voice loop's socket directory: [models.voice].socket lies in it, and it
-# must be owner-only (FIX 2391).
+# The voice loop's socket directory: --voice-socket lies in it, and it must be
+# owner-only (FIX 2391).
 mkdir -p -m 0700 /run/oneiron/voice
 mount -t ext4 -o noatime /dev/vdb /vault
+# This install's key slots: on the vault's own disk, so they outlive the VM,
+# and outside its data directory, /config and /run.
+mkdir -p -m 0700 /vault/keys
 
 vault=""
 owner=""
@@ -45,14 +48,13 @@ fi
 
 # The vault's managed settings, on the read-only third drive (/dev/vdc) when
 # the VM profile names a config_disk: each file present becomes its flag.
+# settings.toml is the owner's settings in the server's config schema; the
+# files its paths name sit beside it or under /vault/data.
 if [ "$config" = "1" ]; then
   mkdir -p /config
   mount -t ext4 -o ro,noatime /dev/vdc /config
-  if [ -f /config/models.toml ]; then
-    set -- "$@" --models-file /config/models.toml
-  fi
-  if [ -f /config/embedder.toml ]; then
-    set -- "$@" --embedder-file /config/embedder.toml
+  if [ -f /config/settings.toml ]; then
+    set -- "$@" --settings-file /config/settings.toml
   fi
   for pair in key:--seal-key-file chain:--seal-chain-file trust:--seal-trust-file; do
     if [ -f "/config/seal/${pair%%:*}.pem" ]; then
@@ -77,6 +79,8 @@ fi
   --vault-name "$vault" \
   --derivation-owner "$owner" \
   --data-dir /vault/data \
+  --keystore-dir /vault/keys \
+  --voice-socket /run/oneiron/voice/voice.sock \
   --http-socket /run/oneiron/http.sock \
   --ctl-socket /run/oneiron/ctl.sock \
   --hypnos-socket /run/oneiron/hypnos.sock "$@" || true

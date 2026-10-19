@@ -100,6 +100,10 @@ pub(crate) struct FacadeCall<'a> {
     /// Where the owner's say-so on this call reached this install, for an
     /// owner act's audit record only: no admission rule reads it.
     surface: ActSurface,
+    /// A narrower caller's own holder proof, as its ingress carried it, for
+    /// the home an opened device asks (FIX 2905, FIX 2907). `None` for an
+    /// owner-grade caller, and for an ingress that carries no per-call proof.
+    forwarded: Option<oneiron::authority::ForwardedCallerProof>,
 }
 
 impl<'a> FacadeCall<'a> {
@@ -125,6 +129,9 @@ impl<'a> FacadeCall<'a> {
             creator_run: None,
             subscription: None,
             surface: crate::api::owner_routes::machine_routes::act_surface(server, auth, headers),
+            forwarded: (!auth.is_owner_grade())
+                .then(|| auth.forwarded_caller_proof(headers))
+                .flatten(),
         }
     }
 
@@ -134,7 +141,9 @@ impl<'a> FacadeCall<'a> {
     /// each read as the HTTP header of the same name is: a malformed one is
     /// refused where the row reads it. The session binds this call only. A
     /// socket's call carries no headers, so its owner act records the
-    /// header-less surface ([`super::owner_binding::act_surface`]).
+    /// header-less surface ([`super::owner_binding::act_surface`]); it
+    /// carries no holder proof of its own either, so a narrower one asks no
+    /// home.
     pub(crate) fn bound(
         auth: &'a CoreAuth,
         room_turn: Option<&str>,
@@ -153,6 +162,7 @@ impl<'a> FacadeCall<'a> {
             creator_run: None,
             subscription: None,
             surface: super::owner_binding::act_surface(auth),
+            forwarded: None,
         }
     }
 
@@ -180,6 +190,7 @@ impl<'a> FacadeCall<'a> {
             creator_run: None,
             subscription: None,
             surface: super::owner_binding::act_surface(auth),
+            forwarded: None,
         }
     }
 
@@ -228,6 +239,17 @@ impl<'a> FacadeCall<'a> {
         self.surface
     }
 
+    /// Who this call asks an opened device's home for (FIX 2905): an
+    /// owner-grade credential is the device's owner; a narrower one is
+    /// judged at the home on the holder proof its ingress carried, and with
+    /// none asks nothing.
+    pub(super) fn home_caller(&self) -> oneiron::memory::HomeRecallCaller {
+        oneiron::memory::HomeRecallCaller::admitted(
+            self.auth.is_owner_grade(),
+            self.forwarded.clone(),
+        )
+    }
+
     /// This call, its live lens card held for `creator_run` and
     /// `subscription`, as the host that admitted the call names them. Only
     /// a host binds them; a call missing either holds its card unowned. The
@@ -272,6 +294,7 @@ impl<'a> FacadeCall<'a> {
             creator_run: self.creator_run.clone(),
             subscription: self.subscription.clone(),
             surface: self.surface,
+            forwarded: self.forwarded.clone(),
         }
     }
 }
@@ -289,6 +312,7 @@ pub(super) struct OwnedFacadeCall {
     creator_run: Option<String>,
     subscription: Option<String>,
     surface: ActSurface,
+    forwarded: Option<oneiron::authority::ForwardedCallerProof>,
 }
 
 impl OwnedFacadeCall {
@@ -304,6 +328,7 @@ impl OwnedFacadeCall {
             creator_run: self.creator_run.clone(),
             subscription: self.subscription.clone(),
             surface: self.surface,
+            forwarded: self.forwarded.clone(),
         }
     }
 }

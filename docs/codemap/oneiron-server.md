@@ -161,7 +161,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/hold_worker.rs` | src | s | 2 crate-vis | — | The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks each new… |
 | `src/api/esign/presentation.rs` | src | s | 8 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
-| `src/api/facade.rs` | src | XL | 34 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
+| `src/api/facade.rs` | src | XL | 35 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 15 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
 | `src/api/facade/action_routes/execution.rs` | src | s | 2 crate-vis | — | How one action runs (OF-181): the principal its call reads as, and the blocking thread it runs on with its… |
 | `src/api/facade/admission_doors.rs` | src | s | 2 crate-vis | — | Admission observations wrap the original generated typed dispatch, not a generic submit endpoint |
@@ -177,7 +177,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/browser_doors.rs` | src | m | 20 crate-vis | — | Typed browser calls on the caller's own attached run and existing guest door |
 | `src/api/facade/budget_doors.rs` | src | s | 13 crate-vis | — | Credential-backed budget controls, beside the owner's held-run routes |
 | `src/api/facade/calendar_doors.rs` | src | m | 16 crate-vis | — | Owner-authorized calendar file imports through the credential's own handle |
-| `src/api/facade/call_context.rs` | src | m | 22 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
+| `src/api/facade/call_context.rs` | src | m | 23 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
 | `src/api/facade/campaign_doors.rs` | src | s | 1 crate-vis | — | The stage-evidence host door binds an owner attestation to the request's verified owner proof |
 | `src/api/facade/campaign_split_doors.rs` | src | s | 1 crate-vis | — | The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores… |
 | `src/api/facade/channel_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed channel setup verbs |
@@ -196,9 +196,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/connector_call_doors.rs` | src | s | 3 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/connector_pack_doors.rs` | src | m | 7 crate-vis | — | Source-bound connector packs over the existing owner, probe and slate doors |
 | `src/api/facade/consent_doors.rs` | src | s | 9 crate-vis | — | Consent lifecycle host doors, on the same owner proof as Gate policy |
-| `src/api/facade/consolidation_doors.rs` | src | s | 4 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
+| `src/api/facade/consolidation_doors.rs` | src | s | 7 crate-vis | — | Owner-bound generated-claim promotion, vetting and evidence reads |
 | `src/api/facade/content_policy_doors.rs` | src | s | 5 crate-vis | — | Content-policy doors beside the Gate policy doors, on each caller's own credential |
-| `src/api/facade/coordination_doors.rs` | src | m | 9 crate-vis | — | The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open… |
+| `src/api/facade/coordination_doors.rs` | src | m | 10 crate-vis | — | The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open… |
 | `src/api/facade/core_write_doors.rs` | src | s | 6 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
 | `src/api/facade/coreference_doors.rs` | src | s | 4 crate-vis | — | Owner coreference doors: every transport reaches the engine's typed operations |
 | `src/api/facade/courtesy_delete_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`… |
@@ -210,6 +210,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/decision_band_doors.rs` | src | s | 3 crate-vis | — | The owner's live decision-band policy through the typed verb table |
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/deck_creation_doors.rs` | src | s | 2 crate-vis | — | The person's outline Keep and Decline use the same proof as other owner doors |
+| `src/api/facade/disclosure_doors.rs` | src | s | 5 crate-vis | — | Owner registry and reveal-settlement doors, shared by HTTP and MCP |
 | `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
 | `src/api/facade/eval_doors.rs` | src | s | 12 crate-vis | — | Typed eval doors under the caller's own verified owner credential |
@@ -222,14 +223,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/goal_optimize_doors.rs` | src | s | 12 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
-| `src/api/facade/graph_ask_doors.rs` | src | m | 11 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
+| `src/api/facade/graph_ask_doors.rs` | src | m | 12 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
-| `src/api/facade/host_doors.rs` | src | XL | 159 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 167 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
+| `src/api/facade/identity_doors.rs` | src | s | 4 crate-vis | — | PERSON identity setup, look-before-mint and saved-mention provenance |
 | `src/api/facade/identity_topology_doors.rs` | src | s | 10 crate-vis | — | Typed identity-topology host doors under the caller's own owner proof |
 | `src/api/facade/learning_doors.rs` | src | s | 2 crate-vis | — | Read-only measured-learning doors under the vault owner's existing proof |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
@@ -238,14 +240,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/live_run_doors.rs` | src | s | 7 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/live_voice_doors.rs` | src | s | 8 crate-vis | — | Typed public live media doors |
 | `src/api/facade/merge_queue_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
+| `src/api/facade/mesh_doors.rs` | src | s | 5 crate-vis | — | Owner-bound mesh setup and a real admission-only dial |
 | `src/api/facade/model_catalog_doors.rs` | src | m | 13 crate-vis | — | The model catalog is evidence |
 | `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
+| `src/api/facade/model_stream_doors.rs` | src | m | 7 crate-vis | — | Owner-proof shared model streams: subscriptions can attach before one admitted producer opens |
 | `src/api/facade/note_doors.rs` | src | s | 5 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
 | `src/api/facade/off_record_doors.rs` | src | m | 9 crate-vis | — | The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06) |
 | `src/api/facade/off_record_room_doors.rs` | src | s | 10 crate-vis | — | Typed room off-record verbs over the existing participant handlers |
 | `src/api/facade/origin_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/owner_binding.rs` | src | s | 3 crate-vis | — | WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy… |
 | `src/api/facade/persona_doors.rs` | src | s | 4 crate-vis | — | Profile request answers and mode-A copy edits under the owner's own proof |
+| `src/api/facade/plugin_section_doors.rs` | src | s | 7 crate-vis | — | The host doors of the plugin Context Board sections (DOOR-112)… |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/project_card_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's project-card tap (OF-501): `vault.projects.confirm` |
 | `src/api/facade/proxy_doors.rs` | src | s | 2 crate-vis | — | Owner-only OpenAI proxy admission and selective remember-grant withdrawal |
@@ -258,6 +263,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/run_read_doors.rs` | src | s | 2 crate-vis | — | Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints… |
 | `src/api/facade/run_review_doors.rs` | src | s | 4 crate-vis | — | The owner's cross-kind review and run compensation, on the caller's own credential handle |
+| `src/api/facade/saved_query_doors.rs` | src | s | 2 crate-vis | — | `self.saved_query.evaluate`, under the caller's own credential |
 | `src/api/facade/seal_doors.rs` | src | s | 6 crate-vis | — | Owner-authorized seal lifecycle, shared by generated HTTP, SDK and MCP calls |
 | `src/api/facade/secret_grant_doors.rs` | src | s | 4 crate-vis | — | The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted… |
 | `src/api/facade/secret_lift_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067) |
@@ -271,6 +277,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/sieve_doors.rs` | src | s | 9 crate-vis | — | The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and… |
 | `src/api/facade/sieve_observation_doors.rs` | src | s | 5 crate-vis | — | The owner's evidence replay and recorded shared-scheduler observations |
 | `src/api/facade/skill_attribution_doors.rs` | src | s | 7 crate-vis | — | Proposal-delta settlement and skill attribution evidence, owner-only |
+| `src/api/facade/skill_default_doors.rs` | src | s | 4 crate-vis | — | The owner's first-hub and bootstrap reads and explicit defaults re-import |
 | `src/api/facade/skill_doors.rs` | src | m | 12 crate-vis | — | Selected-message conversion and the owner's skill library, through the same facade and MCP doors |
 | `src/api/facade/skill_execution_doors.rs` | src | m | 4 crate-vis | — | Skill calls on the caller's attached run and owner-anchored pack outcomes |
 | `src/api/facade/slim_doors.rs` | src | s | 5 crate-vis | — | Owner-bound lifecycle doors; each transport reaches the same engine transaction |
@@ -321,7 +328,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 14 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
 | `src/api/mcp_gateway/device_release.rs` | src | s | 9 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
-| `src/api/mcp_gateway/envelope.rs` | src | m | 16 crate-vis | — | JSON-RPC envelope types and request dispatch |
+| `src/api/mcp_gateway/envelope.rs` | src | m | 17 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/exec_board_verbs.rs` | src | L | 10 crate-vis | — | Execute-code and board-verb executors |
 | `src/api/mcp_gateway/memory_response.rs` | src | m | 1 crate-vis | — | Tool-first projections of the engine-owned typed read table |
 | `src/api/mcp_gateway/mod.rs` | src | s | 11 crate-vis | — | — |
@@ -392,6 +399,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/proactivity_routes.rs` | src | L | 1 crate-vis | — | `/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read… |
 | `src/api/owner_routes/proactivity_routes/training_runs.rs` | src | s | 3 crate-vis | — | `/v1/owner/coach/training-offers/{prepare,authorize,training}` (OF-577): the owner's setup of a Train… |
 | `src/api/owner_routes/recovery_kit_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173) |
+| `src/api/owner_routes/secret_control_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/secrets/*`: the owner's custody doors over HTTP (OF-422, WILL L04 row 04) |
 | `src/api/owner_routes/secret_found_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/found*`: the owner's side of the found-key notice (OF-560) |
 | `src/api/owner_routes/secret_lift_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/lift*`: the owner's side of the historical lift sweep's proposals (OF-067) |
 | `src/api/owner_routes/secret_reveal_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/secrets/reveal*`: the owner's side of reveal by handle (OF-560; ARCH-0069 #reveal-check) |
@@ -405,7 +413,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/weave_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/weave`: the owner's doors to the weave lens (OF-499) |
 | `src/api/owner_routes/widen_proposal_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/widen-proposals`: the owner lists the context-widen proposals agents raised, and approves or… |
 | `src/api/owner_routes/wire_health_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/wire-health`: the health check past a threshold (OF-520) |
-| `src/api/owner_routes/world_privacy_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/worlds/privacy`: a holder answers the world-privacy requests agents raised (FIX 4480) |
+| `src/api/owner_routes/world_privacy_routes.rs` | src | m | 1 crate-vis | — | `/v1/owner/worlds/privacy`: a holder answers the world-privacy requests agents raised (FIX 4480) |
 | `src/api/packs/defaults.rs` | src | s | 1 crate-vis | — | Explicit default restores and on-demand imports from the pinned library |
 | `src/api/packs/mod.rs` | src | s | 1 crate-vis | — | Served pack operations, including explicit default skill imports |
 | `src/api/pairing.rs` | src | m | 14 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
@@ -518,7 +526,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/cli/graph_fs_args.rs` | src | s | 1 enum · 1 crate-vis | GraphFsCommand | Named CLI bindings for the typed file-face rows, using the same paired credential and transport as `oneiron… |
 | `src/cli/hook_args.rs` | src | s | 5 struct · 3 enum · 1 fn | HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost, HookRecallArgs | `oneiron hook`: the flags of the Python example it replaces (`oneiron_hook.py`), with the same defaults and… |
 | `src/cli/learning_setting_args.rs` | src | s | 3 struct · 2 enum | LearningSettingClearArgs, LearningSettingListArgs, LearningSettingModeArg, LearningSettingPutArgs, LearningSettingsCommand | `oneiron learning-settings`: the owner's learned-setting rows on a stopped vault… |
-| `src/cli/owner_args.rs` | src | L | 44 struct · 14 enum | BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs, EmbeddingSpaceMoveArgs +50 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
+| `src/cli/owner_args.rs` | src | L | 45 struct · 14 enum | BackupArgs, DoctorArgs, EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs, EmbeddingSpaceDeclareArgs, EmbeddingSpaceMoveArgs +51 | Flags for the owner's own commands: doctor, backup, maintain, restore, window recovery, export, the secret… |
 | `src/cli/recovery_kit_args.rs` | src | s | 5 struct · 1 enum | KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs, RecoveryKitRestoreArgs, RecoveryKitStatusArgs | Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173) |
 | `src/cli/wake_args.rs` | src | s | 1 struct · 1 enum | WakeArgs, WakeCommand | Host-side wake inbox commands |
 | `src/cli/widen_proposal_args.rs` | src | s | 2 struct · 2 enum | WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand | `oneiron widen-proposals`: the context-widen proposals agents raised, on a stopped vault… |
@@ -579,7 +587,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/limits_tests.rs` | test | s | — | — | Resolution rows for the `[limits]` section |
 | `src/config/line.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LineConfig | `[line]`: the plan of the LINE Official Account the built-in LINE pack serves (OF-519) |
 | `src/config/lookup.rs` | src | s | 11 crate-vis | — | Leaf config helpers: env lookups, value parsing, and secret redaction |
-| `src/config/merge.rs` | src | L | 1 struct · 6 fn · 3 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
+| `src/config/merge.rs` | src | L | 1 struct · 6 fn · 5 crate-vis | EnvConfig | Layered merge: file, environment, and argv values into `ServeConfig` |
 | `src/config/mod.rs` | src | s | 14 mod · 24 re-export · 1 crate-vis | — | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `src/config/models/compaction.rs` | src | s | 1 struct · 2 crate-vis | CompactionSettings | `[models.code_mode.compaction]`: each code-mode run's window compacts by itself (agent-runtime-v1 §d7) |
 | `src/config/models/decision_read.rs` | src | m | 4 struct · 1 enum · 8 fn · 2 crate-vis | DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal | `[models.decision_read]`: the house model's decision read on the `local_reasoner` rung, and the recipe it… |
@@ -718,7 +726,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/logging/tests.rs` | test | s | 4 crate-vis | — | — |
 | `src/machine.rs` | src | s | 12 crate-vis | — | What this machine has: cores, memory, descriptors, free disk |
 | `src/main.rs` | src | s | — | — | — |
-| `src/managed/args.rs` | src | L | 1 struct · 1 enum · 5 fn · 1 const · 2 crate-vis | ManagedArgs, ManagedError | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
+| `src/managed/args.rs` | src | L | 1 struct · 2 enum · 3 fn · 1 const · 2 crate-vis | ManagedArgs, ManagedError, SettingsRefusal | Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals |
 | `src/managed/ctl_shed_tests.rs` | test | s | — | — | — |
 | `src/managed/host.rs` | src | s | 6 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
 | `src/managed/isolation.rs` | src | s | 5 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
@@ -732,6 +740,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/preview.rs` | src | m | 2 struct · 2 trait · 9 fn · 2 type | LocalPreviewHost, PreviewIo, PreviewLease, PreviewProcess | Native forwarding for a manifest-declared private session port |
 | `src/managed/preview/http.rs` | src | m | 1 crate-vis | — | HTTP and WebSocket forwarding on a preview-only origin |
 | `src/managed/relay.rs` | src | m | 1 struct · 1 fn · 1 const | RelayConfig | A relay room has no engine, vault key, Loro document or inference worker |
+| `src/managed/settings.rs` | src | m | 1 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
 | `src/managed/state_serve.rs` | src | L | 3 struct · 20 fn · 1 type · 1 const · 5 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 3 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
@@ -841,7 +850,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/recovery_kit.rs` | src | s | 5 crate-vis | — | The world kit's public side, shared by `oneiron recovery-kit` and `GET /v1/owner/recovery-kit` (OF-173): the… |
 | `src/owner/runs.rs` | src | m | 11 crate-vis | — | Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act… |
 | `src/owner/schedule.rs` | src | m | 7 crate-vis | — | Scheduled backups for a running `serve` |
-| `src/owner/secrets.rs` | src | m | 16 crate-vis | — | The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6) |
+| `src/owner/secrets.rs` | src | m | 20 crate-vis | — | The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6) |
 | `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/owner/vault_key.rs` | src | m | 18 crate-vis | — | The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`… |
 | `src/projection.rs` | src | m | 1 struct · 1 enum · 7 fn · 7 crate-vis | InvalidView, View | — |
@@ -859,7 +868,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/seat_login.rs` | src | L | 12 struct · 10 fn | OfficialCliSeatExecutor, OfficialRunnerSeatSettings, OfficialSeatDreamerExecutor, RunnerPolicySeatRow, RunnerPolicySurface, RunnerProviderRow, RunnerSeatDreamerExecutor, RunnerSeatPolicySettings +4 | Host surface for official subscription seats (OF-375) |
 | `src/runtime/secret_destinations.rs` | src | m | 4 struct · 5 fn · 1 const | RunSecretDestinations, SecretDestination, SecretDestinations, ServedSecretDelivery | T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the… |
 | `src/runtime/usage.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | VaultUsage | Trusted-host attribution of served run settlements to one vault |
-| `src/saved_query_sweep.rs` | src | m | 1 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
+| `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 6 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
 | `src/server/board_publisher.rs` | src | s | 4 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
 | `src/server/browser_seats.rs` | src | s | 2 crate-vis | — | The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do… |
@@ -890,7 +899,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/presence.rs` | src | s | 6 crate-vis | — | The presence hub's charge on the server's retained-memory line (rule 5, census row 19) |
 | `src/server/read_shape.rs` | src | s | 1 struct · 1 fn · 1 const · 6 crate-vis | RetrievalQueryCheck | One retrieval request's shape (F21(a)): its query against `[limits].retrieval_query_bytes`, and the OF-520… |
 | `src/server/reader_runner.rs` | src | L | 8 crate-vis | — | The reader runner (ARCH-0079 #reader-forks): runs the reader children a code run's `self.spawn` queues, each… |
-| `src/server/recall.rs` | src | m | 5 crate-vis | — | The recall verb as every server transport runs it |
+| `src/server/recall.rs` | src | m | 6 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_hyde.rs` | src | m | 9 crate-vis | — | A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction |
 | `src/server/recall_rerank.rs` | src | s | 6 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
 | `src/server/resident_pump.rs` | src | L | 5 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |
@@ -898,7 +907,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/run_host_door.rs` | src | m | 4 crate-vis | — | A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own… |
 | `src/server/slip_transport_tests.rs` | test | s | — | — | Slip-only transport admission with a historical receipt-key registry row |
 | `src/server/space_move.rs` | src | m | 5 crate-vis | — | The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`… |
-| `src/server/tagging.rs` | src | s | 2 crate-vis | — | The tagging worker: the one thing that drives the engine's tagging reconciler |
+| `src/server/tagging.rs` | src | s | 3 crate-vis | — | The tagging worker: the one thing that drives the engine's tagging reconciler |
 | `src/server/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/server/wave_door.rs` | src | s | 2 crate-vis | — | The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner… |
 | `src/server/web_fetch.rs` | src | s | 1 fn · 1 crate-vis | — | The host owns renderer configuration; acquisition itself stays in the engine |

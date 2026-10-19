@@ -111,6 +111,7 @@ pub struct SyncServer {
     pub(crate) artifact_previews: super::ArtifactPreviews,
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
+    pub(crate) model_streams: crate::api::ModelStreams,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -182,6 +183,9 @@ pub struct SyncServer {
     /// ([`crate::commands::hook_sandbox`]); `vault.hooks.replay` replays on
     /// the same one. Empty until then, or when the sandbox did not load.
     pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
+    /// The explicitly enabled mesh endpoint, shared by public admission dials.
+    #[cfg(feature = "mesh")]
+    pub(crate) mesh_transport: std::sync::OnceLock<Arc<oneiron_mesh_transport::iroh_transport::IrohTransport>>,
     /// The checked built-in channels this host serves (OF-519), kept by
     /// `builtin_host::spawn` and read by their provider webhooks.
     pub(crate) builtin_handles: Arc<crate::builtin_host::BuiltinHandles>,
@@ -424,6 +428,7 @@ impl SyncServer {
             artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
             asr_sessions: Default::default(),
+            model_streams: Default::default(),
             lens_frames,
             retained,
             presence,
@@ -476,6 +481,8 @@ impl SyncServer {
             decision_reads,
             decisions,
             hook_runtime: std::sync::OnceLock::new(),
+            #[cfg(feature = "mesh")]
+            mesh_transport: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
             #[cfg(unix)]
             organs: Arc::new(oneiron_organ_host::OrganHost::new(
