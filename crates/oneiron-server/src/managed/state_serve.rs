@@ -735,7 +735,8 @@ async fn freeze_gate(
         // caller stays itself (WILL-PLAN L14 row 01). Any other bearer
         // terminated at the supervisor; a legacy or dev claim never selects a
         // principal, so a request with neither a slip nor an attestation is
-        // served as it was.
+        // anonymous: only the public doors serve it, never as the host's root
+        // (FIX 2222).
         crate::auth::forward_caller_credentials(request.headers_mut());
     }
     if is_read_only(&request) {

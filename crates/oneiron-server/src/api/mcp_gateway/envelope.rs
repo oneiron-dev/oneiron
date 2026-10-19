@@ -693,7 +693,11 @@ pub(crate) async fn handle_mcp_request(
             });
             super::device_release::mcp_release_result(server, &actor, &[], false, result)
         }
-        "notifications/initialized" => Ok(json!({})),
+        // Actor-free, but a caller is still REQUIRED, as for every method.
+        "notifications/initialized" => {
+            resolve_mcp_caller(mode, &request_id, headers, connection, locality, server).await?;
+            Ok(json!({}))
+        }
         "oneiron/wakes" => {
             let actor =
                 resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)

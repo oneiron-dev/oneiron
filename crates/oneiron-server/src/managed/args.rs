@@ -447,17 +447,21 @@ impl ManagedArgs {
     /// else on `ServeArgs` is refused before this runs, so nothing reaches
     /// here to be quietly dropped.
     ///
-    /// `auth_secret` stays `None` and unauthenticated requests are allowed:
-    /// bearer auth terminates at the supervisor, which owns the listening
-    /// socket inside an owner-only directory. Consulting
-    /// `ONEIRON_AUTH_SECRET` here would give the child a second, weaker
-    /// opinion about who may talk to it.
+    /// `auth_secret` stays `None`: bearer auth terminates at the supervisor,
+    /// which owns the listening socket inside an owner-only directory.
+    /// Consulting `ONEIRON_AUTH_SECRET` here would give the child a second,
+    /// weaker opinion about who may talk to it. Unauthenticated requests are
+    /// not allowed: a request the supervisor forwards is its caller's own
+    /// slip, the owner it attested, or anonymous, and an anonymous one never
+    /// takes the dev mode's owner credential at a door that reads headers
+    /// alone (FIX 2222, FIX 5255); the public doors serve it on their own
+    /// proofs.
     pub fn serve_config(&self, args: &ServeArgs) -> ServeConfig {
         let defaults = ServeConfig::default();
         let mut config = ServeConfig {
             vault_path: self.data_dir.clone(),
             auth_secret: None,
-            allow_unauthenticated: true,
+            allow_unauthenticated: false,
             // Browser origins are argv policy too, for the external shared UI.
             allowed_origins: args.allowed_origins.clone().unwrap_or_default(),
             // The host's public https origin and the URLs a kit dials, as
