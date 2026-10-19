@@ -14152,7 +14152,7 @@
      "path": "src/code_sandbox/proposal/body.rs",
      "purpose": "A proposed file's bytes, spooled to an anonymous host temp file as they arrive",
      "surface": {
-      "fn": 13,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -19705,7 +19705,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 46,
+      "crate-vis": 48,
       "enum": 1,
       "type": 1
      }
@@ -19740,7 +19740,7 @@
      "purpose": "Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents…",
      "surface": {
       "mod": 1,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -19821,6 +19821,22 @@
       "enum": 5,
       "fn": 13,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ByoaInputStager",
+      "StagedInputPin"
+     ],
+     "path": "src/dispatch_byoa/staged_input.rs",
+     "purpose": "A CLI run's job carried as a file in its checkout, never in argv: one argv entry has an OS limit (Linux…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -25983,8 +25999,8 @@
      "path": "src/feedback/bundle.rs",
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
-      "const": 15,
-      "crate-vis": 1,
+      "const": 13,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 21,
       "struct": 7
@@ -61843,7 +61859,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62902,7 +62918,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3859,
+   "source_files": 3860,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83555,7 +83571,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1,
-      "mod": 1,
+      "mod": 2,
       "re-export": 8
      }
     },
@@ -83635,6 +83651,18 @@
       "const": 1,
       "fn": 5,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkdirStager"
+     ],
+     "path": "src/runtime/staged_input.rs",
+     "purpose": "The host half of a BYOA run's staged job (`oneiron::dispatch_byoa`'s staged input): the job is written whole…",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -85261,7 +85289,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85347,7 +85375,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 827,
+   "source_files": 828,
    "test_files": 182
   },
   "oneiron-spawn": {
