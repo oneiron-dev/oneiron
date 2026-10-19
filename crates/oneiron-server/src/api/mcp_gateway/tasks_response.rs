@@ -7605,6 +7605,28 @@ async fn execute_agent_verb_row(
                         served.extend(listed);
                         output
                     }),
+                // A managed vault's attested owner carries no slip: the request's own owner proof, which the export revalidates in its snapshot, as the facade takes it (FIX 5202).
+                (None, None) if auth.managed_owner().is_some() => {
+                    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
+                        McpGatewayError::new(
+                            -32020,
+                            "forbidden",
+                            "full-vault export requires verified owner authority",
+                        )
+                    })?;
+                    server
+                        .vault
+                        .export_with_authenticated_owner_listing(
+                            &input,
+                            &owner,
+                            surface,
+                            actor.locality(),
+                        )
+                        .map(|(output, listed)| {
+                            served.extend(listed);
+                            output
+                        })
+                }
                 (None, None) => {
                     return Err(McpGatewayError::new(
                         -32020,

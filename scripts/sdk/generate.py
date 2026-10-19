@@ -763,6 +763,11 @@ def mcp_input_dispatch(row):
                  '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
                  '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),\n'
                  '    (None, Some(action)) => server.vault.export_with_host_action_listing(&input, &action, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output }),\n'
+                 '    // A managed vault\'s attested owner carries no slip: the request\'s own owner proof, which the export revalidates in its snapshot, as the facade takes it (FIX 5202).\n'
+                 '    (None, None) if auth.managed_owner().is_some() => {\n'
+                 '        let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority"))?;\n'
+                 '        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, actor.locality()).map(|(output, listed)| { served.extend(listed); output })\n'
+                 '    }\n'
                  '    (None, None) => return Err(McpGatewayError::new(-32020, "forbidden", "full-vault export requires verified owner authority")),\n'
                  '}.map_err(mcp_facade_error)?;\n')
     elif row.get('host_door'):
