@@ -118,6 +118,11 @@ pub enum Purpose {
     /// mints or retires, never a key. The owner binds the frame's header in
     /// `recipient`.
     CustodyLogFrame = 22,
+    /// One owner's compartment of a checkpoint's ordinary payload (KS-7), sealed under
+    /// that compartment's custody key. The owner binds the custody id (kind, item,
+    /// generation), the row locator and the chunk's position in `key_id`, so no
+    /// compartment opens as another owner's or at another place.
+    CheckpointPayload = 24,
 }
 
 impl Purpose {
@@ -145,6 +150,7 @@ impl Purpose {
             20 => Self::CustodyCompartment,
             21 => Self::CustodyCompartmentKey,
             22 => Self::CustodyLogFrame,
+            24 => Self::CheckpointPayload,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
