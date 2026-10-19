@@ -127,11 +127,6 @@ pub(crate) struct BodyMint {
 }
 
 impl BodyMint {
-    /// The binding this mint publishes under.
-    pub(crate) fn binding(&self) -> &CustodyBinding {
-        &self.binding
-    }
-
     /// A new body instance: a reserved one when this mint holds a reserve,
     /// else a fresh one, its key published and its Mint journaled and
     /// synced before this returns.

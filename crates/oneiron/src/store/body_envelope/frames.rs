@@ -665,8 +665,7 @@ impl<R: Read> SealingStream<R> {
         }
         if self.next < self.layout.chunks {
             let len = self.layout.chunk_len(self.next);
-            let mut chunk =
-                Zeroizing::new(vec![0u8; usize::try_from(len).map_err(|_| corrupt())?]);
+            let mut chunk = Zeroizing::new(vec![0u8; usize::try_from(len).map_err(|_| corrupt())?]);
             self.source.read_exact(&mut chunk).map_err(|_| corrupt())?;
             self.hasher.update(&chunk);
             let frame = seal_frame(

@@ -196,6 +196,8 @@ impl BodySpill {
                 (file, Some((key, dir)))
             }
         };
+        // A sealed spill reads back under its key, a temp's included.
+        let sealed_key = key.as_ref().map(|(key, _)| Arc::clone(key));
         let staged = match (key, self.instance) {
             (Some((key, dir)), None) if dir.scope == KeyScope::OffRecord => Some(StagedBodyKey {
                 digest: *digest,
@@ -211,7 +213,6 @@ impl BodySpill {
             }),
             _ => None,
         };
-        let sealed_key = staged.as_ref().and_then(|staged| staged.key.clone());
         Ok(SpilledBody {
             file,
             temp: self.temp,

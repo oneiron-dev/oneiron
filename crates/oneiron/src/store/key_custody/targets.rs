@@ -33,11 +33,11 @@ use crate::error::{Error, Result};
 use super::files::{open_dir, read_whole, replace_file, write_once};
 use super::identity::{CustodySubject, decode_native_path, encode_native_path, hex_decode};
 use super::log::{CustodyEpoch, CustodyPosition, Journal, LogEntry, frame_hash, open_frame};
+use super::platform;
 use super::protocol::{
     ACK_VERSION, AckOperation, AckRecord, CustodyBatch, EvidenceKind, PendingCode, TargetId,
     TargetKind, TargetPending, TargetScope, TargetSpec, hex,
 };
-use super::platform;
 use super::retirement::{RetireCause, RetirementIntent};
 
 const TARGETS: &str = "targets";

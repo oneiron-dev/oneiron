@@ -1410,7 +1410,7 @@ declare namespace Sdk {
   type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
   type RecordEraseSweepRequest = { receipt_ref: string };
-  type RecordEraseCustody = { state: string; pending: string[] };
+  type RecordEraseCustody = { state: string; pending: string[]; recall: string; note?: string | null };
   type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null; custody?: RecordEraseCustody | null };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };

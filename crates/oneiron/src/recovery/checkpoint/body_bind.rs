@@ -107,13 +107,13 @@ fn bind_in_txn(
             let held = BODY_KEYS
                 .get(store, txn, digest)?
                 .is_some_and(|row| !row.inline);
-            if !held
-                && store
-                    .body_dir()?
-                    .open_reader(digest, *len, None)?
-                    .is_some()
-            {
-                BODY_KEYS.put(store, txn, digest, &BodyKeyRow::vault(instance, *len, false))?;
+            if !held && store.body_dir()?.open_reader(digest, *len, None)?.is_some() {
+                BODY_KEYS.put(
+                    store,
+                    txn,
+                    digest,
+                    &BodyKeyRow::vault(instance, *len, false),
+                )?;
             }
         }
     }

@@ -119,8 +119,8 @@ impl FileAnchor {
     fn lock(&self, stem: &str) -> Result<File> {
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);
-        let lock =
-            platform::secure(&mut options).open(self.present_root()?.join(format!("{stem}.lock")))?;
+        let lock = platform::secure(&mut options)
+            .open(self.present_root()?.join(format!("{stem}.lock")))?;
         platform::lock_exclusive(&lock)?;
         Ok(lock)
     }

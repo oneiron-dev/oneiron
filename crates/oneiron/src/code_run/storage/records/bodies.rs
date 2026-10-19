@@ -573,8 +573,8 @@ pub(crate) fn code_run_body_row_key(digest: &[u8; 32]) -> Vec<u8> {
 /// The digest a raw result body row's key names by its handle.
 fn handle_digest(key: &[u8]) -> Option<[u8; 32]> {
     let handle = key.strip_prefix(RAW_OUTPUTS.decl().prefix)?;
-    let hex = handle
-        .strip_prefix(crate::code_run::support::CODE_RUN_OUTPUT_HANDLE_PREFIX.as_bytes())?;
+    let hex =
+        handle.strip_prefix(crate::code_run::support::CODE_RUN_OUTPUT_HANDLE_PREFIX.as_bytes())?;
     let mut digest = [0; 32];
     for (byte, pair) in digest.iter_mut().zip(hex.chunks_exact(2)) {
         *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;

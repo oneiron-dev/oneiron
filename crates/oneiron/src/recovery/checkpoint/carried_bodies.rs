@@ -33,10 +33,10 @@ use super::artifact::{ArtifactBody, SealedBodies};
 use super::write_budget::{RestoreRoom, landing_len};
 use super::{CheckpointImage, codec_error};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::store::key_custody::{CustodyBinding, CustodyPlan};
 use crate::store::{
-    BODY_KEYS, BodyDir, BodyKeyRow, FileKey, INLINE_ASSETS, SealedStream, SealingStream, Store,
-    body_instances_in_rows, body_key_in, prune_retired_bodies_in_rows, require_body_instances,
+    BODY_KEYS, BodyDir, BodyKeyRow, CustodyBinding, CustodyPlan, FileKey, INLINE_ASSETS,
+    SealedStream, SealingStream, Store, body_instances_in_rows, body_key_in,
+    prune_retired_bodies_in_rows, require_body_instances,
 };
 use crate::{EntityId, Error, Result, Vault};
 
@@ -71,8 +71,10 @@ pub(super) fn matches_artifact(image: &CheckpointImage, streams: &[([u8; 32], u6
     let files = image.bodies.len();
     streams.len() == files + image.inline_bodies.len()
         && image.sealed_bodies.len() == files
-        && streams.iter().enumerate().all(|(index, (_, len))| {
-            match index.checked_sub(files) {
+        && streams
+            .iter()
+            .enumerate()
+            .all(|(index, (_, len))| match index.checked_sub(files) {
                 None => image
                     .sealed_bodies
                     .get(&(index as u64))
@@ -81,8 +83,7 @@ pub(super) fn matches_artifact(image: &CheckpointImage, streams: &[([u8; 32], u6
                     .inline_bodies
                     .get(inline)
                     .is_some_and(|carried| carried.stored_len == *len),
-            }
-        })
+            })
 }
 
 /// The instance row a raw `vault_meta` row is, by its digest.
@@ -147,11 +148,13 @@ impl BodyCensus {
                 if let Some((digest, row)) = key_row_of(key, value)? {
                     self.keys.insert(digest, row);
                 }
-                if let Some((digest, body)) = crate::code_run::code_run_inline_body_of_row(key, value)
+                if let Some((digest, body)) =
+                    crate::code_run::code_run_inline_body_of_row(key, value)
                 {
                     let Some(row) = BODY_KEYS.get(store, txn, &digest)?.filter(|row| row.inline)
                     else {
-                        self.unbound.push(Unbound::Result(digest, body.len() as u64));
+                        self.unbound
+                            .push(Unbound::Result(digest, body.len() as u64));
                         return Ok(None);
                     };
                     return self.carry(database, key, value, 1, row.instance, body);
@@ -221,9 +224,7 @@ impl BodyCensus {
     /// row.
     pub(super) fn unbound(&self, store: &Store) -> Result<Vec<Unbound>> {
         let mut unbound = self.unbound.clone();
-        let sealed = store
-            .dir_seal(crate::store::KeyScope::Vault)
-            .is_some();
+        let sealed = store.dir_seal(crate::store::KeyScope::Vault).is_some();
         for (digest, len) in &self.bodies {
             if self.keys.get(digest).is_none_or(|row| row.inline) {
                 if sealed {
@@ -342,7 +343,10 @@ impl CarriedFiles {
         (
             self.bodies.clone(),
             self.sealed.clone(),
-            self.inline.iter().map(|(carried, _)| carried.clone()).collect(),
+            self.inline
+                .iter()
+                .map(|(carried, _)| carried.clone())
+                .collect(),
         )
     }
 
@@ -478,7 +482,14 @@ pub(super) fn restore(
         }
         room.landing_body(landing_len(*len, Some(carried)))?;
         let key = body_key_in(custody, &carried.instance)?;
-        land_file(&target, &mut bodies, index, (digest, *len), key, results.contains(digest))?;
+        land_file(
+            &target,
+            &mut bodies,
+            index,
+            (digest, *len),
+            key,
+            results.contains(digest),
+        )?;
     }
     for (inline, carried) in image.inline_bodies.iter().enumerate() {
         if retired.contains(&carried.instance) {
@@ -487,8 +498,13 @@ pub(super) fn restore(
         }
         let key = body_key_in(custody, &carried.instance)?;
         let mut body = Vec::with_capacity(usize::try_from(carried.len).map_err(|_| codec_error())?);
-        SealedStream::plaintext(bodies.body(files + inline), key, carried.digest, carried.len)
-            .read_to_end(&mut body)?;
+        SealedStream::plaintext(
+            bodies.body(files + inline),
+            key,
+            carried.digest,
+            carried.len,
+        )
+        .read_to_end(&mut body)?;
         let rows = image
             .databases
             .get_mut(&carried.database)

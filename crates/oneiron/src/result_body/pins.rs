@@ -53,11 +53,6 @@ impl ResultBodyPins {
         lock(&self.counts).promoted.get(digest).copied()
     }
 
-    /// Whether any reader holds `digest`, or every body.
-    pub(crate) fn holds(&self, digest: &[u8; 32]) -> bool {
-        lock(&self.counts).holds(digest)
-    }
-
     /// Runs `remove` unless a reader holds `digest`, keeping new pins out
     /// until it returns: the collector's retirement of a body's rows and key
     /// row, then its unlink (FIX 5348). `None` when a reader holds it.

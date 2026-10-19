@@ -217,66 +217,67 @@ impl Vault {
         self.store.note_custody_pending(target, pending)
     }
 
-    /// The custody steps an erase of the claims `claims` still owes, for its
-    /// receipt's read: `None` when none of them was ever in custody here.
-    /// Each handed-off retirement of theirs is complete once the watermark
-    /// passed it; until then, every member behind it and the anchor are
-    /// owed, and an intent not handed off yet is `custody_retirement_pending`.
+    /// The custody steps an erase of the records `erased` (their 16-byte
+    /// ids) still owes, for its receipt's read: `None` when none of their
+    /// keys was ever in custody here. Their claim keys and the body
+    /// instances the erase retired or owes (KS-2A) count alike. Each
+    /// handed-off retirement is complete once the watermark passed it;
+    /// until then, every member behind it and the anchor are owed (with no
+    /// anchor configured, every member's ack completes it, rollback not
+    /// proven). An intent not handed off yet is `custody_retirement_pending`,
+    /// and a body another holder still keeps is `body_shared_owner_retained`.
     pub(crate) fn erase_custody_in_txn(
         &self,
         txn: &RoTxn<'_>,
-        claims: &[[u8; 16]],
-    ) -> Result<Option<(&'static str, Vec<String>)>> {
-        let mut found = false;
-        let mut steps: Vec<CustodyPendingStep> = Vec::new();
-        let mut newest: Option<u64> = None;
-        for claim in claims {
+        erased: &[[u8; 16]],
+    ) -> Result<Option<(&'static str, Vec<String>, Option<&'static str>)>> {
+        let mut owed = EraseOwed::default();
+        for record in erased {
             let Some(subject) = self
                 .store
-                .custody_subject(CustodyKind::ClaimDecision, claim)?
+                .custody_subject(CustodyKind::ClaimDecision, record)?
             else {
                 return Ok(None);
             };
-            if crate::store::retirement_in_txn(&self.store, txn, &subject)?.is_some() {
-                found = true;
-                if steps
-                    .iter()
-                    .all(|step| step.state != CUSTODY_RETIREMENT_PENDING)
+            owed.subject(&self.store, txn, &subject)?;
+            #[cfg(unix)]
+            for instance in self
+                .store
+                .erased_body_instances_in_txn(txn, &crate::EntityId::from_bytes(*record)?)?
+            {
+                owed.found = true;
+                if self
+                    .store
+                    .body_erase_waits_on_holder_in_txn(txn, &instance)?
                 {
-                    steps.push(CustodyPendingStep {
-                        state: CUSTODY_RETIREMENT_PENDING,
-                        target_id: None,
-                        reason: None,
-                    });
+                    owed.step(BODY_SHARED_OWNER_RETAINED);
+                    continue;
                 }
-            }
-            for (seq, done) in self.store.custody_obligations_of(&subject)? {
-                found = true;
-                if !done {
-                    newest = newest.max(Some(seq));
+                if let Some(binding) = self.store.body_custody() {
+                    let id = crate::store::instance_id(&binding, &instance)?;
+                    owed.subject(&self.store, txn, id.subject())?;
                 }
             }
         }
-        if let Some(newest) = newest
+        let publication = self.store.custody_publication()?;
+        if let Some(newest) = owed.newest
             && let Some(progress) = self.store.custody_retirement()?
             && progress
                 .completed
                 .is_none_or(|completed| completed < newest)
         {
-            steps.extend(status::owed(
-                &progress,
-                &self.store.custody_publication()?,
-                newest,
-            ));
+            owed.steps
+                .extend(status::owed(&progress, &publication, newest));
         }
-        Ok(found.then(|| {
+        Ok(owed.found.then(|| {
             (
-                if steps.is_empty() {
+                if owed.steps.is_empty() {
                     CUSTODY_RETIREMENT_COMPLETE
                 } else {
                     CUSTODY_RETIREMENT_PENDING
                 },
-                steps.iter().map(CustodyPendingStep::name).collect(),
+                owed.steps.iter().map(CustodyPendingStep::name).collect(),
+                status::rollback_note(&publication),
             )
         }))
     }
@@ -416,5 +417,51 @@ impl AnchorStore for CustodyAnchorRoot {
 
     fn advance(&self, expected: Option<[u8; 32]>, record: &[u8]) -> Result<AnchorAdvance> {
         self.anchor.advance(expected, record)
+    }
+}
+
+/// An erased body whose instance another holder still keeps: its key
+/// retires with that holder's release (KS-2A).
+pub const BODY_SHARED_OWNER_RETAINED: &str = "body_shared_owner_retained";
+
+/// What an erase's receipt read has found its keys still owe.
+#[derive(Default)]
+struct EraseOwed {
+    found: bool,
+    steps: Vec<CustodyPendingStep>,
+    newest: Option<u64>,
+}
+
+impl EraseOwed {
+    /// Notes `state` once.
+    fn step(&mut self, state: &'static str) {
+        if self.steps.iter().all(|step| step.state != state) {
+            self.steps.push(CustodyPendingStep {
+                state,
+                target_id: None,
+                reason: None,
+            });
+        }
+    }
+
+    /// Notes what `subject`'s retirement still owes: an intent not handed
+    /// off, or the newest obligation not complete.
+    fn subject(
+        &mut self,
+        store: &crate::store::Store,
+        txn: &RoTxn<'_>,
+        subject: &crate::store::CustodySubject,
+    ) -> Result<()> {
+        if crate::store::retirement_in_txn(store, txn, subject)?.is_some() {
+            self.found = true;
+            self.step(CUSTODY_RETIREMENT_PENDING);
+        }
+        for (seq, done) in store.custody_obligations_of(subject)? {
+            self.found = true;
+            if !done {
+                self.newest = self.newest.max(Some(seq));
+            }
+        }
+        Ok(())
     }
 }

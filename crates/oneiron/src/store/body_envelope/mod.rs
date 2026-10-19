@@ -45,15 +45,14 @@ use oneiron_crypto::Kek;
 use zeroize::Zeroizing;
 
 pub(crate) use self::custody::{
-    BodyInstance, BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id,
-    instance_of, instance_state, pin_body_custody_in_txn,
+    BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
 };
 pub(crate) use self::frames::{FileKey, SealedStream, SealingStream};
 pub(crate) use self::plan::{
-    PrunedBodies, body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
+    body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
 };
-pub(crate) use self::retention::{INLINE_ASSETS, erase_bodies_in_txn, release_body_in_txn};
 pub(crate) use self::reader::BodyFile;
+pub(crate) use self::retention::{INLINE_ASSETS, erase_bodies_in_txn, release_body_in_txn};
 pub(crate) use self::rows::{
     BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn, retire_body_key_in_txn,
 };

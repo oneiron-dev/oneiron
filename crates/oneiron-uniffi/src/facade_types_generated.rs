@@ -20686,6 +20686,10 @@ pub struct RecordEraseCustody {
     pub state: String,
     #[serde(rename = "pending")]
     pub pending: Vec<String>,
+    #[serde(rename = "recall")]
+    pub recall: String,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// `oneiron::memory::erase_sweep::RecordEraseSweep`.
