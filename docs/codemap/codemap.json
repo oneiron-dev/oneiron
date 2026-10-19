@@ -22262,7 +22262,7 @@
      "surface": {
       "crate-vis": 2,
       "mod": 4,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -22355,7 +22355,48 @@
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
       "crate-vis": 5,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/read.rs",
+     "purpose": "A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a landed turn's wakes decided, where one…",
+     "surface": {
+      "fn": 3,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProgramAdmissionOutcomeView",
+      "ProgramFrontierView",
+      "ProgramHeldView",
+      "ProgramQueueView",
+      "ProgramResultAvailability",
+      "ProgramRunLifecycle",
+      "ProgramRunRequest",
+      "ProgramRunStateView",
+      "ProgramRunView",
+      "ProgramStepIssueView",
+      "ProgramStepState",
+      "ProgramStepView",
+      "ProgramTryView",
+      "SettledProgramStepRequest",
+      "SettledProgramStepView",
+      "TurnProgramAdmissionItem",
+      "TurnProgramAdmissionRequest",
+      "TurnProgramAdmissionView"
+     ],
+     "path": "src/dreamer_runner/program/read/views.rs",
+     "purpose": "The wire shapes of a turn program's reads (DOOR-141 PR3a)",
+     "surface": {
+      "enum": 5,
+      "struct": 13
      }
     },
     {
@@ -22365,7 +22406,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 23
      }
     },
     {
@@ -33589,7 +33630,7 @@
      "path": "src/llm/step/settled.rs",
      "purpose": "Settled-step point read (DOOR-141 A): one committed model step of a Dreamer attempt, as its terminal…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 2
      }
@@ -56080,7 +56121,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1097
+      "fn": 1100
      }
     },
     {
@@ -63058,7 +63099,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 90,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64075,7 +64116,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3950,
+   "source_files": 3952,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73041,7 +73082,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1068
+      "fn": 1071
      }
     },
     {
@@ -74180,7 +74221,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1069
+      "fn": 1072
      }
     },
     {
@@ -77968,7 +78009,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 173
+      "crate-vis": 174
      }
     },
     {
@@ -78227,6 +78268,16 @@
      "notable": [],
      "path": "src/api/facade/policy_doors.rs",
      "purpose": "The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/program_read_doors.rs",
+     "purpose": "A turn program's reads (DOOR-141 PR3a): what a landed turn's wakes admitted, where one program's run stands…",
      "surface": {
       "crate-vis": 3
      }
@@ -86720,7 +86771,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 467,
+     "files": 468,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -87170,7 +87221,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 866,
+   "source_files": 867,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -89745,7 +89796,20 @@
       "ProductivityRole",
       "ProductivityTree",
       "ProductivityTreeRequest",
+      "ProgramAdmissionOutcomeView",
+      "ProgramFrontierView",
+      "ProgramHeldView",
+      "ProgramQueueView",
       "ProgramRecipePin",
+      "ProgramResultAvailability",
+      "ProgramRunLifecycle",
+      "ProgramRunRequest",
+      "ProgramRunStateView",
+      "ProgramRunView",
+      "ProgramStepIssueView",
+      "ProgramStepState",
+      "ProgramStepView",
+      "ProgramTryView",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -90331,6 +90395,8 @@
       "SettleVerb",
       "SettleVerdict",
       "SettledHunkView",
+      "SettledProgramStepRequest",
+      "SettledProgramStepView",
       "SettledStepRequest",
       "SettledStepView",
       "ShapeApplyItem",
@@ -90799,6 +90865,9 @@
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TurnProgramAdmissionItem",
+      "TurnProgramAdmissionRequest",
+      "TurnProgramAdmissionView",
       "TurnProgramRegistration",
       "TurnTagsView",
       "TwoClocksAtom",
@@ -90991,8 +91060,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 867,
-      "struct": 2753
+      "enum": 872,
+      "struct": 2766
      }
     },
     {
