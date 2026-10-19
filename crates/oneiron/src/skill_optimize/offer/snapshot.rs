@@ -438,8 +438,8 @@ pub(super) fn digest(offer: &TrainingOffer) -> Result<String> {
 
 /// The union of source sets (FIX 5482), sorted and deduplicated: `None` once
 /// any set is unknown; no set at all unions to a known empty one.
-pub fn union_source_rows<'a>(
-    sets: impl IntoIterator<Item = Option<&'a [EntityId]>>,
+pub fn union_source_rows(
+    sets: impl IntoIterator<Item = Option<&[EntityId]>>,
 ) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
     for set in sets {
