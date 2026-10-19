@@ -124,8 +124,9 @@ pub(crate) use project::create_project_signed_for_test;
 #[cfg(test)]
 pub(crate) use project::set_project_depth_signed_for_test;
 pub use project::{
-    ACTOR_ERASE_PENDING_PROJECT, ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState,
-    ProjectGoalInterviewContext, ProjectProposalRequest,
+    ACTOR_ERASE_PENDING_PROJECT, ACTOR_ERASE_PROJECT_VERDICT, ACTOR_ERASE_SETTLED_PROJECT_CARD,
+    ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectGoalInterviewContext,
+    ProjectProposalRequest, ProjectVerdictErase, SettledProjectCardErase,
 };
 pub(crate) use project::{
     ClaimedProjectDetection, ProjectDetectionAnswer, ProjectDetectionSource,

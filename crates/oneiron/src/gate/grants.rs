@@ -489,10 +489,12 @@ pub(crate) fn companion_profile_access_grant(
             continue;
         }
 
-        let grant = match crate::access_grant::decode_access_grant_body(
+        let grant = match crate::access_grant::decode_live_access_grant_body(
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
         ) {
-            Ok(grant) => grant,
+            Ok(Some(grant)) => grant,
+            // A brief share's history grants nothing (FIX 4231).
+            Ok(None) => continue,
             Err(_) => {
                 return Err(Error::CorruptedIndex("access grant body"));
             }

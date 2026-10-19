@@ -1,5 +1,5 @@
 //! Relationship read authority built from live grants and stored membership evidence.
-use super::{AccessGrant, AccessGrantCapability, decode_access_grant_body};
+use super::{AccessGrant, AccessGrantCapability, decode_live_access_grant_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSubject, claim_surfaceable, decode_claim_body};
 use crate::error::{Error, Result};
@@ -86,7 +86,11 @@ impl<'v> AccessContext<'v> {
                     if raw.len() == ENTITY_METADATA_HEADER_LEN && !live(&id)? {
                         continue;
                     }
-                    let grant = decode_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                    let Some(grant) =
+                        decode_live_access_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?
+                    else {
+                        continue;
+                    };
                     if Some(grant.principal_ref) == principal
                         && grant.effective_status_at(now) == super::AccessGrantStatus::Active
                         && live(&id)?

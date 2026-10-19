@@ -404,7 +404,8 @@ side_tables! {
         => crate::workspace_roster::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
-    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
+    PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named
+        => crate::Vault::erase_project_verdict_actor_in_txn;
     /// A held revision waiting for its slip's mint. Key: slip id32 + id16 (project) + hash32
     /// (revision).
     PROJECT_REVISION_AWAITING_MINT: VaultMeta b"project.revision_awaiting_mint.v1/" Raw;
@@ -597,7 +598,8 @@ side_tables! {
     /// when, written once and never rewritten. Key: id16 (room) + 16 bytes (thread, all zero for the
     /// room itself) + u8 (subject kind) + id16 (subject) + u8 (cause kind) + 16 bytes (the cause's turn
     /// or task id, or an offer id's digest).
-    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson;
+    ROOMS_PARTICIPATION: VaultMeta b"rooms.participation.v1/" LegacyJson
+        => crate::Vault::erase_participation_actor_in_txn;
     /// Maps a host-configured platform handle to the one present actor it addresses within a room.
     /// Key: id16 (room id) + bytes (platform handle).
     ROOMS_HANDLE: VaultMeta b"rooms.platform_handle.v1/" Raw;

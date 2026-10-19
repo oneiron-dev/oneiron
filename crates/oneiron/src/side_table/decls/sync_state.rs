@@ -260,7 +260,8 @@ side_tables! {
     NOTE_PROPOSAL_DOC: SyncState b"note_proposal_doc:v1:" Raw;
     /// Idempotent operation receipt for one authenticated NOTE command. Key: hex32(note) ":"
     /// hex32(request id).
-    NOTE_RECEIPT_BY_REQUEST: SyncState b"nr:e:" LegacyJson;
+    NOTE_RECEIPT_BY_REQUEST: SyncState b"nr:e:" LegacyJson
+        => crate::Vault::erase_note_request_receipt_actor_in_txn;
     /// Entity waiting for an embedding. Key: hex32.
     PENDING_EMBEDDING_MARKER: SyncState b"pe:" Raw;
     /// One admitted peer AUTHORITY_LOG entry's canonical bytes, used to refold that peer's roster

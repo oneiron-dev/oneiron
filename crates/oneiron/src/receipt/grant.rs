@@ -9,7 +9,7 @@ use super::kernel::{
 };
 use super::projection::{GrantReceiptProjection, project_receipts_by_grant_limited};
 use crate::Vault;
-use crate::access_grant::{AccessGrant, AccessGrantScope, decode_access_grant_body};
+use crate::access_grant::{AccessGrant, AccessGrantScope, decode_live_access_grant_body};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -169,7 +169,9 @@ pub(super) fn access_grant_receipts(
         ENTITY_TYPE_ACCESS_GRANT,
         "access grant type index",
         |id, _header, body| {
-            let grant = decode_access_grant_body(body)?;
+            let Some(grant) = decode_live_access_grant_body(body)? else {
+                return Ok(());
+            };
             // A vault-wide receipt would disclose an Empty-scope diary pair.
             // This exact-pair grant has no general receipt projection.
             if matches!(

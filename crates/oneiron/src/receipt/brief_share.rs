@@ -6,7 +6,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
-use crate::share::{Share, ShareAdmission, read_share_history_in_txn};
+use crate::share::{ShareAdmission, ShareView, read_share_history_in_txn};
 
 use super::grant::scan_entities_by_type;
 use super::kernel::{FIELD_BRIEF_REF, ReceiptKind, ReceiptQuery, ReceiptRecord};
@@ -24,7 +24,8 @@ pub(super) fn brief_share_receipts(
         "brief share type index",
         |id, _, _| {
             // A share whose issuer was erased grants nothing and still reads
-            // as history (FIX 3520).
+            // as history (FIX 3520), as does one whose recipient was (FIX
+            // 4231).
             let Some((share, admission)) = read_share_history_in_txn(&vault.store, txn, &id)?
             else {
                 return Ok(());
@@ -61,7 +62,7 @@ pub(super) fn brief_share_receipts(
 
 fn brief_share_receipt(
     id: EntityId,
-    share: &Share,
+    share: &ShareView,
     admission: &ShareAdmission,
     travel: &crate::share_travel::TravelChoice,
     trace: &[String],
@@ -71,7 +72,13 @@ fn brief_share_receipt(
     let mut fields = BTreeMap::from([
         ("share_id".to_owned(), id.to_hex()),
         (FIELD_BRIEF_REF.to_owned(), share.brief_ref.clone()),
-        ("recipient_ref".to_owned(), share.recipient_ref.to_hex()),
+        (
+            "recipient_ref".to_owned(),
+            share
+                .recipient
+                .as_ref()
+                .map_or_else(|| super::ERASED_CALL_IDENTITY.to_owned(), EntityId::to_hex),
+        ),
         ("scope".to_owned(), "shared_brief".to_owned()),
         ("world_refs".to_owned(), scope_refs(&share.world_refs)),
         ("facet_refs".to_owned(), scope_refs(&share.facet_refs)),

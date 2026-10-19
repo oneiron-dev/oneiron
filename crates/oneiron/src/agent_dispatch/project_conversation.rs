@@ -267,11 +267,11 @@ impl AgentDispatcher<'_> {
             return Err(invalid("goal-intake run has foreign lineage"));
         }
         let txn = self.vault.store.env.read_txn()?;
-        let card = self
+        let (state, leader_ref) = self
             .vault
-            .project_card_record_in_txn(&txn, &brief.card)?
+            .project_card_mint_in_txn(&txn, &brief.card)?
             .ok_or(Error::EntityNotFound)?;
-        if card.state != (ProjectCardState::Minted { project }) {
+        if state != (ProjectCardState::Minted { project }) {
             return Err(invalid("goal-intake card did not mint this project"));
         }
         let (record, effective) = self
@@ -282,7 +282,7 @@ impl AgentDispatcher<'_> {
             return Err(invalid("goal-intake brief names another home room"));
         }
         let leader = EntityId::from_hex(&effective.leader)?;
-        if canonical(&card.card.leader_agent_def_ref)? != leader {
+        if canonical(&leader_ref)? != leader {
             return Err(invalid(
                 "the project's leader changed since its card; its owner redispatches the interview",
             ));

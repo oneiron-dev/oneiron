@@ -135,10 +135,6 @@ impl Vault {
     /// # Errors
     ///
     /// Storage errors, or a fact row that cannot be read.
-    #[expect(
-        dead_code,
-        reason = "the participation declaration names this scrub with the scrub registrations (FIX 4228)"
-    )]
     pub(crate) fn erase_participation_actor_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,

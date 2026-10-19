@@ -11903,6 +11903,7 @@ class ProjectCardRecord(TypedDict):
     drafted_by: RosterActor
     state: ProjectCardState
     at: int
+    history: NotRequired[bool]
 class ProjectCardRequest(TypedDict):
     card_id: str
 class ProjectCardDismissal(TypedDict):

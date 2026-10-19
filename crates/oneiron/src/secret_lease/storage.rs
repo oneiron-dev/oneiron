@@ -390,6 +390,79 @@ fn write_t1_lease_rows_in_txn(
     Ok(lease)
 }
 
+/// What an actor's erase does with the leases a reveal sent to that agent's
+/// connection, and their receipts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevealLeaseErase {
+    /// An active lease is revoked first, its T2 file torn down. Every lease
+    /// and receipt keeps its status, its times and its ids, and its effector
+    /// names no one.
+    RevokeActiveAndScrub,
+}
+
+/// A lease and its receipt record a value that went out, so they stay; an
+/// active lease is one the erased agent's connection could still use, so the
+/// erase revokes it (FIX 4230; a call).
+pub const ACTOR_ERASE_REVEAL_LEASE: RevealLeaseErase = RevealLeaseErase::RevokeActiveAndScrub;
+
+/// The effector a reveal lease names an agent's connection by, as the
+/// reveal doors spell it: `model:agent:<hex>`, or no one once it was erased.
+fn reveal_effector(agent: &str) -> String {
+    format!("model:agent:{agent}")
+}
+
+/// Erasing `actor` from the secret leases (FIX 4230): a lease a reveal sent
+/// to its connection names no one, and an active one is revoked first, as
+/// [`ACTOR_ERASE_REVEAL_LEASE`] says. One-way, in the erase's own
+/// transaction.
+pub(crate) fn erase_lease_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let effector = reveal_effector(&actor.to_hex());
+    let named: Vec<SecretLease> = SECRET_LEASE
+        .scan(&vault.store, wtxn)?
+        .into_iter()
+        .filter_map(|(_, lease)| (lease.binding_effector == effector).then_some(lease))
+        .collect();
+    let mut at = None;
+    for mut lease in named {
+        if ACTOR_ERASE_REVEAL_LEASE == RevealLeaseErase::RevokeActiveAndScrub
+            && lease.status == SecretLeaseStatus::Active
+        {
+            let now = match at {
+                Some(now) => now,
+                None => *at.insert(crate::ports::recorded_at_in_txn(&vault.store, wtxn)?),
+            };
+            super::grant::retire_lease_in_txn(&vault.store, wtxn, &lease.lease_id, now)?;
+            lease.status = SecretLeaseStatus::Revoked;
+        }
+        lease.binding_effector = reveal_effector(crate::receipt::ERASED_CALL_IDENTITY);
+        write_secret_lease_in_txn(&vault.store, wtxn, &lease)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the materialization receipts (FIX 4230): a receipt
+/// of a value a reveal sent to its connection keeps its ids, its tier and its
+/// time, and its effector names no one. One-way, in the erase's own
+/// transaction.
+pub(crate) fn erase_receipt_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let effector = reveal_effector(&actor.to_hex());
+    for (key, mut receipt) in SECRET_MATERIALIZATION_RECEIPT.scan(&vault.store, wtxn)? {
+        if receipt.effector == effector {
+            receipt.effector = reveal_effector(crate::receipt::ERASED_CALL_IDENTITY);
+            SECRET_MATERIALIZATION_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
+        }
+    }
+    Ok(())
+}
+
 /// Reads the value bytes through the ONE bound value door (ONE-1919), for
 /// a record already admitted at `requested` tier.
 pub(super) fn read_value_for_ref_in_txn(
