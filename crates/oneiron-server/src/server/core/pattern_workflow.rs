@@ -26,7 +26,7 @@ use oneiron::llm::{
 };
 use oneiron::skill::{LoadedSkillPack, SkillRole};
 use oneiron::team::{PatternLaunchRunner, PatternLaunchSpec, TeamAxis};
-use oneiron::{Error, Result, Vault};
+use oneiron::{Error, ErrorKind, Result, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -137,6 +137,13 @@ impl HostPatternLaunchRunner {
             .admit_role(&self.vault, CHAT_ROLE, request)
             .map_err(|refusal| match refusal {
                 RoleRefusal::NoSeat => no_seat(),
+                // A store fault inside admission is the host's, not a bound
+                // the owner can act on (FIX 5045); a typed refusal keeps its
+                // own text.
+                RoleRefusal::Refused(error) if store_fault(&error) => fault(format!(
+                    "the house generative seat's admission failed on a store fault: {error}"
+                )),
+                RoleRefusal::Refused(error) if matches!(*error, Error::Refused(_)) => *error,
                 refusal => stop(format!(
                     "the house generative seat refused the pattern run: {refusal}; fix the \
                      vault's model route for {}, then ask again",
@@ -454,6 +461,22 @@ fn off_schema(detail: impl std::fmt::Display) -> Error {
 /// refusal that names its bound, which the planner answers as it is.
 pub(in crate::server) fn stop(reason: impl Into<String>) -> Error {
     Error::Refused(reason.into())
+}
+
+/// Whether an admission error is the store's, as the doors' error map reads
+/// it (INTERNAL), rather than a bound the caller can act on.
+fn store_fault(error: &Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::Storage
+            | ErrorKind::Io
+            | ErrorKind::CorruptedIndex
+            | ErrorKind::SideTableRow
+            | ErrorKind::InvariantViolation
+            | ErrorKind::MapFull
+            | ErrorKind::IndexOverflow
+            | ErrorKind::MissingPostingEntry
+    )
 }
 
 /// A host fault that stopped a pattern run: a solo or zero-width plan, task

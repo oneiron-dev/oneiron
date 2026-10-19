@@ -3,13 +3,12 @@ use super::source::{number, resolved};
 use super::*;
 
 /// Flattens a page's `/Annots`, every annotation of it, however many. An
-/// annotation belongs to one page (ISO 32000-1 section 12.5.2), so an
-/// indirect `/Annots` array that `seen` holds from an earlier page is
-/// malformed: flattening it again would repeat its whole layer on each page.
+/// indirect `/Annots` array that several pages name is flattened again for
+/// each of them, into that page's own resources and operations, as a reader
+/// draws it on each: the shared source array is only read, never changed.
 pub(super) fn flatten(
     source: &Document,
     annotations: Option<&&Object>,
-    seen: &mut BTreeSet<ObjectId>,
     copier: &mut VisualCopy<'_>,
     out: &mut Document,
     resources: &mut Dictionary,
@@ -18,10 +17,7 @@ pub(super) fn flatten(
     let Some(annotations) = annotations else {
         return Ok(ops);
     };
-    let (shared, annotations) = source.dereference(annotations)?;
-    if shared.is_some_and(|id| !seen.insert(id)) {
-        return Err(PdfPreparationError::MalformedPdf);
-    }
+    let (_, annotations) = source.dereference(annotations)?;
     for annotation in annotations.as_array()? {
         let annotation = resolved(source, annotation)?.as_dict()?;
         let flags = annotation

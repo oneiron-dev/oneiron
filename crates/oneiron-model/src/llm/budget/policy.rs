@@ -114,7 +114,7 @@ impl BudgetPolicySelector {
         }
     }
 
-    /// Pinned snake-case manifest name of a purpose selector. `Other` rows
+    /// Pinned manifest name of a purpose selector. `Other` rows
     /// carry their own name; the manifest parser maps every built-in name to
     /// its variant, so an `Other` name never collides with a built-in one.
     pub fn purpose_manifest_name(purpose: &CallPurpose) -> &str {
@@ -126,6 +126,8 @@ impl BudgetPolicySelector {
             CallPurpose::ToolRouting => "tool_routing",
             CallPurpose::Voice => "voice",
             CallPurpose::Eval => "eval",
+            CallPurpose::AutonomyForHuman => "autonomy.for_human",
+            CallPurpose::AutonomyOwnTime => "autonomy.own_time",
             CallPurpose::Other { name } => name,
         }
     }

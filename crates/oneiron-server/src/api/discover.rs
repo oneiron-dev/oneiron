@@ -7,7 +7,7 @@ use super::SKILL_PACK_LOAD_HINT;
 use super::SKILL_PACK_MIME_TYPE;
 use super::SKILL_PACK_NAME;
 use super::SKILL_PACK_RESOLUTION;
-use super::check_api_auth;
+use super::scoped_auth::check_request_auth;
 use crate::auth::CoreAuth;
 use crate::auth::Locality;
 use crate::config::SyncServerConfig;
@@ -17,7 +17,7 @@ use crate::runtime::RuntimeHealthStatus;
 use crate::runtime::RuntimeStatus;
 use crate::server::SyncServer;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::request::Parts;
 use axum::response::Json;
 use oneiron::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_POLICY_MANIFEST};
 use serde::Serialize;
@@ -373,11 +373,11 @@ pub(crate) struct RateLimitStatus {
     )
 )]
 pub(crate) async fn discover(
-    headers: HeaderMap,
+    parts: Parts,
     Locality(locality): Locality,
     State(server): State<Arc<SyncServer>>,
 ) -> Result<Json<DiscoverResponse>, ApiError> {
-    let auth = check_api_auth(&headers, &server)?.at(locality);
+    let auth = check_request_auth(&parts, &server)?.at(locality);
     discover_response(&server, &auth).map(Json)
 }
 

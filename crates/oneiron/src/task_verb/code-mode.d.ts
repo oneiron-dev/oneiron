@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1083 code-mode rows (1059 host rows, 24 run rows), 3577 declarations.
+// Census: 1083 code-mode rows (1059 host rows, 24 run rows), 3580 declarations.
 // Replies: 966 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -1613,13 +1613,16 @@ declare namespace Sdk {
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
   type LegalHoldKind = "customer" | "host_order";
   type LegalHoldActorKind = "owner" | "member" | "agent" | "timer" | "host" | "unattributed";
-  type LegalHold = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; placed_by?: string | null; placed_by_kind: LegalHoldActorKind; placed_at: number; ends_at?: number | null; secret_until?: number | null; matter_ref?: string | null; lifted_at?: number | null; owner_told?: boolean };
+  type LegalHold = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; placed_by?: string | null; placed_by_kind: LegalHoldActorKind; placed_at: number; ends_at?: number | null; secret_until?: number | null; matter_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; lifted_at?: number | null; owner_told?: boolean; requires_non_use?: boolean };
   type LegalHoldWidenRequest = { hold_id: EntityId; targets: LegalHoldTarget[] };
   type LegalHoldEventKind = "placed" | "scope_changed" | "delete_refused" | "lift_and_erase_confirmed" | "erase_completed" | "lifted";
   type LegalHoldReason = "owner_placed" | "host_placed" | "legal_order" | "scope_widened" | "scope_narrowed_by_erase" | "end_date_changed" | "held_record" | "privacy_erase_kept" | "owner_confirmed" | "completion_pending" | "receipt_completed" | "authority_released" | "order_ended" | "host_released" | "secrecy_ended";
   type LegalHoldEvent = { hold_id: EntityId; kind: LegalHoldKind; targets: LegalHoldTarget[]; actor_ref?: string | null; actor_kind: LegalHoldActorKind; at: number; event: LegalHoldEventKind; reason: LegalHoldReason; matter_ref?: string | null; request_id?: string | null };
   type LegalHoldLiftAndEraseRequest = { records: EntityId[] };
-  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending" } | { state: "kept_by_legal_order" } | { state: "failed"; message: string };
+  type ErasePendingReason = "historical_sweep";
+  type LegalHoldBoundKind = "law";
+  type LegalHoldBound = { kind: LegalHoldBoundKind; order_ref?: string | null; legal_basis_ref?: string | null; jurisdiction?: string | null; issuing_authority_ref?: string | null; ends_at?: number | null };
+  type LegalHoldEraseState = { state: "erased"; receipt_ref?: string | null } | { state: "completion_pending"; receipt_ref?: string | null; reason?: ErasePendingReason | null } | { state: "retained_for_law"; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string } | { state: "failed"; message: string };
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[] };
   type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };
@@ -2236,11 +2239,11 @@ declare namespace Sdk {
   type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] };
   type WorkflowRunRequest = { root_attempt_ref: EntityId };
   type TaskTypeNodeSpec = { node_id: string; parent?: string | null; name: string };
-  type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[] };
+  type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[]; project_ref?: EntityId | null };
   type TypeStamp = { node_id: string; tree_version: number };
   type TaskTypeNodeView = { node_id: string; parent?: string | null; name: string; live: boolean };
   type TaskTypeTreeView = { tree_version: number; root: TypeStamp; nodes: TaskTypeNodeView[] };
-  type TaskTypeTreePinReceipt = { fork_ref: EntityId; stored: TaskTypeTreeView; in_force: boolean };
+  type TaskTypeTreePinReceipt = { fork_ref: EntityId; stored: TaskTypeTreeView; requested_tree_version?: number | null; project_ref?: EntityId | null; in_force?: boolean | null };
   type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null };
   type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null };
   type PlannedSpawnRead = { spawn_ref: EntityId };
@@ -2573,7 +2576,7 @@ declare namespace Sdk {
   type ModelRouteReplace = { slot: ModelSlot; route: ModelLocality };
   type ModelRoleRead = { role: ModelRole };
   type ModelRoleReceipt = { role: ModelRole; model: ModelId; revision: string; provider: string; slot: ModelSlot; tier: ModelTierRef; route: ModelLocality; catalog_revision?: string | null };
-  type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
+  type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | "autonomy.for_human" | "autonomy.own_time" | { other: { name: string } };
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
   type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
@@ -3238,7 +3241,7 @@ declare namespace Sdk {
   type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
   type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
-  type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; steps: ConsolidationStepRef[]; next_step?: string | null };
+  type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; latest_job_ref?: string | null; steps: ConsolidationStepRef[]; next_step?: string | null };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };

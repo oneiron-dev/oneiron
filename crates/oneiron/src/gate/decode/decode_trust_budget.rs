@@ -356,7 +356,7 @@ pub(super) fn parse_budget_policy_row(entries: &[(Value, Value)]) -> Option<Budg
 
 /// Built-in names map to their pinned `CallPurpose` variants; any other
 /// non-empty string is an exact-name `Other`. An `Other` name that happens
-/// to equal a built-in's snake-case name parses to the built-in variant, so
+/// to equal a built-in's name parses to the built-in variant, so
 /// it can never spell a wildcard.
 pub(super) fn parse_budget_purpose(value: &Value) -> Option<CallPurpose> {
     let name = value.as_str()?;
@@ -371,6 +371,8 @@ pub(super) fn parse_budget_purpose(value: &Value) -> Option<CallPurpose> {
         "tool_routing" => CallPurpose::ToolRouting,
         "voice" => CallPurpose::Voice,
         "eval" => CallPurpose::Eval,
+        "autonomy.for_human" => CallPurpose::AutonomyForHuman,
+        "autonomy.own_time" => CallPurpose::AutonomyOwnTime,
         _ => CallPurpose::Other {
             name: name.to_owned(),
         },
