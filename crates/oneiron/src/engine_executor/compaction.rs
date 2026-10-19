@@ -25,6 +25,8 @@ use crate::entity_id::EntityId;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmRequest, WriteActor};
 
+pub(super) mod live_fork;
+
 /// Runs one background pass where the host chooses: a thread, a blocking
 /// pool. The executor never spawns one itself.
 pub trait CompactionSpawn: Send + Sync {
@@ -82,6 +84,12 @@ pub(super) struct Flight {
     pub(super) folds: Vec<FoldJob>,
     /// The epoch pass's `host.compact` chain past its pre-hooks.
     pub(super) hooks: CompactHooks,
+    /// The run's live request at this breakpoint, when its backend writes
+    /// from the live context (FIX 4465 C): the flight's one immutable copy,
+    /// or why there is none.
+    pub(super) live: Option<
+        Result<crate::code_run::LiveCompactionFork, crate::compaction::SelfCompactionUnavailable>,
+    >,
 }
 
 /// One mark of a batch, sealed: its request, and what its stub lists beside
@@ -141,6 +149,10 @@ pub struct CompactionReport {
     pub last_self_pass: Option<crate::compaction::CompactionExecution>,
     /// Why the last flight could not be written as its agent, typed.
     pub self_unavailable: Option<crate::compaction::SelfCompactionUnavailable>,
+    /// Every self-written summary the run landed, with the durable receipt
+    /// its run's rows keep, read back on its route when the call ends (FIX
+    /// 4465 B). Unlike `last_self_pass`, only what landed.
+    pub landed_self: Vec<crate::compaction::CompactionLandingReceipt>,
 }
 
 /// Why a run parked at its window budget.
@@ -304,7 +316,10 @@ impl RunCompaction {
         self.report.in_flight = false;
         self.report.self_unavailable = outcome.unavailable;
         if outcome.epoch_execution.is_some() {
-            self.report.last_self_pass = outcome.epoch_execution.clone();
+            self.report.last_self_pass = outcome
+                .epoch_execution
+                .clone()
+                .map(crate::compaction::CompactionExecution::without_calls);
         }
         let epoch_execution = outcome.epoch_execution;
         let epoch = outcome.epoch.map(|outcome| match outcome {
@@ -429,22 +444,26 @@ impl RunCompaction {
                         epoch: request,
                         folds,
                         hooks,
+                        live,
                     }) => {
                         if epoch.is_some() && request.is_none() {
                             seat.driver.abandon();
                         }
                         if request.is_some() || !folds.is_empty() {
                             let backend = Arc::clone(seat.driver.backend());
+                            let live = live_fork::admit(&seat.driver, seat.byline, live);
                             let policy = seat.policy;
                             let vectors = seat.vectors.clone().filter(|_| seat.overlay);
                             let session_bound = seat.session_bound;
                             let (sender, receiver) = channel();
                             seat.spawn.spawn(Box::new(move || {
                                 // FIX 4465: a backend writing as its agent
-                                // freezes what this flight wears, or says
-                                // why it cannot; that flight keeps its
-                                // window, never handed to another writer.
-                                if let Err(why) = backend.prepare_flight(session_bound) {
+                                // freezes what this flight wears, its live
+                                // fork too (C), or says why it cannot; that
+                                // flight keeps its window, never handed to
+                                // another writer.
+                                if let Err(why) = live_fork::prepare(&*backend, session_bound, live)
+                                {
                                     let refused = || PassOutcome::Refused(why.refusal());
                                     let epoch = request.as_ref().map(|_| refused());
                                     let folds =
@@ -480,6 +499,7 @@ impl RunCompaction {
                                         (job, outcome)
                                     })
                                     .collect();
+                                backend.end_flight();
                                 let _ = sender.send(FlightOutcome {
                                     epoch,
                                     folds,
@@ -523,7 +543,8 @@ impl RunCompaction {
 /// A backend writing as its agent (FIX 4465) answers what ran each try: the
 /// answering try's record comes back, stamped with the accepted summary's
 /// snapshot, and each try the gate refused before it keeps its own usage
-/// line, so no try is counted twice.
+/// line, so no try is counted twice. The record also holds every paid call
+/// of the pass, the refused ones first, for its host to file (FIX 4465 B).
 fn run_pass(
     backend: &dyn CompactionBackend,
     request: &CompactionRequest,
@@ -533,21 +554,28 @@ fn run_pass(
     let mut last = None;
     let mut spent: Option<crate::compaction::CompactionExecution> = None;
     let mut rejected = Vec::new();
+    let mut calls = Vec::new();
     for _ in 0..policy.tries.max(1) {
-        let (product, execution) = match backend.compact_as_writer(request, retry) {
+        let (product, mut execution) = match backend.compact_as_writer(request, retry) {
             Ok(answer) => answer,
             Err(refusal) => {
-                let spent = spent.map(|spent| spent.with_rejected(rejected));
+                let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
                 return (PassOutcome::Refused(refusal), spent);
             }
         };
+        if let Some(execution) = execution.as_mut() {
+            calls.append(&mut execution.calls);
+        }
         match gate_compaction(request, &product, policy) {
             Ok(gated) => {
                 if let Some(prior) = spent.take() {
                     rejected.push(prior.usage);
                 }
-                let execution =
-                    execution.map(|execution| execution.accepted(gated.summary_text(), rejected));
+                let execution = execution.map(|execution| {
+                    execution
+                        .accepted(gated.summary_text(), rejected)
+                        .with_calls(calls)
+                });
                 return (PassOutcome::Accepted(Box::new(gated)), execution);
             }
             Err(failure) => {
@@ -561,7 +589,7 @@ fn run_pass(
             }
         }
     }
-    let spent = spent.map(|spent| spent.with_rejected(rejected));
+    let spent = spent.map(|spent| spent.with_rejected(rejected).with_calls(calls));
     match last {
         Some(failure) => (PassOutcome::Rejected(failure), spent),
         None => (

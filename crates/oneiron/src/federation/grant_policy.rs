@@ -326,6 +326,29 @@ impl crate::Vault {
         })
     }
 
+    /// The caller selects an explicit scope and expiry, never a clock. Policy,
+    /// live parent authority and the requested narrowing meet in the mint writer.
+    pub fn create_scoped_federation_delegate(
+        &self,
+        holder: &crate::consent::AuthenticatedOwner,
+        parent_grant_id: EntityId,
+        member_ref: EntityId,
+        requested: &Scope,
+        expires_at: u64,
+    ) -> Result<(EntityId, super::FederationGrant)> {
+        self.with_write_txn_grouped(|txn| {
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            let id = self.mint_federation_delegate_in_txn(
+                txn, holder, parent_grant_id, member_ref, now, expires_at, Some(requested),
+            )?;
+            let raw = self.get_raw_in(txn, &id)?.ok_or(Error::EntityNotFound)?;
+            let grant = super::decode_federation_grant_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            Ok((id, grant))
+        })
+    }
+
     pub(crate) fn create_federation_delegate_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -334,6 +357,22 @@ impl crate::Vault {
         member_ref: EntityId,
         now: u64,
         expires_at: u64,
+    ) -> Result<EntityId> {
+        self.mint_federation_delegate_in_txn(
+            txn, holder, parent_grant_id, member_ref, now, expires_at, None,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments, reason = "one shared transactional Delegate mint")]
+    fn mint_federation_delegate_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        holder: &crate::consent::AuthenticatedOwner,
+        parent_grant_id: EntityId,
+        member_ref: EntityId,
+        now: u64,
+        expires_at: u64,
+        requested: Option<&Scope>,
     ) -> Result<EntityId> {
         // Person tier, own holder check: the parent admin grant names this holder.
         let holder_actor = holder.revalidate_person_in_txn(self, txn)?;
@@ -372,6 +411,9 @@ impl crate::Vault {
             ));
         }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
+        if self.shared_vault_deletion_in_txn(txn)?.is_some() || fold.vault_root_is_conflicted() {
+            return Err(Error::InvalidConfig("delegate vault is not active".into()));
+        }
         if matches!(
             crate::authority::federation_grant_activation(&fold, &parent_grant_id),
             crate::authority::FederationGrantActivation::Inactive(_),
@@ -385,6 +427,12 @@ impl crate::Vault {
         grant.authority_scope = parent
             .authority_scope
             .meet(&self.grant_default_scope_in_txn(txn, Role::Delegate, vault_id, member_ref)?);
+        if let Some(requested) = requested {
+            if !requested.is_narrowing_of(&grant.authority_scope) {
+                return Err(Error::InvalidConfig("delegate scope exceeds its ceiling".into()));
+            }
+            grant.authority_scope = grant.authority_scope.meet(requested);
+        }
         let id = EntityId::now();
         crate::batch::apply_ops(
             &self.store,

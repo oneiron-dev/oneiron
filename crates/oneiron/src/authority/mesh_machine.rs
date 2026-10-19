@@ -387,7 +387,6 @@ impl Vault {
         )?;
         Ok(())
     }
-
 }
 
 #[cfg(test)]

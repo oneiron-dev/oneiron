@@ -24,6 +24,10 @@ pub enum SelfCall {
     /// The agent's own refusal of the run's bound TASK, through her refusal
     /// dial (OF-533). The TASK comes from the host binding.
     TasksRefuse(SelfTaskRefuseCall),
+    /// `tasks.consult.result` (DOOR-063): the addressed peer's run lands its
+    /// answer or abstention on one consult TASK. The actor comes from the
+    /// host binding's live lease.
+    ConsultResult(crate::task_verb::run_doors::ConsultLandRequest),
     /// `self.skills.call` (OF-353): one agent-callable skill, run as a step
     /// of its own under the running attempt's lease, with the caller's host
     /// as its bridge. The lease, executor and runtime are the host's.
@@ -119,6 +123,7 @@ impl SelfCall {
             Self::TasksAsk(_) => SelfEffect::TasksAsk,
             Self::TasksWait(_) => SelfEffect::TasksWait,
             Self::TasksRefuse(_) => SelfEffect::TasksRefuse,
+            Self::ConsultResult(_) => SelfEffect::ConsultResult,
             Self::SkillsCall(_) => SelfEffect::SkillsCall,
             Self::MemorySearch(_) => SelfEffect::MemorySearch,
             Self::MemoryWriteFixture(_) => SelfEffect::MemoryWriteFixture,
@@ -183,6 +188,9 @@ pub enum SelfEffect {
     TasksWait,
     /// The agent's own refusal of its bound TASK (OF-533).
     TasksRefuse,
+    /// An addressed peer's run landing its consult answer or abstention
+    /// (DOOR-063).
+    ConsultResult,
     /// An agent-callable skill run on the caller's lease (OF-353).
     SkillsCall,
     MemorySearch,
@@ -248,6 +256,7 @@ impl SelfEffect {
             Self::TasksAsk => "tasks.ask",
             Self::TasksWait => "tasks.wait",
             Self::TasksRefuse => "tasks.refuse",
+            Self::ConsultResult => "tasks.consult.result",
             Self::SkillsCall => "self.skills.call",
             Self::MemorySearch => "self.memory.search",
             Self::MemoryWriteFixture => "self.memory.write_fixture",
@@ -297,6 +306,7 @@ impl SelfEffect {
             | Self::TasksAsk
             | Self::TasksWait
             | Self::TasksRefuse
+            | Self::ConsultResult
             | Self::SkillsCall
             | Self::MemorySearch
             | Self::MemoryWriteFixture

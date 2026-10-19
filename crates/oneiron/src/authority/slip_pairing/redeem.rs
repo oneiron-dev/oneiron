@@ -11,10 +11,19 @@ use crate::authority::slip_vault::{random_slip_id, require_host};
 
 /// The install the explicit bootstrap arm serves (C4): one the vault never
 /// profiled, such as a fresh self-host first install, whose host root signs
-/// as the owner's own key. A profiled install that cannot carry (removed,
-/// poisoned) never falls back to the root.
+/// as the owner's own key, or one whose only standing is its own unanswered
+/// profile from its first serving start (FIX 4648), which pairs its first
+/// device exactly as a never-profiled install does (Engine, CALLS
+/// "selfprofile serving-install role", amendment (c)). A profiled install
+/// that cannot carry (removed, poisoned) never falls back to the root.
 fn unprofiled_install(fold: &AuthorityFold, machine: Option<crate::EntityId>) -> bool {
-    machine.is_none_or(|machine| fold.machine(machine).is_none())
+    machine.is_none_or(|machine| {
+        fold.machine(machine).is_none_or(|folded| {
+            folded.chains().all(|(_, chain)| {
+                !chain.profile.role.answered() && !chain.removed && !chain.conflicted
+            })
+        })
+    })
 }
 
 impl Vault {
@@ -158,6 +167,7 @@ impl Vault {
             grant_ref: grant_ref.map(|id| id.to_hex()),
             invitation_ref: None,
             delegation: None,
+            comm: pending.principal.comm,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         if let Some(facet) = write_facet {
@@ -203,12 +213,12 @@ impl Vault {
     /// Enrols the machine a link adds under the approval it kept (C2): this
     /// install carries the owner's act, its target the redeeming machine and
     /// its `seen` that machine's revision here, zero for a new one. An
-    /// install the vault never profiled takes the explicit bootstrap arm
-    /// instead (C4, a fresh self-host first install): the host root signs
-    /// the owner's answer with no act, as it always has, and the fold judges
-    /// the root's custody, so a hosted root never answers for the owner
-    /// there. Any other install that cannot carry refuses, and nothing is
-    /// written.
+    /// install the vault never profiled, or whose own profile is still
+    /// unanswered, takes the explicit bootstrap arm instead (C4, a fresh
+    /// self-host first install): the host root signs the owner's answer with
+    /// no act, as it always has, and the fold judges the root's custody, so a
+    /// hosted root never answers for the owner there. Any other install that
+    /// cannot carry refuses, and nothing is written.
     fn redeem_machine_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -218,6 +228,11 @@ impl Vault {
     ) -> Result<FoldedMachine> {
         let role = MachineRole::Owned(answer.ownership);
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        // The never-profiled path first: an unanswered serving install also
+        // carries, and it keeps pairing exactly as it did before its profile.
+        if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
+            return self.enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role);
+        }
         if self.carrier_in_txn(txn, &fold).is_ok() {
             let act = AnswerAct {
                 owner: answer.owner,
@@ -227,9 +242,6 @@ impl Vault {
                 seen: None,
             };
             return self.enroll_machine_in_txn(txn, act, request, role);
-        }
-        if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
-            return self.enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role);
         }
         Err(crate::authority::machine_answers::no_carrier())
     }
