@@ -2899,6 +2899,8 @@ class Oneiron:
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
         @property
+        def saved_query(self) -> "Oneiron._SelfSavedQueryVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         @property
         def consent(self) -> "Oneiron._SelfConsentVerbs": ...
@@ -3001,6 +3003,19 @@ class Oneiron:
             """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
         def receipts(self, spec: Facade.AdmissionReceiptsRequest) -> list[Facade.AdmissionReceipt]:
             """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
+    class _SelfSavedQueryVerbs:
+        def create(self, spec: Facade.SavedQueryCreateRequest) -> Facade.SavedQueryRecordView:
+            """Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."""
+        def read(self, spec: Facade.SavedQueryReadRequest) -> Facade.SavedQueryReadResult:
+            """One saved query the caller owns; a query absent or not the caller's reads as not found."""
+        def update(self, spec: Facade.SavedQueryUpdateRequest) -> Facade.SavedQueryRecordView:
+            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."""
+        def archive(self, spec: Facade.SavedQueryArchiveRequest) -> Facade.SavedQueryRecordView:
+            """Archives a saved query under a definition-version check: it stays readable and is never evaluated again."""
+        def members(self, spec: Facade.SavedQueryMembersRequest) -> Facade.SavedQueryMembershipPageView:
+            """One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."""
+        def evaluate(self, spec: Facade.SavedQueryEvaluateRequest) -> Facade.SavedQueryEvaluationReceipt:
+            """Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""

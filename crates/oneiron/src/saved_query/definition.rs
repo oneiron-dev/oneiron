@@ -171,7 +171,7 @@ pub struct EvalPolicy {
 /// ([`super::saved_query_changes_after`]), and still sweeps it in bounded
 /// wakes for what that feed cannot see; OF-241's live-query tee may replace
 /// the feed when it exists.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalMode {
     /// Re-evaluate when relevant evidence moves.
@@ -206,7 +206,7 @@ impl EvalMode {
 }
 
 /// Lifecycle state of a saved query.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum SavedQueryLifecycle {
     /// Evaluable.

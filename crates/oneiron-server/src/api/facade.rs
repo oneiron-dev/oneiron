@@ -124,6 +124,7 @@ pub(super) mod role_picks;
 mod run_read_doors;
 mod run_review_doors;
 mod seal_doors;
+mod saved_query_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;

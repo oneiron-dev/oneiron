@@ -24,10 +24,11 @@ use super::definition::{QueryScope, SavedQueryDefinition};
 use super::evidence::{
     EVIDENCE_HASH_LEN, EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence,
     SavedQueryDerivationEnvelope, VerdictMemoKey, VerdictMemoRow, WakeEvaluationReport,
-    compute_evidence_hash, put_verdict_memo, verdict_memo,
+    compute_evidence_hash, verdict_memo,
 };
 use super::filter::{HiddenDependencies, MatcherSpec, evaluate_filter, filter_dependencies};
 use super::membership::MembershipCause;
+use super::receipts::{SavedQueryEvaluation, SavedQueryJudgeReceipt, put_evaluated_memo};
 use super::storage::{load_record, matcher_to_json};
 use super::support::{
     EVALUATOR_VERSION, canonical_json_bytes, cosine_similarity_micros, edge_kind_from_name,
@@ -96,7 +97,8 @@ pub struct EvaluationRequest<'a> {
 /// `max_judges_per_wake` without inferring it from the verdict.
 struct StagedOutcome {
     outcome: EvaluationOutcome,
-    judge_ran: bool,
+    judge: Option<SavedQueryJudgeReceipt>,
+    memo: Option<VerdictMemoRow>,
 }
 
 /// One evidence collection, plus the vectors the fingerprints were taken from.
@@ -188,43 +190,43 @@ impl SavedQueryEvaluator<'_> {
                 outcome: EvaluationOutcome {
                     decision: MatchDecision {
                         verdict: memo.verdict,
-                        why: memo.why,
+                        why: memo.why.clone(),
                     },
                     evidence_hash,
                     memo_hit: true,
                 },
-                judge_ran: false,
+                judge: None,
+                memo: Some(memo),
             });
         }
 
-        let (decision, judge_ran) =
+        let (decision, judge) =
             if evaluate_filter(&definition.filter, &collected.evidence, &collected.hidden)
                 == Some(true)
             {
                 self.run_stage_two(request.query_ref, &definition, &collected)
                     .await?
             } else {
-                (no_match("stage-1 filter did not match"), false)
+                (no_match("stage-1 filter did not match"), None)
             };
 
-        put_verdict_memo(
-            self.vault,
-            &VerdictMemoRow {
-                key,
-                definition_version: definition.definition_version,
-                verdict: decision.verdict,
-                why: decision.why.clone(),
-                envelope: derivation_envelope(&evidence_hash, &definition.matcher)?,
-                evaluated_at: request.detected_at,
-            },
-        )?;
+        let memo = VerdictMemoRow {
+            key,
+            definition_version: definition.definition_version,
+            verdict: decision.verdict,
+            why: decision.why.clone(),
+            envelope: derivation_envelope(&evidence_hash, &definition.matcher)?,
+            evaluated_at: request.detected_at,
+        };
+        put_evaluated_memo(self, request, &memo)?;
         Ok(StagedOutcome {
             outcome: EvaluationOutcome {
                 decision,
                 evidence_hash,
                 memo_hit: false,
             },
-            judge_ran,
+            judge,
+            memo: Some(memo),
         })
     }
 
@@ -278,7 +280,7 @@ impl SavedQueryEvaluator<'_> {
     /// narrowed to the query's effective worlds so its dependencies keep to
     /// them too. Base reality stays readable: the candidate and the records
     /// its edges reach live there.
-    fn owner_lane(&self, scope: &QueryScope) -> Result<ScopedRead<'_>> {
+    pub(super) fn owner_lane(&self, scope: &QueryScope) -> Result<ScopedRead<'_>> {
         // A room turn's receipt counts nothing withheld, so a hidden row
         // could not fail closed under it.
         if self.owner_read.room_turn().is_some() {
@@ -324,7 +326,7 @@ impl SavedQueryEvaluator<'_> {
         query_ref: EntityId,
         definition: &SavedQueryDefinition,
         collected: &CollectedEvidence,
-    ) -> Result<(MatchDecision, bool)> {
+    ) -> Result<(MatchDecision, Option<SavedQueryJudgeReceipt>)> {
         let evidence = &collected.evidence;
         match &definition.matcher {
             MatcherSpec::Hard { expression } => Ok((
@@ -336,14 +338,14 @@ impl SavedQueryEvaluator<'_> {
                 } else {
                     no_match("hard matcher expression did not match")
                 },
-                false,
+                None,
             )),
             MatcherSpec::SemanticThreshold {
                 exemplar_ref,
                 minimum_similarity_micros,
             } => Ok((
                 semantic_decision(collected, *exemplar_ref, *minimum_similarity_micros),
-                false,
+                None,
             )),
             MatcherSpec::LlmJudge {
                 model_id,
@@ -354,7 +356,7 @@ impl SavedQueryEvaluator<'_> {
                     invalid("saved query judge requires an injected backend and budget lease")
                 })?;
                 let shell = judge_request(binding.envelope, model_id, rubric, evidence)?;
-                let decision = judge(
+                let (decision, receipt) = judge(
                     binding,
                     definition.owner_actor,
                     query_ref,
@@ -364,7 +366,7 @@ impl SavedQueryEvaluator<'_> {
                     evidence,
                 )
                 .await?;
-                Ok((decision, true))
+                Ok((decision, Some(receipt)))
             }
         }
     }
@@ -418,7 +420,7 @@ impl SavedQueryEvaluator<'_> {
             if staged.outcome.memo_hit {
                 report.memo_hits = report.memo_hits.saturating_add(1);
             }
-            if staged.judge_ran {
+            if staged.judge.is_some() {
                 report.judges_run = report.judges_run.saturating_add(1);
                 if report.judges_run >= record.definition.eval.max_judges_per_wake {
                     report.resume_after = Some(*entity_ref);
@@ -702,7 +704,8 @@ fn unmemoized(decision: MatchDecision, evidence_hash: [u8; EVIDENCE_HASH_LEN]) -
             evidence_hash,
             memo_hit: false,
         },
-        judge_ran: false,
+        judge: None,
+        memo: None,
     }
 }
 
@@ -898,11 +901,11 @@ fn no_match(why: &str) -> MatchDecision {
 /// module (the campaign enrollment wake) counts against the query's
 /// `max_entities_per_wake` and `max_judges_per_wake`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct WakeVisit {
+pub struct WakeVisit {
     /// The verdict came from the memo.
-    pub(crate) memo_hit: bool,
+    pub memo_hit: bool,
     /// A stage-2 judge actually ran.
-    pub(crate) judge_ran: bool,
+    pub judge_ran: bool,
 }
 
 impl SavedQueryEvaluator<'_> {
@@ -913,15 +916,32 @@ impl SavedQueryEvaluator<'_> {
     /// # Errors
     ///
     /// As [`Self::evaluate_entity`].
-    pub(crate) async fn evaluate_entity_visit(
+    pub async fn evaluate_entity_visit(
         &self,
         request: &EvaluationRequest<'_>,
     ) -> Result<(EvaluationOutcome, WakeVisit)> {
+        let evaluated = self.evaluate_entity_receipt(request).await?;
+        Ok((evaluated.outcome, evaluated.visit))
+    }
+
+    /// The same staged evaluation with its exact memo and newly measured usage.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate_entity`].
+    pub async fn evaluate_entity_receipt(
+        &self,
+        request: &EvaluationRequest<'_>,
+    ) -> Result<SavedQueryEvaluation> {
         let staged = self.evaluate_staged(request).await?;
-        let visit = WakeVisit {
-            memo_hit: staged.outcome.memo_hit,
-            judge_ran: staged.judge_ran,
-        };
-        Ok((staged.outcome, visit))
+        Ok(SavedQueryEvaluation {
+            visit: WakeVisit {
+                memo_hit: staged.outcome.memo_hit,
+                judge_ran: staged.judge.is_some(),
+            },
+            outcome: staged.outcome,
+            memo: staged.memo,
+            judge: staged.judge,
+        })
     }
 }

@@ -68,7 +68,7 @@ pub struct VerdictMemoKey {
 }
 
 /// A stage-2 verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MatchVerdict {
     /// The entity is a member.
