@@ -83,6 +83,7 @@ mod report_journal;
 pub(crate) use report_journal::{
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
 };
+pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
 pub mod run_doors;
@@ -316,8 +317,8 @@ mod sdk_identity_topology;
 mod sdk_legal_hold;
 mod sdk_live_run;
 mod sdk_live_voice;
-mod sdk_model_manifest;
 mod sdk_mesh;
+mod sdk_model_manifest;
 mod sdk_note_history;
 mod sdk_off_record;
 mod sdk_off_record_rooms;

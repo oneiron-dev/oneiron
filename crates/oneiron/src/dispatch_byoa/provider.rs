@@ -74,7 +74,7 @@ fn cli(program: &str, args: &[&str], input: DreamerProviderInput) -> ByoaResult<
     Ok(connector)
 }
 /// The official Claude Code binary. Under the person's own sign-in it may run
-/// on any runtime, their hosted vault VM included ([`super::login_placement`]).
+/// on any runtime, their hosted vault VM included ([`super::hosted_seat_bound`]).
 pub const CLAUDE_CODE_PROGRAM: &str = "claude";
 /// The official Codex CLI. A ChatGPT plan login runs only on the person's own
 /// runtime.
