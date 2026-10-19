@@ -5,6 +5,7 @@
 //! root predeclares none of them: each downstream change adds its own single
 //! additive `pub mod ...;` line when its file exists.
 
+pub(crate) mod actor_erase;
 mod document_ingress;
 pub use document_ingress::ReceivedFileOperation;
 pub mod lfs;
