@@ -12,6 +12,7 @@ use oneiron::sync::transport::{
 use tokio::time::Duration;
 
 use super::connection::session_credential_revoked;
+use super::protocol_close::ProtocolRefusal;
 use crate::auth::RevokedTokenJtis;
 use crate::protocol::close_codes;
 
@@ -210,6 +211,10 @@ pub(super) struct GuardedTransport<S> {
     max_inner: usize,
     /// Raw and wire bytes per inner tag on this link.
     link_bytes: LinkBytes,
+    /// The inbound frame this transport refused (FIX 3303): a codec frame
+    /// that would not unwrap within the cap. It ends every read, and the
+    /// carrier that owns the socket receipts it and closes with its code.
+    refused: Option<ProtocolRefusal>,
 }
 
 impl<S, E> GuardedTransport<S>
@@ -254,6 +259,7 @@ where
             peer_codecs: WireCodecs::NONE,
             max_inner: MAX_CODEC_INNER_BYTES,
             link_bytes: LinkBytes::default(),
+            refused: None,
         }
     }
 
@@ -271,6 +277,12 @@ where
         self.peer_codecs = codecs;
     }
 
+    /// The inbound frame this transport refused, once it has: a protocol
+    /// refusal its carrier receipts and closes with, never a disconnect.
+    pub(super) fn refusal(&self) -> Option<ProtocolRefusal> {
+        self.refused
+    }
+
     fn credential_revoked(&self) -> bool {
         session_credential_revoked(self.revoked.as_ref(), self.session_jti.as_deref())
             || session_credential_revoked(self.revoked.as_ref(), self.app_jti.as_deref())
@@ -282,8 +294,12 @@ where
     /// frame is pending only inside [`Self::send_binary`], which holds the same
     /// unique borrow, so this cannot run then. That is what keeps tungstenite's
     /// automatic pong/close flush from draining guarded bytes — see the type
-    /// docs. `None` once the transport has been aborted.
+    /// docs. `None` once the transport has been aborted, and from a refused
+    /// frame on ([`Self::refusal`]).
     pub(super) async fn read_next(&mut self) -> Option<Result<WsMessage, E>> {
+        if self.refused.is_some() {
+            return None;
+        }
         if self.credential_revoked() {
             self.close_revoked().await;
             return None;
@@ -296,7 +312,6 @@ where
         match frame {
             Some(Ok(WsMessage::Binary(data))) => self
                 .unwrap_inbound(&data)
-                .await
                 .map(|inner| Ok(WsMessage::Binary(inner.map_or(data, Into::into)))),
             other => other,
         }
@@ -316,8 +331,10 @@ where
 
     /// Unwraps one inbound codec frame and counts the frame. `Some(None)` is a
     /// plain frame to pass on as it came. A frame that will not unwrap within
-    /// the cap closes the socket with a protocol error: `None`.
-    async fn unwrap_inbound(&mut self, data: &[u8]) -> Option<Option<Vec<u8>>> {
+    /// the cap is refused: `None`, and the refusal is held for the carrier,
+    /// which receipts it and closes the socket with its protocol error
+    /// (FIX 3303). No further frame is read.
+    fn unwrap_inbound(&mut self, data: &[u8]) -> Option<Option<Vec<u8>>> {
         let Some(&tag) = data.first() else {
             return Some(None);
         };
@@ -337,12 +354,7 @@ where
                     TransportError::FrameTooLarge { .. } => close_codes::FRAME_TOO_LARGE,
                     _ => close_codes::DECODE_ERROR,
                 };
-                self.send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                    code,
-                    reason: Utf8Bytes::from_static("codec frame refused"),
-                })))
-                .await;
-                self.abort();
+                self.refused = Some(ProtocolRefusal::new(code, "codec frame refused"));
                 None
             }
         }

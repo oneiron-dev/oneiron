@@ -3,6 +3,7 @@
 use axum::extract::ws::Message as WsMessage;
 use futures_util::{SinkExt, Stream};
 
+use super::protocol_close::ProtocolRefusal;
 use super::transport::GuardedTransport;
 use crate::protocol::{self, close_codes};
 
@@ -14,10 +15,17 @@ pub(super) enum HelloOutcome {
     /// First frame was a valid hello with a supported version.
     Valid(u8),
     /// Hello missing/malformed/mismatched/timed out — close with
-    /// `close_codes::VERSION_MISMATCH` and this reason.
-    Reject(&'static str),
+    /// `close_codes::VERSION_MISMATCH` and its reason — or a first frame the
+    /// transport refused, closed with that refusal's own code. Either is the
+    /// connection's refused call, receipted before the close (FIX 3303).
+    Reject(ProtocolRefusal),
     /// Client went away before sending a hello — nothing to close.
     Disconnected,
+}
+
+/// A hello the server rejects, closed with `close_codes::VERSION_MISMATCH`.
+const fn mismatch(reason: &'static str) -> HelloOutcome {
+    HelloOutcome::Reject(ProtocolRefusal::new(close_codes::VERSION_MISMATCH, reason))
 }
 
 /// Waits for the client's protocol-version hello as the FIRST frame.
@@ -40,22 +48,29 @@ where
                             }
                             HelloOutcome::Valid(version)
                         }
-                        Err(_) => HelloOutcome::Reject("protocol version mismatch"),
+                        Err(_) => mismatch("protocol version mismatch"),
                     };
                 }
                 Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_))) => continue,
                 Some(Ok(WsMessage::Text(_))) => {
-                    return HelloOutcome::Reject("expected binary protocol hello");
+                    return mismatch("expected binary protocol hello");
                 }
-                Some(Ok(WsMessage::Close(_))) | Some(Err(_)) | None => {
+                Some(Ok(WsMessage::Close(_))) | Some(Err(_)) => {
                     return HelloOutcome::Disconnected;
+                }
+                // A frame the transport refused is the server's rejection,
+                // carried up to the carrier, not a peer that went away.
+                None => {
+                    return transport
+                        .refusal()
+                        .map_or(HelloOutcome::Disconnected, HelloOutcome::Reject);
                 }
             }
         }
     })
     .await;
 
-    outcome.unwrap_or(HelloOutcome::Reject("protocol hello timeout"))
+    outcome.unwrap_or(mismatch("protocol hello timeout"))
 }
 
 /// Validates a hello frame against the server's supported wire protocols.

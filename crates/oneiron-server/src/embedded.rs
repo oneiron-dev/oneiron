@@ -36,6 +36,7 @@ mod blocking;
 mod engine;
 mod failure;
 mod process_host;
+mod runtime;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::pin;
@@ -43,7 +44,6 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
-use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::Extensions;
 use hyper::body::Incoming;
@@ -97,8 +97,11 @@ const RELAY_REFUSAL: &str =
 /// stopped. The app's timer stays armed for the next wake.
 ///
 /// Run it on a multi-thread Tokio runtime, outside a `LocalSet`, as
-/// [`crate::build_app`] says.
-pub async fn serve_embedded<A: AppHost>(
+/// [`crate::build_app`] says. It serves on that runtime, unless `host`'s
+/// limits grant a bounded CPU share: it then serves on a runtime of its own,
+/// on a thread of its own, whose worker threads that share caps (FIX 2661),
+/// and dropping this future before it returns stops serving in order.
+pub async fn serve_embedded<A: AppHost + 'static>(
     host: EmbeddedHost<A, DuplexStream>,
     vault: Arc<oneiron::Vault>,
     config: ServeConfig,
@@ -109,7 +112,14 @@ pub async fn serve_embedded<A: AppHost>(
         RELAY_REFUSAL
     );
     let owner_host = owner_host(&config);
-    serve_prepared(host, vault, config, artifacts, owner_host).await
+    let Some(workers) = runtime::worker_cap(host.limits()) else {
+        return serve_prepared(host, vault, config, artifacts, owner_host).await;
+    };
+    let _stop = runtime::StopOnDrop(host.stop_handle());
+    let done = runtime::spawn_serving(Some(workers), move || {
+        serve_prepared(host, vault, config, artifacts, owner_host)
+    })?;
+    runtime::served(done).await
 }
 
 /// [`serve_embedded`]'s body, given the owner host the vault's opener
@@ -170,7 +180,11 @@ async fn serve_prepared<A: AppHost>(
     let mesh_server = Arc::clone(&started.server);
     let app = crate::build_app_for_position(started.server, DeploymentPosition::Embedded)
         .layer(cors_layer);
-    let header_read_timeout = config.limits.connections().header_read_timeout;
+    // Each channel's connections meet the socket's header deadline and body
+    // idle limit, and its requests the router's own body floors; a trusted
+    // in-process stream takes no connection permit or stranger share
+    // (FIX 2663).
+    let timeouts = ChannelTimeouts::of(&config);
     // The paired-machine mesh listener (OF-535): off unless the host names
     // its bind address. Its requests carry the drain as the channel's do.
     let mesh_app = app.clone().layer(axum::Extension(upgrades.clone()));
@@ -188,13 +202,7 @@ async fn serve_prepared<A: AppHost>(
     host.ready()?;
     // Each channel's HTTP connections are tasks of its set here.
     let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
-    let api = serve_channel(
-        connections,
-        app,
-        header_read_timeout,
-        upgrades.clone(),
-        &mut api_http,
-    );
+    let api = serve_channel(connections, app, timeouts, upgrades.clone(), &mut api_http);
     let artifact_app = started.artifact_app;
     let artifact_upgrades = upgrades.clone();
     let artifact_connections = &mut artifact_http;
@@ -203,7 +211,7 @@ async fn serve_prepared<A: AppHost>(
             serve_channel(
                 artifacts,
                 artifact_app,
-                header_read_timeout,
+                timeouts,
                 artifact_upgrades,
                 artifact_connections,
             )
@@ -384,17 +392,40 @@ async fn stop_turned(stopped: &mut watch::Receiver<bool>) {
     let _ = stopped.wait_for(|stop| *stop).await;
 }
 
+/// The deadlines an embedded channel's connections meet: a socket's own.
+#[derive(Clone, Copy)]
+struct ChannelTimeouts {
+    /// How long a request's headers may take to arrive.
+    header_read: Duration,
+    /// How long a route may wait for the next piece of a request body: a
+    /// body that sends nothing for this long is ended, one that keeps
+    /// arriving, however slowly, never is (FIX 2663). The `[limits]` row
+    /// `body_idle_timeout_ms`, which TCP and mesh requests meet too.
+    body_idle: Duration,
+}
+
+impl ChannelTimeouts {
+    fn of(config: &ServeConfig) -> Self {
+        let limits = config.limits.connections();
+        Self {
+            header_read: limits.header_read_timeout,
+            body_idle: limits.body_idle_timeout,
+        }
+    }
+}
+
 /// Serves `app` over each stream the app hands in, as the mesh serves its
 /// streams: one HTTP/1.1 connection per stream, upgrades included, each a
-/// task of `http`. Every request carries `upgrades`, so a socket it upgrades
-/// to ends on the stop and is waited for before any worker stops. Once the
-/// stop watch turns it takes no more streams, ends each open connection
-/// gracefully and returns when all have closed. Dropped before then, at the
-/// drain grace, it leaves the open ones in `http` for its caller to abort.
+/// task of `http`, under `timeouts`. Every request carries `upgrades`, so a
+/// socket it upgrades to ends on the stop and is waited for before any
+/// worker stops. Once the stop watch turns it takes no more streams, ends
+/// each open connection gracefully and returns when all have closed.
+/// Dropped before then, at the drain grace, it leaves the open ones in
+/// `http` for its caller to abort.
 async fn serve_channel(
     mut connections: mpsc::Receiver<DuplexStream>,
     app: Router,
-    header_read_timeout: Duration,
+    timeouts: ChannelTimeouts,
     upgrades: UpgradeLifetime,
     http: &mut JoinSet<()>,
 ) {
@@ -412,7 +443,8 @@ async fn serve_channel(
         let routes = TowerToHyperService::new(app.clone());
         let lifetime = upgrades.clone();
         let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
-            let mut request = request.map(Body::new);
+            let mut request =
+                request.map(|body| crate::http_listener::idle_body(body, timeouts.body_idle));
             let extensions = request.extensions_mut();
             extensions.insert(ConnectInfo(IN_PROCESS_PEER));
             extensions.insert(lifetime.clone());
@@ -423,7 +455,7 @@ async fn serve_channel(
             let mut builder = hyper::server::conn::http1::Builder::new();
             builder
                 .timer(TokioTimer::new())
-                .header_read_timeout(header_read_timeout);
+                .header_read_timeout(timeouts.header_read);
             let mut connection = pin!(
                 builder
                     .serve_connection(TokioIo::new(stream), service)

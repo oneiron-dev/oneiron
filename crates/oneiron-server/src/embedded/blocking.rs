@@ -90,18 +90,18 @@ pub struct BlockingEngine<A: AppHost + Clone + 'static> {
 
 impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
     /// Starts an engine as [`EmbeddedEngine::start`] does, on a runtime of
-    /// its own.
+    /// its own, whose worker threads the app's CPU share in `limits` caps
+    /// (FIX 2661). The engine serves on that same runtime, so no second
+    /// worker pool runs beside it.
     pub fn start(app: A, config: ServeConfig, limits: HostLimits) -> anyhow::Result<Self> {
         ensure_app_thread()?;
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .thread_name("oneiron-engine")
-            .build()
+        let runtime = super::runtime::engine_runtime(super::runtime::worker_cap(limits))
             .context(cause(
                 EngineErrorKind::StartFailed,
                 "the embedded engine's runtime did not start",
             ))?;
-        let engine = runtime.block_on(EmbeddedEngine::start(app, config, limits))?;
+        let engine =
+            runtime.block_on(EmbeddedEngine::start_serving_on(app, config, limits, None))?;
         Ok(Self {
             path: engine.path().to_path_buf(),
             dimensions: engine.config().dimensions,
