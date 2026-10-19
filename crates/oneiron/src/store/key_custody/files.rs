@@ -104,7 +104,7 @@ fn verify_permissions(file: &File, is_directory: bool, kind: Option<CustodyKind>
     Ok(())
 }
 
-fn safe_open(
+pub(super) fn safe_open(
     path: &Path,
     write_new: bool,
     directory: bool,
@@ -144,7 +144,7 @@ pub(super) fn make_new_dir(path: &Path, kind: Option<CustodyKind>) -> Result<Fil
 
 /// Opens directory `path`, checked owner-only, making it first when absent
 /// and `create`.
-fn open_dir(path: &Path, create: bool, kind: Option<CustodyKind>) -> Result<File> {
+pub(super) fn open_dir(path: &Path, create: bool, kind: Option<CustodyKind>) -> Result<File> {
     if create {
         match make_new_dir(path, kind) {
             Err(Error::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
@@ -179,6 +179,80 @@ fn write_entry(
     })();
     fs::remove_file(&temp)?;
     published
+}
+
+/// Publishes `bytes` once as `name` in the custody directory `dir` (a
+/// journal's, KS-4), through a synced temporary hard link as an entry is:
+/// false when `name` already exists, whose bytes the caller then reads. The
+/// temporary is removed whatever happened.
+pub(super) fn write_once(dir: &Path, name: &str, bytes: &[u8]) -> Result<bool> {
+    let suffix = rand::rngs::OsRng.next_u64();
+    let temp = dir.join(format!(".t{suffix:016x}.pending"));
+    let published = (|| -> Result<bool> {
+        let mut file = safe_open(&temp, true, false, None)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        match fs::hard_link(&temp, dir.join(name)) {
+            Ok(()) => Ok(true),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+            Err(err) => Err(err.into()),
+        }
+    })();
+    fs::remove_file(&temp)?;
+    File::open(dir)?.sync_all()?;
+    published
+}
+
+/// Replaces `name` in the custody directory `dir` with `bytes` in one
+/// rename, synced, the directory synced after: a reader sees the old file or
+/// the new one, never part of either.
+pub(super) fn replace_file(dir: &Path, name: &str, bytes: &[u8]) -> Result<()> {
+    let suffix = rand::rngs::OsRng.next_u64();
+    let temp = dir.join(format!(".t{suffix:016x}.pending"));
+    let written = (|| -> Result<()> {
+        let mut file = safe_open(&temp, true, false, None)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temp, dir.join(name))?;
+        Ok(())
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    written?;
+    File::open(dir)?.sync_all()?;
+    Ok(())
+}
+
+/// The whole of the custody file at `path`, owner-only and opened without
+/// following a link; `None` when there is none. A second link is allowed:
+/// [`write_once`] holds one for an instant while it publishes.
+pub(super) fn read_whole(path: &Path) -> Result<Option<Vec<u8>>> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
+    }
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let meta = file.metadata()?;
+        // SAFETY: geteuid has no arguments or pointers and only reads the
+        // caller's effective uid; the result rejects another owner's file.
+        if meta.uid() != unsafe { libc::geteuid() } || meta.mode() & 0o077 != 0 || !meta.is_file() {
+            return Err(custody_corrupt());
+        }
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(Some(bytes))
 }
 
 /// Removes a subject's interrupted, unpublished temporaries. A crash after
@@ -406,7 +480,13 @@ impl LocalCustody<'_> {
         let secret = CustodySecret::random(kind.secret_len());
         let published = write_entry(&dir, &path, id.generation(), secret.expose(), kind)?;
         directory.sync_all()?;
-        if published { Ok(secret) } else { self.read(id) }
+        if !published {
+            return self.read(id);
+        }
+        // KS-4: the mint is journaled, synced, before a row sealed under it
+        // may commit.
+        self.journal_entry(&super::log::LogEntry::Mint(id.clone()))?;
+        Ok(secret)
     }
 
     /// Destroys precisely `id`: its marker is synced, then its entry is

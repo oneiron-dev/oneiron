@@ -251,12 +251,12 @@ pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
         anyhow::ensure!(keep > 0, "--keep must be at least 1");
         config.backup.keep = keep;
     }
-    let plan = backup_plan(&config);
+    let plan = backup_plan(&config).anchored_at(&config.backup);
     if args.list {
         return emit(&backup::list(&plan)?);
     }
     let vault = open_vault(&config, "POST /v1/owner/backups")?;
-    emit(&backup::take(&vault, &plan)?)
+    emit(&backup::take_publishing(&vault, &plan)?)
 }
 
 pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
