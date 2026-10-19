@@ -67,6 +67,19 @@ pub(super) struct DreamerHost {
     shutdown: ShutdownHandle,
     hints: Arc<HintPusher>,
     thread: std::thread::JoinHandle<WakeSupervisorReport>,
+    /// `true` once its thread ended, however it ended (FIX 1149).
+    ended: tokio::sync::watch::Receiver<bool>,
+}
+
+/// Held by the Dreamer's thread for its whole life: dropped as it returns
+/// or unwinds, it marks the thread ended, for a watcher that subscribes
+/// before or after.
+struct ThreadEnded(tokio::sync::watch::Sender<bool>);
+
+impl Drop for ThreadEnded {
+    fn drop(&mut self) {
+        self.0.send_replace(true);
+    }
 }
 
 /// The server the standing-question pump runs on, bound once the server is
@@ -141,14 +154,19 @@ impl DreamerHost {
         let (ready, started) = tokio::sync::oneshot::channel();
         // The Coach's drafts block on the server's runtime, off the Dreamer's.
         let serve = tokio::runtime::Handle::current();
+        let (ended_tx, ended) = tokio::sync::watch::channel(false);
         let thread = std::thread::Builder::new()
             .name("oneiron-dreamer".into())
-            .spawn(move || run(start, serve, ready))?;
+            .spawn(move || {
+                let _ended = ThreadEnded(ended_tx);
+                run(start, serve, ready)
+            })?;
         match started.await {
             Ok(Ok((shutdown, hints))) => Ok(Self {
                 shutdown,
                 hints: Arc::new(hints),
                 thread,
+                ended,
             }),
             Ok(Err(error)) => {
                 let _ = thread.join();
@@ -163,6 +181,13 @@ impl DreamerHost {
 
     pub(super) fn hints(&self) -> Arc<HintPusher> {
         Arc::clone(&self.hints)
+    }
+
+    /// Turns `true` once the Dreamer's thread ended, however it ended: a
+    /// planned stop, a supervisor that returned, or a panic. A receiver
+    /// taken after it ended reads `true` at once.
+    pub(super) fn ended(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.ended.clone()
     }
 
     /// Asks the supervisor to stop at its next boundary, without waiting.

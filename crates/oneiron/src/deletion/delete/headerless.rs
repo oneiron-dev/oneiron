@@ -62,10 +62,22 @@ impl Vault {
             deleted_at: requested_at,
             request_id: *request_uuid.as_bytes(),
         };
-        let gate_decision = gate.map(|gate| {
+        let mut gate_decision = gate.map(|gate| {
             gate.context
                 .decision_record(*request_uuid.as_bytes(), id, reason, requested_at)
         });
+        // FIX 5736: a purge names the turn-program rows it removes whole
+        // because they do not decode.
+        if reason.active_store_hard_purge_v1()
+            && let Some(decision) = gate_decision.as_mut()
+        {
+            let details = crate::dreamer_runner::turn_program_erase_details(self, id)?;
+            decision
+                .system_notices
+                .extend(crate::store::GateSystemNoticeRecord::receipt_details(
+                    "deletion", details,
+                ));
+        }
         let window_label = window_label_from_timestamp(requested_at);
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;

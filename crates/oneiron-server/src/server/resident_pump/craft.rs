@@ -3,25 +3,26 @@
 //! through the resident's pack door, so the attempt's manifest names it.
 //!
 //! The task is part of the run's replay identity, so the section is frozen
-//! per attempt, as a planned leader's pack is (`pattern_launch`). A first
-//! entry lists the craft and loads each row, which stamps the manifest in
-//! order. A re-entry, once those rows are stamped or the run has begun,
-//! builds the same section from the manifest's rows and loads nothing again.
-//! A continuation's task, its source's fork, holds its source's section
-//! already and takes nothing.
+//! per attempt once the run began, as a planned leader's pack is
+//! (`pattern_launch`). Until its replay record exists an entry lists the
+//! craft and loads each note the manifest does not name yet, in order, so an
+//! entry cut between two loads takes the rest on its next entry; then the
+//! section is the manifest's notes, in its order. Once the run began a
+//! re-entry builds the same section from the manifest's rows and loads
+//! nothing again, a run that had none included. A continuation's task, its
+//! source's fork, holds its source's section already and takes nothing: the
+//! notes its source run was shown are stamped on its own lease instead.
 
-use oneiron::actor_claims::{
-    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, resident_craft_claim_ids,
-};
-use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ManifestKind};
-use oneiron::claim::ClaimBody;
+use std::collections::BTreeSet;
+
+use oneiron::actor_claims::{CRAFT_HEADING, craft_note_line, resident_craft_claim_ids};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
 use oneiron::engine_executor::EngineExecutorConfig;
+use oneiron::engine_executor::continuation::run_continuation;
 use oneiron::{EntityId, Error, Result, Vault, WriteActor};
 
 use super::SKILL_SEPARATOR;
 
-/// What heads the section; one line per note follows it.
-const HEADING: &str = "Your craft notes (lessons and failure modes you keep):";
 const ERASED: &str = "a craft note this run's task holds no longer reads, so its re-entry cannot \
      rebuild the task the run began with; run the agent afresh";
 const NOT_A_NOTE: &str = "an actor claim this run loaded is no lesson or failure mode with a text \
@@ -29,9 +30,12 @@ const NOT_A_NOTE: &str = "an actor claim this run loaded is no lesson or failure
 
 /// Appends `actor`'s craft to the task of its run on the leased try
 /// `leased`, after the separator its skills take: the heading, then one line
-/// per note, its kind and its whole text, newest first. A first entry reads
-/// and loads it at the pump's clock. Rule 5 caps none. No craft appends
-/// nothing.
+/// per note, its kind and its whole text, in its manifest's order (newest
+/// first as a first entry loads it). An entry before the run began reads
+/// and loads what its manifest lacks at the pump's clock. Rule 5 caps none.
+/// No craft appends nothing. A continuation stamps its source run's craft
+/// on its own lease and appends nothing; a stamp that fails is logged and
+/// the run goes on, as it did before it was stamped.
 ///
 /// # Errors
 ///
@@ -44,69 +48,58 @@ pub(super) fn append_resident_craft(
     config: &mut EngineExecutorConfig,
     continues: bool,
 ) -> Result<()> {
-    if continues {
-        return Ok(());
-    }
     let resident = actor.entity_ref();
-    let mut notes = Vec::new();
-    match frozen_craft(vault, leased, &config.run_id)? {
-        Some(frozen) => {
-            for id in &frozen {
-                notes.push(vault.get_claim(id)?.ok_or_else(|| refused(ERASED))?);
-            }
+    if continues {
+        if let Err(error) = inherit_craft(vault, leased, &resident) {
+            tracing::warn!(kind = ?error.kind(), agent = %resident.to_hex(), "a continued run's craft was not stamped on its own attempt");
         }
-        None => {
-            let at = super::unix_now();
-            for id in resident_craft_claim_ids(vault, &resident, at)? {
-                notes.push(vault.load_resident_actor_claim(leased.id, &resident, &id, at)?);
-            }
-        }
-    }
-    if notes.is_empty() {
         return Ok(());
     }
-    let mut lines = vec![HEADING.to_owned()];
-    for note in &notes {
-        lines.push(note_line(note)?);
+    if vault.get_code_run_replay_record(&config.run_id)?.is_none() {
+        // Not begun: what an entry cut between two loads left out loads now,
+        // once each; what it loaded stays as it loaded.
+        let loaded: BTreeSet<EntityId> = manifest_craft(vault, leased)?.into_iter().collect();
+        let at = super::unix_now();
+        for id in resident_craft_claim_ids(vault, &resident, at)? {
+            if !loaded.contains(&id) {
+                vault.load_resident_actor_claim(leased.id, &resident, &id, at)?;
+            }
+        }
+    }
+    let mut lines = vec![CRAFT_HEADING.to_owned()];
+    for id in manifest_craft(vault, leased)? {
+        let note = vault.get_claim(&id)?.ok_or_else(|| refused(ERASED))?;
+        lines.push(craft_note_line(&note).ok_or_else(|| refused(NOT_A_NOTE))?);
+    }
+    if lines.len() == 1 {
+        return Ok(());
     }
     config.task.push_str(SKILL_SEPARATOR);
     config.task.push_str(&lines.join("\n"));
     Ok(())
 }
 
-/// The craft a re-entry of `leased`'s run `run` builds its section from: the
-/// actor claims its manifest names, in order, once its first entry loaded
-/// them or the run began (its replay record exists, as it does for a run that
-/// had no craft). `None` for a first entry.
-fn frozen_craft(
-    vault: &Vault,
-    leased: &AttemptRecord,
-    run: &EntityId,
-) -> Result<Option<Vec<EntityId>>> {
+/// Stamps the craft the run a continuation's checkpoint names was shown on
+/// the continuation's own lease (OF-490), never the latest retry's.
+fn inherit_craft(vault: &Vault, leased: &AttemptRecord, resident: &EntityId) -> Result<()> {
+    let Some(continuation) = run_continuation(vault, leased.id)? else {
+        return Ok(());
+    };
+    let source = AttemptId::from_bytes(continuation.checkpoint.source_run.as_bytes())?;
+    vault.inherit_resident_craft(leased, source, resident, super::unix_now())?;
+    Ok(())
+}
+
+/// The actor claims `leased`'s live manifest names, in its order.
+fn manifest_craft(vault: &Vault, leased: &AttemptRecord) -> Result<Vec<EntityId>> {
     let live = AttemptQueue::new(vault)
         .get(leased.id)?
         .ok_or(Error::EntityNotFound)?;
-    let mut frozen = Vec::new();
-    for entry in live.manifest() {
-        if entry.kind == ManifestKind::ActorClaim {
-            frozen.push(EntityId::from_hex(&entry.reference)?);
-        }
-    }
-    if frozen.is_empty() && vault.get_code_run_replay_record(run)?.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(frozen))
-}
-
-/// One note's line: its kind and its whole text.
-fn note_line(note: &ClaimBody) -> Result<String> {
-    let kind = match note.predicate.as_str() {
-        PREDICATE_ACTOR_LESSON => "lesson",
-        PREDICATE_ACTOR_FAILURE_MODE => "failure mode",
-        _ => return Err(refused(NOT_A_NOTE)),
-    };
-    let text = note.value.as_str().ok_or_else(|| refused(NOT_A_NOTE))?;
-    Ok(format!("- {kind}: {text}"))
+    live.manifest()
+        .iter()
+        .filter(|entry| entry.kind == ManifestKind::ActorClaim)
+        .map(|entry| EntityId::from_hex(&entry.reference))
+        .collect()
 }
 
 /// Why a run cannot take its craft, and what to do next.

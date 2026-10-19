@@ -96,9 +96,11 @@ pub(crate) fn enqueue_timer_plan_in_txn(
         EnqueueDreamerAttemptOutcome::Existing(status)
             if status.payload.parent_attempt != parent_attempt =>
         {
-            return Err(crate::Error::InvalidConfig(
-                "timer plan dedupe cannot change its parent".into(),
-            ));
+            // Names the plan that stands, so the caller can join it.
+            return Err(crate::Error::InvalidConfig(format!(
+                "timer plan dedupe cannot change its parent; plan attempt {} stands under it",
+                crate::entity_id::bytes_to_hex_lower(status.attempt.id.as_bytes())
+            )));
         }
         EnqueueDreamerAttemptOutcome::Existing(_) => {}
     }

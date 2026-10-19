@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures_util::StreamExt;
+use oneiron::attempt_queue::ManifestEntry;
 use oneiron::claim::CallerLocality;
 use oneiron::compaction::{ChatLog, ChatLogLine, ConversationCompactionUnavailable, read_chat_log};
 use oneiron::conversation::{
@@ -138,6 +139,15 @@ pub(super) fn mark_prefix(request: &mut LlmRequest) {
 pub(super) struct PendingSeed {
     seed: Option<ChatBreakpoint>,
     live: Arc<AtomicBool>,
+}
+
+impl PendingSeed {
+    /// Whether the call it was entered with answered: `false` once a reused
+    /// prefix's captured rung gave way to today's call (OF-490 reads this
+    /// for the craft the reply was shown).
+    pub(super) fn answered_live(&self) -> bool {
+        self.live.load(Ordering::Acquire)
+    }
 }
 
 /// The turn's meter, as the flight's own guard is opened on it.
@@ -391,6 +401,10 @@ pub(crate) enum ChatReuse {
 pub(crate) struct ChatReused {
     pub(crate) live: RoleCall,
     pub(crate) breakpoint: AnswerBreakpoint,
+    /// The craft the captured request shows (OF-490), in its order, as its
+    /// craft message names it: what the reused call is shown, never today's.
+    /// Empty for a request captured with none.
+    pub(crate) craft: Vec<ManifestEntry>,
 }
 
 /// `reuse_chat_breakpoint`: a self agent's Retry clones its reply's kept
@@ -443,6 +457,7 @@ pub(crate) fn reuse_chat_breakpoint(
     if !asks {
         return ChatReuse::Unavailable("user_turn_changed");
     }
+    let craft = crate::ai_host::resident_craft::captured_craft(&request, vault.now_recorded_at());
     let Some(ladder) = readmit_rung(ai, vault, &seed, &request) else {
         return ChatReuse::Unavailable("rung_not_admitted");
     };
@@ -483,6 +498,7 @@ pub(crate) fn reuse_chat_breakpoint(
             instructions_digest: seed.instructions_digest.clone(),
             source: Some(seed),
         },
+        craft,
     }))
 }
 

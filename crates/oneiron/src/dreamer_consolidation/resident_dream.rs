@@ -741,6 +741,38 @@ pub async fn run_resident_dream(
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
+    // OF-490: it dreams knowing its own craft, every note, loaded on this
+    // attempt so its manifest names them: fixed input beside its cut, never
+    // diary progress, so no cut defers or consumes it. A craft that does not
+    // read leaves the dreaming as it was.
+    let craft = match ctx
+        .vault
+        .load_resident_craft(attempt_id, &resident_id, ctx.now_ms / 1_000)
+    {
+        Ok(notes) => crate::actor_claims::craft_message_text(&notes),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), ?attempt_id, "a resident's craft did not read; it dreams without it");
+            None
+        }
+    };
+    let mut messages = vec![LlmMessage {
+        role: LlmMessageRole::System,
+        content: vec![ContentPart::Text {
+            text: model.instruction.to_owned(),
+        }],
+    }];
+    if let Some(text) = craft {
+        messages.push(LlmMessage {
+            role: LlmMessageRole::System,
+            content: vec![ContentPart::Text { text }],
+        });
+    }
+    messages.push(LlmMessage {
+        role: LlmMessageRole::User,
+        content: vec![ContentPart::Text {
+            text: format!("{}\n\n{CRAFT_ASK}", cut.text()),
+        }],
+    });
     let request = LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
@@ -759,20 +791,7 @@ pub async fn run_resident_dream(
             locality,
         }
         .with_purpose_defaults(),
-        messages: vec![
-            LlmMessage {
-                role: LlmMessageRole::System,
-                content: vec![ContentPart::Text {
-                    text: model.instruction.to_owned(),
-                }],
-            },
-            LlmMessage {
-                role: LlmMessageRole::User,
-                content: vec![ContentPart::Text {
-                    text: format!("{}\n\n{CRAFT_ASK}", cut.text()),
-                }],
-            },
-        ],
+        messages,
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),

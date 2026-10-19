@@ -29,6 +29,7 @@ use crate::side_table::{self, Named, SideTable};
 
 pub(crate) use self::arm::{
     arm_turn_program_in_txn, disarm_turn_program_in_txn, erase_turn_program_actor_in_txn,
+    turn_program_erase_details,
 };
 pub(crate) use self::authority::{
     TurnProgramAuthority, TurnProgramBinding, TurnProgramBound, apply_program_started_in_txn,

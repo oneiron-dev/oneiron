@@ -238,9 +238,20 @@ impl StepRunner {
             attempt,
             actor,
             purpose,
-            messages,
+            mut messages,
             response_format,
         } = input;
+        // OF-490: the step speaks as its resident, so it is shown that
+        // resident's craft after its instructions, each note loaded on its
+        // own attempt. A replayed wave plan never calls here.
+        if let Some(craft) = super::resident_craft::queue_craft(
+            vault,
+            attempt.id,
+            &actor.entity_ref(),
+            super::unix_now(),
+        ) {
+            super::resident_craft::join_craft(&mut messages, craft);
+        }
         let seat = self
             .models
             .seat(CHAT_ROLE)

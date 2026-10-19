@@ -47,6 +47,8 @@ mod lens_callbacks;
 mod local_vision;
 pub(crate) mod payer_funding;
 mod policy;
+mod question_timer;
+pub(crate) mod resident_craft;
 pub(crate) mod self_heal_detectors;
 mod skill_author;
 mod skill_discovery;
@@ -474,6 +476,9 @@ pub struct AiHost {
     question_timer: dreamer::QuestionTimer,
     /// The gate each Dreamer pass is admitted through.
     pass_admission: dreamer::PassAdmission,
+    /// The watch that hands the bound Dreamer's timer work to its own
+    /// sleepers should the Dreamer end before shutdown (FIX 1149).
+    dreamer_fallback: OnceLock<question_timer::DreamerFallback>,
 }
 
 /// The sieve's backlog drain and the stop it checks between passes.
@@ -560,13 +565,24 @@ impl AiHost {
     /// Binds the standing-question pump to the running Dreamer's timer
     /// (OF-506): its Deadline passes run the pump on the home node. `false`
     /// when no Dreamer runs, so the caller starts the pump's own sleeper and
-    /// exactly one runner serves the questions.
+    /// exactly one runner serves the questions. Should the bound Dreamer end
+    /// before shutdown, already or later, the questions and due digests go
+    /// to their own sleepers on `server` once (FIX 1149), so one runner
+    /// still serves them.
     pub(crate) fn bind_question_timer(&self, server: &Arc<SyncServer>) -> bool {
-        if self.dreamer.is_none() {
+        let Some(dreamer) = &self.dreamer else {
             return false;
-        }
-        // A second bind finds the first; the timer still drives the pump.
+        };
+        // A second bind finds the first; the timer still drives the pump,
+        // and the first bind's watch stands.
         let _ = self.question_timer.set(Arc::downgrade(server));
+        let _ = self.dreamer_fallback.get_or_init(|| {
+            question_timer::DreamerFallback::spawn(
+                server,
+                dreamer.ended(),
+                Arc::clone(&self.pass_admission),
+            )
+        });
         true
     }
 
@@ -644,6 +660,7 @@ impl AiHost {
             sync_wake: None,
             question_timer: dreamer::QuestionTimer::default(),
             pass_admission: dreamer::PassAdmission::default(),
+            dreamer_fallback: OnceLock::new(),
         };
         let Some(models) = models else {
             served_without_dreamer(&vault, device);
@@ -705,6 +722,11 @@ impl AiHost {
     /// Lets running chat turns end, then stops both workers and the sieve's
     /// backlog drain cooperatively and waits for them.
     pub async fn shutdown(mut self) {
+        // A planned stop hands nothing over: the watch stops before the
+        // Dreamer does, and any sleepers it started stop with it.
+        if let Some(fallback) = self.dreamer_fallback.take() {
+            fallback.stop();
+        }
         if let Some(wake) = self.sync_wake.take() {
             wake.stop();
         }
@@ -743,6 +765,9 @@ impl AiHost {
 /// cannot wait for them here.
 impl Drop for AiHost {
     fn drop(&mut self) {
+        if let Some(fallback) = self.dreamer_fallback.get() {
+            fallback.stop();
+        }
         self.handle.turns.stop_now();
         if let Some(wake) = &self.sync_wake {
             wake.stop();
