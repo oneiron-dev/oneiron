@@ -39,6 +39,7 @@ use crate::owner::{
 };
 use crate::server::SyncServer;
 mod agent_grant_routes;
+mod backup_setting_routes;
 mod browser_takeover_routes;
 mod budget_hold_routes;
 mod checkpoint_policy_routes;
@@ -150,6 +151,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(learning_setting_routes::routes())
         .merge(machine_routes::routes())
         .merge(model_setting_routes::routes())
+        .merge(backup_setting_routes::routes())
         .merge(widen_proposal_routes::routes())
         .merge(craft_candidate_routes::routes())
         .merge(pad_routes::routes())
@@ -433,12 +435,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
     let host = host(&server)?;
     let report = blocking(move || {
         Ok::<_, OwnerError>(OwnerStatus {
-            location: location::locate(
-                &host.vault_path,
-                Some(server.vault()),
-                &host.backups,
-                host.every.map(|every| every.as_secs() / 3_600),
-            )?,
+            location: host.locate(server.vault())?,
             embedder: server.embedder_report()?,
             feedback: feedback::status(server.feedback.as_deref(), &server.config.feedback_inbox),
             link_bytes: oneiron::sync::transport::process_link_bytes(),

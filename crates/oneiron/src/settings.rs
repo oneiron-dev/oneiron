@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, RawValue, SideTable};
 use crate::store::Store;
 
+pub mod backup;
 mod destination;
 mod device_local;
 mod device_only;

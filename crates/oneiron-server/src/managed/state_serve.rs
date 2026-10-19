@@ -1402,8 +1402,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.extend(sync_server.spawn_resident_pump_admitted(admitted()));
     // Held and answered connector calls settle (ONE-2510).
     ladder_workers.push(sync_server.spawn_connector_settler_admitted(admitted()));
-    // The owner's `[backup]` schedule: each tick is admitted like a served
-    // write and holds it through its backup and pruning.
+    // The backup schedule, the owner's setting over `[backup]` (FIX 5621),
+    // started while it is off too: each tick is admitted like a served write
+    // and holds it through its policy read, its backup and its pruning.
     ladder_workers.extend(
         sync_server
             .spawn_backup_schedule_admitted(crate::owner::schedule::SCHEDULE_TICK, admitted()),
