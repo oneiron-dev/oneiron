@@ -47269,9 +47269,23 @@
       "crate-vis": 4,
       "enum": 2,
       "fn": 13,
-      "mod": 1,
+      "mod": 2,
       "re-export": 2,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupPolicy"
+     ],
+     "path": "src/settings/backup.rs",
+     "purpose": "The owner's backup setting (FIX 5621): whether a running server takes backups on its own, how many hours…",
+     "surface": {
+      "const": 2,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -63607,7 +63621,7 @@
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "settings": {
-     "files": 7,
+     "files": 8,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -63924,7 +63938,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3940,
+   "source_files": 3941,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79284,6 +79298,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/backup_setting_routes.rs",
+     "purpose": "`/v1/owner/settings/backup`: the owner's backup setting (FIX 5621), whether this server takes backups on its…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/browser_takeover_routes.rs",
      "purpose": "`/v1/owner/browsers*`: the owner takes a run's browser over (CUA-001), to sign in or pay inside the same…",
      "surface": {
@@ -81531,7 +81555,7 @@
      "purpose": "The `[backup]` section: where local backups go, whether `serve` takes them on its own, how often, and how…",
      "surface": {
       "crate-vis": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -85007,7 +85031,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -86539,7 +86563,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 466,
+     "files": 467,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86989,7 +87013,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 863,
+   "source_files": 864,
    "test_files": 182
   },
   "oneiron-spawn": {
