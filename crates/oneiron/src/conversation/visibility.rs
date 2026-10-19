@@ -329,15 +329,20 @@ pub(crate) fn conversation_summary_covers(
 
 /// Whether every one of `viewers` reads each private thread (FIX 2951) the
 /// revision `raw` of `id`, or its current row, sits in: the root each TURN
-/// up its MESSAGE, reply, quote and spawn edges or a claim's subject names,
-/// and those of every record a summary, merge or reaction draws its words
-/// from, each at that TURN, which a viewer added from a later turn on does
-/// not read (FIX 5545). A TURN's `Parent` stays in its own thread or on the
-/// trunk, which names none, so it is not walked. A TASK also reaches the
-/// thread turns that bind it and the turns its thread and consult refs name
-/// (FIX 3124). A declared root that is gone or does not resolve denies, and
-/// with no viewers so does any private thread. No read is exempt: an
-/// owner's, a host's and an unbound one meet it too.
+/// up its MESSAGE and spawn edges or a claim's subject names, and those of
+/// every record a summary, merge or reaction draws its words from, each at
+/// that TURN under the CONTENT rule, which a viewer added from a later turn
+/// on does not meet, the root included (FIX 5545). The turn a TURN answers
+/// or quotes (`RepliesTo`) is its place, not a source of its words: that
+/// turn and its own ancestry are read under the CURRENT rule, so a reply
+/// after a viewer's add reads to it though it answers a turn from before.
+/// The quoted words themselves are the target's own read. A TURN's `Parent`
+/// stays in its own thread or on the trunk, which names none, so it is not
+/// walked. A TASK also reaches the thread turns that bind it and the turns
+/// its thread and consult refs name (FIX 3124). A declared root that is gone
+/// or does not resolve denies, and with no viewers so does any private
+/// thread. No read is exempt: an owner's, a host's and an unbound one meet
+/// it too.
 pub(crate) fn private_threads_readable_raw_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -362,28 +367,36 @@ pub(crate) fn private_threads_readable_with_read_in(
     raw: &[u8],
     viewers: &[EntityId],
 ) -> Result<bool> {
-    let mut pending = vec![(id, Some(raw.to_vec()))];
+    // Each pending record is walked as a source of the words read (`true`)
+    // or as a place alone (`false`).
+    let mut pending = vec![(id, Some(raw.to_vec()), true)];
     if let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
         && live.as_slice() != raw
     {
-        pending.push((id, Some(live)));
+        pending.push((id, Some(live), true));
     }
     if crate::store::ManifestDbs::is_union(dbs)
         && let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)?
         && live.as_slice() != raw
     {
-        pending.push((id, Some(live)));
+        pending.push((id, Some(live), true));
     }
-    let mut seen = BTreeSet::from([id]);
+    // A record walked as a place is walked again once it is reached as a
+    // source; one walked as a source is not walked again.
+    let mut seen = BTreeMap::from([(id, true)]);
     let mut placed = BTreeSet::new();
-    while let Some((id, revision)) = pending.pop() {
+    let mut reached = BTreeSet::new();
+    while let Some((id, revision, source)) = pending.pop() {
         let bytes = match revision {
             Some(bytes) => bytes,
-            None if !seen.insert(id) => continue,
-            None => match crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)? {
-                Some(bytes) => bytes,
-                None => continue,
-            },
+            None if seen.get(&id).is_some_and(|walked| *walked || !source) => continue,
+            None => {
+                seen.insert(id, source);
+                match crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)? {
+                    Some(bytes) => bytes,
+                    None => continue,
+                }
+            }
         };
         if seen.len() > MAX_ANCESTOR_DEPTH {
             return Err(state("private thread ancestry bound"));
@@ -407,19 +420,33 @@ pub(crate) fn private_threads_readable_with_read_in(
                 if !crate::vault::live_entity_row_in_txn(dbs, txn, &turn)?.is_live() {
                     return Ok(false);
                 }
-                pending.push((turn, None));
+                pending.push((turn, None, source));
             }
             pending.extend(
                 crate::task_verb::room_thread_context_refs(body)
                     .into_iter()
-                    .map(|id| (id, None)),
+                    .map(|id| (id, None, source)),
             );
         }
         let kinds: &[EdgeKind] = if h.entity_type == ENTITY_TYPE_TURN {
             if let Some(binding) = crate::workspace_roster::thread_binding(body)? {
-                placed.insert((binding.root, id));
+                if source {
+                    placed.insert((binding.root, id));
+                } else {
+                    reached.insert(binding.root);
+                }
             }
-            &[EdgeKind::RepliesTo, EdgeKind::SpawnedBy]
+            // FIX 5545: the turn answered is a place.
+            let answered = edge_ids(
+                dbs,
+                txn,
+                &id,
+                EdgeKind::RepliesTo,
+                false,
+                MAX_ANCESTOR_DEPTH,
+            )?;
+            pending.extend(answered.into_iter().map(|id| (id, None, false)));
+            &[EdgeKind::SpawnedBy]
         } else {
             &[
                 EdgeKind::ChildOf,
@@ -432,7 +459,7 @@ pub(crate) fn private_threads_readable_with_read_in(
         };
         for kind in kinds {
             let next = edge_ids(dbs, txn, &id, *kind, false, MAX_ANCESTOR_DEPTH)?;
-            pending.extend(next.into_iter().map(|id| (id, None)));
+            pending.extend(next.into_iter().map(|id| (id, None, source)));
         }
         let mut covers = vec![crate::scope_summary::body_covers_in_txn(
             vault,
@@ -445,7 +472,7 @@ pub(crate) fn private_threads_readable_with_read_in(
             && let Ok(claim) = crate::claim::decode_claim_body(body, true)
         {
             if let crate::claim::ClaimSubject::Entity(subject) = &claim.subject {
-                pending.push((*subject, None));
+                pending.push((*subject, None, source));
             }
             covers.extend([
                 crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim),
@@ -456,12 +483,19 @@ pub(crate) fn private_threads_readable_with_read_in(
         // A cover that does not resolve names no root here; the audience
         // and room reads that resolve covers deny it themselves.
         for covered in covers.into_iter().flat_map(|covers| covers.ok().flatten()) {
-            pending.extend(covered.into_iter().map(|id| (id, None)));
+            pending.extend(covered.into_iter().map(|id| (id, None, source)));
         }
     }
     for (root, turn) in placed {
         if !crate::workspace_roster::thread_turn_readable_with_read_in(
             vault, dbs, txn, root, turn, viewers,
+        )? {
+            return Ok(false);
+        }
+    }
+    for root in reached {
+        if !crate::workspace_roster::thread_root_readable_with_read_in(
+            vault, dbs, txn, root, viewers,
         )? {
             return Ok(false);
         }
