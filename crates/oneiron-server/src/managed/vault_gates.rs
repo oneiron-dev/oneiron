@@ -147,19 +147,29 @@ pub fn check_managed_open_gates(
     vault_name: &str,
     credentials: &Credentials,
 ) -> Result<(), ManagedError> {
-    check_gates_with_isolation(vault, vault_name, credentials, false)
+    // No probe ran here, so no facility is proven.
+    let unprobed = super::isolation::IsolationEvidence {
+        fscrypt: false,
+        dedicated_uid: false,
+        directory: None,
+    };
+    check_gates_with_isolation(vault, vault_name, credentials, false, unprobed.missing())
 }
 
+/// `missing` is what the refusal names: the facilities the probe did not
+/// find.
 fn check_gates_with_isolation(
     vault: &oneiron::Vault,
     vault_name: &str,
     credentials: &Credentials,
     isolated: bool,
+    missing: Vec<&'static str>,
 ) -> Result<(), ManagedError> {
     if !canary_marker_present(vault)? && !isolated {
         return Err(ManagedError::ManagedRealTenantRefused {
             vault: vault_name.to_owned(),
             marker: CANARY_MARKER_KEY,
+            missing,
         });
     }
     verify_or_seal_dek_mac(vault, vault_name, &credentials.dek)
@@ -192,6 +202,7 @@ fn open_probed_vault(
     owner: DerivationOwner,
 ) -> Result<oneiron::Vault, ManagedError> {
     let isolated = evidence.admits() && evidence.directory.is_some();
+    let missing = evidence.missing();
     // The probed directory itself, never what the path names by now: one
     // renamed in under `data_dir` after the probe is refused, not opened.
     let vault = match evidence.directory {
@@ -200,7 +211,7 @@ fn open_probed_vault(
     }
     .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
     warn_if_reader_table_short(&vault);
-    check_gates_with_isolation(&vault, vault_name, credentials, isolated)?;
+    check_gates_with_isolation(&vault, vault_name, credentials, isolated, missing)?;
     // Bind before any managed caller can enqueue or serve derived content.
     vault
         .bind_derivation_owner(owner)

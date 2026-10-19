@@ -961,8 +961,9 @@ impl PartialServeConfig {
         if let Some(value) = self.connectors {
             resolved.connectors = value;
         }
+        // An explicit no stands as firmly as a yes.
         if let Some(value) = self.failure_signal_export {
-            resolved.failure_signal_export = value;
+            resolved.failure_signal_export = Some(value);
         }
         if let Some(value) = self.failure_signal_training {
             resolved.failure_signal_training = value;
