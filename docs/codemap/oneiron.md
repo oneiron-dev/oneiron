@@ -687,12 +687,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/calendar/claims/values.rs` | src | m | 8 struct · 7 enum · 16 fn | CalendarAttendeeValue, CalendarBusyTransparency, CalendarOrigin, CalendarPassportDirection, CalendarPassportPresence, CalendarPassportValue, CalendarSeriesExceptionValue, CalendarSeriesMasterValue +7 | Calendar claim value types with their wire-token impls |
 | `src/calendar/connectors/door.rs` | src | s | 6 struct · 9 fn | CalendarConnectorConfigureRequest, CalendarConnectorKillRequest, CalendarConnectorRegistration, CalendarConnectorRequest, CalendarConnectorWriteRequest, CalendarImipTransportConfig | Owner-installed calendar seats and host iMIP submission, with custody names only |
 | `src/calendar/connectors/inbound.rs` | src | m | 1 fn · 3 crate-vis | — | Pull orchestration: apply, admit, enqueue, and reconcile |
-| `src/calendar/connectors/mod.rs` | src | s | 1 mod · 4 re-export | — | Shared calendar connector kernel (CAL-05, ONE-1787) |
+| `src/calendar/connectors/mod.rs` | src | s | 1 mod · 4 re-export · 1 crate-vis | — | Shared calendar connector kernel (CAL-05, ONE-1787) |
 | `src/calendar/connectors/outbound.rs` | src | m | 2 struct · 2 enum · 4 fn · 12 crate-vis | CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState | Conditional writes plus durable outbox and remote-object cursor store |
 | `src/calendar/connectors/outbound/tests.rs` | test | m | — | — | — |
 | `src/calendar/connectors/remote.rs` | src | m | 4 struct · 3 enum · 1 trait · 6 fn · 8 crate-vis | CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange, RemoteCalendarObject, RemoteSyncBatch, RemoteWriteReceipt, RemoteWriteRequest | Provider-neutral transport seam, change classification, and ICS render |
 | `src/calendar/connectors/resource.rs` | src | s | 5 crate-vis | — | One UID is one remote resource: master plus every live detached exception |
-| `src/calendar/connectors/seat.rs` | src | m | 4 struct · 1 enum · 8 fn · 4 const · 1 crate-vis | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload | Seat configs, cursors, kill switch, error type, and sync verbs |
+| `src/calendar/connectors/seat.rs` | src | m | 4 struct · 1 enum · 8 fn · 4 const · 2 crate-vis | CalendarConnectorError, CalendarConnectorKillSwitchState, CalendarConnectorSeatConfig, CalendarConnectorSeatState, CalendarConnectorSyncPayload | Seat configs, cursors, kill switch, error type, and sync verbs |
 | `src/calendar/door.rs` | src | s | 1 struct · 1 enum · 1 fn | CalendarEventCreateRequest, CalendarEventCreated | Typed, caller-bound calendar origin creation |
 | `src/calendar/freebusy.rs` | src | s | 1 struct · 2 fn · 1 type | BusyInterval | Busy-only freebusy projection (CAL-09, C5) |
 | `src/calendar/google_internal.rs` | src | s | 1 struct · 1 trait · 3 fn · 2 const | GoogleInternalConnector, GoogleInternalWire | Workspace-Internal Google calendar adapter (CAL-05, ONE-1787) |
@@ -2587,7 +2587,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/hook_regen_doors/types.rs` | src | s | 3 struct | HookRegenAdoptRequest, HookRegenBindingRequest, HookRegenView | — |
 | `src/memory/identity_doors.rs` | src | m | 7 struct · 1 enum · 2 fn · 2 crate-vis | IdentityConfidenceEvidence, IdentityHints, IdentityKind, IdentityLookup, IdentityLookupCandidate, IdentityLookupRequest, PersonCreateRequest, PersonCreated | Typed PERSON setup and look-before-mint over the declared identity index |
 | `src/memory/inspection.rs` | src | s | 1 fn · 1 crate-vis | — | `vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane |
-| `src/memory/key_value/mod.rs` | src | s | 3 fn · 1 re-export · 1 crate-vis | — | Exact actor-owned keyed facts over canonical CLAIMs |
+| `src/memory/key_value/mod.rs` | src | s | 3 fn · 1 re-export · 2 crate-vis | — | Exact actor-owned keyed facts over canonical CLAIMs |
 | `src/memory/key_value/tests.rs` | test | L | — | — | Behavior proofs through the real facade and production gate |
 | `src/memory/key_value/types.rs` | src | s | 7 struct | KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut, KeyValuePutReceipt, KeyValueSearch | Typed actor-owned, worldless keyed-memory requests and results |
 | `src/memory/key_value/writes.rs` | src | s | 2 fn | — | Key mutations compose the existing claim gate and lifecycle door in ONE transaction |
@@ -2599,7 +2599,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | m | 25 mod · 53 re-export · 17 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | m | 25 mod · 53 re-export · 18 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -4142,7 +4142,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/lifecycle_receipt.rs` | src | m | 12 crate-vis | — | The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked… |
 | `src/task_verb/linear_store.rs` | src | m | 1 struct · 5 fn · 10 crate-vis | VaultLinearTaskStore | Vault storage for the tracker mirror: replicated fields, local OCC and CAS links |
 | `src/task_verb/mirror_edit.rs` | src | s | 2 crate-vis | — | The owner's public title edit on `tasks.update` (OF-427 C8), and the Owner standing the mirror's mapping… |
-| `src/task_verb/mod.rs` | src | m | 1 fn · 3 mod · 26 re-export · 39 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
+| `src/task_verb/mod.rs` | src | m | 1 fn · 4 mod · 26 re-export · 39 crate-vis | — | Typed, actor-bound verbs over the Context Board TASKS section |
 | `src/task_verb/owner_index.rs` | src | s | 3 fn · 2 crate-vis | — | Shared derived tasks-by-owner index for inbox and saved plan queries |
 | `src/task_verb/policy_change_followup.rs` | src | m | 2 crate-vis | — | Atomic, idempotent human TASK notification for one landed policy change |
 | `src/task_verb/presence_diagnostics.rs` | src | s | 3 crate-vis | — | Typed per-row presence read failures for the bounded TASKS projection |
@@ -4158,6 +4158,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/reconciliation.rs` | src | s | 1 fn · 2 crate-vis | — | Repository conflicts mint one linked reconciliation TASK and realizing attempt |
 | `src/task_verb/refusal.rs` | src | s | 3 struct · 1 fn | SelfRefusalInput, SelfRefusalReceipt, TaskRefusalRecord | The agent's own refusal of a TASK, applied through her dial (OF-533) |
 | `src/task_verb/report_journal.rs` | src | s | 6 crate-vis | — | The per-attempt report journal (OF-220) |
+| `src/task_verb/revoke_lands.rs` | src | m | 3 fn · 1 const · 5 crate-vis | — | The owner's revoke always lands (FIX 5076; Engine 10-19): what a verb hook may change on a revoke, erase or… |
 | `src/task_verb/room_thread.rs` | src | m | 5 crate-vis | — | Existing TASK intent and follow-up facts projected onto a room thread |
 | `src/task_verb/route_receipts.rs` | src | s | 5 struct · 5 enum · 3 fn · 2 const · 2 crate-vis | TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome +2 | — |
 | `src/task_verb/run_doors.rs` | src | m | 11 struct · 3 enum · 3 fn · 1 crate-vis | CancelForceReceipt, CancelForceRequest, ConsultDisposition, ConsultInspection, ConsultLandKind, ConsultLandReply, ConsultLandRequest, ConsultLandSpend +6 | The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)… |
