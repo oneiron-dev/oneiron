@@ -31,12 +31,13 @@
 //! world reads as readable nowhere and the withheld set cannot be named.
 //!
 //! Edits are main-log metadata (the Engine call "OwnerAct world metadata to
-//! every linked machine", 10-19 01:4x): an edit names the main-log heads, its
-//! carrier's standing rows, a one-machine target's and the world's live
-//! edits, and every linked machine folds it. A world's key records stay
-//! per-world side entries, recipient-filtered: no main-log entry, settings
-//! edits included, ever names one, so a replica that may not hold W folds the
-//! main log without W's key records.
+//! every linked machine", 10-19 01:4x): an edit names the main-log heads
+//! alone, whose fold carries its carrier's standing rows, a one-machine
+//! target's and the world's live edits (FIX 4987), and every linked machine
+//! folds it. A world's key records stay per-world side entries,
+//! recipient-filtered: no main-log entry, settings edits included, ever names
+//! one, so a replica that may not hold W folds the main log without W's key
+//! records.
 
 use std::collections::{BTreeMap, BTreeSet};
 
