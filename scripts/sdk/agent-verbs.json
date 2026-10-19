@@ -10719,6 +10719,104 @@
       "section": false
     },
     {
+      "name": "vault.skills.attribution.settle",
+      "description": "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.",
+      "input": "ProposalDeltaSettleRequest",
+      "output": "crate::task_verb::sdk::ProposalDeltaSettlement",
+      "call": "crate::task_verb::sdk::skill_attribution_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.settle\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.read",
+      "description": "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.",
+      "input": "ProposalDeltaReadRequest",
+      "output": "crate::task_verb::sdk::ProposalDeltaRead",
+      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.evidence.record",
+      "description": "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it.",
+      "input": "AttributionEvidenceRequest",
+      "output": "crate::task_verb::sdk::AttributionEvidenceReceipt",
+      "call": "crate::task_verb::sdk::skill_attribution_evidence_record_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.evidence.record\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.project",
+      "description": "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted.",
+      "input": "AttributionProjectRequest",
+      "output": "crate::task_verb::sdk::AttributionProjection",
+      "call": "crate::task_verb::sdk::skill_attribution_project_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.project\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.judgments",
+      "description": "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger.",
+      "input": "AttributionListRequest",
+      "output": "crate::task_verb::sdk::AttributionJudgmentsView",
+      "call": "crate::task_verb::sdk::skill_attribution_judgments_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.judgments\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.proposals",
+      "description": "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted.",
+      "input": "AttributionListRequest",
+      "output": "crate::task_verb::sdk::AttributionProposalsView",
+      "call": "crate::task_verb::sdk::skill_attribution_proposals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.proposals\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.positive.retire",
+      "description": "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it.",
+      "input": "PositiveRetireRequest",
+      "output": "crate::task_verb::sdk::PositiveRetireReceipt",
+      "call": "crate::task_verb::sdk::skill_attribution_positive_retire_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.positive.retire\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.steps.submit",
       "description": "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.",
       "input": "crate::llm::model_step::ModelStepSubmit",
