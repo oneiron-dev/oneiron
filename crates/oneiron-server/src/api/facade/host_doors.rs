@@ -189,6 +189,7 @@ pub(crate) use super::vector_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+pub(crate) use super::critical_confirm_doors::*;
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 // The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
@@ -1333,6 +1334,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.reports.disclosure"
         | "vault.reports.route"
         | "vault.reports.outbound"
+        | "vault.writes.critical_confirm.pending"
+        | "vault.writes.critical_confirm.clear"
+        | "vault.writes.critical_confirm.decline"
+        | "vault.writes.critical_confirm.receipt"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.claims.vet"
@@ -1375,6 +1380,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
         | "vault.consults.get"
+        | "vault.consolidation.home.get"
+        | "vault.consolidation.lineage"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1393,6 +1400,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
+        | "vault.consent.bypass_grant_warning"
+        | "vault.consent.create_bypass_grant"
+        | "vault.consent.active_bypass_grants"
+        | "vault.consent.bypassed_effect_receipts"
         | "vault.consent.graduation.policy"
         | "vault.consent.graduation.policy.set"
         | "vault.consent.graduation.policy.clear"
@@ -1460,6 +1471,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.hold"
         | "vault.budgets.hold.resume"
         | "vault.budgets.local"
+        | "vault.budgets.reservations"
         | "vault.budgets.settlements"
         | "vault.budgets.rsi.configure"
         | "vault.budgets.rsi"

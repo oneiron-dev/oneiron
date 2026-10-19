@@ -313,6 +313,11 @@ export_facade! {
     let output = client.vault_budgets_local(&input)?;
     crate::codec::lift_record("vault.budgets.local", &output)
 };
+"vault.budgets.reservations" => fn vault_budgets_reservations(&self, input: RunnerBudgetReservationsRequest) -> RunnerBudgetReservationsView = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest = crate::codec::lower_record("vault.budgets.reservations", input)?;
+    let output = client.vault_budgets_reservations(&input)?;
+    crate::codec::lift_record("vault.budgets.reservations", &output)
+};
 "vault.budgets.settlements" => fn vault_budgets_settlements(&self, input: RunSettlementsRequest) -> RunSettlementsView = |client| {
     let input: oneiron::agent_dispatch::budget_doors::RunSettlementsRequest = crate::codec::lower_record("vault.budgets.settlements", input)?;
     let output = client.vault_budgets_settlements(&input)?;
@@ -2101,6 +2106,26 @@ export_facade! {
     let output = client.vault_consent_revoke(&input)?;
     crate::codec::lift_record("vault.consent.revoke", &output)
 };
+"vault.consent.bypass_grant_warning" => fn vault_consent_bypass_grant_warning(&self, input: BypassGrantWarningRequest) -> BypassGrantWarningView = |client| {
+    let input: oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest = crate::codec::lower_record("vault.consent.bypass_grant_warning", input)?;
+    let output = client.vault_consent_bypass_grant_warning(&input)?;
+    crate::codec::lift_record("vault.consent.bypass_grant_warning", &output)
+};
+"vault.consent.create_bypass_grant" => fn vault_consent_create_bypass_grant(&self, input: CreateBypassGrantRequest) -> Vec<ConsentActReceipt> = |client| {
+    let input: oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest = crate::codec::lower_record("vault.consent.create_bypass_grant", input)?;
+    let output = client.vault_consent_create_bypass_grant(&input)?;
+    crate::codec::lift_record("vault.consent.create_bypass_grant", &output)
+};
+"vault.consent.active_bypass_grants" => fn vault_consent_active_bypass_grants(&self) -> Vec<BypassActiveState> = |client| {
+    let input: oneiron::consent::bypass_lifecycle::ActiveBypassGrantsRequest = crate::codec::lower_empty("vault.consent.active_bypass_grants")?;
+    let output = client.vault_consent_active_bypass_grants(&input)?;
+    crate::codec::lift_record("vault.consent.active_bypass_grants", &output)
+};
+"vault.consent.bypassed_effect_receipts" => fn vault_consent_bypassed_effect_receipts(&self, input: BypassedEffectReceiptsRequest) -> Vec<BypassedEffectReceipt> = |client| {
+    let input: oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest = crate::codec::lower_record("vault.consent.bypassed_effect_receipts", input)?;
+    let output = client.vault_consent_bypassed_effect_receipts(&input)?;
+    crate::codec::lift_record("vault.consent.bypassed_effect_receipts", &output)
+};
 "vault.consent.graduation.policy" => fn vault_consent_graduation_policy(&self, input: GraduationPolicyRequest) -> GraduationPolicies = |client| {
     let input: oneiron::consent_graduation::api::GraduationPolicyRequest = crate::codec::lower_record("vault.consent.graduation.policy", input)?;
     let output = client.vault_consent_graduation_policy(&input)?;
@@ -3871,6 +3896,26 @@ export_facade! {
     let output = client.vault_delete(&input)?;
     Lift::lift(output)
 };
+"vault.writes.critical_confirm.pending" => fn vault_writes_critical_confirm_pending(&self, input: CriticalWriteConfirmPendingRequest) -> Option<CriticalWriteConfirmPending> = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmPendingRequest = crate::codec::lower_record("vault.writes.critical_confirm.pending", input)?;
+    let output = client.vault_writes_critical_confirm_pending(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.pending", &output)
+};
+"vault.writes.critical_confirm.clear" => fn vault_writes_critical_confirm_clear(&self, input: CriticalWriteConfirmRequest) -> CriticalWriteConfirmSettlement = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmRequest = crate::codec::lower_record("vault.writes.critical_confirm.clear", input)?;
+    let output = client.vault_writes_critical_confirm_clear(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.clear", &output)
+};
+"vault.writes.critical_confirm.decline" => fn vault_writes_critical_confirm_decline(&self, input: CriticalWriteConfirmRequest) -> CriticalWriteConfirmSettlement = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmRequest = crate::codec::lower_record("vault.writes.critical_confirm.decline", input)?;
+    let output = client.vault_writes_critical_confirm_decline(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.decline", &output)
+};
+"vault.writes.critical_confirm.receipt" => fn vault_writes_critical_confirm_receipt(&self, input: CriticalWriteConfirmReceiptRequest) -> CriticalWriteConfirmReceipt = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmReceiptRequest = crate::codec::lower_record("vault.writes.critical_confirm.receipt", input)?;
+    let output = client.vault_writes_critical_confirm_receipt(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.receipt", &output)
+};
 "vault.writes.pending" => fn vault_writes_pending(&self, limit: u32) -> Vec<PendingWrite> = |client| {
     let input: oneiron::task_verb::sdk::ReceiptsRequest = limit.lower()?;
     let output = client.vault_writes_pending(&input)?;
@@ -4165,6 +4210,16 @@ export_facade! {
     let input: oneiron::engine_executor::checkpoint_read::CheckpointReadRequest = crate::codec::lower_record("vault.runs.checkpoint", input)?;
     let output = client.vault_runs_checkpoint(&input)?;
     crate::codec::lift_record("vault.runs.checkpoint", &output)
+};
+"vault.consolidation.home.get" => fn vault_consolidation_home_get(&self) -> ConsolidationHomeView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consolidation.home.get")?;
+    let output = client.vault_consolidation_home_get(&input)?;
+    crate::codec::lift_record("vault.consolidation.home.get", &output)
+};
+"vault.consolidation.lineage" => fn vault_consolidation_lineage(&self, input: ConsolidationLineageRequest) -> Option<ConsolidationLineageView> = |client| {
+    let input: oneiron::dreamer_runner::ConsolidationLineageRequest = crate::codec::lower_record("vault.consolidation.lineage", input)?;
+    let output = client.vault_consolidation_lineage(&input)?;
+    crate::codec::lift_record("vault.consolidation.lineage", &output)
 };
 "vault.consolidation.promote" => fn vault_consolidation_promote(&self, input: ConsolidationPromoteRequest) -> ConsolidationPromotion = |client| {
     let input: oneiron::memory::consolidation::ConsolidationPromoteRequest = crate::codec::lower_record("vault.consolidation.promote", input)?;

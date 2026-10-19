@@ -93,6 +93,7 @@ vaultBudgetsLeaseTopUp(input: unknown): unknown
 vaultBudgetsHold(input: unknown): unknown
 vaultBudgetsHoldResume(input: unknown): unknown
 vaultBudgetsLocal(input: unknown): unknown
+vaultBudgetsReservations(input: unknown): unknown
 vaultBudgetsSettlements(input: unknown): unknown
 vaultBudgetsRsiConfigure(input: unknown): unknown
 vaultBudgetsRsi(input: unknown): unknown
@@ -450,6 +451,10 @@ vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
+vaultConsentBypassGrantWarning(input: unknown): unknown
+vaultConsentCreateBypassGrant(input: unknown): unknown
+vaultConsentActiveBypassGrants(input: unknown): unknown
+vaultConsentBypassedEffectReceipts(input: unknown): unknown
 vaultConsentGraduationPolicy(input: unknown): unknown
 vaultConsentGraduationPolicySet(input: unknown): unknown
 vaultConsentGraduationPolicyClear(input: unknown): unknown
@@ -804,6 +809,10 @@ vaultClaimsListFiltered(input: unknown): unknown
 vaultClaimsReadFiltered(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown
+vaultWritesCriticalConfirmPending(input: unknown): unknown
+vaultWritesCriticalConfirmClear(input: unknown): unknown
+vaultWritesCriticalConfirmDecline(input: unknown): unknown
+vaultWritesCriticalConfirmReceipt(input: unknown): unknown
 vaultWritesPending(input: unknown): unknown
 vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
@@ -863,6 +872,8 @@ vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
 vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
+vaultConsolidationHomeGet(input: unknown): unknown
+vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultSieveEvidence(input: unknown): unknown

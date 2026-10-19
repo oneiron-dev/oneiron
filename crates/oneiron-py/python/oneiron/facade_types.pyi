@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 961 facade rows, 3246 declarations.
-Inputs: 904 of 961 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 863 of 961 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 972 facade rows, 3273 declarations.
+Inputs: 915 of 972 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 874 of 972 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -1800,10 +1800,26 @@ class LocalRunnerBudgetCounter(TypedDict):
     total_units: int
     remaining_units: int
     reserved_units: int
+    spent_units: int
     updated_at: int
 class LocalRunnerBudgetView(TypedDict):
     budget_id: str
     counter: NotRequired[LocalRunnerBudgetCounter | None]
+class RunnerBudgetReservationsRequest(TypedDict):
+    budget_id: str
+    after: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class RunnerBudgetReservation(TypedDict):
+    job_ref: str
+    reserved_units: int
+    created_at: int
+    updated_at: int
+class RunnerBudgetReservationsView(TypedDict):
+    budget_id: str
+    counter: NotRequired[LocalRunnerBudgetCounter | None]
+    reservations: list[RunnerBudgetReservation]
+    next: NotRequired[str | None]
+    local_only: bool
 class RunSettlementsRequest(TypedDict):
     run: str
 class RunRungSettlement(TypedDict):
@@ -7812,6 +7828,43 @@ class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
 class RevokeGrantRequest(TypedDict):
     grant: str
+CatastropheClass = Literal["WidenOwnAuthority", "KeyRecovery", "VaultWideDestruction", "SecurityControlDisable", "MassSecretExport", "WorldPrivacyWiden"]
+class BypassActionEnvelopeRequest(TypedDict):
+    selectors: list[str]
+    target: NotRequired[str | None]
+    budget: NotRequired[int | None]
+    receipt_required: NotRequired[bool]
+class BypassGrantBoundRequest(TypedDict):
+    actor: str
+    actor_class: NotRequired[str | None]
+    classes: list[CatastropheClass]
+    scope: BypassScope
+    envelope: BypassActionEnvelopeRequest
+class BypassGrantWarningRequest(TypedDict):
+    bound: BypassGrantBoundRequest
+class BypassGrantWarningView(TypedDict):
+    owner: str
+    bound: BypassGrantBoundRequest
+    floor_version: int
+    bound_digests: list[str]
+class CreateBypassGrantRequest(TypedDict):
+    warning: BypassGrantWarningView
+class ActiveBypassGrantsRequest(TypedDict):
+    ...
+class BypassActiveState(TypedDict):
+    active: bool
+    grant: str
+    bound: BypassGrantBoundRequest
+    floor_version: int
+    created_at: int
+class BypassedEffectReceiptsRequest(TypedDict):
+    grant: str
+class BypassedEffectReceipt(TypedDict):
+    decision_ref: str
+    grant_ref: str
+    effect_digest: str
+    reason_code: str
+    created_at: int
 class GraduationScope(TypedDict):
     op_kind: str
     target_class: str
@@ -13285,6 +13338,38 @@ SafeDeleteReason = Literal["user_delete", "user_hard_delete", "gdpr_delete", "po
 class SafeDeleteRequest(TypedDict):
     entity_ref: str
     reason: SafeDeleteReason
+class CriticalWriteConfirmPendingRequest(TypedDict):
+    pending_operation: str
+class CriticalWriteConfirmPending(TypedDict):
+    pending_operation: str
+    claim_ref: str
+    confirm_id: str
+    nonce: str
+    read_frontier_hash: str
+    effect_digest: str
+    expires_at: int
+    has_deadline: bool
+class CriticalWriteConfirmRequest(TypedDict):
+    pending_operation: str
+    nonce: str
+    read_frontier_hash: str
+CriticalWriteConfirmAnswer = Literal["clear", "decline"]
+class CriticalWriteConfirmReceipt(TypedDict):
+    receipt_ref: str
+    confirm_id: str
+    pending_operation: str
+    claim_ref: str
+    nonce: str
+    read_frontier_hash: str
+    effect_digest: str
+    expires_at: int
+    disposition: CriticalWriteConfirmAnswer
+CriticalWriteConfirmResolution = Literal["Cleared", "Retracted", "DemotedToProposed", "AlreadySettled"]
+class CriticalWriteConfirmSettlement(TypedDict):
+    receipt: CriticalWriteConfirmReceipt
+    resolution: CriticalWriteConfirmResolution
+class CriticalWriteConfirmReceiptRequest(TypedDict):
+    confirm_id: str
 class ReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 class PendingWrite(TypedDict):
@@ -14725,6 +14810,37 @@ class CheckpointView(TypedDict):
     steps: list[CheckpointStepView]
     resumed: list[CheckpointResumeView]
     next_step: NotRequired[int | None]
+ConsolidationHomeNode = TypedDict("ConsolidationHomeNode", {"node_id": int, "class": str, "elected_at": int})
+class ConsolidationHomeView(TypedDict):
+    home: NotRequired[ConsolidationHomeNode | None]
+    this_node: NotRequired[int | None]
+    candidates_available: bool
+class ConsolidationLineageRequest(TypedDict):
+    job_ref: str
+    from_step: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class ConsolidationTryView(TypedDict):
+    job_ref: str
+    kind: str
+    state: AttemptState
+    run_id: NotRequired[str | None]
+    parent_attempt: NotRequired[str | None]
+    retry_of: NotRequired[str | None]
+    folded_retries: int
+    attempt_count: int
+    lease_owner: NotRequired[str | None]
+    result_ref: NotRequired[str | None]
+    resume_point: NotRequired[AttemptResumePoint | None]
+    parked: NotRequired[DreamerParkedAttemptView | None]
+class ConsolidationStepRef(TypedDict):
+    step_hash: str
+    claim_ref: EntityId
+class ConsolidationLineageView(TypedDict):
+    job_ref: str
+    tries: list[ConsolidationTryView]
+    chain_complete: bool
+    steps: list[ConsolidationStepRef]
+    next_step: NotRequired[str | None]
 EvidenceKind = Literal["turn", "message", "note", "asset_text", "import_record"]
 class CursorSpan(TypedDict):
     start: list[int]

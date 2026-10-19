@@ -358,6 +358,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.budgets.reservations",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest,
+                >(),
+            ),
+            (
                 "vault.budgets.settlements",
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::budget_doors::RunSettlementsRequest,
@@ -2245,6 +2251,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.consent.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::RevokeGrantRequest,
+                >(),
+            ),
+            (
+                "vault.consent.bypass_grant_warning",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::BypassGrantWarningRequest,
+                >(),
+            ),
+            (
+                "vault.consent.create_bypass_grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::CreateBypassGrantRequest,
+                >(),
+            ),
+            (
+                "vault.consent.active_bypass_grants",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest,
+                >(),
+            ),
+            (
+                "vault.consent.bypassed_effect_receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest,
                 >(),
             ),
             (
@@ -4305,6 +4335,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SafeDeleteRequest>(),
             ),
             (
+                "vault.writes.critical_confirm.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmPendingRequest,
+                >(),
+            ),
+            (
+                "vault.writes.critical_confirm.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmRequest,
+                >(),
+            ),
+            (
+                "vault.writes.critical_confirm.decline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmRequest,
+                >(),
+            ),
+            (
+                "vault.writes.critical_confirm.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmReceiptRequest,
+                >(),
+            ),
+            (
                 "vault.writes.pending",
                 crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
             ),
@@ -4615,6 +4669,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.runs.checkpoint",
                 crate::code_run::vault_read::request_schema::<
                     crate::engine_executor::checkpoint_read::CheckpointReadRequest,
+                >(),
+            ),
+            (
+                "vault.consolidation.home.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.consolidation.lineage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::ConsolidationLineageRequest,
                 >(),
             ),
             (
@@ -5445,6 +5509,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold",
     "vault.budgets.hold.resume",
     "vault.budgets.local",
+    "vault.budgets.reservations",
     "vault.budgets.settlements",
     "vault.budgets.rsi.configure",
     "vault.budgets.rsi",
@@ -5688,6 +5753,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
     "vault.consent.revoke",
+    "vault.consent.bypass_grant_warning",
+    "vault.consent.create_bypass_grant",
+    "vault.consent.active_bypass_grants",
+    "vault.consent.bypassed_effect_receipts",
     "vault.consent.graduation.policy",
     "vault.consent.graduation.policy.set",
     "vault.consent.graduation.policy.clear",
@@ -5904,6 +5973,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.claims.demote",
     "vault.claims.list_filtered",
     "vault.claims.read_filtered",
+    "vault.writes.critical_confirm.pending",
+    "vault.writes.critical_confirm.clear",
+    "vault.writes.critical_confirm.decline",
+    "vault.writes.critical_confirm.receipt",
     "vault.search.vector.config",
     "vault.vectors.put",
     "vault.search.hybrid",
@@ -5918,6 +5991,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consolidation.status",
     "vault.runs.step",
     "vault.runs.checkpoint",
+    "vault.consolidation.home.get",
+    "vault.consolidation.lineage",
     "vault.consolidation.promote",
     "vault.sieve.evidence",
     "vault.sieve.evidence.replay",
@@ -6131,6 +6206,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.local" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::LocalRunnerBudgetView,
+        >(),
+        "vault.budgets.reservations" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView,
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
@@ -6869,6 +6947,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consent.revoke" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
+        "vault.consent.bypass_grant_warning" => crate::code_run::vault_read::request_schema::<
+            crate::consent::bypass_lifecycle::BypassGrantWarningView,
+        >(),
+        "vault.consent.create_bypass_grant" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent::lifecycle::ConsentActReceipt>,
+        >(),
+        "vault.consent.active_bypass_grants" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent::bypass_lifecycle::BypassActiveState>,
+        >(),
+        "vault.consent.bypassed_effect_receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>,
+        >(),
         "vault.consent.graduation.policy" => crate::code_run::vault_read::request_schema::<
             crate::consent_graduation::api::GraduationPolicies,
         >(),
@@ -7525,6 +7615,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.claims.read_filtered" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>,
         >(),
+        "vault.writes.critical_confirm.pending" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::CriticalWriteConfirmPending>,
+        >(),
+        "vault.writes.critical_confirm.clear" => crate::code_run::vault_read::request_schema::<
+            crate::memory::CriticalWriteConfirmSettlement,
+        >(),
+        "vault.writes.critical_confirm.decline" => crate::code_run::vault_read::request_schema::<
+            crate::memory::CriticalWriteConfirmSettlement,
+        >(),
+        "vault.writes.critical_confirm.receipt" => crate::code_run::vault_read::request_schema::<
+            crate::memory::CriticalWriteConfirmReceipt,
+        >(),
         "vault.search.vector.config" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>,
         >(),
@@ -7566,6 +7668,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.runs.checkpoint" => crate::code_run::vault_read::request_schema::<
             Option<crate::engine_executor::checkpoint_read::CheckpointView>,
+        >(),
+        "vault.consolidation.home.get" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::ConsolidationHomeView,
+        >(),
+        "vault.consolidation.lineage" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::ConsolidationLineageView>,
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
@@ -8450,6 +8558,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.local" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.reservations" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10897,6 +11012,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.bypass_grant_warning" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.create_bypass_grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.active_bypass_grants" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.bypassed_effect_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13407,6 +13550,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.writes.critical_confirm.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.writes.critical_confirm.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.writes.critical_confirm.decline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.writes.critical_confirm.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.writes.pending" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13808,6 +13979,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.runs.checkpoint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.home.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.lineage" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -14938,6 +15123,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.budgets.local" => {
             let _input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.reservations" => {
+            let _input: crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest =
                 decode(value.clone())?;
         }
         "vault.budgets.settlements" => {
@@ -16097,6 +16286,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.consent.revoke" => {
             let _input: crate::consent::lifecycle::RevokeGrantRequest = decode(value.clone())?;
+        }
+        "vault.consent.bypass_grant_warning" => {
+            let _input: crate::consent::bypass_lifecycle::BypassGrantWarningRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.create_bypass_grant" => {
+            let _input: crate::consent::bypass_lifecycle::CreateBypassGrantRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.active_bypass_grants" => {
+            let _input: crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest =
+                decode(value.clone())?;
+        }
+        "vault.consent.bypassed_effect_receipts" => {
+            let _input: crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest =
+                decode(value.clone())?;
         }
         "vault.consent.graduation.policy" => {
             let _input: crate::consent_graduation::api::GraduationPolicyRequest =
@@ -17330,6 +17535,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.delete" => {
             let _input: SafeDeleteRequest = decode(value.clone())?;
         }
+        "vault.writes.critical_confirm.pending" => {
+            let _input: crate::memory::CriticalWriteConfirmPendingRequest = decode(value.clone())?;
+        }
+        "vault.writes.critical_confirm.clear" => {
+            let _input: crate::memory::CriticalWriteConfirmRequest = decode(value.clone())?;
+        }
+        "vault.writes.critical_confirm.decline" => {
+            let _input: crate::memory::CriticalWriteConfirmRequest = decode(value.clone())?;
+        }
+        "vault.writes.critical_confirm.receipt" => {
+            let _input: crate::memory::CriticalWriteConfirmReceiptRequest = decode(value.clone())?;
+        }
         "vault.writes.pending" => {
             let input: ReceiptsRequest = decode(value.clone())?;
             crate::memory::caps::check_limit_nonzero(
@@ -17528,6 +17745,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.runs.checkpoint" => {
             let _input: crate::engine_executor::checkpoint_read::CheckpointReadRequest =
                 decode(value.clone())?;
+        }
+        "vault.consolidation.home.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.consolidation.lineage" => {
+            let _input: crate::dreamer_runner::ConsolidationLineageRequest = decode(value.clone())?;
         }
         "vault.consolidation.promote" => {
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
@@ -18205,6 +18428,7 @@ pub fn invoke(
         "vault.budgets.hold" => encode(vault_budgets_hold(memory, decode(value)?)?),
         "vault.budgets.hold.resume" => encode(vault_budgets_hold_resume(memory, decode(value)?)?),
         "vault.budgets.local" => encode(vault_budgets_local(memory, decode(value)?)?),
+        "vault.budgets.reservations" => encode(vault_budgets_reservations(memory, decode(value)?)?),
         "vault.budgets.settlements" => encode(vault_budgets_settlements(memory, decode(value)?)?),
         "vault.budgets.rsi.configure" => {
             encode(vault_budgets_rsi_configure(memory, decode(value)?)?)
@@ -18911,6 +19135,19 @@ pub fn invoke(
         }
         "vault.consent.registry" => encode(vault_consent_registry(memory, decode(value)?)?),
         "vault.consent.revoke" => encode(vault_consent_revoke(memory, decode(value)?)?),
+        "vault.consent.bypass_grant_warning" => {
+            encode(vault_consent_bypass_grant_warning(memory, decode(value)?)?)
+        }
+        "vault.consent.create_bypass_grant" => {
+            encode(vault_consent_create_bypass_grant(memory, decode(value)?)?)
+        }
+        "vault.consent.active_bypass_grants" => {
+            encode(vault_consent_active_bypass_grants(memory, decode(value)?)?)
+        }
+        "vault.consent.bypassed_effect_receipts" => encode(vault_consent_bypassed_effect_receipts(
+            memory,
+            decode(value)?,
+        )?),
         "vault.consent.graduation.policy" => {
             encode(vault_consent_graduation_policy(memory, decode(value)?)?)
         }
@@ -19473,6 +19710,21 @@ pub fn invoke(
         "vault.claims.read_filtered" => encode(vault_claims_read_filtered(memory, decode(value)?)?),
         "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
+        "vault.writes.critical_confirm.pending" => encode(vault_writes_critical_confirm_pending(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.writes.critical_confirm.clear" => {
+            encode(vault_writes_critical_confirm_clear(memory, decode(value)?)?)
+        }
+        "vault.writes.critical_confirm.decline" => encode(vault_writes_critical_confirm_decline(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.writes.critical_confirm.receipt" => encode(vault_writes_critical_confirm_receipt(
+            memory,
+            decode(value)?,
+        )?),
         "vault.writes.pending" => encode(vault_writes_pending(memory, decode(value)?)?),
         "vault.hydrate" => encode(vault_hydrate(memory, decode(value)?)?),
         "vault.get" => encode(vault_get(memory, decode(value)?)?),
@@ -19577,6 +19829,12 @@ pub fn invoke(
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
         "vault.runs.step" => encode(vault_runs_step(memory, decode(value)?)?),
         "vault.runs.checkpoint" => encode(vault_runs_checkpoint(memory, decode(value)?)?),
+        "vault.consolidation.home.get" => {
+            encode(vault_consolidation_home_get(memory, decode(value)?)?)
+        }
+        "vault.consolidation.lineage" => {
+            encode(vault_consolidation_lineage(memory, decode(value)?)?)
+        }
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
         }
@@ -20582,6 +20840,17 @@ pub fn vault_budgets_local(
     crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.budgets.local")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_reservations(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView> {
+    crate::agent_dispatch::budget_doors::runner_budget_reservations_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.reservations")?,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
@@ -23560,6 +23829,46 @@ pub fn vault_consent_revoke(
         input,
     )
 }
+pub fn vault_consent_bypass_grant_warning(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::BypassGrantWarningRequest,
+) -> MemoryResult<crate::consent::bypass_lifecycle::BypassGrantWarningView> {
+    crate::consent::bypass_lifecycle::bypass_grant_warning(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.bypass_grant_warning")?,
+        input,
+    )
+}
+pub fn vault_consent_create_bypass_grant(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::CreateBypassGrantRequest,
+) -> MemoryResult<Vec<crate::consent::lifecycle::ConsentActReceipt>> {
+    crate::consent::bypass_lifecycle::create_bypass_grant(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.create_bypass_grant")?,
+        input,
+    )
+}
+pub fn vault_consent_active_bypass_grants(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::ActiveBypassGrantsRequest,
+) -> MemoryResult<Vec<crate::consent::bypass_lifecycle::BypassActiveState>> {
+    crate::consent::bypass_lifecycle::active_bypass_grants(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.active_bypass_grants")?,
+        input,
+    )
+}
+pub fn vault_consent_bypassed_effect_receipts(
+    memory: &Memory<'_>,
+    input: crate::consent::bypass_lifecycle::BypassedEffectReceiptsRequest,
+) -> MemoryResult<Vec<crate::consent::bypass_lifecycle::BypassedEffectReceipt>> {
+    crate::consent::bypass_lifecycle::bypassed_effect_receipts(
+        memory.vault(),
+        &memory.embedded_owner("vault.consent.bypassed_effect_receipts")?,
+        input,
+    )
+}
 pub fn vault_consent_graduation_policy(
     memory: &Memory<'_>,
     input: crate::consent_graduation::api::GraduationPolicyRequest,
@@ -26453,6 +26762,36 @@ pub fn vault_delete(
     )?;
     memory.safe_delete(&input.entity_ref, input.reason)
 }
+pub fn vault_writes_critical_confirm_pending(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmPendingRequest,
+) -> MemoryResult<Option<crate::memory::CriticalWriteConfirmPending>> {
+    memory.critical_write_confirm_pending_as_owner(
+        &memory.embedded_owner("vault.writes.critical_confirm.pending")?,
+        &input,
+    )
+}
+pub fn vault_writes_critical_confirm_clear(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmRequest,
+) -> MemoryResult<crate::memory::CriticalWriteConfirmSettlement> {
+    crate::task_verb::sdk::host_only(memory, "vault.writes.critical_confirm.clear", &input)
+}
+pub fn vault_writes_critical_confirm_decline(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmRequest,
+) -> MemoryResult<crate::memory::CriticalWriteConfirmSettlement> {
+    crate::task_verb::sdk::host_only(memory, "vault.writes.critical_confirm.decline", &input)
+}
+pub fn vault_writes_critical_confirm_receipt(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmReceiptRequest,
+) -> MemoryResult<crate::memory::CriticalWriteConfirmReceipt> {
+    memory.critical_write_confirm_receipt_as_owner(
+        &memory.embedded_owner("vault.writes.critical_confirm.receipt")?,
+        &input,
+    )
+}
 pub fn vault_writes_pending(
     memory: &Memory<'_>,
     input: ReceiptsRequest,
@@ -27026,6 +27365,25 @@ pub fn vault_runs_checkpoint(
         memory,
         &memory.embedded_owner("vault.runs.checkpoint")?,
         &input,
+    )
+}
+pub fn vault_consolidation_home_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::dreamer_runner::ConsolidationHomeView> {
+    crate::dreamer_runner::consolidation_home_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.home.get")?,
+    )
+}
+pub fn vault_consolidation_lineage(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::ConsolidationLineageRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::ConsolidationLineageView>> {
+    crate::dreamer_runner::consolidation_lineage_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.lineage")?,
+        input,
     )
 }
 pub fn vault_consolidation_promote(

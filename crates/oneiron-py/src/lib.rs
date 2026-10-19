@@ -751,6 +751,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_budgets_reservations(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.reservations")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.reservations", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_budgets_settlements(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.budgets.settlements")?;
         let output = py
@@ -3997,6 +4004,63 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consent_bypass_grant_warning(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.bypass_grant_warning")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consent.bypass_grant_warning", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consent_create_bypass_grant(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.create_bypass_grant")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consent.create_bypass_grant", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consent_active_bypass_grants(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consent.active_bypass_grants")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consent.active_bypass_grants", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consent_bypassed_effect_receipts(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.consent.bypassed_effect_receipts")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consent.bypassed_effect_receipts", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consent_graduation_policy(
         &self,
         py: Python<'_>,
@@ -6833,6 +6897,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_writes_critical_confirm_pending(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.pending")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.pending", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_writes_critical_confirm_clear(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.clear")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.clear", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_writes_critical_confirm_decline(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.decline")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.decline", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_writes_critical_confirm_receipt(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.writes.critical_confirm.receipt")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.writes.critical_confirm.receipt", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_writes_pending(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.writes.pending")?;
         let output = py
@@ -7355,6 +7475,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.runs.checkpoint")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.runs.checkpoint", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_home_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.home.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.home.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_lineage(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.lineage")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.lineage", input))
             .map_err(raise)?;
         encode(&output)
     }

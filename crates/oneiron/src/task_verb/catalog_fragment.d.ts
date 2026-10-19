@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 995 code-mode rows (971 host rows, 24 run rows), 3287 declarations.
-// Replies: 890 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1006 code-mode rows (982 host rows, 24 run rows), 3314 declarations.
+// Replies: 901 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -370,8 +370,11 @@ declare namespace Sdk {
   type TopUpSpendLeaseRequest = { scope: string; expected_cap_units: number; cap_units: number; unit: string; shown_at_ms: number };
   type BudgetHoldRequest = { run: string };
   type LocalRunnerBudgetRequest = { budget_id: string };
-  type LocalRunnerBudgetCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
+  type LocalRunnerBudgetCounter = { total_units: number; remaining_units: number; reserved_units: number; spent_units: number; updated_at: number };
   type LocalRunnerBudgetView = { budget_id: string; counter?: LocalRunnerBudgetCounter | null };
+  type RunnerBudgetReservationsRequest = { budget_id: string; after?: string | null; limit?: number | null };
+  type RunnerBudgetReservation = { job_ref: string; reserved_units: number; created_at: number; updated_at: number };
+  type RunnerBudgetReservationsView = { budget_id: string; counter?: LocalRunnerBudgetCounter | null; reservations: RunnerBudgetReservation[]; next?: string | null; local_only: boolean };
   type RunSettlementsRequest = { run: string };
   type RunRungSettlement = { instance: string; lease: string; revision: number; model?: string | null; offer: string; route: string; reserved_units: number; settled_units: number; unit: string; usage_reported: boolean; settlement_refused: boolean; occurred_at: number; cost_amount?: number | null; currency?: string | null; price_table_snapshot?: string | null };
   type RunSettlementsView = { run: string; metering_enabled: boolean; settlements: RunRungSettlement[] };
@@ -1605,6 +1608,16 @@ declare namespace Sdk {
   type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
   type ConsentRegistry = { rows: ConsentRegistryRow[] };
   type RevokeGrantRequest = { grant: string };
+  type CatastropheClass = "WidenOwnAuthority" | "KeyRecovery" | "VaultWideDestruction" | "SecurityControlDisable" | "MassSecretExport" | "WorldPrivacyWiden";
+  type BypassActionEnvelopeRequest = { selectors: string[]; target?: string | null; budget?: number | null; receipt_required?: boolean };
+  type BypassGrantBoundRequest = { actor: string; actor_class?: string | null; classes: CatastropheClass[]; scope: BypassScope; envelope: BypassActionEnvelopeRequest };
+  type BypassGrantWarningRequest = { bound: BypassGrantBoundRequest };
+  type BypassGrantWarningView = { owner: string; bound: BypassGrantBoundRequest; floor_version: number; bound_digests: string[] };
+  type CreateBypassGrantRequest = { warning: BypassGrantWarningView };
+  type ActiveBypassGrantsRequest = Record<string, never>;
+  type BypassActiveState = { active: boolean; grant: string; bound: BypassGrantBoundRequest; floor_version: number; created_at: number };
+  type BypassedEffectReceiptsRequest = { grant: string };
+  type BypassedEffectReceipt = { decision_ref: string; grant_ref: string; effect_digest: string; reason_code: string; created_at: number };
   type GraduationScope = { op_kind: string; target_class: string; actor: string };
   type GraduationPolicyRequest = { scope?: GraduationScope | null };
   type GraduationPolicy = { scope_pattern: string; required_streak: number; posterior_guard: number; snooze_backoff_seconds: number[] };
@@ -2728,6 +2741,14 @@ declare namespace Sdk {
   type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
+  type CriticalWriteConfirmPendingRequest = { pending_operation: string };
+  type CriticalWriteConfirmPending = { pending_operation: string; claim_ref: string; confirm_id: string; nonce: string; read_frontier_hash: string; effect_digest: string; expires_at: number; has_deadline: boolean };
+  type CriticalWriteConfirmRequest = { pending_operation: string; nonce: string; read_frontier_hash: string };
+  type CriticalWriteConfirmAnswer = "clear" | "decline";
+  type CriticalWriteConfirmReceipt = { receipt_ref: string; confirm_id: string; pending_operation: string; claim_ref: string; nonce: string; read_frontier_hash: string; effect_digest: string; expires_at: number; disposition: CriticalWriteConfirmAnswer };
+  type CriticalWriteConfirmResolution = "Cleared" | "Retracted" | "DemotedToProposed" | "AlreadySettled";
+  type CriticalWriteConfirmSettlement = { receipt: CriticalWriteConfirmReceipt; resolution: CriticalWriteConfirmResolution };
+  type CriticalWriteConfirmReceiptRequest = { confirm_id: string };
   type ReceiptsRequest = { limit?: number | null };
   type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null };
   type HydrateRequest = { refs: string[] };
@@ -2962,6 +2983,12 @@ declare namespace Sdk {
   type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
   type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
+  type ConsolidationHomeNode = { node_id: number; class: string; elected_at: number };
+  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: number | null; candidates_available: boolean };
+  type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
+  type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
+  type ConsolidationStepRef = { step_hash: string; claim_ref: EntityId };
+  type ConsolidationLineageView = { job_ref: string; tries: ConsolidationTryView[]; chain_complete: boolean; steps: ConsolidationStepRef[]; next_step?: string | null };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
@@ -3969,6 +3996,8 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner observes a device-local runner budget counter without creating it, including absence after an owner restore. */
     local(input: Sdk.LocalRunnerBudgetRequest): Promise<Sdk.LocalRunnerBudgetView | StoredResult>;
+    /** The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it. */
+    reservations(input: Sdk.RunnerBudgetReservationsRequest): Promise<Sdk.RunnerBudgetReservationsView | StoredResult>;
     /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
     rsi: ((input: Sdk.RsiLineRequest) => Promise<Sdk.RsiLineView | StoredResult>) & {
       /** The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend. */
@@ -4352,8 +4381,16 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   consent: {
+    /** The owner reads live scoped bypass states and their complete bounds, newest first; vault.consent.revoke ends each grant. */
+    active_bypass_grants(input: Sdk.ActiveBypassGrantsRequest): Promise<Sdk.BypassActiveState[] | StoredResult>;
     /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
     approve_once(input: Sdk.ApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing. */
+    bypass_grant_warning(input: Sdk.BypassGrantWarningRequest): Promise<Sdk.BypassGrantWarningView | StoredResult>;
+    /** The owner reads the existing Gate receipts for effects covered by one bypass grant, including after its revocation. */
+    bypassed_effect_receipts(input: Sdk.BypassedEffectReceiptsRequest): Promise<Sdk.BypassedEffectReceipt[] | StoredResult>;
+    /** The owner explicitly acknowledges a scoped bypass warning and atomically creates one receipted standing bypass per class. */
+    create_bypass_grant(input: Sdk.CreateBypassGrantRequest): Promise<Sdk.ConsentActReceipt[] | StoredResult>;
     /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
     create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
     /** The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority. */
@@ -4393,6 +4430,12 @@ declare const vault: Sdk.VaultHost & {
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
     evidence(input: Sdk.ConsolidationEvidenceRequest): Promise<Sdk.ScopedReadResult<Sdk.ConsolidationEvidenceSource[]> | StoredResult>;
+    home: {
+      /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
+    };
+    /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
+    lineage(input: Sdk.ConsolidationLineageRequest): Promise<Sdk.ConsolidationLineageView | null | StoredResult>;
     /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
     promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
@@ -5807,6 +5850,16 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   writes: {
+    critical_confirm: {
+      /** The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+      clear(input: Sdk.CriticalWriteConfirmRequest): Promise<Sdk.CriticalWriteConfirmSettlement | StoredResult>;
+      /** The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+      decline(input: Sdk.CriticalWriteConfirmRequest): Promise<Sdk.CriticalWriteConfirmSettlement | StoredResult>;
+      /** The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline. */
+      pending(input: Sdk.CriticalWriteConfirmPendingRequest): Promise<Sdk.CriticalWriteConfirmPending | null | StoredResult>;
+      /** The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim. */
+      receipt(input: Sdk.CriticalWriteConfirmReceiptRequest): Promise<Sdk.CriticalWriteConfirmReceipt | StoredResult>;
+    };
     /** Gated writes parked for consent, newest first. */
     pending(input: Sdk.ReceiptsRequest): Promise<Sdk.PendingWrite[] | StoredResult>;
   };
