@@ -26,6 +26,7 @@
 //! operations replay onto the head as the same nodes.
 
 mod doc;
+mod export;
 mod log;
 mod preview;
 mod verbs;
@@ -38,20 +39,16 @@ pub use verbs::{
 };
 
 use super::{
-    EXPORTS, FORKS, ForkState, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyFork,
-    OfficeBodyHead, OfficeBodyKind, bounded_ops, check_made_by, invalid, source, version_key,
-    writer,
+    FORKS, ForkState, OfficeBodyEdit, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind, bounded_ops,
+    check_made_by, invalid, source, writer,
 };
 use crate::Vault;
-use crate::blob_artifact::{BlobArtifactVersion, BlobVersionProvenance};
 use crate::edit_roundtrip::VaultAssets;
-use crate::edit_settle::{NativeOutput, PendingProposalView};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-use crate::temporal::TimeRange;
 use crate::typed_body::{
     BodyActor, TypedBodyHead, discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn,
     edit_typed_body_in_txn, merge_typed_body_fork_in_txn, open_typed_body_fork_in_txn,
@@ -121,6 +118,11 @@ pub struct PptxExport {
     pub frontier: Vec<u8>,
     pub authoritative: bool,
     pub outcome: ExportOutcome,
+    /// The version the deck projected over, and its BLAKE3: its last landed
+    /// export, else the imported source. A version landing outside the deck
+    /// since leaves the export forked from it (FIX 2700).
+    pub base_version: u64,
+    pub base_hash: [u8; 32],
 }
 
 /// The imported deck a body is born with.
@@ -401,170 +403,6 @@ impl Vault {
     pub fn pptx_export_gate(&self, profile: &str) -> Result<Gate> {
         let txn = self.store.env.read_txn()?;
         export_gate(&self.store, &txn, profile)
-    }
-
-    /// Project the deck at its head over its retained package (the imported
-    /// source, or the version the last landed export made). Until the
-    /// profile's export gate opens the result is a proposal artifact: nothing
-    /// lands, and the caller proposes the bytes through the edit rails.
-    pub fn export_pptx_body(&self, artifact: &EntityId) -> Result<PptxExport> {
-        let source = self
-            .office_body_head(artifact)?
-            .ok_or(Error::EntityNotFound)?;
-        let profile = ExportProfile::default();
-        let (head, body, gate, assets) = {
-            let txn = self.store.env.read_txn()?;
-            let (head, body) = self.deck_head(&txn, artifact)?;
-            let assets = HeldAssets::resolve(
-                &VaultAssets {
-                    vault: self,
-                    txn: &txn,
-                },
-                &[&body.deck],
-            );
-            (
-                head,
-                body,
-                export_gate(&self.store, &txn, &profile.name)?,
-                assets,
-            )
-        };
-        let package = Package::open(
-            &self.deck_source(artifact, &source, body.retained)?,
-            self.docedit_package_limits()?,
-        )
-        .map_err(|_| invalid("the PPTX package could not be read"))?;
-        let outcome =
-            project(&body.deck, &package, &artifact.to_hex(), &profile, &assets).map_err(live)?;
-        Ok(PptxExport {
-            frontier: head.frontier,
-            authoritative: gate.is_open(),
-            outcome,
-        })
-    }
-
-    /// Land an authoritative export: its bytes become the artifact's next blob
-    /// version, recorded with the frontier it projects, and the deck rebinds to
-    /// them (the same node identities, the exported native ids and
-    /// fingerprints, the joined allocation history) in the lander's commit; the
-    /// next export projects over them. A proposal export, an export whose
-    /// profile's gate is closed now or whose projector is not the current one,
-    /// or a head that moved since the export, refuses.
-    pub fn land_pptx_export(
-        &self,
-        artifact: &EntityId,
-        export: &PptxExport,
-        actor: WriteActor,
-        made_by: &MadeBy,
-        provenance: &BlobVersionProvenance,
-    ) -> Result<BlobArtifactVersion> {
-        if !export.authoritative {
-            return Err(invalid(
-                "the deck export gate is closed for its profile; the export is a proposal",
-            ));
-        }
-        let at = self.now_recorded_at();
-        self.with_write_txn_grouped(|wtxn| {
-            let key = &export.outcome.key;
-            if key.projector != PROJECTOR_VERSION
-                || !export_gate(&self.store, wtxn, &key.profile)?.is_open()
-            {
-                return Err(invalid(
-                    "the deck export gate is closed for its profile; the export is a proposal",
-                ));
-            }
-            let (head, mut body) = self.deck_head(wtxn, artifact)?;
-            if head.frontier != export.frontier {
-                return Err(invalid("the deck moved since the export; export again"));
-            }
-            let version = self.append_blob_artifact_version_in_txn(
-                wtxn,
-                artifact,
-                &export.outcome.bytes,
-                provenance,
-                actor,
-                TimeRange { start: at, end: at },
-                at,
-            )?;
-            body.deck.rebind(&export.outcome).map_err(live)?;
-            let retained = doc::Retained {
-                version: version.version,
-                hash: *blake3::hash(&export.outcome.bytes).as_bytes(),
-            };
-            let writer = writer(OfficeBodyKind::Pptx, actor, made_by);
-            edit_typed_body_in_txn(self, wtxn, artifact, None, writer, |doc| {
-                doc::sync_to(doc, &body.deck)?;
-                doc::push_landed(doc, &retained)
-            })?;
-            let record = OfficeBodyExportRecord {
-                artifact: *artifact,
-                version: version.version,
-                frontier: export.frontier.clone(),
-                source_version: source(&self.store, wtxn, artifact)?.source_version,
-                actor: BodyActor::Actor(actor.entity_ref()),
-                author: actor.entity_ref().to_hex(),
-                token: None,
-                at,
-                changes: export.outcome.changed_parts.len() as u64,
-                recalc: None,
-                effects: export.outcome.effects.iter().map(effect_receipt).collect(),
-            };
-            EXPORTS.put(
-                &self.store,
-                wtxn,
-                &version_key(artifact, version.version),
-                &record,
-            )?;
-            Ok(version)
-        })
-    }
-
-    /// Offer a proposal export (its profile's gate closed) to the artifact as
-    /// a waiting proposal under `run_ref`, pinned to the blob head: the Keep
-    /// door lands its bytes as the next blob version under a person's
-    /// consent, and Discard drops it. The deck does not rebind, so its next
-    /// export still projects over its retained package.
-    pub fn propose_pptx_export(
-        &self,
-        artifact: &EntityId,
-        export: &PptxExport,
-        run_ref: &str,
-        actor: WriteActor,
-        made_by: &MadeBy,
-    ) -> Result<PendingProposalView> {
-        if export.authoritative {
-            return Err(invalid("an authoritative export lands; it is not proposed"));
-        }
-        let body = self
-            .get_blob_artifact(artifact)?
-            .ok_or(Error::EntityNotFound)?;
-        let key = &export.outcome.key;
-        self.propose_native_output(
-            artifact,
-            &NativeOutput {
-                run_ref: run_ref.to_owned(),
-                name: body.name,
-                media_type: body.media_type,
-                bytes: export.outcome.bytes.clone(),
-                report: serde_json::json!({
-                    "deck_export": {
-                        "profile": key.profile,
-                        "projector": key.projector,
-                        "document_version": export.outcome.document_version,
-                        "changed_parts": export.outcome.changed_parts,
-                        "effects": export
-                            .outcome
-                            .effects
-                            .iter()
-                            .map(effect_receipt)
-                            .collect::<Vec<_>>(),
-                    }
-                }),
-                made_by: Some(made_by.clone()),
-            },
-            actor,
-            self.now_recorded_at(),
-        )
     }
 
     /// The deck at the head of its body, with the head.

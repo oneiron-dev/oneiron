@@ -702,6 +702,7 @@ impl Vault {
             receipt: self.with_withdrawn_units(*artifact, &record, receipt)?,
             version: head,
             reanchor: ReanchorSummary::default(),
+            reconciliation: None,
         })
     }
 
