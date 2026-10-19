@@ -11,8 +11,9 @@
 //! held so parks as it is ([`park_for_payer`]) and is taken up as the same
 //! try once its payer can be billed ([`resume_payer_parks`]). Nothing here
 //! falls back to the vault owner silently: a scope that cannot be read, or a
-//! room-bound call whose root names no payer, is a typed error. A call no
-//! room pays for keeps the owner default.
+//! room-bound call whose root names no payer, is a typed error, and so is a
+//! step of a member's bound run (FIX 5316), whose member funds its root. Any
+//! other call no room pays for keeps the owner default.
 
 use std::fmt;
 
@@ -139,6 +140,19 @@ pub(crate) fn scope_funding(
         root_scope: root,
         account,
     }))
+}
+
+/// Whether the call `attempt` makes must read a payer: it works in a room
+/// (`room`), or it is a step of a member's bound run (FIX 5316), a fact its
+/// wrapper keeps. Such a call holds on a missing payer, never the owner's
+/// default. The one predicate a step's first funding and its payer park's
+/// resume share; ordinary owner and unbound calls keep their default.
+pub(crate) fn requires_payer(
+    vault: &Vault,
+    attempt: AttemptId,
+    room: bool,
+) -> oneiron::Result<bool> {
+    Ok(room || AgentDispatcher::new(vault).workflow_payer_required(attempt)?)
 }
 
 /// How a launch that `agent` answers in `room`, or its thread `branch`, for
@@ -326,12 +340,12 @@ pub(crate) fn resume_payer_parks(vault: &Vault, owner: &str, now: u64) -> usize 
         {
             continue;
         }
-        let room = decode_dreamer_attempt_payload(&row.payload)
+        let strict = decode_dreamer_attempt_payload(&row.payload)
             .and_then(|payload| decode_agent_dispatch_input(&payload.input))
-            .map(|input| input.room.is_some());
-        let waits = match (dispatcher.spend_scope_for_attempt(row.id), room) {
-            (Ok(scope), Ok(room)) => matches!(
-                scope_funding(vault, scope.as_ref(), room),
+            .and_then(|input| requires_payer(vault, row.id, input.room.is_some()));
+        let waits = match (dispatcher.spend_scope_for_attempt(row.id), strict) {
+            (Ok(scope), Ok(strict)) => matches!(
+                scope_funding(vault, scope.as_ref(), strict),
                 Err(PayerFault::Needed { .. })
             ),
             (Err(error), _) | (_, Err(error)) => {

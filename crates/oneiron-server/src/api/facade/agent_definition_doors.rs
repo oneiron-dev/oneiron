@@ -2,14 +2,19 @@
 //! caller's own proof.
 use std::sync::Arc;
 
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{
     self, AgentDefinitionCreateRequest, AgentDefinitionRequest, AgentDefinitionUpdateRequest,
-    AgentDefinitionView, WorkflowDispatchRequest, WorkflowRequest, WorkflowRunRequest,
-    WorkflowRunView, WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView,
+    AgentDefinitionView, WorkflowDispatchRequest, WorkflowPersonDispatchRequest, WorkflowRequest,
+    WorkflowRunRequest, WorkflowRunView, WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView,
     WorkspaceMemberOnboardRequest, WorkspacePresetReceipt, WorkspacePresetRequest,
     WorkspaceRosterRequest,
 };
 use oneiron::workspace_roster::{MemberOnboardingOutcome, WorkspaceRosterEntry};
+use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::{MaybeListed, owner_proof};
 use super::shared_act_doors::{as_person_naming, person};
@@ -152,6 +157,91 @@ pub(crate) async fn vault_workflows_dispatch(
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::dispatch_workflow_as(server.vault(), &owner, input),
         workflow_run_rows,
+    )
+    .await
+}
+
+/// The proof of a member acting on their own behalf at a door that binds it
+/// (FIX 5316): the vault owner as the owner door admits him, or any other
+/// live person on their own verified human slip, bound to it so the engine
+/// rechecks that slip in the acting writer, as the world-settings door binds
+/// a holder's. The proof lends a member no owner authority. A managed vault
+/// admits only its attested owner, a host action only the owner it acts as,
+/// and an invitee's slip is no member's.
+pub(super) fn member_proof(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<AuthenticatedOwner> {
+    super::owner_binding::host_preflight(server, auth)?;
+    if let Ok(owner) = crate::api::owner_routes::owner(auth, server) {
+        return Ok(owner);
+    }
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is a live person's own act"),
+            &["Present your own verified human credential."],
+        )
+    };
+    if server.managed_issuer.is_some()
+        || auth.managed_owner().is_some()
+        || crate::api::host_action::host_action_of(server.vault(), auth).is_some()
+    {
+        return Err(refused());
+    }
+    let slip = auth
+        .verified_slip()
+        .filter(|_| auth.actor_class() == Some("human"))
+        .ok_or_else(refused)?;
+    let principal = auth.principal_ref().ok_or_else(refused)?;
+    let actor = EntityId::from_hex(principal).map_err(|_| refused())?;
+    if slip.claims().holder_ref != actor.to_hex() || slip.claims().invitation_ref.is_some() {
+        return Err(refused());
+    }
+    let person = server
+        .vault()
+        .authenticate_owner(actor, principal, true, GateDecisionId::now())
+        .map_err(|_| refused())?;
+    server
+        .vault()
+        .bind_person_credential(person, slip.clone())
+        .map_err(|_| refused())
+}
+
+/// `vault.workflows.dispatch_bound` (FIX 5316): a member binds one run of a
+/// saved workflow to a TASK they own, as themselves, under the funding terms
+/// they accepted. The engine reads on the member's own credential handle
+/// (`caller`'s), rechecks their bound proof in the admitting writer and
+/// opens the run's root spend scope with them as payer. The answer lists
+/// the TASK beside the run's rows.
+pub(crate) async fn vault_workflows_dispatch_bound(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: WorkflowPersonDispatchRequest,
+) -> MaybeListed<WorkflowRunView> {
+    const VERB: &str = "vault.workflows.dispatch_bound";
+    let task = input.task_ref;
+    let lane = auth.clone();
+    as_person_naming(
+        server,
+        VERB,
+        member_proof(server, auth, VERB),
+        move |server, member| {
+            let memory =
+                crate::api::credential_memory(server.vault(), Some(&lane), caller.0, caller.1)
+                    .at(lane.locality());
+            sdk::dispatch_workflow_bound_as_person(&memory, &member, input)
+        },
+        move |run| {
+            let mut rows = workflow_run_rows(run)?;
+            rows.push(task);
+            rows.sort_unstable();
+            rows.dedup();
+            Some(rows)
+        },
     )
     .await
 }
