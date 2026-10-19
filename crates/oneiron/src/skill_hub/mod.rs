@@ -51,6 +51,7 @@ pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifec
 pub(crate) use package_codec::remove_hub_package_in_txn;
 pub use package_codec::{decode_hub_package, encode_hub_package};
 pub use publisher::ForeignSkillPublisher;
+pub(crate) use ref_sync::{RefFetch, pinned_tracking};
 pub(crate) use refinement_admission::{
     RefinementAdmissionProof, skill_refinement_origin_in_txn, stage_refinement_origin,
     validate_refinement_admission,

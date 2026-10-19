@@ -238,7 +238,10 @@ def rust_type(value):
     if value in RUST_PRIMITIVES or value == 'serde_json::Value': return value
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
-SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_off_runtime_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
+SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n///\n/// On a device that syncs only what it opened, the door then asks the home\n/// under the call's own caller (FIX 2905): its references ride in\n/// `residence`, apart from the local items; without them the pack is\n/// local-only and `partial`.\n"
+# FIX 2905: the server doors that also ask an opened device's home, by row,
+# with the caller the call (or the MCP actor) admitted as the last argument.
+HOME_SERVER_DOORS = {'vault.recall': 'recall_home_listing'}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -761,9 +764,12 @@ def mcp_input_dispatch(row):
                   f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
+        home_door = HOME_SERVER_DOORS.get(name)
+        door_call = (f'{home_door}(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input, actor.home_caller())'
+                     if home_door else f'{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)')
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
-                 f'let (output, listed) = server.{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input).await;\n'
+                 f'let (output, listed) = server.{door_call}.await;\n'
                  '// Derived from these rows too, though it names none of them.\n'
                  'served.extend(listed);\n'
                  'let output = output.map_err(mcp_facade_error)?;\n')
@@ -1374,7 +1380,10 @@ def facade_dispatch(facade_rows):
         # runtime, inside the room turn the call names, if any, and lists the
         # rows its answer is derived from without naming them.
         if r.get('server_door'):
-            result = (f'let (output, listed) = server.{r["server_door"]}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?).await;\n'
+            home_door = HOME_SERVER_DOORS.get(name)
+            door_call = (f'{home_door}(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?, call.home_caller())'
+                         if home_door else f'{r["server_door"]}_listing(actor, class, auth.verified_slip().cloned(), auth.locality(), call.room_turn()?, facade_input(value)?)')
+            result = (f'let (output, listed) = server.{door_call}.await;\n'
                       'let output = facade_output(output?)?;\nlet rows = Some(listed);')
         landed = ''
         if r.get('lands_turn'):
