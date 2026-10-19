@@ -53,6 +53,10 @@ pub struct CredentialCaveat {
     pub records: Option<std::collections::BTreeSet<String>>,
     pub channels: Option<std::collections::BTreeSet<String>>,
     pub pact: Option<CredentialPactCeiling>,
+    /// A lower comm reach (FIX 3899): `parent`, `subtree`, `project` or
+    /// `vault`. The verifier meets it with the slip's own, so it only lowers
+    /// whom the holder may message; a wider reach is a new owner mint.
+    pub comm: Option<crate::authority::CommReach>,
 }
 
 /// A pact-bound attenuation, retaining the grant the credential already holds.
@@ -77,7 +81,7 @@ impl CredentialCaveat {
             records: self.records,
             channels: self.channels,
             pact: self.pact.map(|pact| (pact.grant_ref.0, pact.ceiling)),
-            comm: None,
+            comm: self.comm,
         }
     }
 }
