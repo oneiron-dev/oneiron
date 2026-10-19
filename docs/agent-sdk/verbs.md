@@ -637,6 +637,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.release_wait`
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
+- `vault.artifacts.admit`
 - `vault.critic.review`
 - `vault.artifacts.propose_outline`
 - `vault.artifacts.outline`
@@ -752,6 +753,7 @@ both bindings and their export-census tests in one change.
 - `ai.video.cancel`
 - `ai.verdict`
 - `vault.graph.ask`
+- `vault.graph.admit`
 - `vault.questions.create`
 - `vault.questions.edit`
 - `vault.questions.pause`

@@ -3480,6 +3480,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.admit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactAdmitSubmit,
+                >(),
+            ),
+            (
                 "vault.critic.review",
                 crate::code_run::vault_read::request_schema::<
                     crate::critic::review::CriticReviewSubmit,
@@ -4066,6 +4072,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.graph.ask",
                 crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskRequest>(),
+            ),
+            (
+                "vault.graph.admit",
+                crate::code_run::vault_read::request_schema::<crate::receipt::GraphAdmitRequest>(),
             ),
             (
                 "vault.questions.create",
@@ -6097,6 +6107,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
+    "vault.artifacts.admit",
     "vault.artifacts.propose_outline",
     "vault.artifacts.outline",
     "vault.artifacts.keep_outline",
@@ -6146,6 +6157,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.voices.targets.provision",
     "vault.voices.targets.evict",
     "vault.voices.inspect",
+    "vault.graph.admit",
     "vault.questions.outcomes",
     "vault.questions.outcomes.project",
     "vault.questions.schedule",
@@ -7658,6 +7670,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
             Vec<crate::workspace_roster::WorkspaceRosterEntry>,
         >(),
+        "vault.artifacts.admit" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::ArtifactAskOutcome,
+        >(),
         "vault.artifacts.propose_outline" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::deck_creation::DeckOutlineView,
         >(),
@@ -7809,6 +7824,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.voices.inspect" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankInspection,
         >(),
+        "vault.graph.admit" => {
+            crate::code_run::vault_read::request_schema::<crate::receipt::GraphAskOutcome>()
+        }
         "vault.questions.outcomes" => {
             crate::code_run::vault_read::request_schema::<crate::receipt::QuestionOutcomes>()
         }
@@ -12815,6 +12833,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.artifacts.admit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.critic.review" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13646,6 +13671,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.graph.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.graph.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17579,6 +17611,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.ask" => {
             let _input: crate::blob_artifact::ArtifactAskSubmit = decode(value.clone())?;
         }
+        "vault.artifacts.admit" => {
+            let _input: crate::blob_artifact::ArtifactAdmitSubmit = decode(value.clone())?;
+        }
         "vault.critic.review" => {
             let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
         }
@@ -17933,6 +17968,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.graph.ask" => {
             let input: crate::receipt::GraphAskRequest = decode(value.clone())?;
+            input.validate()?;
+        }
+        "vault.graph.admit" => {
+            let input: crate::receipt::GraphAdmitRequest = decode(value.clone())?;
             input.validate()?;
         }
         "vault.questions.create" => {
@@ -20187,6 +20226,7 @@ pub fn invoke(
             encode(vault_artifacts_review_slides(memory, decode(value)?)?)
         }
         "vault.artifacts.ask" => encode(vault_artifacts_ask(memory, decode(value)?)?),
+        "vault.artifacts.admit" => encode(vault_artifacts_admit(memory, decode(value)?)?),
         "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
         "vault.artifacts.propose_outline" => {
             encode(vault_artifacts_propose_outline(memory, decode(value)?)?)
@@ -20372,6 +20412,7 @@ pub fn invoke(
         "ai.video.cancel" => encode(ai_video_cancel(memory, decode(value)?)?),
         "ai.verdict" => encode(ai_verdict(memory, decode(value)?)?),
         "vault.graph.ask" => encode(vault_graph_ask(memory, decode(value)?)?),
+        "vault.graph.admit" => encode(vault_graph_admit(memory, decode(value)?)?),
         "vault.questions.create" => encode(vault_questions_create(memory, decode(value)?)?),
         "vault.questions.edit" => encode(vault_questions_edit(memory, decode(value)?)?),
         "vault.questions.pause" => encode(vault_questions_pause(memory, decode(value)?)?),
@@ -26263,6 +26304,12 @@ pub fn vault_artifacts_ask(
 ) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
     memory.artifacts_ask(&input)
 }
+pub fn vault_artifacts_admit(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactAdmitSubmit,
+) -> MemoryResult<crate::blob_artifact::ArtifactAskOutcome> {
+    memory.artifacts_admit(&input)
+}
 pub fn vault_critic_review(
     memory: &Memory<'_>,
     input: crate::critic::review::CriticReviewSubmit,
@@ -27224,6 +27271,13 @@ pub fn vault_graph_ask(
 ) -> MemoryResult<crate::receipt::GraphAskOutcome> {
     input.validate()?;
     crate::task_verb::sdk::host_only(memory, "vault.graph.ask", &input)
+}
+pub fn vault_graph_admit(
+    memory: &Memory<'_>,
+    input: crate::receipt::GraphAdmitRequest,
+) -> MemoryResult<crate::receipt::GraphAskOutcome> {
+    input.validate()?;
+    crate::task_verb::sdk::host_only(memory, "vault.graph.admit", &input)
 }
 pub fn vault_questions_create(
     memory: &Memory<'_>,

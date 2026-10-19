@@ -3068,6 +3068,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_ask(json.dumps(spec))))
+        def admit(self, spec):
+            """Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_admit(json.dumps(spec))))
         def propose_outline(self, spec):
             """Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_outline(json.dumps(spec))))
@@ -3859,6 +3862,9 @@ class Oneiron:
             self._client = client
         def ask(self, spec):
             return json.loads(_translate(lambda: self._client.vault_graph_ask(json.dumps(spec))))
+        def admit(self, spec):
+            """Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller."""
+            return json.loads(_translate(lambda: self._client.vault_graph_admit(json.dumps(spec))))
     class _VaultQuestionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

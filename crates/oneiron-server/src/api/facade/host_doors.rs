@@ -488,6 +488,40 @@ fn artifact_asker(
     })
 }
 
+/// `vault.artifacts.admit`: the caller's own provider measurements for an
+/// artifact ask's units, admitted as the bound actor in place of the host
+/// ladder's, under the host's starting dial and bands, and held as one
+/// proposal for Keep or Discard. The engine validates each submitted
+/// decision — its provider-bound paired and person readings included —
+/// before the proposal is held, so an invalid measurement mints nothing.
+/// It runs on a blocking thread, one call per unit, as
+/// `vault.artifacts.ask` does. Beside it, the rows its reads listed and
+/// the artifact it asks over.
+pub(crate) async fn vault_artifacts_admit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::blob_artifact::ArtifactAdmitSubmit,
+) -> Listed<oneiron::blob_artifact::ArtifactAskOutcome> {
+    const VERB: &str = "vault.artifacts.admit";
+    let caller = match artifact_asker(server, auth) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    let beside = read_beside([input.ask.artifact_ref.as_str()]);
+    let (answer, mut listed) =
+        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+            let host = server.decision_host();
+            memory.artifacts_admit_through(
+                &input,
+                host.dial(oneiron::llm::decision::DecisionRung::Big),
+                &host.bands(),
+            )
+        })
+        .await;
+    listed.extend(beside);
+    (answer, listed)
+}
+
 /// `vault.artifacts.body.deck.preview`: the asked slides of a deck's head,
 /// drawn by this host's review renderer on a blocking thread, for a
 /// credential that reads the artifact. Beside it, the rows its reads listed
@@ -1691,7 +1725,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
-        "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),
+        "vault.artifacts.ask" | "vault.artifacts.admit" => {
+            artifact_asker(server, auth).map(drop)
+        }
         "self.memory.diary.query" => diary_reader(server, auth).map(drop),
         "vault.decisions.asks.answer"
         | "vault.decisions.asks.climb"

@@ -14870,6 +14870,27 @@ async fn vault_artifacts_ask(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_artifacts_admit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "vault.artifacts.admit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.artifacts.admit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.artifacts.admit", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_artifacts_admit(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_critic_review(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -17432,6 +17453,26 @@ async fn vault_graph_ask(
     let hooks = facade_hooks_pre(server, call, "vault.graph.ask", value).await?;
     let (output, listed) =
         super::host_doors::vault_graph_ask(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_graph_admit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "vault.graph.admit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.graph.admit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.graph.admit", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_graph_admit(server, auth, facade_input(hooks.args.clone())?).await;
     let output = facade_output(output?)?;
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -24684,6 +24725,7 @@ pub(crate) async fn call_verb(
         "vault.artifacts.release_wait" => vault_artifacts_release_wait(server, call, input).await,
         "vault.artifacts.review_slides" => vault_artifacts_review_slides(server, call, input).await,
         "vault.artifacts.ask" => vault_artifacts_ask(server, call, input).await,
+        "vault.artifacts.admit" => vault_artifacts_admit(server, call, input).await,
         "vault.critic.review" => vault_critic_review(server, call, input).await,
         "vault.artifacts.propose_outline" => {
             vault_artifacts_propose_outline(server, call, input).await
@@ -24827,6 +24869,7 @@ pub(crate) async fn call_verb(
         "ai.video.cancel" => ai_video_cancel(server, call, input).await,
         "ai.verdict" => ai_verdict(server, call, input).await,
         "vault.graph.ask" => vault_graph_ask(server, call, input).await,
+        "vault.graph.admit" => vault_graph_admit(server, call, input).await,
         "vault.questions.create" => vault_questions_create(server, call, input).await,
         "vault.questions.edit" => vault_questions_edit(server, call, input).await,
         "vault.questions.pause" => vault_questions_pause(server, call, input).await,
