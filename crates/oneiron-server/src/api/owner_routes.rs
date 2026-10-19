@@ -327,6 +327,15 @@ pub(super) fn owner_error(error: OwnerError) -> ApiError {
         OwnerError::NotFound(what, which) => ApiError::not_found(what, Some(&which)),
         OwnerError::Engine(error) => match error.kind() {
             oneiron::ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
+            // FIX 5479: a backup or a rehearsal stopped at the disk's floor
+            // names capacity, never a fault of its own.
+            oneiron::ErrorKind::Io if backup::write_budget::at_floor(&error) => ApiError::new(
+                backup::write_budget::CAPACITY_REFUSAL,
+                ApiErrorDetails::InvalidState {
+                    state: Some(backup::write_budget::CAPACITY_STATE.to_owned()),
+                },
+                [backup::write_budget::CAPACITY_REMEDY],
+            ),
             // FIX 5147: a stale seen revision (or a write that lost its race)
             // is the same conflict `OwnerError::Changed` answers, with the
             // engine's words, on every owner route, not a 500.

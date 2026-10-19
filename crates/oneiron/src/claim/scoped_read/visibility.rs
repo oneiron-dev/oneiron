@@ -127,7 +127,7 @@ impl<'v> ScopedRead<'v> {
         )
     }
 
-    fn is_entity_raw_readable_held_in(
+    pub(super) fn is_entity_raw_readable_held_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         policy: &PolicyManifestResolution,
@@ -278,8 +278,12 @@ impl<'v> ScopedRead<'v> {
         authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         // A legal use limit keeps the bytes as storage only: no ordinary
-        // reader sees the row, the owner included.
-        if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, id)?.is_some() {
+        // reader sees the row, the owner included. A named read asks it on
+        // its own, once every other gate admits the row (FIX 5226).
+        let use_asked = authority.asks_use_of(id);
+        if !use_asked
+            && crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, id)?.is_some()
+        {
             return Ok(false);
         }
         let header =
@@ -313,9 +317,18 @@ impl<'v> ScopedRead<'v> {
         // A non-CLAIM body carries its own `stale: true` once withdrawn; a
         // CLAIM's staleness is judged by its claim read below. A recorded
         // source that no longer stands withdraws the row, the owner's too.
-        let readable = match self.session_view {
-            Some(view) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
-            None => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
+        let readable = match (self.session_view, use_asked) {
+            (Some(view), false) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
+            (None, false) => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
+            (Some(view), true) => {
+                crate::ports::raw_readable_apart_from_use_in_txn(view, rtxn, id, raw)?
+            }
+            (None, true) => crate::ports::raw_readable_apart_from_use_in_txn(
+                &self.vault.store,
+                rtxn,
+                id,
+                raw,
+            )?,
         };
         if !readable
             || self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some()

@@ -776,8 +776,10 @@ impl SyncServer {
         self
     }
 
+    /// Attaches the owner's backup host: its backups and rehearsals claim
+    /// their writes on the floor uploads keep (FIX 5479).
     pub(crate) fn with_owner_host(mut self, host: crate::owner::schedule::OwnerHost) -> Self {
-        self.owner_host = Some(Arc::new(host));
+        self.owner_host = Some(Arc::new(host.claiming_on(&self.transfers.disk)));
         self
     }
 

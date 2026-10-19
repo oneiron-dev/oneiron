@@ -342,7 +342,7 @@ impl ScopedRead<'_> {
 
     /// One id at one frontier: the admitted row and whether an existing row
     /// was withheld. Value and denial count come from the same snapshot.
-    fn id_row_in(
+    pub(super) fn id_row_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &crate::gate::PolicyManifestResolution,
@@ -362,7 +362,7 @@ impl ScopedRead<'_> {
     }
 
     /// One short reference: the admitted row and whether an existing row was withheld.
-    fn short_ref_in(
+    pub(super) fn short_ref_in(
         &self,
         txn: &heed::RoTxn<'_>,
         policy: &crate::gate::PolicyManifestResolution,
