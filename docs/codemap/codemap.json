@@ -747,11 +747,13 @@
       "SelfBudgetRequest",
       "SpendLeaseView",
       "SpendScopeRequest",
-      "TopUpSpendLeaseRequest"
+      "TopUpSpendLeaseRequest",
+      "UsageEventOrigin"
      ],
      "path": "src/agent_dispatch/budget_doors.rs",
      "purpose": "Typed doors over launch spend leases, budget holds and the local runner counter with its reservations",
      "surface": {
+      "enum": 1,
       "fn": 9,
       "struct": 17
      }
@@ -90934,6 +90936,7 @@
       "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
+      "UsageEventOrigin",
       "UsedProvenanceEdge",
       "Vad",
       "VadAnnotationSource",
@@ -91108,7 +91111,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 872,
+      "enum": 873,
       "struct": 2766
      }
     },
