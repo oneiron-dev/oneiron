@@ -140,7 +140,7 @@ impl Vault {
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector, ledger_changed) =
-                self.soft_erase_active_store_in_txn(wtxn, id)?;
+                self.soft_erase_active_store_in_txn(wtxn, id, false)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;
             }

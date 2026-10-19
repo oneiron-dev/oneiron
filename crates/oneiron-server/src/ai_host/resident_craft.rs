@@ -10,6 +10,11 @@
 //! names each note's claim and revision beside its text, so a captured
 //! request that is sent again shows, and stamps, exactly what it showed.
 //! A craft that does not read leaves the call as it always ran.
+//!
+//! A wave plan speaks with its planner's instructions for its requester: it
+//! is shown both crafts, each attributed (FIX 5777). The requester's travels
+//! as every step's does; the planner's, read on one snapshot, travels whole
+//! in its own message before it ([`planner_craft`]), and stamps nothing.
 
 use oneiron::actor_claims::{craft_message_entries, craft_message_text, resident_craft_pack};
 use oneiron::attempt_queue::{AttemptId, ManifestEntry};
@@ -55,6 +60,50 @@ pub(crate) fn snapshot_craft(vault: &Vault, resident: &EntityId, at: u64) -> Opt
         message: system(text),
         entries: notes.iter().map(|note| note.entry(at)).collect(),
     })
+}
+
+/// The planner resident's craft for a wave plan `requester` asked for (FIX
+/// 5777), read on one snapshot at `at`: one system message,
+/// `{"planner_craft":{"role":"planner","resident_ref":…,"craft":{"craft_notes":…},
+/// "requester":{"role":"requester","resident_ref":…}}}`, which names the
+/// requester's own craft message after it as the requester's. A planner that
+/// is the requester has one craft, the requester's, shown once: this message
+/// then only says it is both roles'. `None` for a planner with no craft, or
+/// one whose craft does not read; the plan then goes on as it ran. It stamps
+/// no attempt: the requester's craft alone is the attempt's.
+pub(crate) fn planner_craft(
+    vault: &Vault,
+    planner: &EntityId,
+    requester: &EntityId,
+    at: u64,
+) -> Option<LlmMessage> {
+    let requester_role = serde_json::json!({
+        "role": "requester",
+        "resident_ref": requester.to_hex(),
+        "shown": "the craft_notes message after this one, when there is one",
+    });
+    let attributed = if planner == requester {
+        serde_json::json!({
+            "planner_craft": {
+                "role": "planner",
+                "resident_ref": planner.to_hex(),
+                "craft": "the requester's craft: the planner is the requester",
+                "requester": requester_role,
+            }
+        })
+    } else {
+        let craft = snapshot_craft(vault, planner, at)?;
+        let craft: serde_json::Value = serde_json::from_str(&message_text(&craft.message)).ok()?;
+        serde_json::json!({
+            "planner_craft": {
+                "role": "planner",
+                "resident_ref": planner.to_hex(),
+                "craft": craft,
+                "requester": requester_role,
+            }
+        })
+    };
+    Some(system(attributed.to_string()))
 }
 
 /// The craft a captured `request` showed: the rows its craft message

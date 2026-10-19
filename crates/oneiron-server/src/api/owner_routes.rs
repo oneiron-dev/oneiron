@@ -212,11 +212,12 @@ pub(super) fn off_record_routes() -> Router<Arc<SyncServer>> {
 /// about which check failed. The proof it returns carries the verified slip,
 /// except a managed vault's owner's, whom its supervisor attested for this
 /// one request (`ManagedOwnerAction`): that proof holds only while the
-/// person is the vault's live recorded owner ([`managed_owner_proof`]).
+/// person is the vault's live recorded owner ([`managed_owner_proof`]); one
+/// it no longer records so is told to sign in again (FIX 5327).
 pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<AuthenticatedOwner, ApiError> {
     let refused = || ApiError::forbidden_scope("owner");
     if let Some(holder) = auth.managed_owner() {
-        return managed_owner_proof(server, holder)?.ok_or_else(refused);
+        return managed_owner_proof(server, holder)?.ok_or_else(ApiError::managed_owner_not_live);
     }
     // A self-hosted root, or the dev mode, acts as the owner its host action
     // names, and its proof carries that action into every acting

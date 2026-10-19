@@ -10,6 +10,7 @@
 //! are enqueued for consolidation atomically with the end.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use oneiron::ModelId;
 use oneiron::agent_def::DreamingMode;
@@ -44,7 +45,7 @@ use super::policy::extraction_egress;
 mod compaction_check;
 mod free_time;
 use super::skill_author::CoachSkillAuthor;
-use super::status::{StatusCell, WorkState, WorkStatus};
+use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, RunBackend, Seat};
@@ -69,16 +70,34 @@ pub(super) struct DreamerHost {
     thread: std::thread::JoinHandle<WakeSupervisorReport>,
     /// `true` once its thread ended, however it ended (FIX 1149).
     ended: tokio::sync::watch::Receiver<bool>,
+    /// Set once the host asked it to stop, so its end reads as a stop.
+    stopping: Arc<AtomicBool>,
 }
 
 /// Held by the Dreamer's thread for its whole life: dropped as it returns
 /// or unwinds, it marks the thread ended, for a watcher that subscribes
-/// before or after.
-struct ThreadEnded(tokio::sync::watch::Sender<bool>);
+/// before or after. First it says so in the host's status (FIX 5776): the
+/// Dreamer is idle, stopped when the host asked it to stop, else its worker
+/// exited. Only its state and reason change; its tallies and last error
+/// stand.
+struct ThreadEnded {
+    ended: tokio::sync::watch::Sender<bool>,
+    status: Arc<StatusCell>,
+    stopping: Arc<AtomicBool>,
+}
 
 impl Drop for ThreadEnded {
     fn drop(&mut self) {
-        self.0.send_replace(true);
+        let reason = if self.stopping.load(Ordering::Acquire) {
+            IdleReason::Stopped
+        } else {
+            IdleReason::WorkerExited
+        };
+        self.status.update(|status| {
+            status.dreamer.state = WorkState::Idle;
+            status.dreamer.reason = Some(reason);
+        });
+        self.ended.send_replace(true);
     }
 }
 
@@ -155,10 +174,16 @@ impl DreamerHost {
         // The Coach's drafts block on the server's runtime, off the Dreamer's.
         let serve = tokio::runtime::Handle::current();
         let (ended_tx, ended) = tokio::sync::watch::channel(false);
+        let stopping = Arc::new(AtomicBool::new(false));
+        let thread_ended = ThreadEnded {
+            ended: ended_tx,
+            status: Arc::clone(&start.status),
+            stopping: Arc::clone(&stopping),
+        };
         let thread = std::thread::Builder::new()
             .name("oneiron-dreamer".into())
             .spawn(move || {
-                let _ended = ThreadEnded(ended_tx);
+                let _ended = thread_ended;
                 run(start, serve, ready)
             })?;
         match started.await {
@@ -167,6 +192,7 @@ impl DreamerHost {
                 hints: Arc::new(hints),
                 thread,
                 ended,
+                stopping,
             }),
             Ok(Err(error)) => {
                 let _ = thread.join();
@@ -192,6 +218,7 @@ impl DreamerHost {
 
     /// Asks the supervisor to stop at its next boundary, without waiting.
     pub(super) fn signal_stop(&self) {
+        self.stopping.store(true, Ordering::Release);
         self.shutdown.shutdown();
     }
 

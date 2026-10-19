@@ -31,6 +31,7 @@ pub(crate) mod grant_policy;
 mod grant_travel;
 #[cfg(feature = "sync")]
 pub(crate) use grant_travel::live_federation_grant_in;
+mod booking_payer;
 mod membership_gate;
 pub use membership_gate::MembershipStanding;
 pub use membership_gate::SharedVaultWrite;

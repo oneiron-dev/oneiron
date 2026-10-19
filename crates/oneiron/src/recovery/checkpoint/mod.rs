@@ -18,11 +18,13 @@
 //! (`commitment`); a restore refuses a signer its key does not trust.
 mod artifact;
 mod authority_plane;
+mod body_bind;
 mod carried_bodies;
 mod commitment;
 mod custody_head;
 mod decisions;
 mod host_holds;
+mod image;
 mod rebuild;
 mod restore_class;
 mod snapshot;
@@ -38,9 +40,10 @@ pub use commitment::CheckpointSigner;
 pub use custody_head::*;
 use heed::types::Bytes;
 pub use host_holds::HostOrderHolds;
+use image::{CheckpointImage, read_image, read_image_required};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::{Path, PathBuf},
 };
 pub use tiers::{StorageTier, storage_tier};
@@ -59,33 +62,6 @@ const INDEX_SOURCE_PHONETIC: SideTable<EntityId, (), Named> =
 /// `u64be(sequence)`.
 const RESTORE_EPOCH: SideTable<u64, RestoreEpoch, Named> =
     SideTable::new(&side_table::RESTORE_EPOCH);
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CheckpointImage {
-    version: u16,
-    created_at: u64,
-    databases: BTreeMap<String, CanonicalRows>,
-    /// Each body file the rows name: its BLAKE3 and length.
-    bodies: Vec<([u8; 32], u64)>,
-    /// The envelopes among them, by their place in `bodies`: a sealed
-    /// vault's files (FIX 5348). A plain vault's image names none.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    sealed_bodies: BTreeMap<u64, carried_bodies::SealedFile>,
-}
-
-impl CheckpointImage {
-    /// A direct restore may land on any install, so the image's machine
-    /// identity, and the root it pins, stay with the install that minted it:
-    /// the restored vault joins as a new machine and opens unpinned. So does a copy served beside a live vault,
-    /// whose authority it keeps; only a restore that takes that vault's
-    /// place carries its identity (`restore_class`).
-    fn drop_machine_identity(&mut self) {
-        if let Some(rows) = self.databases.get_mut("sync_state") {
-            rows.retain(|(key, _)| !crate::identity::is_machine_identity_row(key));
-        }
-    }
-}
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
 #[derive(Clone, Copy)]
@@ -275,59 +251,6 @@ pub struct RestoreReport {
 }
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
-}
-/// Opens one sealed artifact with `key` and structurally checks its image;
-/// returns the image, its checkpoint id and the bodies it carries.
-fn read_image<'k>(
-    path: &Path,
-    key: &'k CheckpointKey,
-) -> Result<(CheckpointImage, String, artifact::SealedBodies<'k>)> {
-    read_image_required(path, key).map(|(image, id, bodies, _)| (image, id, bodies))
-}
-
-/// [`read_image`], with what the image needs of its custody (KS-4).
-fn read_image_required<'k>(
-    path: &Path,
-    key: &'k CheckpointKey,
-) -> Result<(
-    CheckpointImage,
-    String,
-    artifact::SealedBodies<'k>,
-    Option<crate::store::CustodyRequirement>,
-)> {
-    let opened = artifact::open_artifact(path, key)?;
-    let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
-    if image.version != 2
-        || image.created_at != opened.created_at
-        || !carried_bodies::matches_artifact(
-            &image.bodies,
-            &image.sealed_bodies,
-            &opened.bodies.list(),
-        )
-        || image.databases.len() != DB_MANIFEST.len()
-        || DB_MANIFEST
-            .iter()
-            .any(|e| !image.databases.contains_key(e.name))
-    {
-        return Err(codec_error());
-    }
-    for (name, rows) in &image.databases {
-        if rows.windows(2).any(|w| w[0].0 >= w[1].0)
-            || rows
-                .iter()
-                .any(|(k, _)| storage_tier(name, k) != StorageTier::Canonical)
-        {
-            return Err(codec_error());
-        }
-    }
-    if image.databases["entities"].iter().any(|(_, value)| {
-        crate::batch::EntityMetadataHeader::parse(value)
-            .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
-    }) {
-        return Err(codec_error());
-    }
-    let id = blake3::Hash::from(opened.image_id).to_hex().to_string();
-    Ok((image, id, opened.bodies, opened.custody))
 }
 impl Vault {
     /// Create-new output only: one sealed artifact under this vault's
@@ -724,11 +647,16 @@ impl Vault {
             Custody::Fork(source) => (true, source, None),
         };
         let new_host = matches!(custody, Custody::NewHost);
-        let gate_custody = if new_host {
+        let mut gate_custody = if new_host {
             crate::store::preflight_absent_custody_rows(&image.databases["vault_meta"])?
         } else {
             crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?
         };
+        // Every body instance the rows name, through the plan the claim keys
+        // share, so one fork copies both: missing refuses by name, retired
+        // takes its rows out (KS-2A).
+        let retired = carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        let body_custody = gate_custody.plan_mut().source().cloned();
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
@@ -759,9 +687,13 @@ impl Vault {
         // result body with its line index, an ASSET's file raw (FIX 3677),
         // a sealed vault's envelope checked frame by frame under its key row
         // (FIX 5348).
-        if !image.bodies.is_empty() {
-            carried_bodies::restore(&vault, &mut image, bodies, &mut room)?;
-        }
+        carried_bodies::restore(
+            &vault,
+            &mut image,
+            bodies,
+            &mut room,
+            (body_custody.as_ref(), &retired),
+        )?;
         room.landing_rows(&image)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {

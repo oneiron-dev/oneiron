@@ -328,17 +328,17 @@ pub(crate) fn short_content_hash_in_txn(
     })
 }
 
-/// FIX 3677: the body file a local ASSET put's `data` goes to when it is one
-/// ([`ASSET_INLINE_BODY_BYTES`], [`opaque_body`], a file the secret mask did
-/// not mark): the file is published from `data` as it is, no second copy,
-/// and the manifest the row keeps instead is returned with the body's facts.
-/// On a sealed vault the file is a new envelope and its key row commits in
-/// `txn`, unless the digest has a committed pair already (FIX 5348). `None`
-/// keeps the body in its row.
+/// FIX 3677: the body file a local ASSET put's `data` would go to when it
+/// is one ([`ASSET_INLINE_BODY_BYTES`], [`opaque_body`], a file the secret
+/// mask did not mark). This runs inside the batch writer, and a body file is
+/// one vault instance whose key is minted before any writer opens (KS-2A):
+/// so the body stays in its row, which a checkpoint seals under an instance
+/// of its own. A put that files a long body stages it before its writer
+/// ([`crate::Vault::stage_asset_body`]). `None` keeps the body in its row.
 ///
 /// # Errors
 ///
-/// Storage and filesystem errors as they occur.
+/// Storage errors as they occur.
 pub(crate) fn file_put_body_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -352,28 +352,11 @@ pub(crate) fn file_put_body_in_txn(
     {
         return Ok(None);
     }
-    let facts = AssetBodyFacts::of(data);
     // A marked file keeps its row: a serving door reads its keys' spans over
-    // the bytes it holds.
-    if crate::secret_custody::masked_file_in_txn(store, txn, &facts.blake3)?.is_some() {
-        return Ok(None);
-    }
-    let dir = store.body_dir()?;
-    if dir.sealed.is_none() {
-        dir.publish_asset_body(&facts, data)?;
-    } else if !dir.holds_pair(
-        &facts.blake3,
-        super::body_key_row_in_txn(store, txn, &facts.blake3)?.as_ref(),
-    )? {
-        let staged = dir.publish_sealed_body(&facts.blake3, data)?;
-        super::bind_body_key_in_txn(store, txn, &dir, &staged)?;
-    }
-    let manifest = AssetFileManifest {
-        facts,
-        kind: AssetFileKind::Opaque,
-        mime: None,
-    };
-    Ok(Some((manifest.encode()?, facts)))
+    // the bytes it holds. Any other stays there too, with no instance minted
+    // inside this writer.
+    crate::secret_custody::masked_file_in_txn(store, txn, &AssetBodyFacts::of(data).blake3)?;
+    Ok(None)
 }
 
 /// Binds ASSET `id`'s body file to the row a put just staged, in the put's
@@ -454,26 +437,6 @@ pub(crate) fn stage_asset_body_in_txn(
 }
 
 impl BodyDir {
-    /// Publishes `body`, whose facts are `facts`, as its plain file, unless
-    /// this directory holds it already. A sealed directory publishes an
-    /// envelope ([`BodyDir::publish_sealed_body`]).
-    pub(crate) fn publish_asset_body(&self, facts: &AssetBodyFacts, body: &[u8]) -> Result<()> {
-        if self.sealed.is_some() {
-            return Err(Error::InvariantViolation(
-                "a sealed body directory publishes envelopes only",
-            ));
-        }
-        if self.open_body(&facts.blake3, facts.len)?.is_some() {
-            return Ok(());
-        }
-        let (mut file, temp) = self.create_temp()?;
-        if let Err(error) = file.write_all(body) {
-            self.discard(&temp);
-            return Err(error.into());
-        }
-        self.publish(file, &temp, &body_file_name(&facts.blake3))
-    }
-
     /// Copies in the ASSET body file with `digest` from `source`, checking
     /// its digest and length as it streams, unless this directory holds it
     /// already. Raw: no line index, no preview, no scan, whatever its size.

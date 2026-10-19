@@ -126,15 +126,21 @@ pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
     [retirement_prefix(), holds, host_holds]
 }
 
-/// Each claim key-retirement intent among a checkpoint's `vault_meta` rows,
-/// with whether the finisher would carry it out now: an erase's always, a
-/// sweep's unless its partition is held. A restore treats a carried-out one
+/// Each claim and body instance key-retirement intent among a checkpoint's
+/// `vault_meta` rows, with whether the finisher would carry it out now: an
+/// erase's always, a sweep's unless its partition is held. A restore treats a carried-out one
 /// as done, so it never brings back a key a vault has committed to destroy.
 pub(super) fn checkpoint_retirements(
     rows: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<Vec<(RetirementIntent, bool)>> {
     let mut retirements = Vec::new();
     for intent in retirements_in_rows(rows)? {
+        // A body instance retires for an erase only, which no hold defers
+        // (KS-2A): the restore treats it as done.
+        if intent.subject.kind() == CustodyKind::BodyInstance {
+            retirements.push((intent, true));
+            continue;
+        }
         if intent.subject.kind() != CustodyKind::ClaimDecision {
             continue;
         }
@@ -348,6 +354,10 @@ impl Vault {
                 "gate decision key retirement deferred to the next retention pass"
             );
         }
+        // KS-2A: an erase's body instance retirements, once nothing names
+        // their instances.
+        #[cfg(unix)]
+        self.finish_body_custody_retirements_after_commit();
     }
 
     /// One owner maintenance pass over gate-decision retention, for a host
