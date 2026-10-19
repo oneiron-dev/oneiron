@@ -15,7 +15,7 @@ mod device_only;
 pub mod model_versioning;
 mod models;
 
-pub(crate) use destination::withheld_worlds_in;
+pub(crate) use destination::{machine_recipient_hold_in, recipient_limits_in, withheld_worlds_in};
 pub use destination::{
     ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
 };

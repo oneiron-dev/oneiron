@@ -324,6 +324,7 @@ mod sdk_model_manifest;
 mod sdk_note_history;
 mod sdk_off_record;
 mod sdk_off_record_rooms;
+mod sdk_pack_preview;
 mod sdk_persona;
 mod sdk_proxy;
 mod sdk_record_erase;

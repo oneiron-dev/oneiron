@@ -266,6 +266,7 @@ vaultPacksHooksGrantSet(input: unknown): unknown
 vaultPacksHooksGrantGet(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
+vaultPacksPreview(input: unknown): unknown
 vaultPacksConnectorPrepare(input: unknown): unknown
 vaultPacksConnectorGet(input: unknown): unknown
 vaultPacksConnectorQualify(input: unknown): unknown

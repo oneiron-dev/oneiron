@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1051 facade rows, 3529 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1003.
+// UniFFI census: 1052 facade rows, 3532 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1004.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13500,6 +13500,32 @@ pub struct PackSection {
     pub budget_policy: String,
 }
 
+/// `oneiron::share_travel::pack_notice::WorldRecipientNotice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorldRecipientNotice {
+    #[serde(rename = "notice_type")]
+    pub notice_type: String,
+    #[serde(rename = "channel")]
+    pub channel: String,
+    #[serde(rename = "voice")]
+    pub voice: String,
+    #[serde(rename = "audience")]
+    pub audience: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(
+        rename = "world_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub world_name: Option<String>,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "body")]
+    pub body: String,
+}
+
 /// `oneiron::skill_hub::pack_catalog::admission_types::PackInstallReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -13566,6 +13592,8 @@ pub struct PackInstallReceipt {
     pub agent: Option<String>,
     #[serde(rename = "installed_at")]
     pub installed_at: u64,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::task_verb::sdk_host::PackPutReceipt`.
@@ -14818,6 +14846,32 @@ pub enum PackFileInput {
 pub struct PackPutRequest {
     #[serde(rename = "files")]
     pub files: Vec<PackFileInput>,
+}
+
+/// `oneiron::task_verb::sdk_pack_preview::PackPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PackPreviewRequest {
+    #[serde(rename = "files")]
+    pub files: Vec<PackFileInput>,
+    #[serde(rename = "world", default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<String>,
+}
+
+/// `oneiron::skill_hub::pack_catalog::import_notice::PackImportPreview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PackImportPreview {
+    #[serde(rename = "pack_name")]
+    pub pack_name: String,
+    #[serde(rename = "agent")]
+    pub agent: bool,
+    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
+    pub world_ref: Option<String>,
+    #[serde(rename = "needs_world")]
+    pub needs_world: bool,
+    #[serde(rename = "notices")]
+    pub notices: Vec<WorldRecipientNotice>,
 }
 
 /// `oneiron::connector_key::slate::SlatePackSource`.
@@ -34584,6 +34638,8 @@ pub struct AgentPackExport {
     pub omitted: Vec<OmittedKnowledge>,
     #[serde(rename = "files")]
     pub files: Vec<AgentPackExportFile>,
+    #[serde(rename = "notices", default, skip_serializing_if = "Option::is_none")]
+    pub notices: Option<Vec<WorldRecipientNotice>>,
 }
 
 /// `oneiron::blob_artifact::verbs::BornFromRequest`.

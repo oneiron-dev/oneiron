@@ -206,6 +206,11 @@ pub struct PackInstallReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     pub installed_at: u64,
+    /// A travelling agent's world whose current setting does not cover this
+    /// machine: "please double-check", kept with the install, which landed
+    /// all the same (FIX 5493).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<crate::share_travel::WorldRecipientNotice>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackInstallDisposition {

@@ -1018,6 +1018,8 @@ export class Oneiron {
       },
       /** The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
+      /** The owner previews a pack folder before vault.packs.put: the world its travelling agent would land in, with a please double-check notice when that world's current setting does not cover this machine; nothing is staged or written. */
+      preview: (input: Facade.PackPreviewRequest): Facade.PackImportPreview => this.#call(() => this.#client.vaultPacksPreview(input) as Facade.PackImportPreview),
       connector: {
         /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
         prepare: (input: Facade.ConnectorPackPrepareRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorPrepare(input) as Facade.ConnectorPackView),

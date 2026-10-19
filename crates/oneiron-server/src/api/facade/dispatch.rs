@@ -5511,6 +5511,26 @@ async fn vault_packs_put(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_packs_preview(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.packs.preview")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.packs.preview", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.packs.preview", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_packs_preview(server, auth, facade_door_input(&mut hooks)?)
+            .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_packs_connector_prepare(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -24852,6 +24872,7 @@ pub(crate) async fn call_verb(
         "vault.packs.hooks.grant.get" => vault_packs_hooks_grant_get(server, call, input).await,
         "vault.packs.hooks.qualify" => vault_packs_hooks_qualify(server, call, input).await,
         "vault.packs.put" => vault_packs_put(server, call, input).await,
+        "vault.packs.preview" => vault_packs_preview(server, call, input).await,
         "vault.packs.connector.prepare" => vault_packs_connector_prepare(server, call, input).await,
         "vault.packs.connector.get" => vault_packs_connector_get(server, call, input).await,
         "vault.packs.connector.qualify" => vault_packs_connector_qualify(server, call, input).await,

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3603 declarations.
-// Replies: 969 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1087 code-mode rows (1062 host rows, 25 run rows), 3606 declarations.
+// Replies: 970 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -919,7 +919,8 @@ declare namespace Sdk {
   type AuthorityLaneRef = string;
   type BudgetPolicyRef = string;
   type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef };
-  type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number };
+  type WorldRecipientNotice = { notice_type: string; channel: string; voice: string; audience: string; world_ref: string; world_name?: string | null; reason: string; body: string };
+  type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number; notices?: WorldRecipientNotice[] };
   type PackPutReceipt = { outcome: PackPutOutcome; reason?: string | null; receipt?: PackInstallReceipt | null };
   type HubPackRequest = { name: string };
   type HubSkillImported = { entity: EntityId };
@@ -1010,6 +1011,8 @@ declare namespace Sdk {
   type PackBytesFile = { path: string; content_base64: string };
   type PackFileInput = PackTextFile | PackBytesFile;
   type PackPutRequest = { files: PackFileInput[] };
+  type PackPreviewRequest = { files: PackFileInput[]; world?: EntityId | null };
+  type PackImportPreview = { pack_name: string; agent: boolean; world_ref?: string | null; needs_world: boolean; notices: WorldRecipientNotice[] };
   type SlatePackSource = { source_ref: string; content_hash: string };
   type SlateDataClass = "public" | "personal" | "secret" | "header";
   type SlateToolManifest = { name: string; data_class: SlateDataClass; header_parameters: string[]; resolved_input_schema?: unknown | null; trigger?: string | null; destroys: boolean; spends: boolean; sends_outward: boolean; legacy_ask: boolean; read_only?: boolean; idempotent?: boolean };
@@ -2309,7 +2312,7 @@ declare namespace Sdk {
   type AgentPackExportRequest = { agent_ref: string; travel?: TravelChoice | null };
   type OmittedKnowledge = { claim: string; reason: string };
   type AgentPackExportFile = { path: string; content_base64: string };
-  type AgentPackExport = { agent_ref: string; version: string; content_hash: string; born_with: BornWith; omitted: OmittedKnowledge[]; files: AgentPackExportFile[] };
+  type AgentPackExport = { agent_ref: string; version: string; content_hash: string; born_with: BornWith; omitted: OmittedKnowledge[]; files: AgentPackExportFile[]; notices?: WorldRecipientNotice[] };
   type BornFromRequest = { task_ref?: string | null; ask_ref?: string | null; run_ref?: string | null; skill_ref?: string | null; agent_run?: string | null };
   type BornFromArtifact = { artifact_id: EntityId; version: number; at: number };
   type BornFromView = { born: EntityId[]; versions: BornFromArtifact[] };
@@ -4115,7 +4118,7 @@ declare const vault: Sdk.VaultHost & {
       /** The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary. */
       set(input: Sdk.AgentDreamingSetRequest): Promise<Sdk.AgentDreamingView | StoredResult>;
     };
-    /** An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home. */
+    /** An agent's travelling AgentPack folder, read through the caller's admission, with the chosen born-with text and a share receipt; the owner's own export also carries his private worlds, naming each his recipient choice would keep. */
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
     /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
@@ -5477,6 +5480,8 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent. */
     install(input: Sdk.HubImportRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+    /** The owner previews a pack folder before vault.packs.put: the world its travelling agent would land in, with a please double-check notice when that world's current setting does not cover this machine; nothing is staged or written. */
+    preview(input: Sdk.PackPreviewRequest): Promise<Sdk.PackImportPreview | StoredResult>;
     /** The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks. */
     put(input: Sdk.PackPutRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */

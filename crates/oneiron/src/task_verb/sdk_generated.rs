@@ -1202,6 +1202,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackPutRequest>(),
             ),
             (
+                "vault.packs.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::PackPreviewRequest,
+                >(),
+            ),
+            (
                 "vault.packs.connector.prepare",
                 crate::code_run::vault_read::request_schema::<ConnectorPackPrepareRequest>(),
             ),
@@ -10566,6 +10572,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.packs.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.packs.connector.prepare" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17027,6 +17040,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
         }
+        "vault.packs.preview" => {
+            let _input: crate::task_verb::sdk::PackPreviewRequest = decode(value.clone())?;
+        }
         "vault.packs.connector.prepare" => {
             let _input: ConnectorPackPrepareRequest = decode(value.clone())?;
         }
@@ -20329,6 +20345,7 @@ pub fn invoke(
         }
         "vault.packs.hooks.qualify" => encode(vault_packs_hooks_qualify(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
+        "vault.packs.preview" => encode(vault_packs_preview(memory, decode(value)?)?),
         "vault.packs.connector.prepare" => {
             encode(vault_packs_connector_prepare(memory, decode(value)?)?)
         }
@@ -24088,6 +24105,16 @@ pub fn vault_packs_put(
     input: PackPutRequest,
 ) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
     crate::task_verb::sdk::put_pack_embedded(memory, input)
+}
+pub fn vault_packs_preview(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::PackPreviewRequest,
+) -> MemoryResult<crate::skill_hub::pack_catalog::PackImportPreview> {
+    crate::task_verb::sdk::pack_preview_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.preview")?,
+        input,
+    )
 }
 pub fn vault_packs_connector_prepare(
     memory: &Memory<'_>,

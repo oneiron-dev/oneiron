@@ -1817,6 +1817,9 @@ class Oneiron:
         def put(self, spec):
             """The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."""
             return json.loads(_translate(lambda: self._client.vault_packs_put(json.dumps(spec))))
+        def preview(self, spec):
+            """The owner previews a pack folder before vault.packs.put: the world its travelling agent would land in, with a please double-check notice when that world's current setting does not cover this machine; nothing is staged or written."""
+            return json.loads(_translate(lambda: self._client.vault_packs_preview(json.dumps(spec))))
         @property
         def connector(self) -> "Oneiron._VaultPacksConnectorVerbs":
             return Oneiron._VaultPacksConnectorVerbs(self._client)

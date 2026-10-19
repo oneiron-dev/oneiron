@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1051 facade rows, 3556 declarations.
-Inputs: 987 of 1051 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 941 of 1051 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1052 facade rows, 3559 declarations.
+Inputs: 988 of 1052 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 942 of 1052 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -4441,6 +4441,15 @@ class PackSection(TypedDict):
     verbs: list[SectionVerbRef]
     authority_lane: AuthorityLaneRef
     budget_policy: BudgetPolicyRef
+class WorldRecipientNotice(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    world_ref: str
+    world_name: NotRequired[str | None]
+    reason: str
+    body: str
 class PackInstallReceipt(TypedDict):
     source_id: str
     pack_name: str
@@ -4465,6 +4474,7 @@ class PackInstallReceipt(TypedDict):
     skills: list[str]
     agent: NotRequired[str | None]
     installed_at: int
+    notices: NotRequired[list[WorldRecipientNotice]]
 class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]
@@ -4868,6 +4878,15 @@ class PackBytesFile(TypedDict):
 PackFileInput = PackTextFile | PackBytesFile
 class PackPutRequest(TypedDict):
     files: list[PackFileInput]
+class PackPreviewRequest(TypedDict):
+    files: list[PackFileInput]
+    world: NotRequired[EntityId | None]
+class PackImportPreview(TypedDict):
+    pack_name: str
+    agent: bool
+    world_ref: NotRequired[str | None]
+    needs_world: bool
+    notices: list[WorldRecipientNotice]
 class SlatePackSource(TypedDict):
     source_ref: str
     content_hash: str
@@ -11108,6 +11127,7 @@ class AgentPackExport(TypedDict):
     born_with: BornWith
     omitted: list[OmittedKnowledge]
     files: list[AgentPackExportFile]
+    notices: NotRequired[list[WorldRecipientNotice]]
 class BornFromRequest(TypedDict):
     task_ref: NotRequired[str | None]
     ask_ref: NotRequired[str | None]

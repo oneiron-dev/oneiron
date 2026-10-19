@@ -1794,6 +1794,8 @@ class Oneiron:
         def hooks(self) -> "Oneiron._VaultPacksHooksVerbs": ...
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
             """The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."""
+        def preview(self, spec: Facade.PackPreviewRequest) -> Facade.PackImportPreview:
+            """The owner previews a pack folder before vault.packs.put: the world its travelling agent would land in, with a please double-check notice when that world's current setting does not cover this machine; nothing is staged or written."""
         @property
         def connector(self) -> "Oneiron._VaultPacksConnectorVerbs": ...
         def remove(self, spec: Facade.PackRemoveRequest) -> Facade.PackInstallReceipt:

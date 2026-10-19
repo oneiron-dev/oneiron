@@ -239,6 +239,7 @@ pub enum AgentVerb {
     VaultPacksHooksGrantGet,
     VaultPacksHooksQualify,
     VaultPacksPut,
+    VaultPacksPreview,
     VaultPacksConnectorPrepare,
     VaultPacksConnectorGet,
     VaultPacksConnectorQualify,
@@ -1313,6 +1314,7 @@ impl AgentVerb {
         Self::VaultPacksHooksGrantGet,
         Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
+        Self::VaultPacksPreview,
         Self::VaultPacksConnectorPrepare,
         Self::VaultPacksConnectorGet,
         Self::VaultPacksConnectorQualify,
@@ -2390,6 +2392,7 @@ impl AgentVerb {
             Self::VaultPacksHooksGrantGet => "vault.packs.hooks.grant.get",
             Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
+            Self::VaultPacksPreview => "vault.packs.preview",
             Self::VaultPacksConnectorPrepare => "vault.packs.connector.prepare",
             Self::VaultPacksConnectorGet => "vault.packs.connector.get",
             Self::VaultPacksConnectorQualify => "vault.packs.connector.qualify",
@@ -3492,6 +3495,7 @@ impl AgentVerb {
                 | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksPreview
                 | Self::VaultPacksConnectorPrepare
                 | Self::VaultPacksConnectorGet
                 | Self::VaultPacksConnectorQualify
@@ -4593,6 +4597,7 @@ impl AgentVerb {
                 | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksPreview
                 | Self::VaultPacksConnectorPrepare
                 | Self::VaultPacksConnectorGet
                 | Self::VaultPacksConnectorQualify
@@ -5799,6 +5804,7 @@ impl AgentVerb {
                 | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
+                | Self::VaultPacksPreview
                 | Self::VaultPacksConnectorPrepare
                 | Self::VaultPacksConnectorGet
                 | Self::VaultPacksConnectorQualify
@@ -7501,6 +7507,7 @@ impl AgentVerb {
             Self::VaultPacksHooksGrantGet => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksPreview => &["spec"],
             Self::VaultPacksConnectorPrepare => &["spec"],
             Self::VaultPacksConnectorGet => &["spec"],
             Self::VaultPacksConnectorQualify => &["spec"],
@@ -8576,6 +8583,7 @@ impl AgentVerb {
             Self::VaultPacksHooksGrantGet => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
+            Self::VaultPacksPreview => &["spec"],
             Self::VaultPacksConnectorPrepare => &["spec"],
             Self::VaultPacksConnectorGet => &["spec"],
             Self::VaultPacksConnectorQualify => &["spec"],
@@ -10114,6 +10122,9 @@ impl AgentVerb {
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."
             }
+            Self::VaultPacksPreview => {
+                "The owner previews a pack folder before vault.packs.put: the world its travelling agent would land in, with a please double-check notice when that world's current setting does not cover this machine; nothing is staged or written."
+            }
             Self::VaultPacksConnectorPrepare => {
                 "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."
             }
@@ -11345,7 +11356,7 @@ impl AgentVerb {
                 "The owner reads the workspace house and companion roster with their actor, subject and facet refs."
             }
             Self::VaultAgentsExportPack => {
-                "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home."
+                "An agent's travelling AgentPack folder, read through the caller's admission, with the chosen born-with text and a share receipt; the owner's own export also carries his private worlds, naming each his recipient choice would keep."
             }
             Self::VaultArtifactsBornFrom => {
                 "What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made."

@@ -1176,6 +1176,11 @@ export_facade! {
     let output = client.vault_packs_put(&input)?;
     crate::codec::lift_record("vault.packs.put", &output)
 };
+"vault.packs.preview" => fn vault_packs_preview(&self, input: PackPreviewRequest) -> PackImportPreview = |client| {
+    let input: oneiron::task_verb::sdk::PackPreviewRequest = crate::codec::lower_record("vault.packs.preview", input)?;
+    let output = client.vault_packs_preview(&input)?;
+    crate::codec::lift_record("vault.packs.preview", &output)
+};
 "vault.packs.connector.prepare" => fn vault_packs_connector_prepare(&self, input: ConnectorPackPrepareRequest) -> ConnectorPackView = |client| {
     let input: oneiron::task_verb::sdk::ConnectorPackPrepareRequest = crate::codec::lower_record("vault.packs.connector.prepare", input)?;
     let output = client.vault_packs_connector_prepare(&input)?;
