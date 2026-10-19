@@ -357,23 +357,19 @@ pub(super) fn download(
     }));
     // Each buffered chunk is released only while no world withheld from the
     // peer keeps the object; a flag set mid-download ends the body with an
-    // error.
+    // error that says why (FIX 4939).
     Body::from_stream(stream::unfold(receiver, move |mut receiver| {
         let vault = Arc::clone(&vault);
         async move {
-            let item = receiver.recv().await?;
-            let item = match item {
-                Ok(_)
-                    if oneiron::sync::chunks::lfs_object_withheld_for(&vault, oid, peer)
-                        .unwrap_or(true) =>
-                {
-                    receiver.close();
-                    Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "lfs object kept on this device",
-                    ))
-                }
-                item => item,
+            let item = match receiver.recv().await? {
+                Ok(piece) => match super::support::lfs_piece_hold(&vault, oid, peer) {
+                    Some(kept) => {
+                        receiver.close();
+                        Err(kept)
+                    }
+                    None => Ok(piece),
+                },
+                ended => ended,
             };
             Some((item, receiver))
         }

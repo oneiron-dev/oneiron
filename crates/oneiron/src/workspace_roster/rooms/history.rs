@@ -1,4 +1,5 @@
 //! Bounded room-local history and transactional auxiliary-row cleanup.
+use super::thread_reads::{RoomReach, unread_places};
 use super::*;
 use crate::store::Store;
 
@@ -227,24 +228,25 @@ impl Memory<'_> {
     /// The turns among `turns` this reader may read. Membership admits none
     /// of them: each passes the reader's own read lane, which inside a room
     /// turn is the room's lane, so every other member's read binds it too. A
-    /// turn is kept only when its TURN record and the turns it answers are
-    /// admitted, and it names only the messages, tasks and project the lane
-    /// admits as well.
+    /// turn is kept only when its TURN record is admitted and each turn it
+    /// answers is admitted or held back as a place (FIX 5545), and it names
+    /// only the messages, tasks and project the lane admits as well.
     pub(super) fn admitted_turns(&self, turns: Vec<RoomTurn>) -> MemoryResult<Vec<RoomTurn>> {
-        self.admitted_turns_at(turns, None)
+        Ok(self.reached_turns_at(turns, None)?.into_read())
     }
 
     /// [`Self::admitted_turn_group_at`] over a room's turns: each private
     /// thread's (FIX 2951) under that thread's own gate and lane, never the
-    /// room's, so a reader in its audience reads it there and any other
+    /// room's, so a reader in its audience now reads it there and any other
     /// reads none of it, neither its turns nor what they name. Every other
     /// turn reads as the room's, in the order given. With `thread`, all of
-    /// them read under that thread.
-    fn admitted_turns_at(
+    /// them read under that thread. Each turn held back from the reader is
+    /// kept as its place alone (FIX 5545).
+    fn reached_turns_at(
         &self,
         turns: Vec<RoomTurn>,
         thread: Option<EntityId>,
-    ) -> MemoryResult<Vec<RoomTurn>> {
+    ) -> MemoryResult<RoomReach> {
         if turns.is_empty() || thread.is_some() {
             return self.admitted_turn_group_at(turns, thread);
         }
@@ -260,8 +262,10 @@ impl Memory<'_> {
         let mut groups = std::collections::BTreeMap::<Option<EntityId>, Vec<RoomTurn>>::new();
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            // A turn joins the thread it sits in for this reader (CURRENT);
+            // its words meet the CONTENT rule on admission (FIX 5545).
             for turn in turns {
-                let place = self.thread_place_in(&txn, room, EntityId::from_hex(&turn.turn_id)?)?;
+                let place = self.thread_reach_in(&txn, room, EntityId::from_hex(&turn.turn_id)?)?;
                 let group = match place {
                     ThreadPlace::Room => None,
                     ThreadPlace::Private(root) => Some(root),
@@ -270,7 +274,7 @@ impl Memory<'_> {
                 groups.entry(group).or_default().push(turn);
             }
         }
-        let mut admitted = Vec::new();
+        let mut admitted = RoomReach::default();
         for (root, group) in groups {
             admitted.extend(self.admitted_turn_group_at(group, root)?);
         }
@@ -284,19 +288,22 @@ impl Memory<'_> {
     /// FIX 2028) is kept only beside its citing MESSAGE the lane admits, and
     /// only when the lane admits its target TURN and MESSAGE, or the one it
     /// does not is no longer live: an erased target reads as redacted, never
-    /// as a hidden live row.
+    /// as a hidden live row. A turn the reader does not read is kept as its
+    /// place alone when it is held back from the reader (FIX 5545), and a
+    /// turn answering such a place reads on its own gate.
     fn admitted_turn_group_at(
         &self,
         mut turns: Vec<RoomTurn>,
         thread: Option<EntityId>,
-    ) -> MemoryResult<Vec<RoomTurn>> {
+    ) -> MemoryResult<RoomReach> {
         if turns.is_empty() {
-            return Ok(turns);
+            return Ok(RoomReach::default());
         }
         let room = EntityId::from_hex(&turns[0].room_id)?;
         if turns.iter().any(|turn| turn.room_id != room.to_hex()) {
             return Err(invalid().into());
         }
+        let unread;
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             match thread {
@@ -313,6 +320,7 @@ impl Memory<'_> {
                         .map(|id| id.to_hex());
                 }
             }
+            unread = self.unread_turns_in(&txn, room, thread, &turns)?;
         }
         let ids: BTreeSet<EntityId> = turns
             .iter()
@@ -371,27 +379,33 @@ impl Memory<'_> {
             }
         }
         let readable = |id: &String| EntityId::from_hex(id).is_ok_and(|id| admitted.contains(&id));
-        Ok(turns
-            .into_iter()
-            .filter(|turn| {
-                readable(&turn.turn_id)
-                    && turn.reply_to.iter().all(readable)
-                    && turn.thread_of.iter().all(readable)
-            })
-            .map(|mut turn| {
-                turn.message_ids.retain(readable);
-                turn.task_ids.retain(readable);
-                turn.converted_project = turn.converted_project.filter(readable);
-                // A quote shows only beside its readable citing MESSAGE.
-                let citers = &turn.message_ids;
-                turn.quotes.retain(|citer, quote| {
-                    citers.contains(citer)
-                        && !withheld.contains(&quote.target_turn)
-                        && !withheld.contains(&quote.anchor.message())
-                });
-                turn
-            })
-            .collect())
+        let content = |id: &String| readable(id) && !unread.contains(id);
+        let held = self.held_back_among(room, &unread_places(&turns, &content))?;
+        let placed = |id: &String| content(id) || held.contains(id);
+        let mut reach = RoomReach::default();
+        for mut turn in turns {
+            if !(content(&turn.turn_id)
+                && turn.reply_to.iter().all(placed)
+                && turn.thread_of.iter().all(placed))
+            {
+                if held.contains(&turn.turn_id) {
+                    reach.push_held(&turn);
+                }
+                continue;
+            }
+            turn.message_ids.retain(readable);
+            turn.task_ids.retain(readable);
+            turn.converted_project = turn.converted_project.filter(readable);
+            // A quote shows only beside its readable citing MESSAGE.
+            let citers = &turn.message_ids;
+            turn.quotes.retain(|citer, quote| {
+                citers.contains(citer)
+                    && !withheld.contains(&quote.target_turn)
+                    && !withheld.contains(&quote.anchor.message())
+            });
+            reach.push_read(turn);
+        }
+        Ok(reach)
     }
 
     /// First trunk page: an admitted origin pointer, then trunk turns and
@@ -410,7 +424,7 @@ impl Memory<'_> {
             _ => None,
         };
         let turns = self.room_turn_snapshot(room)?;
-        let headers = self.room_result_headers(room, &turns, origin.as_ref())?;
+        let headers = self.room_result_headers(room, turns.placed(), origin.as_ref())?;
         let mut entries = Vec::new();
         if let Some(origin) = origin {
             let thread = EntityId::from_hex(&origin.thread)?;
@@ -424,11 +438,12 @@ impl Memory<'_> {
             );
         }
         for turn in turns
-            .iter()
+            .read()
             .filter(|turn| turn.thread_of.is_none())
             .take(PAGE_LIMIT)
         {
             let roots = turns
+                .placed()
                 .iter()
                 .filter(|thread| {
                     super::liveness::is_thread_root(thread)
@@ -665,13 +680,14 @@ impl Memory<'_> {
 impl Memory<'_> {
     /// Complete snapshot for a room liveness fold; never silently truncates
     /// the working-set census to the first `vault.rooms.messages` page. Empty when
-    /// the room Scope reads no turns.
-    pub(super) fn room_turn_snapshot(&self, room: EntityId) -> MemoryResult<Vec<RoomTurn>> {
+    /// the room Scope reads no turns. A turn held back from the reader is its
+    /// place alone (FIX 5545).
+    pub(super) fn room_turn_snapshot(&self, room: EntityId) -> MemoryResult<RoomReach> {
         let worlds = self.room_read_worlds(room)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_reader(self.vault(), &txn, room, self.actor())?;
         if !turns_readable(&worlds) {
-            return Ok(Vec::new());
+            return Ok(RoomReach::default());
         }
         // Every turn is read, however many (rule 5); past the threshold row
         // the owner's check is raised for the room.
@@ -689,7 +705,7 @@ impl Memory<'_> {
         }
         drop(txn);
         count.finish(self.vault());
-        Ok(answer_closed(self.admitted_turns(turns)?))
+        Ok(self.reached_turns_at(turns, None)?.answer_closed())
     }
 
     /// [`Self::room_turn_snapshot`] for a reader of one thread (OF-529): the
@@ -702,12 +718,12 @@ impl Memory<'_> {
         &self,
         room: EntityId,
         handle: EntityId,
-    ) -> MemoryResult<Vec<RoomTurn>> {
+    ) -> MemoryResult<RoomReach> {
         let worlds = self.thread_read_worlds(room, handle)?;
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         require_thread_reader(self.vault(), &txn, room, handle, self.actor())?;
         if !turns_readable(&worlds) {
-            return Ok(Vec::new());
+            return Ok(RoomReach::default());
         }
         // The thread is found by walking the room's history, every row of it
         // (rule 5); past the threshold row the owner's check is raised for
@@ -728,7 +744,7 @@ impl Memory<'_> {
         count.finish(self.vault());
         let roots = super::liveness::thread_root_map(&turns)?;
         if roots.get(&handle) != Some(&handle) {
-            return Ok(Vec::new());
+            return Ok(RoomReach::default());
         }
         // The thread, then each turn it answers, followed to its end: the
         // trunk anchor and that anchor's own answer chain.
@@ -764,9 +780,9 @@ impl Memory<'_> {
             .into_iter()
             .filter(|turn| kept.contains(&turn.turn_id))
             .collect();
-        Ok(answer_closed(
-            self.admitted_turns_at(selected, Some(handle))?,
-        ))
+        Ok(self
+            .reached_turns_at(selected, Some(handle))?
+            .answer_closed())
     }
 
     /// Recomputes thread liveness from the current room history and TASK
@@ -784,8 +800,9 @@ impl Memory<'_> {
             .room_thread_settings(self.actor())?;
         drop(txn);
         let policy = policy.narrowed(settings);
-        let turns = self.room_turn_snapshot(room)?;
-        let roots = super::liveness::thread_root_map(&turns)?;
+        let reach = self.room_turn_snapshot(room)?;
+        let turns = reach.placed();
+        let roots = super::liveness::thread_root_map(turns)?;
         let members = self
             .vault()
             .project_room(room)?
@@ -794,7 +811,7 @@ impl Memory<'_> {
             .into_iter()
             .collect();
         // Task and result reads run inside the room too, on every transport.
-        let bindings = super::liveness::thread_task_bindings(&turns, &roots)?;
+        let bindings = super::liveness::thread_task_bindings(turns, &roots)?;
         let tasks = crate::task_verb::room_thread_tasks(
             self.for_room_projection(room)?.memory(),
             &roots,
@@ -803,7 +820,7 @@ impl Memory<'_> {
             policy.now,
         )?;
         Ok(super::liveness::project_in_room(
-            &turns, &tasks, policy, room,
+            turns, &tasks, policy, room,
         )?)
     }
 
@@ -835,7 +852,8 @@ impl Memory<'_> {
             return Err(MemoryError::from(invalid()));
         }
         let turn = self.admitted_turns(vec![turn])?.pop().ok_or_else(invalid)?;
-        let turns = self.room_turn_snapshot(room)?;
+        let reach = self.room_turn_snapshot(room)?;
+        let turns = reach.placed();
         let trunk_hex = trunk.to_hex();
         let root_ids = turns
             .iter()
@@ -846,7 +864,7 @@ impl Memory<'_> {
             .map(|turn| EntityId::from_hex(&turn.turn_id))
             .collect::<Result<BTreeSet<_>>>()?;
         let headers = self
-            .room_result_headers(room, &turns, None)?
+            .room_result_headers(room, turns, None)?
             .into_iter()
             .filter(|header| root_ids.contains(&header.thread))
             .collect();
@@ -867,10 +885,11 @@ impl Memory<'_> {
         // private threads, by root id alone, with a seat in it or not.
         let owner = self.owner_private_roots(room)?;
         let turns = match &owner {
-            Some(owner) if !owner.reads_room => Vec::new(),
+            Some(owner) if !owner.reads_room => RoomReach::default(),
             _ => self.room_turn_snapshot(room)?,
         };
         let mut roots = turns
+            .placed()
             .iter()
             .filter(|turn| super::liveness::is_thread_root(turn))
             .map(|turn| EntityId::from_hex(&turn.turn_id))
@@ -930,11 +949,12 @@ impl Memory<'_> {
                 || agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?)
             .then_some(handle)
         };
-        let turns = match thread {
+        let reach = match thread {
             None => self.room_turn_snapshot(room)?,
             Some(thread) => self.thread_turn_snapshot(room, thread)?,
         };
-        let roots = super::liveness::thread_root_map(&turns)?;
+        let turns = reach.placed();
+        let roots = super::liveness::thread_root_map(turns)?;
         if !roots.contains_key(&handle) || roots.get(&handle) != Some(&handle) {
             return Ok(None);
         }
@@ -950,7 +970,7 @@ impl Memory<'_> {
             .into_iter()
             .filter(|(_, root)| *root == handle)
             .collect();
-        let bindings = super::liveness::thread_task_bindings(&turns, &selected)?;
+        let bindings = super::liveness::thread_task_bindings(turns, &selected)?;
         let projection = match thread {
             None => self.for_room_projection(room)?,
             Some(thread) => self.for_thread_projection(room, thread)?,
@@ -962,9 +982,7 @@ impl Memory<'_> {
             &members,
             now,
         )?;
-        Ok(super::liveness::project_target(
-            &turns, &tasks, handle, now,
-        )?)
+        Ok(super::liveness::project_target(turns, &tasks, handle, now)?)
     }
 }
 

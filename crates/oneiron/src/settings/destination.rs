@@ -313,6 +313,47 @@ pub(crate) fn recipient_limits_in(
         .collect())
 }
 
+/// Why one of `worlds`, which a verdict read in `txn` already keeps from
+/// `destination`, stays (FIX 4939): the owner's recipient choice for the
+/// first of them his choice limits there, by the same rule as
+/// [`recipient_limits_in`], else an integrity hold. Under a conflicted vault
+/// root no choice can be judged, and it says so. Naming the reason never
+/// changes the verdict.
+pub(crate) fn worlds_hold_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    worlds: &BTreeSet<EntityId>,
+    destination: &ReadDestination,
+) -> ReleaseHold {
+    match WorldPrivacyView::load_unless_conflicted_in(vault, txn) {
+        Ok(Some(view)) => worlds
+            .iter()
+            .find_map(|world| recipient_limit_in(&view, *world, destination))
+            .map_or(ReleaseHold::Placement, ReleaseHold::Recipient),
+        Ok(None) => ReleaseHold::ConflictedRoot,
+        Err(_) => ReleaseHold::Placement,
+    }
+}
+
+/// Why `row`, which a verdict read in `txn` already withheld from
+/// `destination` by the `withheld` worlds, stays (FIX 4939):
+/// [`Vault::release_hold_for`]'s reason for it in that same snapshot. A
+/// reason that cannot be read is an integrity hold.
+pub(crate) fn withheld_row_hold_in(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    withheld: &BTreeSet<EntityId>,
+    row: &EntityId,
+    destination: &ReadDestination,
+) -> ReleaseHold {
+    match WorldPrivacyView::load_unless_conflicted_in(vault, txn) {
+        Ok(Some(view)) => row_hold(vault, txn, &view, withheld, row, destination)
+            .unwrap_or(ReleaseHold::Placement),
+        Ok(None) => ReleaseHold::ConflictedRoot,
+        Err(_) => ReleaseHold::Placement,
+    }
+}
+
 /// Why `world`'s current settings keep it from `machine`, named directly
 /// rather than proved by a connection, in `txn`'s snapshot (FIX 5493: an
 /// import judged for the install it lands on), or `None` when it may be
