@@ -276,8 +276,8 @@ impl Work {
     /// `node`'s place and current fingerprint in `next`.
     fn target(&self, node: NodeId) -> Result<(String, u32, [u8; 32]), LiveError> {
         let (part, native) = self.at.get(&node).cloned().ok_or(LiveError::UnknownNode)?;
-        let expected =
-            fingerprint_of(&self.view()?, &part, native).ok_or(LiveError::UnknownNode)?;
+        let view = self.view()?;
+        let expected = fingerprint_of(&view, &part, native).ok_or(LiveError::UnknownNode)?;
         Ok((part, native, expected))
     }
 
@@ -699,11 +699,10 @@ pub fn project(
         // The held text as the text mapping reads it: soft breaks as
         // U+000B, and a line feed inside a run as text.
         let held_text = match (&shape.text, deck.texts.get(id)) {
-            (Some(text), Some(_)) => Some(paragraph_chars(&text_body(
-                text,
-                &work.slide_tree(&part)?,
-                || NodeId(0),
-            ))),
+            (Some(text), Some(_)) => {
+                let tree = work.slide_tree(&part)?;
+                Some(paragraph_chars(&text_body(text, &tree, || NodeId(0))))
+            }
             _ => None,
         };
         if xfrm != Xfrm::default() {
@@ -1075,8 +1074,8 @@ fn project_payload(
                     .ok_or(LiveError::UnknownNode)?
                     .node
                     .index;
-                held::table_cells(&work.slide_tree(part)?, at)
-                    .ok_or(LiveError::Invalid(WRITTEN_FRAME))?
+                let tree = work.slide_tree(part)?;
+                held::table_cells(&tree, at).ok_or(LiveError::Invalid(WRITTEN_FRAME))?
             } else {
                 have
             };

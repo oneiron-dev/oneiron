@@ -1,6 +1,7 @@
 //! The new XML the text mapping writes: a run with new text, a run of the
 //! paragraph's end properties, and new paragraphs shaped like their
-//! neighbour or bare.
+//! neighbour or bare. A line break (U+000B) in new text is written as an
+//! `a:br` carrying the properties of the run it lands in.
 
 use super::{BREAK, Kind, Paragraph, bare_runs};
 use crate::edit::EditRefusal;
@@ -31,6 +32,59 @@ pub(super) fn run_bytes(
     Ok(out)
 }
 
+/// A run's bytes with `text` as its text, each U+000B in it an `a:br`
+/// carrying the run's own `a:rPr`: the text between breaks goes into copies
+/// of the run, and an empty piece writes no run.
+pub(super) fn broken_run(
+    bytes: &[u8],
+    tree: &XmlTree,
+    run: usize,
+    text: &str,
+) -> Result<Vec<u8>, EditRefusal> {
+    if !text.contains(BREAK) {
+        return run_bytes(bytes, tree, run, text);
+    }
+    let properties = xml::child(tree, run, A, "rPr").map_or_else(String::new, |r_pr| {
+        String::from_utf8_lossy(&bytes[tree.nodes[r_pr].span.clone()]).into_owned()
+    });
+    let line_break = soft_break(xml::prefix(&tree.nodes[run]), &properties);
+    let mut out = Vec::new();
+    for (at, piece) in text.split(BREAK).enumerate() {
+        if at > 0 {
+            out.extend_from_slice(line_break.as_bytes());
+        }
+        if !piece.is_empty() {
+            out.extend(run_bytes(bytes, tree, run, piece)?);
+        }
+    }
+    Ok(out)
+}
+
+/// An `a:br` carrying `properties`, an `a:rPr` element or nothing.
+fn soft_break(prefix: &str, properties: &str) -> String {
+    let br = xml::qualify(prefix, "br");
+    if properties.is_empty() {
+        format!("<{br}/>")
+    } else {
+        format!("<{br}>{properties}</{br}>")
+    }
+}
+
+/// `text` written between its line breaks: each U+000B as `line_break`,
+/// each nonempty piece as `run` makes it.
+fn broken(text: &str, line_break: &str, run: impl Fn(&str) -> String) -> String {
+    let mut out = String::new();
+    for (at, piece) in text.split(BREAK).enumerate() {
+        if at > 0 {
+            out.push_str(line_break);
+        }
+        if !piece.is_empty() {
+            out.push_str(&run(piece));
+        }
+    }
+    out
+}
+
 /// A new run carrying the paragraph's end properties as its own.
 pub(super) fn new_run(bytes: &[u8], tree: &XmlTree, paragraph: &Paragraph, text: &str) -> String {
     let node = &tree.nodes[paragraph.node];
@@ -39,12 +93,10 @@ pub(super) fn new_run(bytes: &[u8], tree: &XmlTree, paragraph: &Paragraph, text:
         .map_or_else(String::new, |end| {
             renamed(bytes, &tree.nodes[end], &xml::qualify(prefix, "rPr"))
         });
-    format!(
-        "<{r}>{properties}<{t}>{}</{t}></{r}>",
-        escape_text(text),
-        r = xml::qualify(prefix, "r"),
-        t = xml::qualify(prefix, "t"),
-    )
+    let (r, t) = (xml::qualify(prefix, "r"), xml::qualify(prefix, "t"));
+    broken(text, &soft_break(prefix, &properties), |piece| {
+        format!("<{r}>{properties}<{t}>{}</{t}></{r}>", escape_text(piece))
+    })
 }
 
 /// An element's bytes under another qualified name (`a:endParaRPr` as
@@ -70,9 +122,6 @@ pub(super) fn insert_paragraphs(
     at: usize,
     added: &[&[char]],
 ) -> Result<Splice, EditRefusal> {
-    if added.iter().any(|p| p.contains(&BREAK)) {
-        return Err(EditRefusal::TextMapping("new text holds a line break"));
-    }
     let template = at
         .checked_sub(1)
         .or((!old.is_empty()).then_some(0))
@@ -119,16 +168,13 @@ fn paragraph_like(bytes: &[u8], tree: &XmlTree, template: &Paragraph, text: &str
                 .map(|at| renamed(bytes, &tree.nodes[at], &xml::qualify(prefix, "rPr")))
         })
         .unwrap_or_default();
-    let run = if text.is_empty() {
-        String::new()
-    } else {
+    let (r, t) = (xml::qualify(prefix, "r"), xml::qualify(prefix, "t"));
+    let run = broken(text, &soft_break(prefix, &run_properties), |piece| {
         format!(
             "<{r}>{run_properties}<{t}>{}</{t}></{r}>",
-            escape_text(text),
-            r = xml::qualify(prefix, "r"),
-            t = xml::qualify(prefix, "t"),
+            escape_text(piece)
         )
-    };
+    });
     format!(
         "<{p}>{}{run}{}</{p}>",
         element("pPr"),
@@ -139,5 +185,8 @@ fn paragraph_like(bytes: &[u8], tree: &XmlTree, template: &Paragraph, text: &str
 
 fn bare_paragraph(prefix: &str, text: &str) -> String {
     let p = xml::qualify(prefix, "p");
-    format!("<{p}>{}</{p}>", bare_runs(prefix, text))
+    let runs = broken(text, &soft_break(prefix, ""), |piece| {
+        bare_runs(prefix, piece)
+    });
+    format!("<{p}>{runs}</{p}>")
 }

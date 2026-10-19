@@ -1,14 +1,16 @@
 //! Step 3's text comparison: a model text body against its re-import, by
 //! paragraph text and level and by the declared character properties over
 //! aligned character spans. Run partitions match one for one, except where
-//! the writer put new text beside a field: a field's text is computed, so
-//! the writer never makes one the host of new text, and the new text lands
-//! in a run of its own. That split is allowed only at the edge of a field
-//! the baseline held on the same shape, which this asserts is still there.
+//! the writer split a run for a reason the text shows: new text beside a
+//! field (a field's text is computed, so the writer never makes one the host
+//! of new text, and the new text lands in a run of its own), allowed only at
+//! the edge of a field the baseline held on the same shape, which this
+//! asserts is still there; and a line break (U+000B) in new text, written as
+//! an `a:br` between copies of its run.
 
 use super::record::{Res, text};
 use super::variants::{A, part_text, xml_tree};
-use crate::deck::DeckView;
+use crate::deck::{DeckView, soft_breaks};
 use crate::edit::BREAK;
 use crate::live::{LiveDeck, NodeId, Paragraph, Run, TextBody};
 use crate::ooxml::XmlTree;
@@ -25,7 +27,8 @@ struct Field {
 }
 
 /// Per text shape (slide part, native id), per paragraph, per run in the
-/// reader's order: the field the run is, when it is one.
+/// live reader's order (a soft break is a run): the field the run is, when
+/// it is one.
 type FieldMap = BTreeMap<(String, u32), Vec<Vec<Option<Field>>>>;
 
 /// The fields of the baseline an export was projected over and of the
@@ -104,15 +107,23 @@ fn field_map(package: &Package) -> Res<FieldMap> {
             let (Some(native), Some(body)) = (shape.id, &shape.text) else {
                 continue;
             };
+            // In the live reader's order: a soft break is a run of its own.
             let paragraphs = body
                 .paragraphs
                 .iter()
                 .map(|paragraph| {
-                    paragraph
-                        .runs
-                        .iter()
-                        .map(|run| field(&tree, run.node.index))
-                        .collect()
+                    let mut breaks = soft_breaks(&tree, paragraph.node.index)
+                        .into_iter()
+                        .peekable();
+                    let mut runs = Vec::with_capacity(paragraph.runs.len());
+                    for (at, run) in paragraph.runs.iter().enumerate() {
+                        while breaks.next_if_eq(&at).is_some() {
+                            runs.push(None);
+                        }
+                        runs.push(field(&tree, run.node.index));
+                    }
+                    runs.extend(breaks.map(|_| None));
+                    runs
                 })
                 .collect();
             out.insert((slide.part.clone(), native), paragraphs);
@@ -193,8 +204,9 @@ pub(super) fn same_text(
 }
 
 /// The model's runs over the re-read ones, aligned by character: each model
-/// run reads back as one run or, split at a kept field's edge, as several,
-/// and every run under it reads the properties it declares.
+/// run reads back as one run or, split at a kept field's edge or a line
+/// break, as several, and every run under it reads the properties it
+/// declares.
 fn same_runs(a: &Paragraph, b: &Paragraph, kept: &dyn Fn(usize) -> bool) -> Res<()> {
     let mut next = 0;
     for ra in &a.runs {
@@ -208,17 +220,21 @@ fn same_runs(a: &Paragraph, b: &Paragraph, kept: &dyn Fn(usize) -> bool) -> Res<
         if under.is_empty() || covered != ra.text {
             return Err(format!("run {ra:?} reads back as {under:?}"));
         }
-        if let Some(cut) = (start + 1..next).find(|&cut| !kept(cut - 1) && !kept(cut)) {
+        let edge = |at: usize| kept(at) || soft_break(&b.runs[at]);
+        if let Some(cut) = (start + 1..next).find(|&cut| !edge(cut - 1) && !edge(cut)) {
             return Err(format!(
-                "run {ra:?} reads back split between {:?} and {:?}, at no field the baseline held",
+                "run {ra:?} reads back split between {:?} and {:?}, at no field the baseline held or line break",
                 b.runs[cut - 1].text,
                 b.runs[cut].text
             ));
         }
         // A soft break (U+000B) is no character the writer formats: run
         // properties count no break, so a break's run declares nothing.
-        let characters = ra.text.chars().any(|c| c != BREAK);
-        if characters && let Some(rb) = under.iter().find(|rb| !declared_hold(ra, rb)) {
+        if !soft_break(ra)
+            && let Some(rb) = under
+                .iter()
+                .find(|rb| !soft_break(rb) && !declared_hold(ra, rb))
+        {
             return Err(format!("run {ra:?} reads back as {rb:?}"));
         }
     }
@@ -229,6 +245,11 @@ fn same_runs(a: &Paragraph, b: &Paragraph, kept: &dyn Fn(usize) -> bool) -> Res<
         ));
     }
     Ok(())
+}
+
+/// A run of nothing but line breaks: no character the writer formats.
+fn soft_break(run: &Run) -> bool {
+    !run.text.is_empty() && run.text.chars().all(|c| c == BREAK)
 }
 
 /// Every character property the model run declares reads back.

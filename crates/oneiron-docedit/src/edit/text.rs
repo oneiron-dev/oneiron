@@ -11,16 +11,18 @@
 //! word replaced in a linked or bold run stays linked or bold, and nothing
 //! outside the change is rewritten. A field's text is computed: a change
 //! that cuts into one or writes text in its place is refused (deleting it
-//! whole is allowed), as is new text holding a line break. Extra paragraphs
-//! copy the `a:pPr`, first run properties and `a:endParaRPr` of the
-//! paragraph before them; surplus ones are removed.
+//! whole is allowed). A line break (U+000B) in new text is written as an
+//! `a:br` with the properties of the run it lands in, or of the
+//! paragraph's end for a new run. Extra paragraphs copy the `a:pPr`, first
+//! run properties and `a:endParaRPr` of the paragraph before them; surplus
+//! ones are removed.
 use super::check::Declared;
 use super::xml::{self, A, P, Splice};
 use super::{EditRefusal, FitUnverified, RunProps, Written};
 use crate::deck::{ShapeView, SlideView, TargetRole, TextRange};
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
-use build::{insert_paragraphs, new_run, run_bytes};
+use build::{broken_run, insert_paragraphs, new_run, run_bytes};
 
 mod build;
 
@@ -518,10 +520,8 @@ fn rewrite_paragraph(
         b += 1;
     }
     let (s, e) = (a, old.len() - b);
+    // A U+000B in the new text is written as an `a:br` (see `build`).
     let inserted: String = new[a..new.len() - b].iter().collect();
-    if inserted.contains(BREAK) {
-        return Err(EditRefusal::TextMapping("new text holds a line break"));
-    }
     let text = |from: usize, to: usize| -> String { old[from..to].iter().collect() };
     let mut actions = Vec::with_capacity(paragraph.items.len());
     for item in &paragraph.items {
@@ -604,7 +604,7 @@ fn rewrite_paragraph(
             (Action::Trim(head, tail), false) => format!("{head}{tail}"),
         };
         if !written.is_empty() {
-            out.extend(run_bytes(bytes, tree, child, &written)?);
+            out.extend(broken_run(bytes, tree, child, &written)?);
         }
     }
     if let Some(run) = pending {

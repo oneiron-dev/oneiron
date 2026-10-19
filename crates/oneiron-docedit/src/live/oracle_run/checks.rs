@@ -475,7 +475,7 @@ fn same_model(model: &LiveDeck, reread: &LiveDeck, fields: &Fields<'_>) -> Res<(
                 same_text(
                     model.texts.get(id),
                     reread.texts.get(&other),
-                    &|paragraph, run| fields.kept(*id, (&key.1, key.2), paragraph, run),
+                    &|paragraph, run| fields.kept(*id, (key.1.as_str(), key.2), paragraph, run),
                 )
             })
             .map_err(|why| format!("{key:?}: {why}"))?;

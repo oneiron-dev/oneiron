@@ -102,7 +102,7 @@ pub(super) fn fold(dir: &Path) -> Res<(Header, Vec<CaseLine>)> {
     let body = String::from_utf8(bytes).map_err(|_| format!("{JOURNAL} is not UTF-8"))?;
     let mut lines = body.lines().enumerate();
     let header = match lines.next() {
-        Some((_, first)) => match serde_json::from_str(first) {
+        Some((_, first)) => match serde_json::from_str::<Line>(first) {
             Ok(Line::Header(header)) if header.schema == JOURNAL_SCHEMA => header,
             _ => return Err(format!("{JOURNAL} does not open with its header")),
         },
@@ -110,7 +110,7 @@ pub(super) fn fold(dir: &Path) -> Res<(Header, Vec<CaseLine>)> {
     };
     let mut cases = Vec::new();
     for (at, line) in lines {
-        match serde_json::from_str(line) {
+        match serde_json::from_str::<Line>(line) {
             Ok(Line::Case(case)) => cases.push(case),
             Ok(_) => return Err(format!("{JOURNAL} line {} is out of place", at + 1)),
             Err(error) => return Err(format!("{JOURNAL} line {}: {error}", at + 1)),
