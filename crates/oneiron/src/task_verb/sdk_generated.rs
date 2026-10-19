@@ -25102,20 +25102,18 @@ pub fn vault_courtesy_delete_sent(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteSent>> {
-    crate::task_verb::sdk::courtesy_delete_host_only(
-        memory,
-        "vault.courtesy_delete.sent",
-        &EmptyRequest {},
+    crate::task_verb::sdk::read_courtesy_delete_sent(
+        memory.vault(),
+        &memory.embedded_owner("vault.courtesy_delete.sent")?,
     )
 }
 pub fn vault_courtesy_delete_incoming(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::task_verb::sdk::CourtesyDeleteIncoming>> {
-    crate::task_verb::sdk::courtesy_delete_host_only(
-        memory,
-        "vault.courtesy_delete.incoming",
-        &EmptyRequest {},
+    crate::task_verb::sdk::read_courtesy_delete_incoming(
+        memory.vault(),
+        &memory.embedded_owner("vault.courtesy_delete.incoming")?,
     )
 }
 pub fn vault_courtesy_delete_answer(
