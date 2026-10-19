@@ -94,6 +94,7 @@ pub(super) fn persist_review(
             triage: triage.clone(),
             artifacts: artifacts.clone(),
             receipts: Vec::new(),
+            spawn_attempt: request.spawn_attempt,
         };
         let stored = StoredReview {
             principal: request.actor.entity_ref(),
@@ -101,6 +102,7 @@ pub(super) fn persist_review(
             verdict: id.to_hex(),
             triage: triage.clone(),
             artifacts,
+            spawn_attempt: request.spawn_attempt,
         };
         let hash = review_identity_hash(request)?;
         RESULT.put(vault, txn, &hash, &stored)?;
@@ -186,6 +188,10 @@ struct StoredReview {
     verdict: String,
     triage: CritiqueTriage,
     artifacts: Vec<CritiqueArtifact>,
+    /// The launched run the review was first declared for. A review declared
+    /// for none stores none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    spawn_attempt: Option<EntityId>,
 }
 /// The [`RESULT`] table's key: a blake3 hash of the review request's identity tuple.
 fn review_identity_hash(request: &ReviewRequest) -> Result<[u8; 32]> {
@@ -238,7 +244,74 @@ pub(super) fn cached_review(
         triage: stored.triage,
         artifacts: stored.artifacts,
         receipts: Vec::new(),
+        spawn_attempt: stored.spawn_attempt,
     }))
+}
+
+/// Declares the review behind `verdict` for `spawn` when it is declared for
+/// no run yet, and gives back the run it is declared for: a declared review
+/// keeps its first run.
+pub(super) fn declare_spawn(
+    vault: &Vault,
+    verdict: &EntityId,
+    spawn: EntityId,
+) -> Result<Option<EntityId>> {
+    vault.with_write_txn_grouped(|txn| {
+        let hash = result_hash(vault, txn, verdict)?;
+        let mut stored = RESULT
+            .get(&vault.store, txn, &hash)?
+            .ok_or(Error::EntityNotFound)?;
+        if stored.spawn_attempt.is_none() {
+            stored.spawn_attempt = Some(spawn);
+            RESULT.put(vault, txn, &hash, &stored)?;
+        }
+        Ok(stored.spawn_attempt)
+    })
+}
+
+/// The in-scope critiques of every stored review declared for one of `runs`,
+/// by run, read in the caller's snapshot for an observation (FIX 4470): one
+/// pass over every stored review, each critique validated on its own as the
+/// branch store validates it, and one line naming each review or critique
+/// that does not read. A storage fault fails the pass.
+pub(crate) fn declared_critiques_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    runs: &BTreeSet<EntityId>,
+) -> Result<(BTreeMap<EntityId, Vec<CritiqueArtifact>>, Vec<String>)> {
+    let mut found: BTreeMap<EntityId, Vec<CritiqueArtifact>> = BTreeMap::new();
+    let mut unread = Vec::new();
+    for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, value) = row?;
+        let stored = match RESULT.decode_value(&value) {
+            Ok(stored) => stored,
+            Err(error) => {
+                let key = crate::entity_id::bytes_to_hex_lower(&key);
+                unread.push(format!(
+                    "stored review {key} does not read, so the run it was declared for is unknown: {error}"
+                ));
+                continue;
+            }
+        };
+        let Some(run) = stored.spawn_attempt.filter(|run| runs.contains(run)) else {
+            continue;
+        };
+        for artifact in stored.artifacts {
+            if artifact.out_of_scope {
+                continue;
+            }
+            match validate_critique_artifact(&artifact) {
+                Ok(()) => found.entry(run).or_default().push(artifact),
+                Err(error) => unread.push(format!(
+                    "critique {} of review {} declared for run {} does not read: {error}",
+                    artifact.artifact_id,
+                    stored.verdict,
+                    run.to_hex()
+                )),
+            }
+        }
+    }
+    Ok((found, unread))
 }
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
 /// A synced or raw claim is not a calibration event and cannot train this projector.
@@ -352,6 +425,7 @@ pub(super) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {
                 triage: stored.triage,
                 artifacts: stored.artifacts,
                 receipts: Vec::new(),
+                spawn_attempt: stored.spawn_attempt,
             })
         })
         .collect()
