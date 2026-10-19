@@ -148,22 +148,26 @@ impl Vault {
     /// Only a key found in a record's body or in a file is ruled here; one in
     /// a claim, a text field alone or a row outside the entity tables keeps
     /// its handle. The revoke's owner act records `surface`, where his
-    /// request reached this install: audit only (FIX 4650).
+    /// request reached this install: audit only (FIX 4650). The install key
+    /// loads as the revoke door's does: when it is not available here the
+    /// ruling still stands, and its revoke's carry waits for the next pass
+    /// that can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY, FIX 5407).
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
     /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
     /// [`GateError::InvalidConsentBound`] for a key already ruled, a place
     /// that cannot take its value back, a key whose value a revoke erased,
-    /// or a value that is not text going back into text. What the record's
-    /// write door returns.
+    /// or a value that is not text going back into text. An install key that
+    /// fails to load for a reason other than keys not available here. What
+    /// the record's write door returns.
     pub fn rule_found_key_not_a_secret(
         &self,
         owner: &AuthenticatedOwner,
         surface: crate::authority::ActSurface,
         handle: &str,
     ) -> Result<FoundKeySettled> {
-        self.load_install_signing_if_minted()?;
+        self.load_signing_for_revoke()?;
         let (settled, carried) = self.with_write_txn_grouped(|txn| {
             let actor = live_owner_in_txn(self, owner, txn, "only the vault owner rules on it")?;
             let mut found = Located::find_in_txn(&self.store, txn, handle)?;
