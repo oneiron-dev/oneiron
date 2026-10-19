@@ -489,6 +489,8 @@ impl Memory<'_> {
                 rendered,
                 narrowing: Box::new(narrowing),
                 retrieval_run_id: None,
+                // The documents named, not a recall answer.
+                residence: None,
             },
             gaps,
         ))

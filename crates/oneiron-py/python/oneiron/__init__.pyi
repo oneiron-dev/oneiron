@@ -147,6 +147,22 @@ class RetrievalMeta(TypedDict):
     temporal_hints: NotRequired[list[TemporalHint]]
     limit_clamped: NotRequired[bool]
 
+class RecallResidenceHit(TypedDict):
+    # The entity's full id, 32 lowercase hex.
+    id: str
+    # The home's own score, never compared with a local item's.
+    score: float
+    # The month window (YYYY-MM) that holds the hit.
+    window: str
+
+class RecallResidence(TypedDict):
+    # What an opened device's recall says of the windows it does not hold:
+    # the home's hits are separate references the local pack does not hold.
+    source: Literal["home", "local_only"]
+    complete: bool
+    capped: bool
+    hits: list[RecallResidenceHit]
+
 class MemoryPack(TypedDict):
     items: list[MemoryItem]
     scope_honesty: ScopeHonesty
@@ -154,6 +170,8 @@ class MemoryPack(TypedDict):
     # Always equal to the engine's MEMORY_PACK_VERSION, and to this package's major.
     pack_version: int
     rendered: str | None
+    # Absent when this device holds every window it may read, or runs no sync.
+    residence: NotRequired[RecallResidence]
 
 class FacadeReceipt(TypedDict):
     receipt_ref: str

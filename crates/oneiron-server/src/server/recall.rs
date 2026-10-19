@@ -27,9 +27,9 @@ use oneiron::claim::CallerLocality;
 use oneiron::embed::InputKind;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::{
-    Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryPack, MemoryResult, ProducerRows,
-    RecallEffort,
+    Effort, HomeRecallAsk, HomeRecallCaller, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
+    MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryPack,
+    MemoryResult, ProducerRows, RecallEffort, complete_with_home,
 };
 use oneiron::retrieval_depth::RecallQueryVectors;
 use oneiron::task_verb::sdk::{RecallDoor, RecallRequest};
@@ -279,6 +279,7 @@ impl SyncServer {
     /// without naming it (a reaction claim a line counts) as recall read it,
     /// for a door that judges the pack again before it leaves this device
     /// (DEC-0005). A pack cut at its deadline comes with the rows read by then.
+    /// It asks no home: an opened device's pack says it answered alone.
     pub(crate) async fn recall_off_runtime_listing(
         self: &Arc<Self>,
         actor: EntityId,
@@ -287,6 +288,42 @@ impl SyncServer {
         locality: CallerLocality,
         room: Option<EntityId>,
         input: RecallRequest,
+    ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
+        self.recall_home_listing(
+            actor,
+            class,
+            proof,
+            locality,
+            room,
+            input,
+            HomeRecallCaller::none(),
+        )
+        .await
+    }
+
+    /// [`Self::recall_off_runtime_listing`] that also asks this device's
+    /// home, when it syncs only what it opened (FIX 2905): once the local
+    /// pack is ready, and before its deadline, the home is asked for the
+    /// references it holds that the pack does not, under `home`, the caller
+    /// as its ingress admitted it, and within the residence RPC timeout and
+    /// what is left of the deadline. Its hits ride in `residence`, apart
+    /// from the local items, which stay as ranked. A pack cut at its
+    /// deadline or a refused recall asks nothing; a home out of reach, or a
+    /// recall the home cannot answer, leaves the pack local-only and
+    /// `partial`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the recall door's parameters plus the caller it asks the home for"
+    )]
+    pub(crate) async fn recall_home_listing(
+        self: &Arc<Self>,
+        actor: EntityId,
+        class: EdgeActorClass,
+        proof: Option<VerifiedSlip>,
+        locality: CallerLocality,
+        room: Option<EntityId>,
+        input: RecallRequest,
+        home: HomeRecallCaller,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let producers = Arc::new(ProducerRows::default());
         let listing = Arc::clone(&producers);
@@ -299,6 +336,7 @@ impl SyncServer {
             )?;
             let rerank = self.door_rerank(effort, actor, class)?;
             let media = self.recall_media(&input)?;
+            let ask = HomeRecallAsk::new(&input, room.is_some());
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);
@@ -342,10 +380,15 @@ impl SyncServer {
                     }
                 }
             };
-            joined.unwrap_or_else(|error| {
+            let mut pack = joined.unwrap_or_else(|error| {
                 tracing::warn!(panicked = error.is_panic(), "recall task failed to join");
                 Err(recall_did_not_finish())
-            })
+            })?;
+            let due = budget.map(|budget| arrived + budget);
+            if due.is_none_or(|due| Instant::now() < due) {
+                complete_with_home(&self.vault, &mut pack, &ask, &home, due).await;
+            }
+            Ok(pack)
         }
         .await;
         (pack, producers.take())

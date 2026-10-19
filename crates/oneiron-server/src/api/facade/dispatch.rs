@@ -1966,7 +1966,7 @@ async fn vault_claims_upsert(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
-/// `vault.recall` → `SyncServer::recall_off_runtime_listing`, the recall door
+/// `vault.recall` → `SyncServer::recall_home_listing`, the recall door
 /// every server transport shares (`POST /v1/core/facade/vault.recall`, and
 /// the held socket's `rpc.req`): it embeds the query whenever the vault's
 /// embedder is serving.
@@ -1977,6 +1977,11 @@ async fn vault_claims_upsert(
 /// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no
 /// reranker route the recall runs unreranked and reports
 /// `skipped / no_reranker` in `retrieval_meta.rerank`.
+///
+/// On a device that syncs only what it opened, the door then asks the home
+/// under the call's own caller (FIX 2905): its references ride in
+/// `residence`, apart from the local items; without them the pack is
+/// local-only and `partial`.
 async fn vault_recall(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -1991,13 +1996,14 @@ async fn vault_recall(
     let hooks = facade_hooks_pre(server, call, "vault.recall", value).await?;
     let value = hooks.args.clone();
     let (output, listed) = server
-        .recall_off_runtime_listing(
+        .recall_home_listing(
             actor,
             class,
             auth.verified_slip().cloned(),
             auth.locality(),
             call.room_turn()?,
             facade_input(value)?,
+            call.home_caller(),
         )
         .await;
     let output = facade_output(output?)?;

@@ -114,6 +114,6 @@ impl crate::memory::Memory<'_> {
             None => lane,
         };
         let receipt = lane.read_receipt(None, 0)?;
-        Ok(super::cut_pack(&receipt))
+        Ok(super::cut_pack(self.vault, &receipt))
     }
 }

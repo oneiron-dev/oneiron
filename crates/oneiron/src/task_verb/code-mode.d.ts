@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1022 code-mode rows (998 host rows, 24 run rows), 3419 declarations.
+// Census: 1022 code-mode rows (998 host rows, 24 run rows), 3422 declarations.
 // Replies: 917 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
@@ -453,7 +453,10 @@ declare namespace Sdk {
   type RerankReport = { status: "applied"; model: string; served_model?: string | null; candidates: number; calls: number } | { status: "skipped"; reason: RerankSkip };
   type RetrievalMeta = { quality?: RetrievalQuality; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment; sparse?: boolean | null; total_candidates: number; claims_returned: number; deep_pending?: boolean | null; partial?: boolean; temporal_hints?: TemporalHintReport[]; rerank?: RerankReport | null; limit_clamped?: boolean };
   type RetrievalRunId = { bytes: number[] };
-  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type RecallResidenceSource = "home" | "local_only";
+  type RecallResidenceHit = { id: string; score: number; window: string };
+  type RecallResidence = { source: RecallResidenceSource; complete: boolean; capped: boolean; hits: RecallResidenceHit[] };
+  type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null; residence?: RecallResidence | null };
   type AccessFactorPolicy = { half_life_secs: number; floor: number };
   type ClaimAgingProfiles = { durable: AccessFactorPolicy; standard: AccessFactorPolicy; ephemeral: AccessFactorPolicy };
   type ClaimAgingProfilesView = { manifest_ref: string; body_hash: string; profiles: ClaimAgingProfiles };

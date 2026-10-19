@@ -150,9 +150,10 @@ pub struct Vault {
     pub(crate) live_window_manager_attached: std::sync::atomic::AtomicBool,
     /// This device's home search, lent by its own sync connection
     /// ([`crate::sync::HomeSearch`], OF-534). A `Weak`, so a dropped
-    /// connection routes nothing.
+    /// connection routes nothing; the slot keeps the mode that connection
+    /// ran, so a dropped one still reads as opened (FIX 2905).
     #[cfg(feature = "sync")]
-    pub(crate) home_search: std::sync::Mutex<std::sync::Weak<crate::sync::HomeSearch>>,
+    pub(crate) home_search: std::sync::Mutex<crate::sync::connection::HomeSearchSlot>,
     /// The speculative passes running on threads of their own (call mode on
     /// ASR partials), capped against the reader slots.
     pub(crate) speculative_passes: crate::speculative::SpeculativePasses,

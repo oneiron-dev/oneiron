@@ -7,6 +7,7 @@ use super::*;
 use crate::ports::EntityStoreRead;
 
 mod call_mode;
+mod home;
 mod hyde_host;
 mod items;
 mod paid;
@@ -17,6 +18,12 @@ mod stale;
 pub use stale::MemoryStaleStamp;
 
 pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_recall_dial};
+pub use self::home::{
+    HOME_RECALL_MERGE_ORDER, HomeRecallCaller, HomeRecallMergeOrder, RecallResidence,
+    RecallResidenceHit, RecallResidenceSource,
+};
+#[cfg(feature = "sync")]
+pub use self::home::{HomeRecallAsk, complete_with_home};
 #[cfg(test)]
 pub(super) use self::paid::PREPARED_SCORES_TAKEN;
 pub use self::paid::{
@@ -357,7 +364,9 @@ pub struct RetrievalMeta {
     /// Retained wire field. Always `None`: paid work never pretends to complete.
     pub deep_pending: Option<bool>,
     /// Requested stages skipped or cut at the explicit deadline: the pack
-    /// holds what was ready when it came due.
+    /// holds what was ready when it came due. Also set when a device that
+    /// syncs only what it opened answered without its home
+    /// ([`MemoryPack::residence`]).
     #[serde(default)]
     pub partial: bool,
     /// Time phrases read from the query, in order. `used` ones narrowed the
@@ -393,6 +402,14 @@ pub struct MemoryPack {
     /// The finalized serving run, absent when capture is off or no run published.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retrieval_run_id: Option<crate::store::RetrievalRunId>,
+    /// What a device that syncs only what it opened says of the windows it
+    /// does not hold (FIX 2905): local-only and incomplete when it answered
+    /// alone, which also marks `retrieval_meta.partial`. The home's
+    /// discovery hits are separate references the local pack does not hold,
+    /// never items; a hit's window opens it. `None`: this device holds every
+    /// window it may read, or runs no sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub residence: Option<RecallResidence>,
 }
 
 impl Memory<'_> {
@@ -663,7 +680,7 @@ impl Memory<'_> {
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
         if receipt.applied.deny_all {
-            return Ok(MemoryPack {
+            let mut pack = MemoryPack {
                 items: Vec::new(),
                 scope_honesty: ScopeHonesty::default(),
                 retrieval_meta: RetrievalMeta {
@@ -675,7 +692,10 @@ impl Memory<'_> {
                 rendered: None,
                 narrowing: Box::new(receipt),
                 retrieval_run_id: None,
-            });
+                residence: None,
+            };
+            pack.stamp_residence(home::local_residence(self.vault));
+            return Ok(pack);
         }
         let kinds = recall_kinds(scope)?;
         // A scope that names TURN but not MESSAGE still finds a turn by its
@@ -1110,7 +1130,10 @@ impl Memory<'_> {
             rendered,
             narrowing: Box::new(receipt),
             retrieval_run_id,
+            residence: None,
         };
+        // An opened device's answer is its own items alone (FIX 2905).
+        pack.stamp_residence(home::local_residence(self.vault));
         if let Some(on_cut) = execution.on_cut {
             // The items are ready. A door that stops waiting during the
             // census answers with them, the census marked unfinished.
@@ -1130,10 +1153,10 @@ impl Memory<'_> {
 /// The pack a recall answers with when its door stops waiting at the
 /// deadline before retrieval finished: nothing was ready, so no items, marked
 /// partial, under the reader's own read receipt. The census did not run, so
-/// it says it stopped early.
-fn cut_pack(receipt: &ScopedReadReceipt) -> MemoryPack {
+/// it says it stopped early. An opened device's says it answered alone.
+fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
     let quality = RetrievalQuality::Passthrough;
-    MemoryPack {
+    let mut pack = MemoryPack {
         items: Vec::new(),
         scope_honesty: ScopeHonesty {
             out_of_scope_worlds: Vec::new(),
@@ -1150,7 +1173,10 @@ fn cut_pack(receipt: &ScopedReadReceipt) -> MemoryPack {
         rendered: None,
         narrowing: Box::new(receipt.clone()),
         retrieval_run_id: None,
-    }
+        residence: None,
+    };
+    pack.stamp_residence(home::local_residence(vault));
+    pack
 }
 
 impl Memory<'_> {

@@ -47,7 +47,8 @@ use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
-pub use home_search::HomeSearch;
+pub(crate) use home_search::HomeSearchSlot;
+pub use home_search::{DeviceResidence, HomeSearch};
 pub use topology::HomeNodeTopology;
 
 /// Configuration for the connection manager.

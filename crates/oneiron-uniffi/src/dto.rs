@@ -850,6 +850,44 @@ pub struct MemoryPack {
     pub narrowing: ReadReceipt,
     /// The finalized serving-run id as sixteen bytes; absent when capture is off.
     pub retrieval_run_id: Option<Vec<u8>>,
+    /// What a device that syncs only what it opened says of the windows it
+    /// does not hold; absent when it holds every window or runs no sync.
+    pub residence: Option<RecallResidence>,
+}
+
+/// Who answered an opened device's recall residence.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RecallResidenceSource {
+    /// The home answered the query.
+    Home,
+    /// The home was not asked, was out of reach or refused.
+    LocalOnly,
+}
+
+/// What an opened device's recall says of the windows it does not hold
+/// (FIX 2905): the home's discovery hits are separate references the local
+/// pack does not hold, and a hit's window opens it.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RecallResidence {
+    /// Who answered.
+    pub source: RecallResidenceSource,
+    /// The home answered in full; false also marks the pack partial.
+    pub complete: bool,
+    /// The home was asked for no more than the residence `search_limit`.
+    pub capped: bool,
+    /// The home's references, in its order, each entity once.
+    pub hits: Vec<RecallResidenceHit>,
+}
+
+/// One reference the home holds that the local pack does not.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct RecallResidenceHit {
+    /// The entity's full id, 32 lowercase hex.
+    pub id: String,
+    /// The home's own score, never compared with a local item's.
+    pub score: f32,
+    /// The month window (`YYYY-MM`) that holds the hit.
+    pub window: String,
 }
 
 // ── jobs and effects ────────────────────────────────────────────────────

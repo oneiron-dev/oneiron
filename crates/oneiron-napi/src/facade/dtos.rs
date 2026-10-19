@@ -629,6 +629,35 @@ pub struct NapiMemoryPack {
     pub narrowing: NapiReadReceipt,
     /// The finalized serving-run id as sixteen bytes; absent when capture is off.
     pub retrieval_run_id: Option<Vec<u8>>,
+    /// What a device that syncs only what it opened says of the windows it
+    /// does not hold; absent when it holds every window or runs no sync.
+    pub residence: Option<NapiRecallResidence>,
+}
+
+/// What an opened device's recall says of the windows it does not hold
+/// (FIX 2905): the home's discovery hits are separate references the local
+/// pack does not hold, and a hit's window opens it.
+#[napi(object)]
+pub struct NapiRecallResidence {
+    /// `home` | `local_only`.
+    pub source: String,
+    /// The home answered in full; false also marks the pack partial.
+    pub complete: bool,
+    /// The home was asked for no more than the residence `search_limit`.
+    pub capped: bool,
+    /// The home's references, in its order, each entity once.
+    pub hits: Vec<NapiRecallResidenceHit>,
+}
+
+/// One reference the home holds that the local pack does not.
+#[napi(object)]
+pub struct NapiRecallResidenceHit {
+    /// The entity's full id, 32 lowercase hex.
+    pub id: String,
+    /// The home's own score, never compared with a local item's.
+    pub score: f64,
+    /// The month window (`YYYY-MM`) that holds the hit.
+    pub window: String,
 }
 
 /// One Dreamer consolidation enqueue (BRIDGE-03).

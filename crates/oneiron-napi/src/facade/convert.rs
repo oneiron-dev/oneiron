@@ -13,9 +13,10 @@ use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
     NapiCommitOutcome, NapiCommitReceipt, NapiDreamerParkedJobView, NapiEntityRefReceipt,
     NapiEntityView, NapiGateReceipt, NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance,
-    NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallScope,
-    NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput,
-    NapiTemporalHint, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiMemoryStaleStamp, NapiQuoteSpan, NapiReadReceipt, NapiReadScope, NapiRecallResidence,
+    NapiRecallResidenceHit, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
+    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -526,7 +527,32 @@ pub(super) fn memory_pack_from_engine(
         rendered: pack.rendered,
         narrowing: read_receipt_from_engine(*pack.narrowing)?,
         retrieval_run_id: pack.retrieval_run_id.map(|id| id.as_bytes().to_vec()),
+        residence: pack.residence.map(recall_residence_from_engine),
     })
+}
+
+/// Projects an opened device's recall residence onto the boundary DTO.
+fn recall_residence_from_engine(
+    residence: oneiron::memory::RecallResidence,
+) -> NapiRecallResidence {
+    NapiRecallResidence {
+        source: match residence.source {
+            oneiron::memory::RecallResidenceSource::Home => "home",
+            oneiron::memory::RecallResidenceSource::LocalOnly => "local_only",
+        }
+        .to_owned(),
+        complete: residence.complete,
+        capped: residence.capped,
+        hits: residence
+            .hits
+            .into_iter()
+            .map(|hit| NapiRecallResidenceHit {
+                id: hit.id,
+                score: f64::from(hit.score),
+                window: hit.window,
+            })
+            .collect(),
+    }
 }
 
 /// Lowers the boundary media query onto the engine's wire type; an unknown
