@@ -8,8 +8,10 @@
 //! Controls are written whole into `controls/`; receipts are read from
 //! `receipts/` against each scope's own cursor and removed once the engine
 //! applied them, and a receipt for a scope the vault does not list is never
-//! removed here. The scopes file (`training-scopes.v2.json`) is rewritten
-//! whole when the engine's list of scopes or a cursor differs from it.
+//! removed here. The scopes file (`scopes/training-scopes.v2.json`) is
+//! rewritten whole when the engine's list of scopes or a cursor differs from
+//! it; `scopes/` is the vault user's own directory, so the root stays
+//! read-only to the vault on a managed node.
 //! Nothing here decides what is staged, published or purged.
 
 use std::collections::BTreeSet;
@@ -23,9 +25,9 @@ use oneiron::feedback::{
     SignedTrainingControl, TrainingQueued, TrainingReceiptPage, TrainingSubmissionId,
 };
 use oneiron_vault_contract::conversation_training::{
-    CONTROLS_DIR, OFFERS_DIR, RECEIPTS_DIR, TRAINING_SCHEMA_VERSION, TRAINING_SCOPES_FILE,
-    TRAINING_SCOPES_TYPE, TrainingFileName, TrainingScopeCursorV2, TrainingScopesV2,
-    decode_training_receipt, parse_training_file_name, spool_training_file,
+    CONTROLS_DIR, OFFERS_DIR, RECEIPTS_DIR, SCOPES_DIR, TRAINING_SCHEMA_VERSION,
+    TRAINING_SCOPES_FILE, TRAINING_SCOPES_TYPE, TrainingFileName, TrainingScopeCursorV2,
+    TrainingScopesV2, decode_training_receipt, parse_training_file_name, spool_training_file,
 };
 
 /// Held for a tick, so two vault processes never share the directory.
@@ -244,11 +246,15 @@ impl PublisherTrainingLifecycle for Outbox {
                 "the training scopes file does not encode: {error}"
             )))
         })?;
+        // A managed node makes `scopes/` for the vault's user ahead of time;
+        // a self-host vault owns its outbox and makes it here.
+        let dir = self.root.join(SCOPES_DIR);
+        fs::create_dir_all(&dir).map_err(oneiron::Error::Io)?;
         // Rewritten whole only when it differs: the list or a cursor moved.
-        if fs::read(self.root.join(TRAINING_SCOPES_FILE)).is_ok_and(|held| held == bytes) {
+        if fs::read(dir.join(TRAINING_SCOPES_FILE)).is_ok_and(|held| held == bytes) {
             return Ok(());
         }
-        spool_training_file(&self.root, TRAINING_SCOPES_FILE, &bytes)
+        spool_training_file(&dir, TRAINING_SCOPES_FILE, &bytes)
             .map_err(|error| oneiron::Error::Io(io::Error::other(format!("{error:#}"))))?;
         Ok(())
     }

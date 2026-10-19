@@ -307,9 +307,11 @@ withdrawals the vault already recorded are written even while it is frozen for
 reap, and stay shippable from a cold vault. The supervisor binds the registry
 vault id and the node's bearer when it ships: the files name no vault, only each
 month's scope and codes, with the install's signature for the intake to check
-and discard. The vault also keeps `training-scopes.v2.json` there, every scope it
+and discard. The vault also keeps `scopes/training-scopes.v2.json`, every scope it
 used with its receipt cursor, rewritten whole when either changes, for the node
-to pull receipts by scope. Before an erase the supervisor sends `training_purge`
+to pull receipts by scope. `scopes/` is the vault user's own directory: a managed
+node makes it ahead of time and keeps the outbox root, which holds the intake's
+keys, unwritable by the vault. Before an erase the supervisor sends `training_purge`
 on the ctl socket: the vault records one purge per scope and answers
 `not_needed`, `pending` (with `purge_unsent`, `receipt_pending` or
 `purge_rejected`) or `done`, and the erase waits for `done`.
