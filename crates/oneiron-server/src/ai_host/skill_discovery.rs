@@ -11,6 +11,7 @@
 //! the host's model rungs for what the rules leave open. A doubtful answer
 //! takes a Coach note and holds in the unclear ledger.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::receipt::ReceiptRecord;
 use oneiron::skill_attribution::{
     ATTRIBUTION_CALL_PURPOSE_NAME, AttributionNotes, AttributionVerdict, DeviationCause,
@@ -27,14 +28,6 @@ use crate::server::SyncServer;
 const RECEIPTS: usize = 32;
 /// What one job's calls may spend.
 const BUDGET_UNITS: u64 = 1 << 20;
-/// Most bytes of the attempt's run the call reads, and of each call, output,
-/// task or error in it.
-const TRACE_BYTES: usize = 48 * 1024;
-const ITEM_BYTES: usize = 2 * 1024;
-/// Most bytes of skill text the call reads, and of one skill's. Every loaded
-/// skill is judged; more skills share the text room.
-const SKILLS_BYTES: usize = 32 * 1024;
-const SKILL_BYTES: usize = 8 * 1024;
 /// Most bytes of a deviation's reason kept.
 const REASON_BYTES: usize = 1024;
 /// Most bytes of one doubtful answer's note kept.
@@ -110,8 +103,7 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         &self,
         receipt: &ReceiptRecord,
     ) -> oneiron::Result<Option<Vec<ReceiptAttributionFacts>>> {
-        let Some(trace) = receipt_attribution_trace(self.vault, receipt, TRACE_BYTES, ITEM_BYTES)?
-        else {
+        let Some(trace) = receipt_attribution_trace(self.vault, receipt)? else {
             return Ok(None);
         };
         // A pack that loaded no skill has nothing to judge.
@@ -122,7 +114,20 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
         if trace.steps.is_empty() && trace.outputs.is_empty() && trace.last_error.is_none() {
             return Ok(None);
         }
-        let skill_bytes = (SKILLS_BYTES / trace.skills.len()).min(SKILL_BYTES);
+        // Every loaded skill is judged on its whole text: the longest and the
+        // count are measured, never cut.
+        let longest = trace
+            .skills
+            .iter()
+            .map(|skill| skill.desc.len())
+            .max()
+            .unwrap_or(0);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceRowItems, trace.skills.len() as u64);
         let data = serde_json::json!({
             "outcome": receipt.outcome,
             "kind": trace.kind,
@@ -130,13 +135,12 @@ impl ReceiptAttributionSource for TraceClassifier<'_> {
             "last_error": trace.last_error,
             "calls": trace.steps,
             "outputs": trace.outputs,
-            "cut": trace.cut,
             "skills": trace
                 .skills
                 .iter()
                 .map(|skill| serde_json::json!({
                     "revision": skill.revision,
-                    "text": clip(&skill.desc, skill_bytes),
+                    "text": skill.desc,
                 }))
                 .collect::<Vec<_>>(),
         });

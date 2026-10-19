@@ -130,6 +130,25 @@ pub trait SkillOptimizeAuthor {
     /// Implementation-defined: an author that cannot answer must error rather
     /// than invent, and the attempt drafts nothing.
     fn draft(&self, brief: &SkillOptimizeBrief) -> Result<SkillEditDraft>;
+
+    /// Drafts the edit `brief` supports on the Coach's optimization attempt
+    /// `_attempt`, whose lease the caller holds (ARCH-0079: each recipe is a
+    /// workflow skill). An author that runs the shipped improver workflow
+    /// loads it on that attempt, so the attempt's pack manifest pins the
+    /// revision and model that drafted, and runs its instructions; when the
+    /// workflow does not load it drafts as [`Self::draft`] does. Default:
+    /// [`Self::draft`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::draft`].
+    fn draft_on(
+        &self,
+        _attempt: &crate::attempt_queue::AttemptRecord,
+        brief: &SkillOptimizeBrief,
+    ) -> Result<SkillEditDraft> {
+        self.draft(brief)
+    }
 }
 
 /// The [`CallPurpose`] an author's LLM tier must stamp.

@@ -53,6 +53,7 @@ mod apply;
 mod ask;
 mod check_repeat;
 mod duplicate;
+mod loaded;
 mod run_loop;
 pub use apply::{
     AgentHealthApplicationState, AgentHealthCoachApplication, ConcernApplyOutcome,
@@ -63,6 +64,7 @@ pub use ask::{
     AgentHealthPadRead, COACH_AGENT_HEALTH_ASK_FACET, CoachHealthBrief, CoachHealthHost,
     ConcernMove, ConcernMoveOutcome, ConcernMoveRequest,
 };
+pub use loaded::{AgentHealthLoadedSkill, AgentHealthSkillTarget};
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.
@@ -1910,6 +1912,10 @@ pub struct AgentHealthCardView {
     pub body: AgentHealthCard,
     /// The run of the card's newest attempt, when it has one.
     pub run_tree: Option<AgentHealthRunTree>,
+    /// The skills that attempt's pack loaded, each at the revision it
+    /// pinned, with its instructions whole: what a `skill_edit` replaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<AgentHealthLoadedSkill>,
     /// The owner's applied prompt continuation of that attempt (FIX 3694),
     /// once one is applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1997,10 +2003,12 @@ fn card_view(
             });
         }
     }
+    let skills = loaded::run_skills(vault, &card)?;
     Ok(AgentHealthCardView {
         card: card_ref(key),
         body: card,
         run_tree,
+        skills,
         prompt_inject,
     })
 }

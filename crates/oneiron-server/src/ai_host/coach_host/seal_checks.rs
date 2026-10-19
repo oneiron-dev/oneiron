@@ -1,10 +1,12 @@
 //! The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal,
 //! OF-544): for each pending confession recheck or drawn random audit, a
 //! judge that did not produce the result reads the attempt's pinned output
-//! and answers, per requested objective, whether a flaw keeps it from being
-//! met. A recheck shows what the agent confessed, to be examined directly; a
-//! random audit shows only the objectives, so the agent's own report does not
-//! steer it. The Coach pays for the calls.
+//! (an output handle's bytes, or the answer a resident run's result TURN
+//! names) and answers, per requested objective, whether a flaw keeps it from
+//! being met. A recheck shows what the agent confessed, to be examined
+//! directly; a random audit shows only the objectives, so the agent's own
+//! report does not steer it. The Coach pays for the calls.
+use oneiron::agent_dispatch::AgentDispatcher;
 use oneiron::compaction::output::{OutputRef, restore_output};
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::seal_checks::{SealCheck, SealChecker};
@@ -93,9 +95,21 @@ impl SealChecker for HostChecker<'_> {
         }) else {
             return Ok(SealCheck::Unavailable);
         };
-        // Only an output handle names bytes the vault can hand back whole.
-        let Ok(source) = OutputRef::from_handle(&request.result_ref) else {
-            return Ok(SealCheck::Unavailable);
+        // An output handle names its bytes; a resident run's result TURN names
+        // the answer its own run recorded, read back by that output's digest
+        // and length, never by the TURN's id. Any other result is unavailable.
+        let source = match OutputRef::from_handle(&request.result_ref) {
+            Ok(source) => source,
+            Err(_) => match AgentDispatcher::new(self.server.vault())
+                .resident_run_answer(request.attempt, &request.result_ref)
+            {
+                Ok(Some(source)) => source,
+                Ok(None) => return Ok(SealCheck::Unavailable),
+                Err(error) => {
+                    tracing::debug!(kind = ?error.kind(), "a resident result could not be read");
+                    return Ok(SealCheck::Unavailable);
+                }
+            },
         };
         let bytes = match restore_output(self.server.vault(), source) {
             Ok(bytes) => bytes,

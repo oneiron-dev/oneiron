@@ -12,6 +12,7 @@ use super::{
     DiagnosticEventClass, RepairActor, RepairOperation, RepairProposal,
     decode_diagnostic_event_body,
 };
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::receipt::{ReceiptKind, ReceiptQuery};
 use crate::{ClaimSource, EntityId, Result, Vault};
@@ -74,12 +75,16 @@ impl Vault {
     /// diagnostic whose class a closed-form repair answers. A retrieval miss
     /// (a point miss or the windowed regression) asks for a reindex of its
     /// scope; a Dreamer consolidation the Gate refused and a degenerate
-    /// Dreamer run each ask for a retry of their run. A consent refusal is
-    /// the owner's answer, not a malfunction, drift is the owner's policy to
-    /// narrow, and a refused MCP call is the boundary working, so those stay
-    /// diagnostics. A diagnostic already answered is skipped. Each intent
-    /// filed is counted as proposed in the healer oversight receipts under
-    /// its diagnostic's id, where the host's review door settles it.
+    /// Dreamer run each ask for a retry of their run, only once their replay
+    /// coordinate verifies as that ended Dreamer attempt
+    /// (`ended_dreamer_attempt`), a refused one as failed. A refusal whose
+    /// coordinate is its Gate receipt's id names no run, so it stays a
+    /// diagnostic. A consent refusal is the owner's answer, not a
+    /// malfunction, drift is the owner's policy to narrow, and a refused MCP
+    /// call is the boundary working, so those stay diagnostics. A diagnostic
+    /// already answered is skipped. Each intent filed is counted as proposed
+    /// in the healer oversight receipts under its diagnostic's id, where the
+    /// host's review door settles it.
     pub fn propose_tier1_repairs(
         &self,
         diagnostics: &[EntityId],
@@ -124,13 +129,16 @@ impl Vault {
                     },
                 ),
                 DiagnosticEventClass::ConsolidationError if event.actor_ref.is_none() => {
-                    let Some(run_ref) = event.replay.run_ref.clone() else {
+                    let run_ref = event.replay.run_ref.as_deref();
+                    let ended = self.ended_dreamer_attempt(run_ref)?;
+                    let Some((run_ref, AttemptState::Failed)) = ended else {
                         continue;
                     };
                     ("dreamer.consolidation", RepairOperation::Retry { run_ref })
                 }
                 DiagnosticEventClass::DreamerRunDegenerate => {
-                    let Some(run_ref) = event.replay.run_ref.clone() else {
+                    let run_ref = event.replay.run_ref.as_deref();
+                    let Some((run_ref, _)) = self.ended_dreamer_attempt(run_ref)? else {
                         continue;
                     };
                     ("dreamer.run", RepairOperation::Retry { run_ref })
@@ -163,5 +171,29 @@ impl Vault {
             filed.push(proposal_id);
         }
         Ok(filed)
+    }
+
+    /// The Dreamer attempt a diagnostic's replay coordinate names, as 32 hex,
+    /// with the state it ended in: a stored queue row whose payload is a
+    /// Dreamer job's and which is failed or completed. `None` for anything
+    /// else, a Gate receipt's id among them: a receipt is never a run to
+    /// retry.
+    fn ended_dreamer_attempt(
+        &self,
+        run_ref: Option<&str>,
+    ) -> Result<Option<(String, AttemptState)>> {
+        let Some(Ok(id)) = run_ref.map(EntityId::from_hex) else {
+            return Ok(None);
+        };
+        let attempt = AttemptId::from_bytes(id.as_bytes())?;
+        let Some(record) = AttemptQueue::new(self).get(attempt)? else {
+            return Ok(None);
+        };
+        if crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload).is_err()
+            || !matches!(record.state, AttemptState::Failed | AttemptState::Completed)
+        {
+            return Ok(None);
+        }
+        Ok(Some((id.to_hex(), record.state)))
     }
 }

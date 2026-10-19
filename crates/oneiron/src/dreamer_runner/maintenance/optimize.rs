@@ -1,8 +1,13 @@
 //! The Coach's skill-maintenance body on the shared wake runner. Drafting and
 //! admission remain separate: this job asks the independent held-out gate and
-//! never activates or supersedes a skill itself.
+//! never activates or supersedes a skill itself. The author drafts on the
+//! optimization attempt (`SkillOptimizeAuthor::draft_on`): the Coach's author
+//! loads the shipped `skill-optimize` workflow there and runs it, and a scored
+//! edit is an outcome of that loaded revision (`coach_learning`). A workflow
+//! that does not load leaves the Coach's own instruction and record, as before.
 use std::time::{Duration, Instant};
 
+use crate::attempt_queue::AttemptRecord;
 use crate::autoreason_campaign::coverage::CoverageFloorComparison;
 use crate::claim::ClaimApprovalStatus;
 use crate::dreamer_runner::{
@@ -15,9 +20,9 @@ use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_ATTEMPT_KEY,
-    SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition, SkillOptimizeAuthor, SkillOptimizeDecisions,
-    SkillReplayPair, measure_skill_edit_goal_axes, run_skill_optimize,
-    run_skill_optimize_for_resident, score_gate_skill_edit_in_cycle,
+    SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition, SkillEditDraft, SkillOptimizeAuthor,
+    SkillOptimizeBrief, SkillOptimizeDecisions, SkillReplayPair, measure_skill_edit_goal_axes,
+    run_skill_optimize, run_skill_optimize_for_resident, score_gate_skill_edit_in_cycle,
     skill_edit_needs_goal_axis_report, skill_edit_verdict, skill_tradeoff_ask,
 };
 use crate::{EntityId, Error, Result, TimeRange, Vault};
@@ -125,6 +130,20 @@ impl GoalAxisBandit for PassBoundBandit<'_> {
     }
 }
 
+/// The host's author on one optimization attempt: each draft goes through
+/// [`SkillOptimizeAuthor::draft_on`], so a workflow author loads its skill on
+/// the attempt it drafts for.
+struct OnAttempt<'a> {
+    inner: &'a (dyn SkillOptimizeAuthor + Send + Sync),
+    attempt: &'a AttemptRecord,
+}
+
+impl SkillOptimizeAuthor for OnAttempt<'_> {
+    fn draft(&self, brief: &SkillOptimizeBrief) -> Result<SkillEditDraft> {
+        self.inner.draft_on(self.attempt, brief)
+    }
+}
+
 fn invalid() -> Error {
     Error::InvalidConfig("invalid Coach skill optimization input".into())
 }
@@ -201,6 +220,10 @@ fn optimize(
     };
     let resident = resident(&attempt.status.payload.input)?;
     let id = attempt.status.attempt.id;
+    let author = OnAttempt {
+        inner: optimizer.author,
+        attempt: &attempt.status.attempt,
+    };
     let at = now_ms / 1000;
     // Resume an unscored proposal before drafting another one. A crash after
     // draft commit must not strand the candidate behind the open-edit filter.
@@ -210,15 +233,10 @@ fn optimize(
     } else {
         let occurred = TimeRange { start: at, end: at };
         let outcome = match resident {
-            Some(resident) => run_skill_optimize_for_resident(
-                vault,
-                resident,
-                id,
-                optimizer.author,
-                occurred,
-                at,
-            )?,
-            None => run_skill_optimize(vault, id, optimizer.author, occurred, at)?,
+            Some(resident) => {
+                run_skill_optimize_for_resident(vault, resident, id, &author, occurred, at)?
+            }
+            None => run_skill_optimize(vault, id, &author, occurred, at)?,
         };
         (
             outcome.proposal,
@@ -253,16 +271,14 @@ fn optimize(
         // This gate owns its held-out read and revalidates it at commit. The
         // drafting author never receives the scores or reserved receipts.
         let verdict = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at)?;
-        // A scored edit is a held-out outcome for the Coach's own edit
-        // record: did the edited instructions beat the current ones. A
-        // refusal before scoring is none.
+        // A scored edit is a held-out outcome for the improver revision that
+        // drafted it, a resumed proposal's included: did the edited
+        // instructions beat the current ones. A refusal before scoring is
+        // none.
         if !verdict.goal_axes.is_empty() {
-            super::coach_learning::record_coach_outcome(
+            super::coach_learning::record_improver_outcome(
                 vault,
-                super::coach_learning::COACH_SKILL_EDIT_AXIS,
-                format!("skill_edit:{}", proposal.to_hex()),
-                at,
-                crate::learning::Anchor::HeldOut,
+                &proposal,
                 verdict.after > verdict.before,
                 at,
             )?;

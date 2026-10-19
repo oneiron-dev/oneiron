@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ask::{AgentHealthCoachAsk, AgentHealthCoachRoute, COACH_AGENT_HEALTH_ASK_FACET};
+use super::loaded::RunPack;
 use super::{AgentHealthCard, CARDS, card_ref, parse_card_ref};
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
@@ -147,27 +148,12 @@ fn standing_for(
 /// Whether the run the card's evidence came from loaded `record`: its
 /// attempt's pack manifest names the skill, and a fork is that run's
 /// resident's own. A card with no attempt, or a run with no pack, loaded none.
+/// The card's `skills` list reads the same pack (`loaded.rs`).
 fn run_loaded(vault: &Vault, card: &AgentHealthCard, record: &SkillRecord) -> Result<bool> {
-    let Some(attempt) = card.attempt else {
-        return Ok(false);
-    };
-    let attempt = AttemptId::from_bytes(attempt.as_bytes())?;
-    let receipt_id = crate::receipt::attempt_pack_receipt_id(&attempt);
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, &receipt_id)? else {
-        return Ok(false);
-    };
-    let Some(manifest) = receipt.pack_manifest_skills() else {
-        return Ok(false);
-    };
-    if !manifest
-        .iter()
-        .any(|entry| crate::skill_attribution::manifest_entry_names_skill(entry, record))
-    {
-        return Ok(false);
+    match RunPack::of(vault, card)? {
+        Some(pack) => pack.loaded(record),
+        None => Ok(false),
     }
-    let fork_of = crate::skill::resident_of(record)?;
-    Ok(fork_of.is_none()
-        || fork_of == crate::skill::resident::receipt_resident(vault, &receipt_id)?)
 }
 
 impl Vault {
