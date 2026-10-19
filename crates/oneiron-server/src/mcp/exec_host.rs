@@ -250,6 +250,14 @@ pub trait McpCodeModeProvider: Send + Sync {
         run_id: EntityId,
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig>;
+    /// The model the code-mode template runs on, read without entering a
+    /// run (FIX 4659). The default reads it from the config of a run keyed
+    /// by `caller`, which nothing enters; a provider that holds its template
+    /// answers it directly.
+    fn template_model(&self, vault: &Vault, caller: EntityId) -> oneiron::Result<oneiron::ModelId> {
+        self.executor_config(vault, caller, "")
+            .map(|config| config.model)
+    }
     /// A compaction seat for a run the host holds none for, its summaries
     /// bylined by the actor `host` authenticated (who also writes them, when
     /// its profile names `self`, FIX 4465), its passes queued in

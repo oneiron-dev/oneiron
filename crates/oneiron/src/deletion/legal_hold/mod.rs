@@ -10,9 +10,12 @@
 //!
 //! Only where Oneiron hosts the bytes (posture `Hosted` or `Relay`): host
 //! orders only Oneiron places and lifts, through host-only doors no owner,
-//! member or agent surface may route to; a host-only log; silence under a
-//! secrecy order; "erase confirmed" apart from "erase completed"; a privacy
-//! erase that keeps only the held part; and a use limit on what it keeps.
+//! member or agent surface may route to; a host-only log the owner reads
+//! through one permitted view; silence under a secrecy order; refusals that
+//! name the order's law bound and what self-hosting changes; a privacy erase
+//! that keeps only the held part; and a use limit on what it keeps where the
+//! order forbids use (WILL-PLAN L01 rows 01-03). Everywhere, "erase
+//! confirmed" stands apart from "erase completed" (C4, row 04).
 
 mod types;
 
@@ -23,7 +26,9 @@ pub use types::*;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, LegalHoldState, Result};
+use crate::memory::Memory;
+use crate::memory::erase_sweep::RecordEraseSweepRequest;
 use crate::store::legal_hold::{self as hold_store, HoldActor};
 use crate::{HostingPrivacyPosture, Vault};
 
@@ -133,8 +138,12 @@ impl Vault {
             ends_at: None,
             secret_until: None,
             matter_ref,
+            legal_basis_ref: None,
+            jurisdiction: None,
+            issuing_authority_ref: None,
             lifted_at: None,
             owner_told: true,
+            requires_non_use: false,
         };
         hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
         hold_store::log_in_txn(
@@ -193,34 +202,29 @@ impl Vault {
         })
     }
 
-    /// The holds the owner may see: every customer hold, and each host order
-    /// the owner may be told of, without its order reference or operator.
-    /// A host order under a secrecy order is absent (C2).
+    /// The holds the owner may see, whole, through the one permitted view
+    /// ([`LegalHold::owner_may_see`]): every customer hold, and each host
+    /// order with its order reference, operator and terms. A host order under
+    /// a secrecy order is absent while its silence runs (C2, WILL-PLAN L01
+    /// row 02).
     pub fn legal_holds(&self, owner: &AuthenticatedOwner) -> Result<Vec<LegalHold>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         let now = self.store.clock.now_recorded_at();
         Ok(hold_store::holds_in_txn(&self.store, &txn)?
             .into_iter()
-            .filter(|hold| {
-                hold.kind == LegalHoldKind::Customer || (hold.owner_told && !hold.secret_at(now))
-            })
-            .map(|mut hold| {
-                if hold.kind == LegalHoldKind::HostOrder {
-                    hold.matter_ref = None;
-                    hold.placed_by = None;
-                }
-                hold
-            })
+            .filter(|hold| hold.owner_may_see(now))
             .collect())
     }
 
     /// The owner-visible hold log, oldest first: ids, times and reason
-    /// codes (C3). Nothing of a host order under a secrecy order (C2).
+    /// codes (C3), each host order's through the one permitted view. Nothing
+    /// of a host order while its silence runs (C2).
     pub fn legal_hold_log(&self, owner: &AuthenticatedOwner) -> Result<Vec<LegalHoldEvent>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        hold_store::owner_events_in_txn(&self.store, &txn)
+        let now = self.store.clock.now_recorded_at();
+        hold_store::owner_events_in_txn(&self.store, &txn, now)
     }
 
     /// The owner's one confirm: [`LIFT_AND_ERASE_TITLE`], showing
@@ -229,10 +233,12 @@ impl Vault {
     /// owner delete rail; the confirm, the lift and each scope change are
     /// logged first, in one transaction, so the choice is recorded whatever
     /// the erase does. A host order is never lifted here: its records keep
-    /// their bytes, the erase waits, and it runs once Oneiron lifts the
-    /// order. Where Oneiron hosts the bytes every erase reads
-    /// [`ERASE_COMPLETION_PENDING`] until its receipt completes, so a secret
-    /// order shows nothing more (C2, C4).
+    /// their bytes, read as retained for law with the order's bound, the
+    /// erase waits, and it runs once Oneiron lifts the order. An erase that
+    /// ran reads erased once its receipt is complete, and
+    /// [`ERASE_COMPLETION_PENDING`] with its receipt while its historical
+    /// sweep is queued, wherever the bytes live; a record a secret order
+    /// keeps reads that, and nothing more (C2, C4, WILL-PLAN L01 row 04).
     ///
     /// # Errors
     /// The owner proof no longer holds, or no record is named. A record's
@@ -255,15 +261,13 @@ impl Vault {
             // Each customer hold on these records, with what leaves it.
             let mut lifting: BTreeMap<EntityId, (LegalHold, Vec<LegalHoldTarget>)> =
                 BTreeMap::new();
-            // Each kept record, and whether its owner may be told why.
-            let mut kept: BTreeMap<EntityId, bool> = BTreeMap::new();
+            // Each kept record, with the host orders on it the owner may see.
+            let mut kept: BTreeMap<EntityId, Vec<LegalHold>> = BTreeMap::new();
             for record in &records {
                 let target = LegalHoldTarget::Record(*record);
                 for hold in hold_store::holds_on_in_txn(&self.store, txn, &target)? {
                     hold_store::link_erase_in_txn(&self.store, txn, record, &hold)?;
                     if hold.kind == LegalHoldKind::HostOrder {
-                        let told = hold.owner_told && !hold.secret_at(now);
-                        *kept.entry(*record).or_default() |= told;
                         hold_store::log_in_txn(
                             &self.store,
                             txn,
@@ -275,6 +279,10 @@ impl Vault {
                             now,
                             None,
                         )?;
+                        let seen = kept.entry(*record).or_default();
+                        if hold.owner_may_see(now) {
+                            seen.push(hold);
+                        }
                         continue;
                     }
                     let leaving: Vec<LegalHoldTarget> = hold
@@ -339,20 +347,16 @@ impl Vault {
             }
             Ok((actor, kept, lifting.into_keys().collect::<Vec<_>>()))
         })?;
-        let hosted = self.legal_hold_hosted();
         let memory = self.memory(actor, EdgeActorClass::Human);
         let hard = crate::memory::SafeDeleteReason::UserHardDelete;
+        let now = self.store.clock.now_recorded_at();
         let mut statuses = Vec::with_capacity(records.len());
         let mut failed = false;
         for record in records {
             let status = match kept.get(&record) {
-                Some(true) => LiftAndEraseStatus::KeptByLegalOrder,
-                Some(false) => LiftAndEraseStatus::CompletionPending,
+                Some(seen) => kept_status(seen, now),
                 None => match memory.safe_delete(&record.to_hex(), hard) {
-                    Ok(_) if hosted => LiftAndEraseStatus::CompletionPending,
-                    Ok(receipt) => LiftAndEraseStatus::Erased {
-                        receipt_ref: receipt.receipt_ref,
-                    },
+                    Ok(receipt) => erase_status(&memory, owner, receipt.receipt_ref),
                     Err(error) => {
                         failed = true;
                         LiftAndEraseStatus::Failed {
@@ -379,12 +383,22 @@ impl Vault {
     /// member or agent surface may route here.
     ///
     /// # Errors
-    /// Self-hosted, a reference that is not an opaque id, an order already
-    /// ended, or a named claim whose erase has committed.
+    /// Self-hosted, a reference or term that is not an opaque id, an order
+    /// already ended, or a named claim whose erase has committed.
     pub fn place_host_order_hold(&self, order: HostOrderHold) -> Result<LegalHold> {
         self.require_hosted_bytes()?;
         check_opaque(&order.order_ref, "order reference")?;
         check_opaque(&order.placed_by, "host operator")?;
+        let terms = [
+            (&order.legal_basis_ref, "legal basis reference"),
+            (&order.jurisdiction, "jurisdiction"),
+            (&order.issuing_authority_ref, "issuing authority reference"),
+        ];
+        for (term, what) in terms {
+            if let Some(term) = term {
+                check_opaque(term, what)?;
+            }
+        }
         let targets = distinct(order.targets)?;
         self.with_write_txn_grouped(|txn| {
             let now = self.store.clock.now_recorded_at();
@@ -402,8 +416,12 @@ impl Vault {
                 ends_at: Some(order.ends_at),
                 secret_until: order.secret_until,
                 matter_ref: Some(order.order_ref.clone()),
+                legal_basis_ref: order.legal_basis_ref.clone(),
+                jurisdiction: order.jurisdiction.clone(),
+                issuing_authority_ref: order.issuing_authority_ref.clone(),
                 lifted_at: None,
                 owner_told: order.secret_until.is_none_or(|until| now >= until),
+                requires_non_use: order.requires_non_use,
             };
             hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
             hold_store::log_in_txn(
@@ -589,7 +607,8 @@ impl Vault {
     /// Writes the refusals still queued to the hold logs. Each refusing door
     /// logs its own before it returns, so this writes what a failed log write
     /// left. A refused privacy erasure keeps its record under a use limit
-    /// where Oneiron hosts the bytes (C6). Returns how many were written.
+    /// where Oneiron hosts the bytes and a standing host order forbids its
+    /// use (C6). Returns how many were written.
     pub fn flush_legal_hold_refusals(&self) -> Result<u64> {
         self.store.flush_legal_hold_refusals_now()
     }
@@ -608,12 +627,63 @@ impl Vault {
         })
     }
 
-    /// The use limit on a record kept after a refused privacy erasure: it
-    /// serves only the legal reason that kept it (C6). Enforcing it on
-    /// reads is the scope checks' (L02).
+    /// The use limit on a record kept after a refused privacy erasure, while
+    /// a standing host order that forbids its use still names it: it serves
+    /// only the legal reason that kept it (C6). Enforcing it on reads is the
+    /// scope checks' (L02).
     pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
         let txn = self.store.env.read_txn()?;
         hold_store::use_limit_in_txn(&self.store, &txn, record)
+    }
+}
+
+/// What a record a host order keeps reads as after the owner's confirm:
+/// retained for law, naming the bound of an order the owner may see; else
+/// completion pending and nothing more, since only a secret order keeps it
+/// (C2, WILL-PLAN L01 rows 01 and 04).
+fn kept_status(seen: &[LegalHold], now: u64) -> LiftAndEraseStatus {
+    match hold_store::law_notice(seen, now, LegalHoldState::RetainedForLaw) {
+        Some(notice) => LiftAndEraseStatus::RetainedForLaw(notice),
+        None => LiftAndEraseStatus::CompletionPending {
+            receipt_ref: None,
+            reason: None,
+        },
+    }
+}
+
+/// What an owner erase that ran reads as (C4, WILL-PLAN L01 row 04), one
+/// rule wherever the bytes live: erased once its receipt has both
+/// completion times, else completion pending with the receipt and, while
+/// its historical sweep is queued, that reason. No receipt: nothing was
+/// there to erase.
+fn erase_status(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    receipt_ref: Option<String>,
+) -> LiftAndEraseStatus {
+    let Some(receipt_ref) = receipt_ref else {
+        return LiftAndEraseStatus::Erased { receipt_ref: None };
+    };
+    let request = RecordEraseSweepRequest {
+        receipt_ref: receipt_ref.clone(),
+    };
+    let sweep = memory.record_erase_sweep_as(owner, request);
+    let (complete, queued) = match &sweep {
+        Ok(Some(sweep)) => (
+            sweep.sweep_complete_at.is_some() || sweep.sweep_queued_at.is_none(),
+            sweep.sweep_queued_at.is_some(),
+        ),
+        // An unreadable receipt proves nothing complete.
+        _ => (false, false),
+    };
+    if complete {
+        return LiftAndEraseStatus::Erased {
+            receipt_ref: Some(receipt_ref),
+        };
+    }
+    LiftAndEraseStatus::CompletionPending {
+        receipt_ref: Some(receipt_ref),
+        reason: queued.then_some(ErasePendingReason::HistoricalSweep),
     }
 }
 

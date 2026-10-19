@@ -186,10 +186,7 @@ pub(super) fn pre(
 /// hooks live.
 pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Stopped<Value>> {
     let VerbHookPre {
-        call,
-        args,
-        carry,
-        ..
+        call, args, carry, ..
     } = pre;
     let state = &vault.verb_hook_state;
     let Some(carry) = carry else {
