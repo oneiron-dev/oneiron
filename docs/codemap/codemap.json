@@ -20591,7 +20591,7 @@
      "path": "src/dreamer_runner/home.rs",
      "purpose": "The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a): which node of the vault runs its MACRO…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -21283,6 +21283,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConsolidationHomeCandidate",
       "ConsolidationHomeNode",
       "ConsolidationHomePickHead",
       "ConsolidationHomePickReceipt",
@@ -21298,7 +21299,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 4,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -33855,6 +33856,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/origin_doors/setup.rs",
+     "purpose": "The owner's repository registration and outbound mirror setup, through the same proof and credential-scoped…",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CheckoutDoorBindRequest",
       "CheckoutDoorBinding",
@@ -33862,17 +33873,22 @@
       "CodeExportResult",
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
+      "OriginMirrorCleared",
+      "OriginMirrorSetRequest",
+      "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
       "OriginPublicationsRequest",
       "OriginPublicationsView",
+      "OriginRegisterRequest",
+      "OriginRegistered",
       "OriginRepoRequest"
      ],
      "path": "src/memory/origin_doors/types.rs",
      "purpose": "—",
      "surface": {
       "enum": 1,
-      "struct": 10
+      "struct": 15
      }
     },
     {
@@ -36487,6 +36503,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/actor_erase.rs",
+     "purpose": "An erased actor out of origin's claim bodies (FIX 3877)",
+     "surface": {
+      "crate-vis": 27
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -36496,7 +36522,7 @@
      "purpose": "Commit-hash keyed LEDGER change identities",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 1
      }
@@ -36720,7 +36746,8 @@
      "purpose": "Outbound mirror pushing (ARCH-0068 RA8)",
      "surface": {
       "const": 4,
-      "fn": 5,
+      "crate-vis": 2,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -36731,7 +36758,8 @@
      "path": "src/origin/mod.rs",
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
-      "mod": 10,
+      "crate-vis": 1,
+      "mod": 11,
       "re-export": 1
      }
     },
@@ -36839,6 +36867,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/registration.rs",
+     "purpose": "Owner registration of a new, empty served origin",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -36850,7 +36888,7 @@
      "path": "src/origin/residence.rs",
      "purpose": "Explicit owner-controlled origin epochs",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -36981,7 +37019,7 @@
      "path": "src/origin/smart_http/evidence.rs",
      "purpose": "Receive-pack wire types and the admission/outcome evidence claims: producer receipts plus the…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "fn": 1,
       "struct": 4
      }
@@ -37054,10 +37092,20 @@
      "path": "src/origin/smart_http/intent.rs",
      "purpose": "The crash-durable per-ref intent journal and its reconcile/resume path",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/intent_erase.rs",
+     "purpose": "An erased actor out of the receive-pack intent journal (FIX 3877)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -37131,7 +37179,7 @@
      "path": "src/origin/smart_http/mod.rs",
      "purpose": "Git smart-HTTP serving over the vault (ARCH-0068 Phase A, ONE-1908)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "re-export": 12
      }
     },
@@ -44321,7 +44369,7 @@
      "path": "src/secret_lease/doors.rs",
      "purpose": "T0/T1/T2 Vault doors: inject, materialize, register, revoke, expire",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 8
      }
     },
@@ -49800,7 +49848,7 @@
      "path": "src/sync/client/connect.rs",
      "purpose": "Public Connect delivery/rejoin over the production guest admission path",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -49824,7 +49872,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -49834,7 +49882,7 @@
      "path": "src/sync/client/federation_replay.rs",
      "purpose": "Durable inbound federation drain, entered on startup, receive and timer ticks",
      "surface": {
-      "fn": 2
+      "fn": 4
      }
     },
     {
@@ -50104,7 +50152,7 @@
      "purpose": "WebSocket connection manager with debounced sync and reconnection",
      "surface": {
       "crate-vis": 1,
-      "fn": 16,
+      "fn": 17,
       "re-export": 3,
       "struct": 3
      }
@@ -50258,6 +50306,27 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/import_guard.rs",
+     "purpose": "Revalidate the retained batch and its acting proof in every import writer",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/ledger.rs",
+     "purpose": "Payload-free batch receipts, kept after durable work completes",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FederationBurstDecision",
       "FederationPeer"
@@ -50265,10 +50334,10 @@
      "path": "src/sync/federation_burst/mod.rs",
      "purpose": "Peer-relative federation admission with durable, automatically replayable work",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 1
      }
     },
@@ -50279,7 +50348,7 @@
      "path": "src/sync/federation_burst/observations.rs",
      "purpose": "Transactional per-principal/grant observations, independent of connections",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -50289,17 +50358,28 @@
      "path": "src/sync/federation_burst/peer_health.rs",
      "purpose": "Relative signals for one peer; policy compares ratios, never write counts",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/federation_burst/policy.rs",
+     "purpose": "Owner policy changes and the peer's own observed baseline",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/federation_burst/queue.rs",
      "purpose": "Actual deferred payloads and their identity-bound, idempotent completion",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
     },
     {
@@ -50312,8 +50392,20 @@
      "path": "src/sync/federation_burst/review_bundle.rs",
      "purpose": "One advisory proposal per peer, with an actual isolated ledger subgraph",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/federation_burst/review_doors.rs",
+     "purpose": "Retained coalesced review evidence and owner release/reject acts",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
      }
     },
     {
@@ -50337,6 +50429,34 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FederationBurstBaseline",
+      "FederationBurstBaselineState",
+      "FederationBurstDisposition",
+      "FederationBurstOutcome",
+      "FederationBurstPeerRequest",
+      "FederationBurstPolicy",
+      "FederationBurstPolicySetRequest",
+      "FederationBurstReceipt",
+      "FederationBurstReplayRequest",
+      "FederationBurstReviewReceipt",
+      "FederationBurstReviewRequest",
+      "FederationBurstScope",
+      "FederationBurstWorkState",
+      "FederationBurstWorld"
+     ],
+     "path": "src/sync/federation_burst/types.rs",
+     "purpose": "Public peer-relative burst policy, receipts and retained-work addresses",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 1,
+      "struct": 9
      }
     },
     {
@@ -50597,7 +50717,7 @@
      "path": "src/sync/mod.rs",
      "purpose": "CRDT sync layer for Oneiron",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 24,
       "re-export": 16
      }
@@ -50650,6 +50770,16 @@
      "purpose": "Remove active NOTE carriers in the same window commit as a tombstone",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/origin_claims.rs",
+     "purpose": "Origin claim carriers under an erase (FIX 3877)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -51181,7 +51311,7 @@
      "path": "src/sync/selector/authorize.rs",
      "purpose": "Grant and pact authorization resolving the requested position under the grant ceiling, guest-share…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -51282,7 +51412,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 7
      }
     },
@@ -53129,7 +53259,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 68,
+      "re-export": 69,
       "struct": 40
      }
     },
@@ -53542,6 +53672,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/sdk_federation_burst.rs",
+     "purpose": "Typed facade calls over the engine's peer-relative federation burst doors",
+     "surface": {
+      "fn": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -53572,7 +53712,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1058
+      "fn": 1072
      }
     },
     {
@@ -60700,7 +60840,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 217,
+     "files": 218,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60742,7 +60882,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 62,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61183,7 +61323,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 187,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61211,7 +61351,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 185,
+     "files": 186,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61381,7 +61521,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3738,
+   "source_files": 3749,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70039,7 +70179,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1029
+      "fn": 1043
      }
     },
     {
@@ -71135,7 +71275,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1030
+      "fn": 1044
      }
     },
     {
@@ -74039,7 +74179,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
@@ -74199,7 +74339,7 @@
      "path": "src/api/facade/call_context.rs",
      "purpose": "One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -74586,6 +74726,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/federation_burst_doors.rs",
+     "purpose": "Signed Connect ingress and owner lifecycle doors over the shared burst engine",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/federation_connect_doors.rs",
      "purpose": "The typed owner federation doors share the existing owner HTTP operations",
      "surface": {
@@ -74699,7 +74849,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 167
+      "crate-vis": 168
      }
     },
     {
@@ -74899,7 +75049,7 @@
      "path": "src/api/facade/origin_doors.rs",
      "purpose": "Credential-bound host projections of the typed origin and checkout doors (DOOR-139)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 10
      }
     },
     {
@@ -75291,7 +75441,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/ui_action_routes.rs",
@@ -76343,6 +76493,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/owner_work_routes.rs",
+     "purpose": "`/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -76398,6 +76558,26 @@
      "notable": [],
      "path": "src/api/owner_routes/recovery_kit_routes.rs",
      "purpose": "`/v1/owner/recovery-kit`: the world kit's public status on a running server (OF-173)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/recovery_kit_target_routes.rs",
+     "purpose": "The target install's own kit calls (FIX 4736, 4530, 4564): the material a root change or a late joiner's pad…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/root_routes.rs",
+     "purpose": "`/v1/owner/roots/requests`: the owner decides a change to one install's recovery root from any surface he is…",
      "surface": {
       "crate-vis": 1
      }
@@ -76556,6 +76736,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/world_privacy_work_routes.rs",
+     "purpose": "`/v1/owner/worlds/privacy/settings` and `/reassert`: a holder changes a world's settings, or re-asserts them…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/packs/defaults.rs",
      "purpose": "Explicit default restores and on-demand imports from the pinned library",
      "surface": {
@@ -76579,7 +76769,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -82889,7 +83079,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 433,
+     "files": 438,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -83318,7 +83508,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 791,
+   "source_files": 796,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84285,6 +84475,7 @@
       "ConsolidationEvidenceRequest",
       "ConsolidationEvidenceSource",
       "ConsolidationFrontierRequest",
+      "ConsolidationHomeCandidate",
       "ConsolidationHomeNode",
       "ConsolidationHomePickHead",
       "ConsolidationHomePickReceipt",
@@ -84714,10 +84905,26 @@
       "FanoutSlotTerminal",
       "FanoutStatement",
       "FatalLlmError",
+      "FederationBurstBaseline",
+      "FederationBurstBaselineState",
+      "FederationBurstDisposition",
+      "FederationBurstOutcome",
+      "FederationBurstPeerRequest",
+      "FederationBurstPolicy",
+      "FederationBurstPolicySetRequest",
+      "FederationBurstReceipt",
+      "FederationBurstReplayRequest",
+      "FederationBurstReviewBundle",
+      "FederationBurstReviewReceipt",
+      "FederationBurstReviewRequest",
+      "FederationBurstScope",
+      "FederationBurstWorkState",
+      "FederationBurstWorld",
       "FederationDelegateRequest",
       "FederationDirectionScope",
       "FederationGrantRole",
       "FederationGrantScope",
+      "FederationIsolatedUpdate",
       "FederationMemberGrant",
       "FederationPactScope",
       "FederationPactStatus",
@@ -85575,10 +85782,17 @@
       "OriginAuthority",
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
+      "OriginMirrorCleared",
+      "OriginMirrorRun",
+      "OriginMirrorSetRequest",
+      "OriginMirrorTarget",
+      "OriginMirrorView",
       "OriginPublicationState",
       "OriginPublicationView",
       "OriginPublicationsRequest",
       "OriginPublicationsView",
+      "OriginRegisterRequest",
+      "OriginRegistered",
       "OriginRepoRequest",
       "OriginResidence",
       "OutcomeBinding",
@@ -86980,8 +87194,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 825,
-      "struct": 2636
+      "enum": 830,
+      "struct": 2655
      }
     },
     {

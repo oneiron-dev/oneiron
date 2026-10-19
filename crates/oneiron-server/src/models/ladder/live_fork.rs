@@ -40,6 +40,37 @@ impl OfferLadder {
                 .is_none()
     }
 
+    /// The rung a kept chat breakpoint names by ref (FIX 4465 D): this
+    /// ladder's rung whose wire model and offer digest are the kept ones,
+    /// under the kept provider and place, when its walk would take `request`
+    /// now. `None` when no rung here matches or the matching one rests or
+    /// is held: the breakpoint is not admitted again.
+    pub(crate) fn live_rung_by_ref(
+        &self,
+        provider: &str,
+        position: usize,
+        wire_model: &str,
+        offer_digest: &str,
+        request: &LlmRequest,
+    ) -> Option<LiveForkRung> {
+        let index = (0..self.rungs.len()).find(|index| {
+            let rung = &self.rungs[*index];
+            rung.wire_model == wire_model
+                && oneiron::code_run::live_fork_offer_digest(&rung.offer.binding).as_deref()
+                    == Some(offer_digest)
+        })?;
+        if !self.takes_now(index, request) {
+            return None;
+        }
+        let rung = &self.rungs[index];
+        Some(LiveForkRung {
+            provider: provider.to_owned(),
+            position,
+            wire_model: rung.wire_model.clone(),
+            offer: rung.offer.binding.clone(),
+        })
+    }
+
     /// The one-rung ladder a captured live fork is sent on: this ladder's
     /// rung at the captured offer and wire model, under the captured place
     /// in its ladder. It carries no prompt of its own, since the captured

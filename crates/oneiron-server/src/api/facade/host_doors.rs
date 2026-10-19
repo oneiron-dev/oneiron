@@ -100,6 +100,7 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::coreference_doors::*;
 // The owner's subject-bound feedback and report doors, likewise.
 pub(crate) use super::federation_connect_doors::*;
+pub(crate) use super::federation_burst_doors::*;
 pub(crate) use super::feedback_doors::*;
 pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
@@ -1528,6 +1529,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.federation.coreference.confirm"
         | "vault.federation.coreference.share_consent"
         | "vault.federation.coreference.unlink"
+        | "vault.federation.burst.ingress"
+        | "vault.federation.burst.disposition"
+        | "vault.federation.burst.replay"
+        | "vault.federation.burst.baseline"
+        | "vault.federation.burst.policy"
+        | "vault.federation.burst.policy.set"
+        | "vault.federation.burst.review"
+        | "vault.federation.burst.review.release"
+        | "vault.federation.burst.review.reject"
         | "vault.federation.connect.identity"
         | "vault.federation.connect.grants.mint"
         | "vault.federation.connect.offer"
@@ -1615,6 +1625,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.waits.resolve"
         | "vault.code.waits.receipt"
         | "vault.code.export"
+        | "vault.code.origin.register"
+        | "vault.code.origin.mirror.get"
+        | "vault.code.origin.mirror.set"
+        | "vault.code.origin.mirror.clear"
+        | "vault.code.origin.mirror.push"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
