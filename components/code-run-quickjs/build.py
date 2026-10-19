@@ -85,7 +85,10 @@ def main():
         found = run([tool, "--version"], capture_output=True, text=True).stdout.strip()
         if not tool_version_matches(tool, version, found): parser.error(f"expected {tool} {version}, got {found}")
         versions[tool] = found
-    versions["clang"] = run([Path(sdk) / "bin/clang", "--version"], capture_output=True, text=True).stdout.strip()
+    # Only the version line: InstalledDir and the config-file path name the
+    # build host and user, so a byte-identical rebuild elsewhere keeps the
+    # manifest unchanged (FIX 5581).
+    versions["clang"] = run([Path(sdk) / "bin/clang", "--version"], capture_output=True, text=True).stdout.strip().partition("\n")[0]
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     archive = args.source or out / "quickjs.tar.xz"
