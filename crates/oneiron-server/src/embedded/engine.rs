@@ -29,10 +29,12 @@
 //! hands the Dreamer the wake, since the app's timer wakes an engine it has
 //! backgrounded.
 //!
-//! The serve body runs on a thread of its own, entered into the caller's
-//! runtime as `oneiron serve` drives it on its main thread, so the app's
-//! host callbacks run there or on the thread that called [`start`], never on
-//! a runtime worker.
+//! The serve body runs on a thread of its own, as `oneiron serve` drives it
+//! on its main thread, so the app's host callbacks run there or on the
+//! thread that called [`start`], never on a runtime worker. It enters the
+//! caller's runtime, or, when the app grants a bounded CPU share, a runtime
+//! that serve run owns, whose worker threads that share caps (FIX 2661,
+//! `super::runtime`).
 //!
 //! [`start`]: EmbeddedEngine::start
 
@@ -197,11 +199,7 @@ impl Serving {
     /// Stops serving and waits out the ordered drain and worker shutdown.
     async fn finish(self) -> anyhow::Result<()> {
         self.stop.notify_one();
-        self.done.await.unwrap_or_else(|_| {
-            Err(anyhow::anyhow!(
-                "the embedded engine's serve thread panicked"
-            ))
-        })
+        super::runtime::served(self.done).await
     }
 
     /// The serve body returned, or is returning: it takes no connection.
@@ -211,36 +209,24 @@ impl Serving {
 }
 
 /// Starts the serve body over `vault` on a thread of its own and waits for
-/// the app's `ready`, or for the body's startup error.
+/// the app's `ready`, or for the body's startup error. With `serve_workers`
+/// the run serves on a runtime of its own capped at that many workers, else
+/// on the caller's ([`super::runtime::spawn_serving`]).
 async fn serve_on<A: AppHost + 'static>(
     host: EmbeddedHost<Readied<A>, DuplexStream>,
     mut readied: oneshot::Receiver<()>,
     vault: Arc<oneiron::Vault>,
     config: ServeConfig,
     owner_host: OwnerHost,
+    serve_workers: Option<usize>,
 ) -> anyhow::Result<Serving> {
     let connector = host.connector();
     // The artifact origin's channel, served beside the API's for this run.
     let (artifacts, artifact_streams) = mpsc::channel(ENGINE_CONNECTION_BACKLOG);
     let (wake, stop) = (host.wake_handle(), host.stop_handle());
-    let (finished, mut done) = oneshot::channel();
-    let runtime = Handle::current();
-    std::thread::Builder::new()
-        .name("oneiron-engine-serve".to_owned())
-        .spawn(move || {
-            let served = runtime.block_on(super::serve_prepared(
-                host,
-                vault,
-                config,
-                Some(artifact_streams),
-                owner_host,
-            ));
-            let _ = finished.send(served);
-        })
-        .context(cause(
-            EngineErrorKind::StartFailed,
-            "the embedded engine's serve thread did not start",
-        ))?;
+    let mut done = super::runtime::spawn_serving(serve_workers, move || {
+        super::serve_prepared(host, vault, config, Some(artifact_streams), owner_host)
+    })?;
     let ready = tokio::select! {
         biased;
         ready = &mut readied => ready.is_ok(),
@@ -285,12 +271,17 @@ struct State<A> {
 /// The engine inside an app's process, over the one vault it opened.
 ///
 /// Its methods are async; run them on a multi-thread Tokio runtime outside
-/// a `LocalSet`, as [`crate::build_app`] says. Dropped while serving, it
-/// asks serving to stop and does not wait: call [`EmbeddedEngine::close`]
-/// for the ordered stop.
+/// a `LocalSet`, as [`crate::build_app`] says. Serving runs on that runtime,
+/// unless the app's limits grant a bounded CPU share: each serve run then
+/// owns a runtime whose worker threads the share caps (FIX 2661). Dropped
+/// while serving, it asks serving to stop and does not wait: call
+/// [`EmbeddedEngine::close`] for the ordered stop.
 pub struct EmbeddedEngine<A> {
     config: ServeConfig,
     limits: HostLimits,
+    /// The worker cap of each serve run's own runtime, or `None` to serve on
+    /// the caller's.
+    serve_workers: Option<usize>,
     vault: Arc<oneiron::Vault>,
     /// The rehearsal config the opener resolved, which a restart's owner
     /// host takes, so nothing is resolved or opened twice.
@@ -304,6 +295,18 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// A relay host's config is refused before anything opens. Returns once
     /// `app`'s `ready` has run, or with the serve body's startup error.
     pub async fn start(app: A, config: ServeConfig, limits: HostLimits) -> anyhow::Result<Self> {
+        Self::start_serving_on(app, config, limits, super::runtime::worker_cap(limits)).await
+    }
+
+    /// [`Self::start`], each serve run on a runtime of its own capped at
+    /// `serve_workers`, or, with `None`, on the caller's: a
+    /// [`super::BlockingEngine`]'s own runtime already carries the cap.
+    pub(super) async fn start_serving_on(
+        app: A,
+        config: ServeConfig,
+        limits: HostLimits,
+        serve_workers: Option<usize>,
+    ) -> anyhow::Result<Self> {
         if config.privacy_posture == oneiron::HostingPrivacyPosture::Relay {
             return Err(failure(EngineErrorKind::RelayRefused, super::RELAY_REFUSAL));
         }
@@ -320,11 +323,13 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             Arc::clone(&vault),
             config.clone(),
             owner_host,
+            serve_workers,
         )
         .await?;
         Ok(Self {
             config,
             limits,
+            serve_workers,
             vault,
             rehearsal,
             state: Mutex::new(State {
@@ -445,6 +450,7 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             Arc::clone(&self.vault),
             self.config.clone(),
             owner_host,
+            self.serve_workers,
         )
         .await?;
         serving.wake.notify_one();
