@@ -5,7 +5,7 @@ mod ledger;
 mod limit;
 mod model;
 pub use codec::UsageError;
-pub use ledger::{SEAT_USAGE_REFS, SeatUsage, UsageLedger};
+pub use ledger::{SeatUsage, UsageLedger};
 pub use limit::{CachedBudgetLimit, ExchangeRate};
 pub use model::{
     Money, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent,

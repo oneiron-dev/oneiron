@@ -55,7 +55,10 @@ mod settings;
 mod shed;
 pub(crate) use self::peer::UnixPeer;
 mod state_serve;
-pub(crate) use state_serve::{ManagedIngress, ManagedOwnerHolder, ManagedWidenHolder};
+pub(crate) use state_serve::{
+    ManagedCarrierContext, ManagedIngress, ManagedOwnerHolder, ManagedOwnerSession,
+    ManagedWidenHolder,
+};
 mod vault_gates;
 #[cfg(target_os = "linux")]
 mod vm_guest;
