@@ -18,6 +18,7 @@ use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{SelfCall, SelfDispatchOutcome, SessionHookDisposition};
 use crate::error::{Error, Result};
+use crate::runtime_hooks::verb::RoomHookCall;
 use crate::runtime_hooks::{VerbCall, hook_class};
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
@@ -51,6 +52,9 @@ impl HostSelfDispatcher<'_> {
             return Ok(Ok((call, HookedCall(None))));
         }
         let invocation = self.verb_invocation(&call, site)?;
+        // The same search a hook's ask parked names that pause, and resumes
+        // it in the room (FIX 5524).
+        let resume = self.parked_ask(&call, site)?;
         let args = hook_args(&call)?;
         let hook_call = VerbCall {
             verb: effect.as_str().to_owned(),
@@ -69,13 +73,17 @@ impl HostSelfDispatcher<'_> {
         // A stop keeps the hooks' records at once; a refusal carries no
         // field for what each did. The search with no key answers when its
         // hooks cannot be read, as it did before they ran in a room.
-        let answers_unread = hook_call.reader.is_none();
+        let how = RoomHookCall {
+            answers_unread: hook_call.reader.is_none(),
+            turn: None,
+            resume,
+        };
         let (pre, _) = binding.session.pre_verb_hooks_in_room(
             &binding.route,
             hook_call,
             args.clone(),
             &check,
-            answers_unread,
+            how,
         )?;
         let pre = match pre {
             Ok(pre) => pre,

@@ -88,7 +88,8 @@ impl SocketCallContext {
             )
     }
 
-    /// The facade call this context carries for `auth`'s credential. Its
+    /// The facade call this context carries for `auth`'s credential, naming
+    /// the hook pause it resumes when the context names one (FIX 5526). Its
     /// lens card is held for the subscription instance the socket resolved,
     /// and for no creating run: no run attaches on the socket, so a render
     /// keeps `LensFrameStore::record` until one does (FIX 2612 (b)).
@@ -99,6 +100,7 @@ impl SocketCallContext {
             self.carried.invocation.as_deref(),
             self.carried.session.as_deref(),
         )
+        .resuming_hook_ask(self.carried.hook_ask.as_deref())
         .lens_held(None, self.subscription.clone().flatten())
     }
 }
