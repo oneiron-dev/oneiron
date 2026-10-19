@@ -1,21 +1,24 @@
 //! Staging an ASSET body from a reader before the transaction that puts it
 //! (FIX 3677): the body streams into the body directory, measured as it
-//! passes, and is published as a file only when it is long and opaque.
+//! passes, and is published as a file only when it is long and opaque. On a
+//! sealed vault it spills sealed as it streams and is published as an
+//! envelope, whose key row the put commits (FIX 5348).
 
-use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 
 use heed::RwTxn;
 
 use super::{
-    ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest, keeps_bodies_inline,
+    ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::result_body::ResultBodyPin;
 use crate::store::body_store::SecretScan;
-use crate::store::{BodyDir, LINE_INDEX_BLOCK_BYTES, body_file_name, read_body_range};
+use crate::store::{
+    BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES, SpilledBody, StagedBodyKey,
+};
 use crate::temporal::TimeRange;
 
 /// The bytes of a body's head its stream classification reads: enough for
@@ -30,13 +33,15 @@ pub(crate) struct StagedAssetBody {
     facts: AssetBodyFacts,
     mime: Option<String>,
     body: Staged,
+    /// A sealed file's key row, committed with the put (FIX 5348).
+    key: Option<StagedBodyKey>,
     _pin: Option<ResultBodyPin>,
 }
 
 enum Staged {
     Inline(Vec<u8>),
     /// The published file, held open.
-    File(File),
+    File(BodyFile),
 }
 
 impl StagedAssetBody {
@@ -53,8 +58,7 @@ impl StagedAssetBody {
     pub(crate) fn to_vec(&self) -> Result<Vec<u8>> {
         match &self.body {
             Staged::Inline(bytes) => Ok(bytes.clone()),
-            Staged::File(file) => read_body_range(
-                file,
+            Staged::File(file) => file.read_range(
                 0,
                 usize::try_from(self.facts.len).map_err(|_| {
                     Error::InvariantViolation("asset body past this machine's memory")
@@ -174,29 +178,38 @@ impl Utf8Stream {
     }
 }
 
-/// A temp file in the body directory, removed when dropped unless taken.
+/// A spill in the body directory, its temp file removed when dropped
+/// unfinished.
 struct Spill<'a> {
     dir: &'a BodyDir,
-    file: File,
-    temp: Option<String>,
+    body: Option<BodySpill>,
 }
 
 impl Spill<'_> {
-    /// The temp file and its name, no longer removed on drop.
-    fn take(mut self) -> Result<(File, String)> {
-        let file = self.file.try_clone()?;
-        let temp = self
-            .temp
+    fn write(&mut self, bytes: &[u8]) -> Result<()> {
+        match &mut self.body {
+            Some(body) => body.write(bytes),
+            None => Err(Error::InvariantViolation("asset body spill taken twice")),
+        }
+    }
+
+    /// The finished spill of the body `facts` names: its temp file is the
+    /// caller's to publish or remove.
+    fn finish(mut self, facts: &AssetBodyFacts) -> Result<SpilledBody> {
+        let body = self
+            .body
             .take()
             .ok_or(Error::InvariantViolation("asset body spill taken twice"))?;
-        Ok((file, temp))
+        let temp = body.temp().to_owned();
+        body.finish(&facts.blake3, facts.len)
+            .inspect_err(|_| self.dir.discard(&temp))
     }
 }
 
 impl Drop for Spill<'_> {
     fn drop(&mut self) {
-        if let Some(temp) = self.temp.take() {
-            self.dir.discard(&temp);
+        if let Some(body) = self.body.take() {
+            self.dir.discard(body.temp());
         }
     }
 }
@@ -204,12 +217,12 @@ impl Drop for Spill<'_> {
 impl crate::Vault {
     /// Streams `reader` into one staged ASSET body, before the transaction
     /// that puts it (FIX 3677): a body past [`ASSET_INLINE_BODY_BYTES`]
-    /// spills to a temp file in the body directory as it streams, and is
-    /// published under its digest (synced, renamed, the directory synced)
-    /// when its stream shows it opaque in an unsealed vault. Any other body
-    /// is held whole for its row, as a slice put holds it. `mime` is the
-    /// body's media type, kept in its manifest. Nothing is refused for its
-    /// size (Rule 5).
+    /// spills to a temp file in the body directory as it streams, sealed as
+    /// it streams on a sealed vault, and is published under its name (synced,
+    /// renamed, the directory synced) when its stream shows it opaque. Any
+    /// other body is held whole for its row, as a slice put holds it. `mime`
+    /// is the body's media type, kept in its manifest. Nothing is refused for
+    /// its size (Rule 5).
     ///
     /// # Errors
     ///
@@ -240,18 +253,16 @@ impl crate::Vault {
             let bytes = &frame[..read];
             meter.feed(bytes);
             if let Some(spill) = &mut spill {
-                spill.file.write_all(bytes)?;
+                spill.write(bytes)?;
             } else if (inline.len() + read) as u64 <= ASSET_INLINE_BODY_BYTES {
                 inline.extend_from_slice(bytes);
             } else {
-                let (file, temp) = dir.create_temp()?;
                 let mut opened = Spill {
                     dir: &dir,
-                    file,
-                    temp: Some(temp),
+                    body: Some(BodySpill::create(&dir)?),
                 };
-                opened.file.write_all(&inline)?;
-                opened.file.write_all(bytes)?;
+                opened.write(&inline)?;
+                opened.write(bytes)?;
                 inline = Vec::new();
                 spill = Some(opened);
             }
@@ -261,25 +272,33 @@ impl crate::Vault {
             facts,
             mime: mime.map(str::to_owned),
             body,
+            key: None,
             _pin: None,
         };
         let Some(spill) = spill else {
             return Ok(staged(Staged::Inline(inline)));
         };
-        if !opaque || keeps_bodies_inline(&self.store) {
+        let spilled = spill.finish(&facts)?;
+        let held = match spilled.reader() {
+            Ok(held) => held,
+            Err(error) => {
+                dir.discard(spilled.temp());
+                return Err(error);
+            }
+        };
+        if !opaque || !ASSET_FILE_PLANE {
             // Read whole, as a slice put holds it: the batch door judges it.
+            dir.discard(spilled.temp());
             let len = usize::try_from(facts.len)
                 .map_err(|_| Error::InvariantViolation("asset body past this machine's memory"))?;
-            let bytes = read_body_range(&spill.file, 0, len)?;
-            return Ok(staged(Staged::Inline(bytes)));
+            return Ok(staged(Staged::Inline(held.read_range(0, len)?)));
         }
         // Pinned before the name exists, so a collector unlinking a released
         // file of the same digest leaves this one alone.
         let pin = self.pin_result_body(facts.blake3);
-        let (file, temp) = spill.take()?;
-        let held = file.try_clone()?;
-        dir.publish(file, &temp, &body_file_name(&facts.blake3))?;
+        let key = spilled.publish(&dir)?;
         Ok(StagedAssetBody {
+            key,
             _pin: Some(pin),
             ..staged(Staged::File(held))
         })
@@ -307,6 +326,11 @@ impl crate::Vault {
             && crate::secret_custody::masked_file_in_txn(&self.store, txn, &staged.facts.blake3)?
                 .is_none()
         {
+            // A sealed file's key row commits with the row naming it; a
+            // digest with a committed pair keeps it (FIX 5348).
+            if let Some(key) = &staged.key {
+                crate::store::bind_body_key_in_txn(&self.store, txn, &self.store.body_dir()?, key)?;
+            }
             let manifest = AssetFileManifest {
                 facts: staged.facts,
                 kind: AssetFileKind::Opaque,

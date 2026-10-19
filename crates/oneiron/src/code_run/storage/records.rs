@@ -7,7 +7,9 @@ use crate::secret_rotation::{
 };
 use crate::session_overlay::RouteTarget;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-use crate::store::{BodyDir, BodySink, SunkBody, read_body_range};
+use crate::store::{
+    BodyDir, BodyFile, BodyKeyRow, BodySink, StagedBodyKey, SunkBody, body_key_row_in_txn,
+};
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
 use super::super::codec::validate_raw_output;
@@ -297,6 +299,10 @@ impl Vault {
             ));
         }
         RAW_OUTPUTS.put(&self.store, wtxn, &output.handle, &finished.body)?;
+        // A sealed body file's key commits with the row naming it (FIX 5348).
+        if let Some(key) = &finished.key {
+            crate::store::bind_body_key_in_txn(&self.store, wtxn, &self.store.body_dir()?, key)?;
+        }
         if let Some(reason) = finished.secret {
             self.mark_code_run_output_secret_in_txn(wtxn, output, at, reason)?;
         }
@@ -593,11 +599,13 @@ impl Vault {
                     .get(room, wtxn, &output.handle)?
                     .ok_or(Error::CorruptedIndex("message result body"))?;
                 if matches!(stored, StoredBody::File { .. })
-                    && self
-                        .store
-                        .body_dir()?
-                        .open_body(&output.raw_blake3, output.raw_len)?
-                        .is_none()
+                    && !crate::store::keep_promoted_body_key_in_txn(
+                        &self.store,
+                        wtxn,
+                        room,
+                        &output.raw_blake3,
+                        output.raw_len,
+                    )?
                 {
                     return Err(Error::CorruptedIndex("message result body file missing"));
                 }
@@ -670,10 +678,29 @@ impl Vault {
         rtxn: &heed::RoTxn<'_>,
         output: &CodeRunRawOutput,
     ) -> Result<Option<Vec<u8>>> {
-        RAW_OUTPUTS
-            .get(&self.store, rtxn, &output.handle)?
-            .map(|body| load_whole_body(output, body, || Ok(vec![self.store.body_dir()?])))
+        self.stored_body_in_txn(rtxn, output)?
+            .map(|(body, key)| {
+                load_whole_body(output, body, key.as_ref(), || {
+                    Ok(vec![self.store.body_dir()?])
+                })
+            })
             .transpose()
+    }
+
+    /// The stored row of `output`'s body and, read in the same snapshot, the
+    /// key row of its sealed file (FIX 5348).
+    fn stored_body_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        output: &CodeRunRawOutput,
+    ) -> Result<Option<(StoredBody, Option<BodyKeyRow>)>> {
+        let Some(body) = RAW_OUTPUTS.get(&self.store, rtxn, &output.handle)? else {
+            return Ok(None);
+        };
+        Ok(Some((
+            body,
+            body_key_row_in_txn(&self.store, rtxn, &output.raw_blake3)?,
+        )))
     }
 
     /// The value-free proposals to lift what the secret scan found in run
@@ -753,10 +780,14 @@ impl Vault {
         let _pin = self.pin_result_body(output.raw_blake3);
         let body = {
             let rtxn = self.store.env.read_txn()?;
-            RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)?
+            self.stored_body_in_txn(&rtxn, output)?
         };
-        body.map(|body| load_whole_body(output, body, || Ok(vec![self.store.body_dir()?])))
-            .transpose()
+        body.map(|(body, key)| {
+            load_whole_body(output, body, key.as_ref(), || {
+                Ok(vec![self.store.body_dir()?])
+            })
+        })
+        .transpose()
     }
 
     /// The whole body a context reference names, by its digest and length,
@@ -769,10 +800,14 @@ impl Vault {
         let _pin = self.pin_result_body(source.hash);
         let body = {
             let rtxn = self.store.env.read_txn()?;
-            RAW_OUTPUTS.get(&self.store, &rtxn, &output.handle)?
+            self.stored_body_in_txn(&rtxn, &output)?
         };
-        body.map(|body| load_whole_body(&output, body, || Ok(vec![self.store.body_dir()?])))
-            .transpose()
+        body.map(|(body, key)| {
+            load_whole_body(&output, body, key.as_ref(), || {
+                Ok(vec![self.store.body_dir()?])
+            })
+        })
+        .transpose()
     }
 
     /// `len` bytes of `output`'s body from `offset`, cut at its end: an
@@ -790,7 +825,8 @@ impl Vault {
         let Some(row) = RAW_OUTPUTS.get_borrowed(&self.store, &rtxn, &output.handle)? else {
             return Ok(None);
         };
-        read_body_row_range(output, &row, offset, len, || {
+        let key = body_key_row_in_txn(&self.store, &rtxn, &output.raw_blake3)?;
+        read_body_row_range(output, &row, key.as_ref(), offset, len, || {
             Ok(vec![self.store.body_dir()?])
         })
         .map(Some)
@@ -803,6 +839,8 @@ pub(crate) struct FinishedOutput {
     pub(crate) output: CodeRunRawOutput,
     pub(super) body: StoredBody,
     pub(super) secret: Option<&'static str>,
+    /// A sealed file's key row, committed with the body's row (FIX 5348).
+    pub(super) key: Option<StagedBodyKey>,
 }
 
 impl FinishedOutput {
@@ -830,19 +868,20 @@ pub(super) fn finish_output(
 ) -> Result<FinishedOutput> {
     let (facts, sunk) = sink.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS)?;
     let output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
-    let body = match sunk {
-        SunkBody::Inline(bytes) => StoredBody::Inline(bytes),
-        SunkBody::File { free_bytes } => {
+    let (body, key) = match sunk {
+        SunkBody::Inline(bytes) => (StoredBody::Inline(bytes), None),
+        SunkBody::File { free_bytes, key } => {
             if let Some(free_bytes) = free_bytes {
                 watch.floor(EngineLimit::CodeResultDiskFloorBytes, free_bytes);
             }
-            StoredBody::File { len: facts.len }
+            (StoredBody::File { len: facts.len }, key)
         }
     };
     Ok(FinishedOutput {
         output,
         body,
         secret: facts.secret,
+        key,
     })
 }
 
@@ -893,13 +932,15 @@ fn owned_body(
     })
 }
 
-/// The body file of `output` in the first of `dirs` that holds it.
+/// The body file of `output` in the first of `dirs` that holds it, as
+/// `key`, its key row in the snapshot that found its row, names it.
 pub(super) fn open_body_file(
     output: &CodeRunRawOutput,
+    key: Option<&BodyKeyRow>,
     dirs: Vec<BodyDir>,
-) -> Result<std::fs::File> {
+) -> Result<BodyFile> {
     for dir in dirs {
-        if let Some(file) = dir.open_body(&output.raw_blake3, output.raw_len)? {
+        if let Some(file) = dir.open_reader(&output.raw_blake3, output.raw_len, key)? {
             return Ok(file);
         }
     }
@@ -911,6 +952,7 @@ pub(super) fn open_body_file(
 pub(super) fn load_whole_body(
     output: &CodeRunRawOutput,
     body: StoredBody,
+    key: Option<&BodyKeyRow>,
     dirs: impl FnOnce() -> Result<Vec<BodyDir>>,
 ) -> Result<Vec<u8>> {
     let bytes = match body {
@@ -921,7 +963,7 @@ pub(super) fn load_whole_body(
             }
             let len = usize::try_from(len)
                 .map_err(|_| Error::ArithmeticOverflow("code-run result body length"))?;
-            read_body_range(&open_body_file(output, dirs()?)?, 0, len)?
+            open_body_file(output, key, dirs()?)?.read_range(0, len)?
         }
     };
     if u64::try_from(bytes.len()).ok() != Some(output.raw_len)
@@ -936,6 +978,7 @@ pub(super) fn load_whole_body(
 pub(super) fn read_body_row_range(
     output: &CodeRunRawOutput,
     row: &[u8],
+    key: Option<&BodyKeyRow>,
     offset: u64,
     len: usize,
     dirs: impl FnOnce() -> Result<Vec<BodyDir>>,
@@ -957,7 +1000,7 @@ pub(super) fn read_body_row_range(
                 .map_err(|_| Error::ArithmeticOverflow("code-run result range"))?;
             Ok(body[start..start + take].to_vec())
         }
-        Some((&STORED_FILE, _)) => read_body_range(&open_body_file(output, dirs()?)?, offset, take),
+        Some((&STORED_FILE, _)) => open_body_file(output, key, dirs()?)?.read_range(offset, take),
         _ => Err(Error::CorruptedIndex("code-run raw output row")),
     }
 }

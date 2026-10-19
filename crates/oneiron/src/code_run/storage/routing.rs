@@ -24,7 +24,7 @@ use super::speech_identity::{
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::result_memory::ResultShare;
 use crate::secret_rotation::ArtifactTaintState;
-use crate::store::BodySink;
+use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 #[cfg(test)]
 use super::records::CodeRunModelHealCount;
@@ -237,6 +237,7 @@ impl SessionBinding<'_> {
     ) -> Result<CodeRunRawOutput> {
         let finished = finish_output(path, sink, complete, self.session.limit_watch())?;
         self.mark_secret(&finished.output, owner, finished.secret)?;
+        self.put_body_key(&finished)?;
         self.answered(|| {
             self.session.side_table_put_routed(
                 &self.route,
@@ -282,6 +283,7 @@ impl SessionBinding<'_> {
             ));
         }
         self.mark_secret(output, owner, finished.secret)?;
+        self.put_body_key(&finished)?;
         self.answered(|| {
             self.session.side_table_put_routed(
                 &self.route,
@@ -292,15 +294,43 @@ impl SessionBinding<'_> {
         })
     }
 
+    /// The key row of the sealed file `finished` wrote, on the run's route,
+    /// before the row naming it (FIX 5348). A key the route's scope holds
+    /// for the digest already stays: its file serves the body.
+    fn put_body_key(&self, finished: &super::records::FinishedOutput) -> Result<()> {
+        let Some(key) = finished.key.as_ref() else {
+            return Ok(());
+        };
+        self.answered(|| {
+            let dir = self.session.body_dir(self.route.target())?;
+            if let Some(held) = self.session.side_table_get(&BODY_KEYS, key.digest())?
+                && key.keeps(&held, &dir)?
+            {
+                return Ok(());
+            }
+            self.session
+                .side_table_put_routed(&self.route, &BODY_KEYS, key.digest(), key.row())
+        })
+    }
+
     fn get_raw_output(&self, output: &CodeRunRawOutput) -> Result<Option<Vec<u8>>> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);
-        let Some(body) =
-            self.answered(|| self.session.side_table_get(&RAW_OUTPUTS, &output.handle))?
+        let Some((body, key)) = self.answered(|| {
+            self.session.read_composed(|view, rtxn| {
+                let Some(body) = RAW_OUTPUTS.get(view, rtxn, &output.handle)? else {
+                    return Ok(None);
+                };
+                Ok(Some((
+                    body,
+                    body_key_row_in_txn(view, rtxn, &output.raw_blake3)?,
+                )))
+            })
+        })?
         else {
             return Ok(None);
         };
-        load_whole_body(output, body, || self.session.body_dirs()).map(Some)
+        load_whole_body(output, body, key.as_ref(), || self.session.body_dirs()).map(Some)
     }
 
     fn read_raw_output_range(
@@ -312,10 +342,16 @@ impl SessionBinding<'_> {
         validate_raw_output(output)?;
         let _pin = self.session.pin_result_body(output.raw_blake3);
         self.answered(|| {
-            self.session
-                .side_table_read_bytes(&RAW_OUTPUTS, &output.handle, |row| {
-                    read_body_row_range(output, row, offset, len, || self.session.body_dirs())
+            self.session.read_composed(|view, rtxn| {
+                let Some(row) = RAW_OUTPUTS.get_borrowed(view, rtxn, &output.handle)? else {
+                    return Ok(None);
+                };
+                let key = body_key_row_in_txn(view, rtxn, &output.raw_blake3)?;
+                read_body_row_range(output, &row, key.as_ref(), offset, len, || {
+                    self.session.body_dirs()
                 })
+                .map(Some)
+            })
         })
     }
 
@@ -797,13 +833,25 @@ impl<'a> ExecutorStorage<'a> {
         &self,
         output: &CodeRunRawOutput,
     ) -> Result<Option<Vec<u64>>> {
-        let dirs = match self {
-            Self::Canonical(vault) => vec![vault.store.body_dir()?],
-            Self::Session(binding) => binding.answered(|| binding.session.body_dirs())?,
+        let digest = &output.raw_blake3;
+        let (dirs, key) = match self {
+            Self::Canonical(vault) => {
+                let key = {
+                    let rtxn = vault.store.env.read_txn()?;
+                    body_key_row_in_txn(&vault.store, &rtxn, digest)?
+                };
+                (vec![vault.store.body_dir()?], key)
+            }
+            Self::Session(binding) => binding.answered(|| {
+                let key = binding
+                    .session
+                    .read_composed(|view, rtxn| body_key_row_in_txn(view, rtxn, digest))?;
+                Ok((binding.session.body_dirs()?, key))
+            })?,
         };
         Ok(dirs
             .iter()
-            .find_map(|dir| dir.read_line_index(&output.raw_blake3, output.raw_len)))
+            .find_map(|dir| dir.line_index_of(digest, output.raw_len, key.as_ref())))
     }
 
     /// A writer for one result body, where this run's bodies go.

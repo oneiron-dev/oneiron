@@ -222,6 +222,12 @@ impl OpenedDataKey {
         }
     }
 
+    /// The key for `context` of this data key (FIX 5348: a restore opens the
+    /// artifact's body-file keys with it).
+    pub(crate) fn subkey(&self, context: &str) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.key.derive(context, &self.vault_id))
+    }
+
     /// A seal for a vault restored from the artifact: its vault id and data
     /// key under a fresh incarnation. It creates the restored vault, whose
     /// rows carry the key's wraps; its second open checks the key against

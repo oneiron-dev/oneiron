@@ -937,21 +937,18 @@ impl OffRecordSession<'_> {
         table.get(&view, &rtxn, key)
     }
 
-    /// [`Self::side_table_get`]'s stored bytes, lent to `read` inside the
-    /// read: a base row is read in place, an overlay row from its copy.
-    pub(crate) fn side_table_read_bytes<K: SideKey, V, C: SideCodec<V>, R>(
+    /// Runs `read` over the composed view in one read snapshot, checked as
+    /// [`Self::side_table_get`] is: a base row is read in place, an overlay
+    /// row from its copy, and a body's row and its key row are read together
+    /// (FIX 5348).
+    pub(crate) fn read_composed<R>(
         &self,
-        table: &SideTable<K, V, C>,
-        key: &K,
-        read: impl FnOnce(&[u8]) -> Result<R>,
-    ) -> Result<Option<R>> {
+        read: impl FnOnce(&crate::store::SessionStoreView<'_>, &heed::RoTxn<'_>) -> Result<R>,
+    ) -> Result<R> {
         let view = self.read_view()?;
         let rtxn = self.vault.store.env.read_txn()?;
         self.participant_in_txn(&rtxn)?;
-        table
-            .get_borrowed(&view, &rtxn, key)?
-            .map(|bytes| read(&bytes))
-            .transpose()
+        read(&view, &rtxn)
     }
 
     /// Where a result body this session writes along `target` goes: the

@@ -8,7 +8,8 @@
 //! the image lists every one its rows name, and the snapshot seals each into
 //! the same artifact after the image. A restore streams them back, each chunk
 //! opened and checked, before the rows naming them land. Their line indexes
-//! are rebuilt, never restored.
+//! are rebuilt, never restored. A sealed vault's file goes as its envelope,
+//! its key row with the rows (`carried_bodies`, FIX 5348).
 //!
 //! Nothing leaves in the clear: the image and its bodies are one sealed
 //! artifact under a key derived from the vault data key (`artifact`), opened
@@ -17,6 +18,7 @@
 //! (`commitment`); a restore refuses a signer its key does not trust.
 mod artifact;
 mod authority_plane;
+mod carried_bodies;
 mod commitment;
 mod decisions;
 mod host_holds;
@@ -58,8 +60,12 @@ struct CheckpointImage {
     version: u16,
     created_at: u64,
     databases: BTreeMap<String, CanonicalRows>,
-    /// Each result body file the rows name: its BLAKE3 and length.
+    /// Each body file the rows name: its BLAKE3 and length.
     bodies: Vec<([u8; 32], u64)>,
+    /// The envelopes among them, by their place in `bodies`: a sealed
+    /// vault's files (FIX 5348). A plain vault's image names none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    sealed_bodies: BTreeMap<u64, carried_bodies::SealedFile>,
 }
 
 impl CheckpointImage {
@@ -261,7 +267,11 @@ fn read_image<'k>(
     let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != 2
         || image.created_at != opened.created_at
-        || image.bodies != opened.bodies.list()
+        || !carried_bodies::matches_artifact(
+            &image.bodies,
+            &image.sealed_bodies,
+            &opened.bodies.list(),
+        )
         || image.databases.len() != DB_MANIFEST.len()
         || DB_MANIFEST
             .iter()
@@ -408,7 +418,7 @@ impl Vault {
             }
         }
         let mut databases = BTreeMap::new();
-        let mut bodies = Vec::new();
+        let mut census = carried_bodies::BodyCensus::default();
         for entry in DB_MANIFEST {
             let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
                 if storage_tier(entry.name, key) != StorageTier::Canonical {
@@ -432,19 +442,10 @@ impl Vault {
                 if excluded_row {
                     return Ok(None);
                 }
-                if entry.name == "vault_meta"
-                    && let Some(body) = crate::code_run::code_run_body_file_of_row(key, value)
-                {
-                    bodies.push(body);
-                }
-                // A file-plane ASSET's body file goes with its row (FIX 3677).
-                #[cfg(unix)]
-                if entry.name == "entities"
-                    && let Some(body) =
-                        crate::store::asset_body_file_of_row(&self.store, &txn, key, value)?
-                {
-                    bodies.push(body);
-                }
+                // Every body file a row names goes with it: a result body's,
+                // a file-plane ASSET's (FIX 3677), each descriptor's, and a
+                // sealed file's key row (FIX 5348).
+                census.note(&self.store, &txn, entry.name, key, value)?;
                 let value = if entry.name == "job_records" {
                     rebuild::unlease_attempt(key, value)?
                 } else {
@@ -474,37 +475,20 @@ impl Vault {
             databases.insert(entry.name.into(), rows);
         }
         drop(txn);
-        // Two rows may name one file: it is carried once.
-        bodies.sort_unstable();
-        bodies.dedup();
+        // Two rows may name one file: it is carried once. Body files are
+        // immutable once named, so the ones the snapshot's rows name read the
+        // same after its transaction. Each is sealed into the artifact after
+        // the image, and never lands anywhere in the clear.
+        let files = census.finish(&self.store)?;
+        let (bodies, sealed_bodies) = files.image_bodies();
         let image = CheckpointImage {
             version: 2,
             created_at,
             databases,
             bodies,
+            sealed_bodies,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
-        // Body files are immutable once named, so the ones the snapshot's rows
-        // name read the same after its transaction. Each is sealed into the
-        // artifact after the image, and never lands anywhere in the clear.
-        #[cfg(unix)]
-        let body_dir = if image.bodies.is_empty() {
-            None
-        } else {
-            Some(self.store.body_dir()?)
-        };
-        let open_body = |digest: &[u8; 32], len: u64| -> Result<std::fs::File> {
-            #[cfg(unix)]
-            if let Some(file) = match &body_dir {
-                Some(dir) => dir.open_body(digest, len)?,
-                None => None,
-            } {
-                return Ok(file);
-            }
-            #[cfg(not(unix))]
-            let _ = (digest, len);
-            Err(Error::CorruptedIndex("code-run result body file missing"))
-        };
         let (id, head) = artifact::write_artifact(
             path,
             &key,
@@ -513,8 +497,8 @@ impl Vault {
             &link,
             created_at,
             &bytes,
-            &image.bodies,
-            open_body,
+            &files.streams(),
+            |index| files.open(index),
         )?;
         // A checkpoint the chain does not take is no checkpoint.
         if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
@@ -801,7 +785,7 @@ impl Vault {
     /// dropped in reverse, close the copy before the others go.
     #[allow(clippy::too_many_arguments)]
     fn restore_image(
-        image: CheckpointImage,
+        mut image: CheckpointImage,
         checkpoint_id: String,
         bodies: artifact::SealedBodies<'_>,
         destination: &Path,
@@ -859,28 +843,13 @@ impl Vault {
         fail_at(RestoreStep::FirstOpen)?;
         made.holds(&vault.store)?;
         // The bodies land, read back through their sealed chunks and each
-        // checked against its digest, before any row naming them does.
-        #[cfg(unix)]
+        // checked against its digest, before any row naming them does: a
+        // result body with its line index, an ASSET's file raw (FIX 3677),
+        // a sealed vault's envelope checked frame by frame under its key row
+        // (FIX 5348).
         if !image.bodies.is_empty() {
-            let mut bodies = bodies;
-            let target = vault.store.body_dir()?;
-            // A result body comes back with its line index; an ASSET's file
-            // comes back raw, checked as it streams (FIX 3677).
-            let results = image.databases["vault_meta"]
-                .iter()
-                .filter_map(|(key, value)| crate::code_run::code_run_body_file_of_row(key, value))
-                .map(|(digest, _)| digest)
-                .collect::<BTreeSet<_>>();
-            for (index, (digest, len)) in image.bodies.iter().enumerate() {
-                if results.contains(digest) {
-                    target.import(digest, *len, &mut bodies.body(index))?;
-                } else {
-                    target.import_asset_body(digest, *len, &mut bodies.body(index))?;
-                }
-            }
+            carried_bodies::restore(&vault, &mut image, bodies)?;
         }
-        #[cfg(not(unix))]
-        drop(bodies);
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
                 let db = vault

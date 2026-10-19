@@ -284,6 +284,10 @@ pub struct StoreCore {
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
     pub(crate) limit_watch: crate::limit_ask::LimitWatch,
+    /// A sealed vault's body-file wrap key, held from its open (FIX 5348):
+    /// every body file it writes is an envelope under a key it wraps.
+    #[cfg(unix)]
+    pub(crate) body_seal: super::BodySealSlot,
     /// Where this vault's queued code-run reader children are woken, none
     /// until a host installs one ([`crate::Vault::set_reader_job_runner`]).
     pub(crate) reader_job_runner: RwLock<Option<Arc<dyn crate::code_run::ReaderJobRunner>>>,

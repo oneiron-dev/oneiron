@@ -92,6 +92,14 @@ pub enum Purpose {
     /// its erase sweep opens the object (FIX 4271). A pad object's own capsules
     /// are 14 and never open as one.
     SealedPadAdmission = 16,
+    /// One body file's data key, wrapped under the vault's body-file wrap key. The
+    /// owner binds the file's digest, instance, length and format in `key_id`, and
+    /// the scope that may open it as the recipient.
+    BodyFileKey = 17,
+    /// One chunk, or the terminal record, of a body file, sealed under that file's
+    /// data key. The owner binds the format version, the instance, the chunk's index
+    /// and whether it is the last in `key_id`.
+    BodyFileChunk = 18,
 }
 
 impl Purpose {
@@ -113,6 +121,8 @@ impl Purpose {
             14 => Self::SealedKeyPads,
             15 => Self::SealedWorldAuthority,
             16 => Self::SealedPadAdmission,
+            17 => Self::BodyFileKey,
+            18 => Self::BodyFileChunk,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

@@ -491,7 +491,7 @@ impl Vault {
         // A file-plane ASSET lends its body read from its file, never the
         // manifest its row keeps (FIX 3677).
         if let Some(manifest) = crate::store::asset_file_in_txn(&self.store, txn, &id, &body)? {
-            return Ok(Some(Cow::Owned(self.asset_file_body(&manifest)?)));
+            return Ok(Some(Cow::Owned(self.asset_file_body(txn, &manifest)?)));
         }
         // A body migrated into an entity document resolves as
         // `port_entity_get` resolves it; only an unmigrated body is lent in place.

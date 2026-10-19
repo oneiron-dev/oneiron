@@ -737,6 +737,13 @@ impl Vault {
             .vault_key
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(key));
+        // Its body files are envelopes under keys this one wraps, from the
+        // vault's first write (FIX 5348).
+        #[cfg(unix)]
+        self.store.body_seal.admit(crate::store::BodySeal::new(
+            vault_id,
+            &Zeroizing::new(key.derive(crate::store::BODY_FILE_WRAP_CONTEXT, &vault_id)),
+        ));
         Ok(())
     }
 
