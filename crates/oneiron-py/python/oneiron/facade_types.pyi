@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1071 facade rows, 3663 declarations.
+Census: 1071 facade rows, 3664 declarations.
 Inputs: 1006 of 1071 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 960 of 1071 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -1962,6 +1962,7 @@ class RunnerBudgetReservationsView(TypedDict):
     local_only: bool
 class RunSettlementsRequest(TypedDict):
     run: str
+UsageEventOrigin = Literal["engine", "posted"]
 class RunRungSettlement(TypedDict):
     instance: str
     lease: str
@@ -1971,6 +1972,7 @@ class RunRungSettlement(TypedDict):
     offer: str
     route: str
     purpose: NotRequired[str | None]
+    source: UsageEventOrigin
     agent: NotRequired[str | None]
     cycle: NotRequired[str | None]
     item: NotRequired[str | None]
