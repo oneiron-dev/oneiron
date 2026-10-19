@@ -152,6 +152,19 @@ pub(super) async fn refuse_frame(
         .await;
 }
 
+/// Closes the socket on the server's own fault serving it (an export it
+/// could not make, FIX 5570 and 5849; an admission state it could not read,
+/// FIX 5850): `close_codes::INTERNAL_ERROR` stating `reason`. No frame of
+/// the peer's was refused, so no receipt is written.
+pub(super) async fn internal_fault_close(transport: &mut StoppingTransport, reason: &'static str) {
+    transport
+        .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
+            code: close_codes::INTERNAL_ERROR,
+            reason: Utf8Bytes::from_static(reason),
+        })))
+        .await;
+}
+
 /// After a read that ended the socket: when the transport ended it by
 /// refusing a frame (one that would not unwrap within the cap), receipts that
 /// refusal and closes with it. A read that ended any other way closes
