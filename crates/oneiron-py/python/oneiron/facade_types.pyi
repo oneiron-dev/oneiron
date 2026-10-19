@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1043 facade rows, 3513 declarations.
-Inputs: 980 of 1043 fully typed, 63 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 934 of 1043 fully typed, 109 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1049 facade rows, 3534 declarations.
+Inputs: 985 of 1049 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 939 of 1049 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -12574,6 +12574,205 @@ class SkillPackOutcomeProjection(TypedDict):
     persisted: bool
 class SkillPackCreditRequest(TypedDict):
     receipt_id: str
+ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach"]
+ModelTierRef = str
+ModelDisposition = Literal["offline", "served"]
+class ModelBinding(TypedDict):
+    model: ModelId
+    slot: ModelSlot
+    tier: ModelTierRef
+    route_models: NotRequired[dict[str, ModelId]]
+    disposition: NotRequired[ModelDisposition | None]
+    reads_audio: NotRequired[bool]
+SeatPrecedence = Literal["narrow_only", "seat_override"]
+DescriptionSource = Literal["owner", "measured", "benchmarks", "vendor"]
+class SeatPolicy(TypedDict):
+    default_reasoning_ladder: list[ReasoningEffort]
+    default_plain_ladder: list[ReasoningEffort]
+    gemini_ladder: list[ReasoningEffort]
+    model_ladders: NotRequired[dict[str, list[ReasoningEffort]]]
+    vault_default: NotRequired[ReasoningEffort | None]
+    purpose_defaults: NotRequired[dict[str, ReasoningEffort]]
+    global_default: NotRequired[ReasoningEffort | None]
+    vault_ceiling: ReasoningEffort
+    precedence: SeatPrecedence
+    evidence_order: list[DescriptionSource]
+    facet_max_bytes: int
+    line_max_bytes: int
+class ModelManifest(TypedDict):
+    version: int
+    roles: dict[str, ModelBinding]
+    routes: dict[str, ModelLocality]
+    verdict: NotRequired[VerdictBinding | None]
+    seat_policy: NotRequired[SeatPolicy | None]
+class TeacherProbeApproval(TypedDict):
+    probe_id: str
+    model: ModelId
+    binding_hash: str
+    f1_millionths: int
+    policy_hash: str
+    holder_ref: NotRequired[str | None]
+class ModelManifestReplace(TypedDict):
+    manifest: ModelManifest
+    teacher_approval: NotRequired[TeacherProbeApproval | None]
+class ModelRouteRead(TypedDict):
+    slot: ModelSlot
+class ModelRouteView(TypedDict):
+    slot: ModelSlot
+    pin: NotRequired[ModelLocality | None]
+    route: NotRequired[ModelLocality | None]
+class ModelRouteReplace(TypedDict):
+    slot: ModelSlot
+    route: ModelLocality
+class ModelRoleRead(TypedDict):
+    role: ModelRole
+class ModelRoleReceipt(TypedDict):
+    role: ModelRole
+    model: ModelId
+    revision: str
+    provider: str
+    slot: ModelSlot
+    tier: ModelTierRef
+    route: ModelLocality
+    catalog_revision: NotRequired[str | None]
+class CallPurposeOtherBody(TypedDict):
+    name: str
+class CallPurposeOther(TypedDict):
+    other: CallPurposeOtherBody
+CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval"] | CallPurposeOther
+class DeterministicFallback(TypedDict):
+    name: str
+    config: NotRequired[Any | None]
+class CallClassDurable(TypedDict):
+    kind: Literal["durable"]
+    fallback: DeterministicFallback
+class CallClassBestEffort(TypedDict):
+    kind: Literal["best_effort"]
+CallClass = CallClassDurable | CallClassBestEffort
+class TierPrecedence(TypedDict):
+    per_seat: NotRequired[ModelTierRef | None]
+    vault_policy: NotRequired[ModelTierRef | None]
+    purpose_default: NotRequired[ModelTierRef | None]
+    global_default: ModelTierRef
+    seat: NotRequired[ModelTierRef | None]
+class ResponseFormatText(TypedDict):
+    format: Literal["text"]
+class ResponseFormatJson(TypedDict):
+    format: Literal["json"]
+    schema: Any
+ResponseFormat = ResponseFormatText | ResponseFormatJson
+CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
+LlmMessageRole = Literal["system", "user", "assistant", "tool"]
+class ImageContentBase64(TypedDict):
+    source: Literal["base64"]
+    data: str
+class ImageContentUrl(TypedDict):
+    source: Literal["url"]
+    url: str
+ImageContent = ImageContentBase64 | ImageContentUrl
+class ContentPartText(TypedDict):
+    kind: Literal["text"]
+    text: str
+class ContentPartReasoning(TypedDict):
+    kind: Literal["reasoning"]
+    text: str
+    signature: NotRequired[str | None]
+class ContentPartToolCall(TypedDict):
+    kind: Literal["tool_call"]
+    call_id: str
+    name: str
+    input: Any
+class ContentPartToolResult(TypedDict):
+    kind: Literal["tool_result"]
+    call_id: str
+    output: Any
+    is_error: NotRequired[bool]
+class ContentPartImage(TypedDict):
+    kind: Literal["image"]
+    media_type: str
+    image: ImageContent
+class ContentPartAudio(TypedDict):
+    kind: Literal["audio"]
+    media_type: str
+    data: str
+ContentPart = ContentPartText | ContentPartReasoning | ContentPartToolCall | ContentPartToolResult | ContentPartImage | ContentPartAudio
+class LlmMessage(TypedDict):
+    role: LlmMessageRole
+    content: list[ContentPart]
+class LlmToolSpec(TypedDict):
+    name: str
+    description: str
+    input_schema: Any
+class LlmRequest(TypedDict):
+    model: ModelId
+    envelope: CallEnvelope
+    messages: list[LlmMessage]
+    tools: NotRequired[list[LlmToolSpec]]
+    params: NotRequired[dict[str, Any]]
+    provider_options: NotRequired[dict[str, Any]]
+class ModelRoleInputGenerate(TypedDict):
+    kind: Literal["generate"]
+    request: LlmRequest
+class ModelRoleInputEmbed(TypedDict):
+    kind: Literal["embed"]
+    text: str
+class ModelRoleInputTag(TypedDict):
+    kind: Literal["tag"]
+    text: str
+ModelRoleInput = ModelRoleInputGenerate | ModelRoleInputEmbed | ModelRoleInputTag
+class ModelRoleInvoke(TypedDict):
+    role: ModelRole
+    input: ModelRoleInput
+class LlmResponse(TypedDict):
+    message: LlmMessage
+    usage: LlmUsage
+    finish_reason: FinishReason
+class NerSpan(TypedDict):
+    message: int
+    start: int
+    end: int
+    label: str
+    confidence: float
+class CorefLink(TypedDict):
+    span: int
+    antecedent: int
+    confidence: NotRequired[float | None]
+class Vad(TypedDict):
+    valence: float
+    arousal: float
+    dominance: float
+class ContextLink(TypedDict):
+    span: int
+    turn: str
+    message: str
+    start: int
+    end: int
+    confidence: float
+SpeakerTarget = Literal["speaker", "addressee"]
+class SpeakerLink(TypedDict):
+    span: int
+    target: SpeakerTarget
+    confidence: float
+class EncoderOutput(TypedDict):
+    spans: list[NerSpan]
+    links: NotRequired[list[CorefLink]]
+    vad: NotRequired[Vad | None]
+    context_links: NotRequired[list[ContextLink]]
+    speaker_links: NotRequired[list[SpeakerLink]]
+    stack_sha16: NotRequired[str | None]
+class ModelRoleOutputGenerated(TypedDict):
+    kind: Literal["generated"]
+    response: LlmResponse
+class ModelRoleOutputEmbedded(TypedDict):
+    kind: Literal["embedded"]
+    vector: list[float]
+class ModelRoleOutputTagged(TypedDict):
+    kind: Literal["tagged"]
+    output: EncoderOutput
+ModelRoleOutput = ModelRoleOutputGenerated | ModelRoleOutputEmbedded | ModelRoleOutputTagged
+class ModelRoleInvocation(TypedDict):
+    receipt: ModelRoleReceipt
+    output: ModelRoleOutput
 class ProposalReplacement(TypedDict):
     before: str
     after: str
@@ -12746,92 +12945,12 @@ class PositiveRetireRequest(TypedDict):
     evidence_sequence: int
 class PositiveRetireReceipt(TypedDict):
     retired: bool
-class CallPurposeOtherBody(TypedDict):
-    name: str
-class CallPurposeOther(TypedDict):
-    other: CallPurposeOtherBody
-CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval"] | CallPurposeOther
-class DeterministicFallback(TypedDict):
-    name: str
-    config: NotRequired[Any | None]
-class CallClassDurable(TypedDict):
-    kind: Literal["durable"]
-    fallback: DeterministicFallback
-class CallClassBestEffort(TypedDict):
-    kind: Literal["best_effort"]
-CallClass = CallClassDurable | CallClassBestEffort
-ModelTierRef = str
-class TierPrecedence(TypedDict):
-    per_seat: NotRequired[ModelTierRef | None]
-    vault_policy: NotRequired[ModelTierRef | None]
-    purpose_default: NotRequired[ModelTierRef | None]
-    global_default: ModelTierRef
-    seat: NotRequired[ModelTierRef | None]
-class ResponseFormatText(TypedDict):
-    format: Literal["text"]
-class ResponseFormatJson(TypedDict):
-    format: Literal["json"]
-    schema: Any
-ResponseFormat = ResponseFormatText | ResponseFormatJson
-CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
-LlmMessageRole = Literal["system", "user", "assistant", "tool"]
-class ImageContentBase64(TypedDict):
-    source: Literal["base64"]
-    data: str
-class ImageContentUrl(TypedDict):
-    source: Literal["url"]
-    url: str
-ImageContent = ImageContentBase64 | ImageContentUrl
-class ContentPartText(TypedDict):
-    kind: Literal["text"]
-    text: str
-class ContentPartReasoning(TypedDict):
-    kind: Literal["reasoning"]
-    text: str
-    signature: NotRequired[str | None]
-class ContentPartToolCall(TypedDict):
-    kind: Literal["tool_call"]
-    call_id: str
-    name: str
-    input: Any
-class ContentPartToolResult(TypedDict):
-    kind: Literal["tool_result"]
-    call_id: str
-    output: Any
-    is_error: NotRequired[bool]
-class ContentPartImage(TypedDict):
-    kind: Literal["image"]
-    media_type: str
-    image: ImageContent
-class ContentPartAudio(TypedDict):
-    kind: Literal["audio"]
-    media_type: str
-    data: str
-ContentPart = ContentPartText | ContentPartReasoning | ContentPartToolCall | ContentPartToolResult | ContentPartImage | ContentPartAudio
-class LlmMessage(TypedDict):
-    role: LlmMessageRole
-    content: list[ContentPart]
-class LlmToolSpec(TypedDict):
-    name: str
-    description: str
-    input_schema: Any
-class LlmRequest(TypedDict):
-    model: ModelId
-    envelope: CallEnvelope
-    messages: list[LlmMessage]
-    tools: NotRequired[list[LlmToolSpec]]
-    params: NotRequired[dict[str, Any]]
-    provider_options: NotRequired[dict[str, Any]]
 class ModelStepRetryPolicy(TypedDict):
     max_attempts: int
 class ModelStepSubmit(TypedDict):
     step_key: str
     request: LlmRequest
     retry: NotRequired[ModelStepRetryPolicy]
-class LlmResponse(TypedDict):
-    message: LlmMessage
-    usage: LlmUsage
-    finish_reason: FinishReason
 LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
 class UnsupportedCapability(TypedDict):
     capability: LlmCapability
@@ -13457,15 +13576,6 @@ class ModelTrialComplete(TypedDict):
     question: EntityId
     trial: EntityId
     assessment: TrialAssessment
-ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach"]
-ModelDisposition = Literal["offline", "served"]
-class ModelBinding(TypedDict):
-    model: ModelId
-    slot: ModelSlot
-    tier: ModelTierRef
-    route_models: NotRequired[dict[str, ModelId]]
-    disposition: NotRequired[ModelDisposition | None]
-    reads_audio: NotRequired[bool]
 class ModelBindingPropose(TypedDict):
     question: EntityId
     trial: EntityId
@@ -13486,13 +13596,6 @@ class ModelBindingProposalRef(TypedDict):
     proposal: EntityId
 class ModelBindingRead(TypedDict):
     role: ModelRole
-class TeacherProbeApproval(TypedDict):
-    probe_id: str
-    model: ModelId
-    binding_hash: str
-    f1_millionths: int
-    policy_hash: str
-    holder_ref: NotRequired[str | None]
 class ModelBindingAccept(TypedDict):
     proposal: EntityId
     teacher_approval: NotRequired[TeacherProbeApproval | None]

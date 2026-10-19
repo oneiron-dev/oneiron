@@ -24,7 +24,8 @@
 //!   operation.
 //! - Reverse rematerialization mirrors a MESSAGE's pins beside it. The quote
 //!   door hands the message to the live mirror, which mirrors a new pin into
-//!   the live window that carries the message.
+//!   the live window that carries the message, or faults in the message's
+//!   window when none is loaded (FIX 3462, `cold_pin_windows`).
 //! - Forward rematerialization and Observer B install each carried pin here
 //!   (`Vault::merge_replicated_quote_pin_in_txn`).
 //! - Every export, and the erase sweep, drop each pin of a message or reply
@@ -257,6 +258,45 @@ pub(crate) fn mirror_document_pins(
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
     }
     Ok(wrote)
+}
+
+/// The base windows a quote pin flush faults in (FIX 3462): the window of
+/// each MESSAGE among `rows`, which a local write queued, that holds a pin,
+/// by the message's learned month, where `loaded` holds none of it. A pin
+/// rides only beside the message it quotes, so a quote of a message older
+/// than every loaded window rode nowhere until that window opened.
+pub(crate) fn cold_pin_windows(
+    vault: &Vault,
+    rows: &BTreeSet<EntityId>,
+    loaded: &[WindowKey],
+) -> Vec<WindowKey> {
+    let Ok(rtxn) = vault.store.env.read_txn() else {
+        return Vec::new();
+    };
+    let mut keys = Vec::new();
+    for id in rows {
+        let Some(raw) = vault.get_raw_in(&rtxn, id).ok().flatten() else {
+            continue;
+        };
+        if crate::batch::EntityMetadataHeader::parse(&raw)
+            .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_MESSAGE)
+        {
+            continue;
+        }
+        let Ok(key) = super::residence::residence_window_for_blob(&raw) else {
+            continue;
+        };
+        if key.world().is_none()
+            && !loaded.contains(&key)
+            && !keys.contains(&key)
+            && vault
+                .message_quote_pins_in_txn(&rtxn, id)
+                .is_ok_and(|pins| !pins.is_empty())
+        {
+            keys.push(key);
+        }
+    }
+    keys
 }
 
 /// Whether `pin`, held here, takes the place of `held`, the carrier the

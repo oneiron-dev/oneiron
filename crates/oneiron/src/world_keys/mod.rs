@@ -82,7 +82,7 @@ pub use self::root_doors::{ActivatedRoot, AnchoredMachine, KitConfirmation, Root
 pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
 pub use self::session::WorldKeyFrontierCheck;
-pub(crate) use self::session::WorldKeySession;
+pub(crate) use self::session::{CountersignStage, WorldKeySession};
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::{

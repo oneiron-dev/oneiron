@@ -39,9 +39,9 @@ use crate::models::RoleRefusal;
 const LAUNCH_PURPOSE: &str = "team.pattern_launch";
 /// The host's frame after the skill's own text: the start, and nothing later.
 const LAUNCH_FRAME: &str = "The text above is the workflow skill a planned team runs. Write \
-     only its start, before any agent runs: the briefing the leader reads after the owner's \
+     only its start, before any agent runs: the briefing the leader reads after the supplied \
      prompt, one briefing for each member the plan launches, in launch order, and the axis the \
-     team runs on. The task data names what was asked, the owner's prompt, the plan and the \
+     team runs on. The task data names what was asked, the supplied prompt, the plan and the \
      skill's revision. Leave the workflow's later steps, its reports and its decision, to the \
      team, and call no tool. Answer with one JSON object that matches the schema below, and \
      nothing else.";
@@ -129,6 +129,9 @@ impl HostPatternLaunchRunner {
     /// thread of its own, since a caller may sit inside a runtime, which
     /// cannot block on another.
     fn capture(&self, request: LlmRequest, run_id: String) -> Result<LlmResponse> {
+        // A running turn to shutdown's grace and the Dreamer's idle sample,
+        // until the capture returns on any path (FIX 4639).
+        let _turn = self.ai.enter_turn();
         let mut call = self
             .ai
             .admit_role(&self.vault, CHAT_ROLE, request)
@@ -231,8 +234,9 @@ pub(in crate::server) fn launch_spec_schema(members: u32) -> Value {
     })
 }
 
-/// The task data a pattern run reads: what was asked, the owner's prompt,
-/// the frozen plan's team, and the skill revision it runs.
+/// The task data a pattern run reads: what was asked, the asker's prompt
+/// (the owner's, or a leased agent's briefing or need), the frozen plan's
+/// team, and the skill revision it runs.
 #[derive(Serialize)]
 struct LaunchTask<'a> {
     asked: &'a SpawnNeed,
