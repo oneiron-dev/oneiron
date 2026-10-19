@@ -63,8 +63,8 @@ pub(super) struct WorkRequest {
     narrow_only: bool,
 }
 
-/// A request's one result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// A request's one result. `Clone`, not `Copy`, as its outcome is.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct OwnerWorkAnswer {
     /// The result's signed entry.
     pub(crate) entry: AuthorityEntryHash,
@@ -382,7 +382,7 @@ fn apply_result(
         OwnerWorkAnswer {
             entry: hash,
             executor: result.executor,
-            outcome: result.outcome,
+            outcome: result.outcome.clone(),
         },
     );
     Ok(())
@@ -409,19 +409,19 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
     for (request, answer) in &right.results {
-        match merged.results.get(request).copied() {
+        match merged.results.get(request) {
             Some(held) if held.entry == answer.entry => {}
             Some(held) => {
                 let (stands, without) = if held.entry < answer.entry {
-                    (held, *answer)
+                    (held.clone(), answer.entry)
                 } else {
-                    (*answer, held)
+                    (answer.clone(), held.entry)
                 };
-                merged.refused.insert(without.entry);
+                merged.refused.insert(without);
                 merged.results.insert(*request, stands);
             }
             None => {
-                merged.results.insert(*request, *answer);
+                merged.results.insert(*request, answer.clone());
             }
         }
     }

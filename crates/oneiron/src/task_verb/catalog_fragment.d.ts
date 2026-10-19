@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3593 declarations.
+// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3600 declarations.
 // Replies: 969 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -116,7 +116,8 @@ declare namespace Sdk {
   type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved";
   type AgentHealthPadRead = { state: "read"; read?: EntityId | null; pads: number } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" } | { state: "refused"; code: string };
   type AgentHealthCoachRoute = "skill_edit" | "prompt_inject" | "neither";
-  type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string };
+  type AgentHealthSkillTarget = { skill: string; version: string };
+  type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string; target?: AgentHealthSkillTarget | null };
   type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null };
   type AgentHealthApplicationState = "pending" | "admitted" | "rejected";
   type AgentHealthCoachApplication = { by: EntityId; at: number; skill: EntityId; version: string; instructions: string; candidate: EntityId; state: AgentHealthApplicationState; verdict?: EntityId | null; disposition?: string | null; updated_at: number };
@@ -131,8 +132,9 @@ declare namespace Sdk {
   type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string };
   type RunTree = { roots: RunTreeNode[]; repairs: RunTreeRepair[] };
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
+  type AgentHealthLoadedSkill = { skill: string; name: string; version: string; active: boolean; instructions: string };
   type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean };
-  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; prompt_inject?: AgentHealthPromptInject | null };
+  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; skills?: AgentHealthLoadedSkill[]; prompt_inject?: AgentHealthPromptInject | null };
   type ConcernOutcome = "confirmed" | "dismissed" | "unresolved";
   type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome };
   type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number };
@@ -3550,7 +3552,12 @@ declare namespace Sdk {
   type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string } | { kind: "asked"; ask: string; ask_seq?: number | null };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
-  type MemorySearchOutput = { results: MemorySearchHit[] };
+  type SessionHookPhase = "pre" | "post";
+  type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string } | { kind: "unread"; reason: string };
+  type SessionHookNotKept = "budget_full" | "custody" | "no_retention" | "withheld_from_base";
+  type SessionHookReceipt = { kind: "kept"; id: string } | { kind: "not_kept"; why: SessionHookNotKept } | { kind: "no_run" };
+  type SessionHookDisposition = { hook?: string | null; phase: SessionHookPhase; state: SessionHookState; receipt: SessionHookReceipt };
+  type MemorySearchOutput = { results: MemorySearchHit[]; hooks?: SessionHookDisposition[] };
   type MemoryTimeRange = { start: number; end: number };
   type MemoryClaimInput = { id: string; predicate: string; subject: string; value: unknown; confidence?: number | null; occurred?: MemoryTimeRange | null; learnedAt?: number | null };
   type MemoryWriteOutput = { id: EntityId };
