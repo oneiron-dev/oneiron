@@ -87,12 +87,9 @@ fn live_skill_call(
         runtime,
         root.token(),
     );
-    // Read before the record takes the step's calls, failed or not.
-    let (skills, read) = std::mem::take(&mut host.callable_rows);
-    *rows = host
-        .result_rows()
-        .zip(read)
-        .map(|(results, read)| [results, read, skills].concat());
+    // Read before the record takes the step's calls, failed or not: the
+    // run's result rows already hold the callable rows (FIX 5460).
+    *rows = host.result_rows();
     // Keep all recorded nested calls even when the callable failed. Loading
     // and a callable invocation witness never settle the attempt's outcome.
     record.bridge_calls.extend(host.bridge_calls);

@@ -377,10 +377,14 @@ pub(crate) fn answer_as_agent(
         None => memory,
     };
     let name = verb.as_str();
+    // The rows an `ai.verdict`'s evidence refs and image resolved to (FIX 5461).
+    let mut evidence = Vec::new();
     let output = if served_by_host(verb) {
         verb_hook_boundary::row(&memory, name, input, |input| {
             sdk::validate_input(name, &input)?;
-            HELD_IMAGE.sync_scope(held, || host_row(server, actor, &memory, verb, input, line))
+            HELD_IMAGE.sync_scope(held, || {
+                host_row(server, actor, &memory, verb, input, line, &mut evidence)
+            })
         })?
     } else {
         sdk::invoke(&memory, name, input)?
@@ -390,7 +394,9 @@ pub(crate) fn answer_as_agent(
             .ai
             .turn_landed_by(server.vault(), actor.entity_ref(), actor.actor_class());
     }
-    Ok((output, producers.take()))
+    let mut rows = producers.take();
+    rows.append(&mut evidence);
+    Ok((output, rows))
 }
 
 /// The agent's own surface for one call, on this device.
@@ -441,7 +447,8 @@ fn served_by_host(verb: AgentVerb) -> bool {
 }
 
 /// One row the host serves, asked for the agent: never for a principal or
-/// a time the input names.
+/// a time the input names. An `ai.verdict` keeps the rows its evidence
+/// resolved to in `evidence`.
 fn host_row(
     server: &SyncServer,
     actor: WriteActor,
@@ -449,6 +456,7 @@ fn host_row(
     verb: AgentVerb,
     input: Value,
     line: Option<&RunAdmission>,
+    evidence: &mut Vec<EntityId>,
 ) -> MemoryResult<Value> {
     let (principal, class) = (actor.entity_ref(), actor.actor_class());
     let vault = server.vault();
@@ -489,7 +497,7 @@ fn host_row(
                 &request,
                 // It bills the payer the run's line binds (FIX 3574).
                 line.and_then(RunAdmission::payer),
-                &mut Vec::new(),
+                evidence,
             )?)
         }
         AgentVerb::VaultGraphAsk => {

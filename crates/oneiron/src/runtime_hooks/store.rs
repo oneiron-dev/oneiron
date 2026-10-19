@@ -39,6 +39,13 @@ pub(super) const RUN_INDEX: SideTable<(EntityId, u64, RunKey), HookRunRef, Named
 /// The derivation envelope's model id for a body that calls no model.
 const HOOK_MODEL_ID: &str = "hook-js";
 
+/// Whether a fact run that did not pin every verdict (the pins passed their
+/// byte bound) screens its Hook receipt by its read pins alone, as before its
+/// verdicts' evidence counted (FIX 5459). Off, such a run screens unknown and
+/// a caller off this device no longer reads its receipt: a byte bound would
+/// refuse a read (FIX 5764).
+const INCOMPLETE_VERDICT_PINS_KEEP_READ_PIN_SCREEN: bool = true;
+
 /// The ARCH-0035 derivation envelope shape, for one hook run. Copied rather
 /// than shared, as `SavedQueryDerivationEnvelope` is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -322,9 +329,13 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
 }
 
 /// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
-/// run's memo's reads, else a verb run's saved record's. `None` when the key
-/// names no kept run. The receipt family screens a Hook receipt on them for
-/// a caller off this device (FIX 1119).
+/// run's memo's reads and the rows each of its verdicts' evidence resolved
+/// to (FIX 5459), else a verb run's saved record's reads. A fact run that
+/// did not pin every verdict lists its reads alone while
+/// [`INCOMPLETE_VERDICT_PINS_KEEP_READ_PIN_SCREEN`]. `None` when the key
+/// names no kept run, or a fact run pinned a verdict without its evidence
+/// rows. The receipt family screens a Hook receipt on them for a caller off
+/// this device (FIX 1119).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
     hook_run_read_rows_in(&vault.store, &rtxn, run_key)
@@ -341,10 +352,25 @@ fn hook_run_read_rows_in(
     let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
         return Ok(None);
     };
-    let reads = match MEMOS.get(dbs, rtxn, &key)? {
-        Some(memo) => memo.reads,
+    let (reads, evidence) = match MEMOS.get(dbs, rtxn, &key)? {
+        Some(memo) if !memo.verdicts_complete => {
+            if !INCOMPLETE_VERDICT_PINS_KEEP_READ_PIN_SCREEN {
+                return Ok(None);
+            }
+            (memo.reads, Vec::new())
+        }
+        Some(memo) => {
+            let mut evidence = Vec::new();
+            for verdict in memo.verdicts {
+                let Some(rows) = verdict.evidence else {
+                    return Ok(None);
+                };
+                evidence.extend(rows);
+            }
+            (memo.reads, evidence)
+        }
         None => match super::verb::VERB_RUNS.get(dbs, rtxn, &key)? {
-            Some(run) => run.reads,
+            Some(run) => (run.reads, Vec::new()),
             None => return Ok(None),
         },
     };
@@ -352,6 +378,7 @@ fn hook_run_read_rows_in(
         reads
             .into_iter()
             .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+            .chain(evidence)
             .collect(),
     ))
 }

@@ -91,13 +91,19 @@ pub(super) struct RecordingJsHost<'a, 's> {
     admitted_skill_seq: Option<u64>,
     /// Each stored skill this host's callable calls read and loaded, and the
     /// rows of every result a read took from another run (`None` once one
-    /// kept no set): what a callable's answer stands on beside
+    /// kept no set): what a callable's answer stands on, counted in
     /// [`Self::result_rows`].
     pub(super) callable_rows: (Vec<EntityId>, Option<Vec<EntityId>>),
 }
 
 /// The name a reader child reads its parent's source by.
 const READER_SOURCE_NAME: &str = "src";
+
+/// Whether the gate an act takes over the run's results (a store, a fold, a
+/// summary, a spawn) counts the stored skills its callables loaded and the
+/// other runs' results they read, as each read's gate does (FIX 5460). Off:
+/// such an act runs as it did before those rows were counted.
+const ACT_GATES_COUNT_CALLABLE_ROWS: bool = false;
 
 /// The longest recipe a fold's `store` may name for its receipt, as JSON.
 const RECEIPT_RECIPE_MAX_BYTES: usize = 4096;
@@ -593,8 +599,19 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 
     /// The rows the run's results were served from: the conservative union
     /// of every row its recorded and this step's verb answers were served
-    /// from, or none known when one answer kept no set.
+    /// from, each stored skill its callables loaded and the rows of each
+    /// other run's result they read (FIX 5460), or none known when one kept
+    /// no set.
     pub(super) fn result_rows(&self) -> Option<Vec<EntityId>> {
+        let (skills, read) = &self.callable_rows;
+        self.verb_rows()
+            .zip(read.as_deref())
+            .map(|(verbs, read)| [verbs.as_slice(), read, skills.as_slice()].concat())
+    }
+
+    /// The rows the run's recorded and this step's verb answers were served
+    /// from, or none known when one answer kept no set.
+    fn verb_rows(&self) -> Option<Vec<EntityId>> {
         self.recorded_rows
             .as_ref()
             .zip(agent_verb_rows_of(&self.bridge_calls))
@@ -886,14 +903,29 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         &mut self,
         target: &JsResultTarget,
     ) -> Result<std::result::Result<ResultRead, serde_json::Value>> {
-        Ok(self.checked_read(target)?.map(|(read, _)| read))
+        Ok(self
+            .checked_read_counting(target, true)?
+            .map(|(read, _)| read))
     }
 
-    /// [`Self::checked_result`], with the rows the read was checked against:
-    /// the run's own and the ones its owner's answers were served from.
+    /// [`Self::checked_result`] for an act over the run's results, with the
+    /// rows the read was checked against: its gate counts the callable rows
+    /// only while [`ACT_GATES_COUNT_CALLABLE_ROWS`].
     fn checked_read(
         &mut self,
         target: &JsResultTarget,
+    ) -> Result<std::result::Result<(ResultRead, Option<Vec<EntityId>>), serde_json::Value>> {
+        self.checked_read_counting(target, ACT_GATES_COUNT_CALLABLE_ROWS)
+    }
+
+    /// The read both gates take, with the rows it was checked against: the
+    /// run's own and the ones its owner's answers were served from, with the
+    /// callable rows when `callable`. Only a read the caller may take adds
+    /// another run's rows to the callable rows.
+    fn checked_read_counting(
+        &mut self,
+        target: &JsResultTarget,
+        callable: bool,
     ) -> Result<std::result::Result<(ResultRead, Option<Vec<EntityId>>), serde_json::Value>> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
@@ -910,21 +942,23 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             return Ok(Err(result_refusal("reader_task_settled")));
         }
         self.admit_result_read(storage)?;
+        let own = if callable {
+            self.result_rows()
+        } else {
+            self.verb_rows()
+        };
+        let rows = match found.rows.clone() {
+            None => own,
+            Some(extra) => own.zip(extra).map(|(run, extra)| [run, extra].concat()),
+        };
+        if self.withholds_rows(rows.clone())? {
+            return Ok(Err(result_refusal("result_withheld")));
+        }
         if let Some(extra) = &found.rows {
             let held = self.callable_rows.1.take();
             self.callable_rows.1 = held
                 .zip(extra.clone())
                 .map(|(held, extra)| [held, extra].concat());
-        }
-        let rows = match found.rows {
-            None => self.result_rows(),
-            Some(extra) => self
-                .result_rows()
-                .zip(extra)
-                .map(|(run, extra)| [run, extra].concat()),
-        };
-        if self.withholds_rows(rows.clone())? {
-            return Ok(Err(result_refusal("result_withheld")));
         }
         let whole = found
             .within
@@ -1010,7 +1044,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         if self.resolve_result(&target.reference).is_none() {
             return Ok(Err("unknown_handle".to_owned()));
         }
-        let read = match self.checked_result(&target)? {
+        let read = match self.checked_read(&target)?.map(|(read, _)| read) {
             Ok(read) => read,
             Err(refused) => {
                 let code = refused

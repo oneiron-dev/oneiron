@@ -22630,7 +22630,7 @@ pub struct OfferListRequest {
     pub pending_only: Option<bool>,
 }
 
-/// `oneiron::skill_optimize::offer::OfferModelPin`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferModelPin`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfferModelPin {
@@ -22646,7 +22646,7 @@ pub struct OfferModelPin {
     pub content_hash: Option<String>,
 }
 
-/// `oneiron::skill_optimize::offer::OfferCandidate`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferCandidate`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OfferCandidate {
     #[serde(rename = "stock")]
@@ -22669,7 +22669,7 @@ pub enum OfferCandidate {
     },
 }
 
-/// `oneiron::skill_optimize::offer::OfferCost`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferCost`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfferCost {
@@ -22697,7 +22697,7 @@ pub struct OfferCost {
     pub payback_months: Option<f64>,
 }
 
-/// `oneiron::skill_optimize::offer::OfferOption`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferOption`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfferOption {
@@ -22713,7 +22713,7 @@ pub struct OfferOption {
     pub evidence_refs: Vec<String>,
 }
 
-/// `oneiron::skill_optimize::offer::SeatWorkload`.
+/// `oneiron::skill_optimize::offer::snapshot::SeatWorkload`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SeatWorkload {
@@ -22741,7 +22741,7 @@ pub struct SeatWorkload {
     pub receipt_refs: Vec<String>,
 }
 
-/// `oneiron::skill_optimize::offer::OfferEvidence`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfferEvidence {
@@ -22763,7 +22763,7 @@ pub struct OfferEvidence {
     pub risk: Option<String>,
 }
 
-/// `oneiron::skill_optimize::offer::ComputeDestination`.
+/// `oneiron::skill_optimize::offer::snapshot::ComputeDestination`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ComputeDestination {
     #[serde(rename = "on_device")]
@@ -22782,7 +22782,7 @@ pub enum ComputeDestination {
     },
 }
 
-/// `oneiron::skill_optimize::offer::TrainingOffer`.
+/// `oneiron::skill_optimize::offer::snapshot::TrainingOffer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TrainingOffer {
@@ -22832,11 +22832,17 @@ pub struct TrainingOffer {
     pub check_at: u64,
     #[serde(rename = "offered_at")]
     pub offered_at: u64,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
     #[serde(rename = "digest")]
     pub digest: String,
 }
 
-/// `oneiron::skill_optimize::offer::OfferAnswer`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferAnswer`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OfferAnswer {
     #[serde(rename = "keep_baseline")]
@@ -22851,7 +22857,7 @@ pub enum OfferAnswer {
     Postpone,
 }
 
-/// `oneiron::skill_optimize::offer::OfferIntent`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferIntent`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum OfferIntent {
     #[serde(rename = "switch")]
@@ -22876,7 +22882,7 @@ pub enum OfferIntent {
     },
 }
 
-/// `oneiron::skill_optimize::offer::OfferAnswerRecord`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferAnswerRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfferAnswerRecord {
@@ -22896,7 +22902,7 @@ pub struct OfferAnswerRecord {
     pub at: u64,
 }
 
-/// `oneiron::skill_optimize::offer::OfferCheck`.
+/// `oneiron::skill_optimize::offer::snapshot::OfferCheck`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct OfferCheck {
@@ -22924,6 +22930,12 @@ pub struct OfferCheck {
     pub note: Option<String>,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::skill_optimize::offer_doors::OfferView`.
