@@ -118,6 +118,10 @@ pub enum Purpose {
     /// mints or retires, never a key. The owner binds the frame's header in
     /// `recipient`.
     CustodyLogFrame = 22,
+    /// One home-to-home handoff: the typed rows a vault's old home froze,
+    /// sealed to its new home's machine (FIX 5661). The owner binds the
+    /// handoff's id in `key_id` and the target machine as the recipient.
+    HomeHandoff = 23,
 }
 
 impl Purpose {
@@ -145,6 +149,7 @@ impl Purpose {
             20 => Self::CustodyCompartment,
             21 => Self::CustodyCompartmentKey,
             22 => Self::CustodyLogFrame,
+            23 => Self::HomeHandoff,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }
