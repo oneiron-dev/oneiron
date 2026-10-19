@@ -17,6 +17,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
             if [
                 b"dreamer:budget:".as_slice(),
                 b"dreamer:budget_reservation:",
+                // The host's last home-node candidates are this node's own
+                // topology input, never an image's (DOOR-101 PR2a).
+                b"dreamer:home_candidates:v1",
                 b"dreamer:parked:",
                 b"dreamer:peer_wait",
                 b"dreamer:trap_binding:",

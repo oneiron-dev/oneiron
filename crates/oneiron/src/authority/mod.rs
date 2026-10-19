@@ -66,6 +66,7 @@ mod history_coverage;
 mod history_fetch;
 mod history_repair;
 mod history_transfer;
+mod home_pick;
 mod host_action;
 mod host_actor;
 mod host_re_root;
@@ -89,6 +90,7 @@ mod mesh_machine;
 mod observation_policy;
 mod op_apply;
 mod owner_act;
+mod owner_choice;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
@@ -200,6 +202,9 @@ pub use history_fetch::{
 };
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
+pub(crate) use home_pick::{
+    HomePickHead, HomePickState, election_home_pick_in_txn, home_pick_in_txn,
+};
 pub use host_action::HostActionAuthority;
 pub use host_re_root::{HostReRoot, RetiredSlip};
 pub use ingest_observation::*;
@@ -214,13 +219,17 @@ pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
 pub use machine_write::machine_claim_transcript;
-pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
+pub use mesh_machine::{
+    MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
+    MeshMachineBinding,
+};
 pub use observation_policy::*;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
     owner_act_signer_admits, owner_live_in_fold,
 };
+pub use owner_choice::OwnerChoiceHead;
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{
@@ -272,7 +281,7 @@ pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;
 pub(crate) use readonly_fold::{
-    AuthorityCachedFold, advance_authority_cache_generation,
+    AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
     authority_fold_readonly_for_store_in_txn,
 };
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};

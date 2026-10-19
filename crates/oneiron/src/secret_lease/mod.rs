@@ -123,8 +123,10 @@ pub use self::grant::{
     SecretGrantRedemption, SecretGrantRef, SecretGrantStatus, SecretGrantTarget,
     SecretGrantTeardown, SecretLeaseGrant,
 };
+pub use self::storage::{ACTOR_ERASE_REVEAL_LEASE, RevealLeaseErase};
 pub(crate) use self::storage::{
-    stamp_reveal_lease_in_txn, teardown_local_registration_in_txn, write_secret_lease_in_txn,
+    erase_lease_actor_in_txn, erase_receipt_actor_in_txn, stamp_reveal_lease_in_txn,
+    teardown_local_registration_in_txn, write_secret_lease_in_txn,
 };
 pub(crate) use self::types::VaultInstant;
 pub use self::types::{

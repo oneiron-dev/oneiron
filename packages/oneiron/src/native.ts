@@ -213,6 +213,9 @@ vaultInboxGroups(input: unknown): unknown
 vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
+vaultSkillsBootstrap(input: unknown): unknown
+vaultSkillHubsDefaultGet(input: unknown): unknown
+vaultSkillsRestoredefaults(input: unknown): unknown
 vaultSkillHubsPut(input: unknown): unknown
 vaultSkillHubsGet(input: unknown): unknown
 vaultSkillHubsPublishersAdmit(input: unknown): unknown
@@ -292,6 +295,11 @@ vaultSlimResumeStep(input: unknown): unknown
 vaultSlimDropHeavy(input: unknown): unknown
 vaultSlimResume(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
+vaultMeshIdentity(input: unknown): unknown
+vaultMeshBindMachine(input: unknown): unknown
+vaultMeshSetAlpnGrant(input: unknown): unknown
+vaultMeshRevokeMachine(input: unknown): unknown
+vaultMeshDial(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
@@ -665,6 +673,7 @@ vaultArtifactsWaits(requestJson: string): string
 vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsAsk(input: unknown): unknown
+vaultArtifactsAdmit(input: unknown): unknown
 vaultCriticReview(input: unknown): unknown
 vaultArtifactsProposeOutline(input: unknown): unknown
 vaultArtifactsOutline(input: unknown): unknown
@@ -780,6 +789,7 @@ aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
 aiVerdict(input: unknown): unknown
 vaultGraphAsk(input: unknown): unknown
+vaultGraphAdmit(input: unknown): unknown
 vaultQuestionsCreate(input: unknown): unknown
 vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
@@ -908,6 +918,7 @@ vaultConsolidationStatus(input: unknown): unknown
 vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
+vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationPin(input: unknown): unknown
