@@ -43335,7 +43335,7 @@
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 7,
       "struct": 2
@@ -43391,6 +43391,23 @@
       "crate-vis": 17,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CustodyAnchorRoot",
+      "CustodyRecovery",
+      "CustodyStatus"
+     ],
+     "path": "src/recovery/checkpoint/custody_head.rs",
+     "purpose": "Custody heads at the vault's surface (KS-4A1, FIX 5685): publishing a vault's exterior key custody beside…",
+     "surface": {
+      "const": 5,
+      "crate-vis": 1,
+      "fn": 9,
+      "struct": 3
      }
     },
     {
@@ -43641,7 +43658,7 @@
      "surface": {
       "enum": 1,
       "fn": 19,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 3
      }
     },
@@ -43719,6 +43736,16 @@
      "notable": [],
      "path": "src/recovery/checkpoint/restore_class/vault_meta_s_z.rs",
      "purpose": "The restore class of every canonical `vault_meta`, `s` to `z` family, in declaration order",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/snapshot.rs",
+     "purpose": "Taking one sealed checkpoint image: the snapshot behind [`Vault::snapshot_checkpoint`] and…",
      "surface": {
       "crate-vis": 1
      }
@@ -50433,7 +50460,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 29
      }
     },
     {
@@ -50614,13 +50641,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/anchor.rs",
+     "purpose": "The custody anchor (KS-4, FIX 5685): one lineage's current position, kept where neither the vault's image…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/files.rs",
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 25
      }
     },
     {
@@ -50630,7 +50667,17 @@
      "path": "src/store/key_custody/fork.rs",
      "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head.rs",
+     "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
+     "surface": {
+      "crate-vis": 14
      }
     },
     {
@@ -50640,7 +50687,17 @@
      "path": "src/store/key_custody/identity.rs",
      "purpose": "Typed custody identities and their codecs: who a custody entry belongs to (vault, kind, item, generation)…",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 41
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/log.rs",
+     "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
+     "surface": {
+      "crate-vis": 32
      }
     },
     {
@@ -50650,7 +50707,27 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 27
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/publish.rs",
+     "purpose": "Publishing one lineage's custody (KS-4, FIX 5685): its keyless log, then its latest sealed head, to a…",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/recovery.rs",
+     "purpose": "Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image…",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -50660,7 +50737,7 @@
      "path": "src/store/key_custody/retirement.rs",
      "purpose": "Durable retirement intents and the one finisher that carries them out",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -50741,7 +50818,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "mod": 1,
       "re-export": 13
      }
@@ -63372,7 +63449,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 62,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63617,7 +63694,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 86,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63843,7 +63920,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3933,
+   "source_files": 3940,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79053,6 +79130,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openapi/left_slip_paths.rs",
+     "purpose": "A removed device's own routes in the OpenAPI document (OF-150, OF-158, FIX 1300), moved whole out of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openapi/mod.rs",
      "purpose": "OpenAPI document assembly for the HTTP API",
      "surface": {
@@ -79076,7 +79163,7 @@
      "path": "src/api/openapi/owner_paths.rs",
      "purpose": "The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 3
      }
     },
     {
@@ -81278,8 +81365,18 @@
      "path": "src/commands/owner/recovery_kit.rs",
      "purpose": "`oneiron recovery-kit`: the world kit's ceremony on a stopped vault (OF-173), and the kit unlock `oneiron…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_kit/custody.rs",
+     "purpose": "The kit's side of a custody head (KS-4A1, FIX 5685)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81307,8 +81404,18 @@
      "path": "src/commands/owner/vault_key.rs",
      "purpose": "The vault data key on a stopped vault and on a clean host (OF-570 E1): `oneiron vault-key` enrolls and lists…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/vault_key/fresh_restore.rs",
+     "purpose": "`oneiron restore` where no vault is yet: the restore on a clean host, its key unlocked the way the owner…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -84601,13 +84708,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody.rs",
+     "purpose": "Custody heads beside the backups (KS-4A1, FIX 5685)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/rehearse.rs",
+     "purpose": "Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/restore.rs",
+     "purpose": "Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -86367,7 +86504,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 465,
+     "files": 466,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -86437,7 +86574,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 39,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -86696,9 +86833,9 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 27,
+     "files": 30,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "The owner's own actions on his vault, shared by the CLI and `/v1/owner`"
     },
@@ -86815,9 +86952,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 56,
+   "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 854,
+   "source_files": 860,
    "test_files": 182
   },
   "oneiron-spawn": {
