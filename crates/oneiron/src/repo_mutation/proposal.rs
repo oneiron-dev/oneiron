@@ -225,6 +225,7 @@ impl RepoProposal {
         let distinct = self
             .critiques
             .iter()
+            .filter(|c| self.counts_toward_quorum(c))
             .map(|c| c.provenance.critic_ref.as_str())
             .collect::<BTreeSet<_>>();
         Ok(distinct.len() >= 2
@@ -421,10 +422,7 @@ impl Vault {
             Value::from(crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY),
             Value::Binary(actor.as_bytes().to_vec()),
         )]));
-        let session_claim_id = crate::codebase::entity_id_from_hash_material(
-            b"oneiron:repo-session-claim:v1",
-            &[session.as_bytes(), actor.as_bytes()],
-        )?;
+        let session_claim_id = actor_erase::session_claim_id(session, row.id)?;
         let mut session_claim = ClaimBody::new(
             "repo.session",
             ClaimSubject::Entity(session),
@@ -459,7 +457,7 @@ impl Vault {
                 self,
                 &mut txn,
                 session_claim_id,
-                actor,
+                Some(actor),
                 &session_claim,
                 row.created_at,
             )?;
@@ -467,7 +465,7 @@ impl Vault {
         if !crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &actor)? {
             return Err(Error::EntityNotFound);
         }
-        put_journal_claim(self, &mut txn, row.id, actor, &body, row.created_at)?;
+        put_journal_claim(self, &mut txn, row.id, Some(actor), &body, row.created_at)?;
         let snapshot_row = SNAPSHOT.decode_value(&snapshot)?;
         SNAPSHOT.put(
             &self.store,
@@ -664,8 +662,8 @@ pub(super) fn finish(
         RepoMutationStatus::Failed => RepoProposalStatus::Failed,
         RepoMutationStatus::Prepared => RepoProposalStatus::Approved,
     };
-    // An erased actor's write keeps its outcome; no producer is left to restamp its claim.
-    if let (RepoMutationStatus::Applied, Some(actor)) = (status, row.actor.id()) {
+    // An erased actor's applied write approves its journal naming no one (FIX 4479).
+    if status == RepoMutationStatus::Applied {
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         let bytes = raw
@@ -673,7 +671,7 @@ pub(super) fn finish(
             .ok_or(Error::CorruptedIndex("proposal entity header"))?;
         let mut claim = crate::claim::decode_claim_body(bytes, true)?;
         if claim.predicate != "repo.proposed_diff"
-            || crate::claim::session_claim_producer(&claim) != Some(actor)
+            || crate::claim::session_claim_producer(&claim) != row.actor.id()
         {
             return Err(Error::CorruptedIndex("proposal claim binding changed"));
         }
@@ -683,7 +681,7 @@ pub(super) fn finish(
         if !row.eligible()? {
             return Err(invalid("proposal approval lost critic coverage"));
         }
-        put_journal_claim(vault, txn, id, actor, &claim, row.created_at)?;
+        put_journal_claim(vault, txn, id, row.actor.id(), &claim, row.created_at)?;
     }
     store(vault, txn, &row)
 }
@@ -777,11 +775,12 @@ pub(super) fn resolution_claim_id(vault: &Vault, row: &RepoProposal) -> Result<O
 /// These are engine-owned review/session journal facts, not session-overlay
 /// claim candidates. Their subject/value binds the session; `sess` is reserved
 /// for envelope-routed session writes. Only the reviewed queue can advance them.
+/// An erased actor's journal names no producer (`actor` none, FIX 4479).
 fn put_journal_claim(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
-    actor: EntityId,
+    actor: Option<EntityId>,
     body: &ClaimBody,
     now: u64,
 ) -> Result<()> {
@@ -789,7 +788,7 @@ fn put_journal_claim(
         body.predicate.as_str(),
         "repo.proposed_diff" | "repo.session"
     ) || body.session_tag.is_some()
-        || crate::claim::session_claim_producer(body) != Some(actor)
+        || crate::claim::session_claim_producer(body) != actor
     {
         return Err(invalid("invalid repository journal producer"));
     }

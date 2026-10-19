@@ -511,7 +511,7 @@ pub fn refresh_due_questions_by_role<A: GraphAnswerer>(
 pub fn standing_ask_route(principal: EntityId) -> AskTo {
     AskTo {
         role: AskRole::Responsible {
-            actor: principal,
+            actor: crate::llm::decision::AnswerActor::Actor(principal),
             project: None,
         },
         ceiling: RoleRank::Owner,

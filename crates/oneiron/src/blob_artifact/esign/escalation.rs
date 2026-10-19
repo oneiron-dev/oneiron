@@ -140,7 +140,10 @@ impl HeldSigning {
         };
         let project = vault.esign_document(document)?.document.project;
         Ok(match (actor, project) {
-            (Some(actor), project) => AskRole::Responsible { actor, project },
+            (Some(actor), project) => AskRole::Responsible {
+                actor: AnswerActor::Actor(actor),
+                project,
+            },
             (None, Some(project)) => AskRole::Board { project },
             (None, None) => AskRole::Owner,
         })

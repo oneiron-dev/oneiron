@@ -88,7 +88,10 @@ pub(super) fn validate_provenance(provenance: &CritiqueProvenance) -> Result<()>
         MAX_PROVENANCE_REF_BYTES,
         "critic_ref",
     )?;
-    provenance.actor()?;
+    // An erased critic's opaque ref names no actor (FIX 4477); a live one must.
+    if !provenance.is_erased() {
+        provenance.actor()?;
+    }
     provenance.executor()?;
     validate_text(&provenance.model_id, MAX_PROVENANCE_REF_BYTES, "model_id")?;
     if let Some(model_revision) = &provenance.model_revision {

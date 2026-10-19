@@ -120,17 +120,7 @@ pub struct KeptDecision {
     pub ask: Option<KeptAsk>,
 }
 
-/// The ask a decision went up as: its arrival number, the route the Dreamer
-/// bound, and the holder's answer once one landed (who, as which role, person
-/// or agent). The answer is copied as the ask holds it, so one read after its
-/// answerer's erase names no one (FIX 3520). A request never reads as a grant.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct KeptAsk {
-    pub seq: u64,
-    pub to: crate::llm::decision::AskTo,
-    pub answer: Option<crate::llm::decision::AskAnswer>,
-}
+pub use super::kept_ask::{KeptAnswer, KeptAsk, KeptRole, KeptRoute};
 
 impl KeptDecision {
     /// The answer the Dreamer acts on: the holder's when the decision went up

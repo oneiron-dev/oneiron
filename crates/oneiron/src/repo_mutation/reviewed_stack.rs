@@ -62,6 +62,48 @@ fn read(vault: &Vault, identity: &str, batch: &str) -> Result<Option<ReviewedSta
     REVIEWED_STACK.get(&vault.store, &txn, &key(identity, batch))
 }
 
+/// Drops each admitted stack that listed a proposal in `gone`, deleted with
+/// its erased actor before it ran (FIX 4478), and unbinds the stack's other
+/// members, so each lands alone or in a new stack under its own approval. A
+/// stack that already ran a member stays as it is: its recovery replays only
+/// the proven prefix, and no receipt or outcome is rewritten.
+pub(super) fn drop_stacks_listing_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    gone: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let mut listing = Vec::new();
+    for row in REVIEWED_STACK.iter_from(&vault.store, wtxn, &[])? {
+        let (key, stack) = row?;
+        if stack
+            .proposals
+            .iter()
+            .any(|id| EntityId::from_hex(id).is_ok_and(|id| gone.contains(&id)))
+        {
+            listing.push((key, stack));
+        }
+    }
+    for (key, stack) in listing {
+        let mut members = Vec::new();
+        for id in &stack.proposals {
+            if let Some(row) = PROPOSAL.get(&vault.store, wtxn, &EntityId::from_hex(id)?)? {
+                members.push(row);
+            }
+        }
+        if members.iter().any(|row| row.operation_seq.is_some()) {
+            continue;
+        }
+        REVIEWED_STACK.delete(&vault.store, wtxn, &key)?;
+        for mut row in members {
+            if row.merge_stack.as_deref() == Some(stack.batch.as_str()) {
+                row.merge_stack = None;
+                proposal::store(vault, wtxn, &row)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
     pub(crate) fn has_reviewed_merge_stack(
         &self,

@@ -1,15 +1,20 @@
 //! Whose act a repo proposal records, and the erase that forgets it
-//! (FIX 3520).
+//! (FIX 3520): its proposer, the critics whose evidence judged it (FIX 4477)
+//! and the journal claims it wrote (FIX 4479).
 
 use std::collections::BTreeSet;
 
+use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use super::{PROPOSAL, PROPOSAL_OP, RepoProposalStatus, invalid};
+use super::{PROPOSAL, PROPOSAL_OP, RepoProposal, RepoProposalStatus, invalid};
 use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::critic::CritiqueArtifact;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::receipt::ERASED_CALL_IDENTITY;
+use crate::registry::ENTITY_TYPE_CLAIM;
 
 /// Who opened a repo proposal: an actor, or no one once that actor was
 /// erased (FIX 3520). It reads and writes as the actor's hex id, or as
@@ -76,6 +81,87 @@ impl<'de> Deserialize<'de> for ProposalActor {
     }
 }
 
+impl RepoProposal {
+    /// Whether `critique`'s critic counts toward the distinct-critic quorum
+    /// (FIX 4477). An erased critic's evidence stays, with its verdict and
+    /// lens, but a proposal still open waits for a live critic in its place.
+    /// An approval already settled stays as it was: each erased critic keeps
+    /// an opaque ref of its own, so the settled count does not change.
+    pub(super) fn counts_toward_quorum(&self, critique: &CritiqueArtifact) -> bool {
+        self.status != RepoProposalStatus::Proposed || !critique.provenance.is_erased()
+    }
+
+    /// Names one fresh opaque ref in place of `critic` across every critique
+    /// it wrote here (FIX 4477); whether any named it.
+    fn forget_critic(&mut self, vault: &Vault, critic: &str) -> Result<bool> {
+        if !self
+            .critiques
+            .iter()
+            .any(|critique| critique.provenance.critic_ref == critic)
+        {
+            return Ok(false);
+        }
+        let opaque = crate::critic::erased_critic_ref(vault.store.clock.entity_id()?);
+        for critique in &mut self.critiques {
+            if critique.provenance.critic_ref == critic {
+                critique.forget_critic(&opaque);
+            }
+        }
+        Ok(true)
+    }
+}
+
+/// The session claim a proposal writes beside its proposed diff: one per
+/// session and proposal, whose id hashes no actor (FIX 4479; a call).
+pub(super) fn session_claim_id(session: EntityId, proposal: EntityId) -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(
+        b"oneiron:repo-session-claim:v2",
+        &[session.as_bytes(), proposal.as_bytes()],
+    )
+}
+
+/// Rewrites `proposal`'s journal claims, its proposed diff and its session
+/// claim, naming no one once `actor` was erased (FIX 4479): the value's actor
+/// reads [`ERASED_CALL_IDENTITY`] and the producer evidence goes. Each keeps
+/// its id, status, outcome and times, and its revision ledger starts over
+/// from the rewritten row, so no older revision keeps the actor.
+fn erase_journal_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    proposal: &RepoProposal,
+    actor: &EntityId,
+) -> Result<()> {
+    let session = session_claim_id(proposal.session, proposal.id)?;
+    for id in [proposal.id, session] {
+        let Some(raw) = vault.get_raw_in(wtxn, &id)? else {
+            continue;
+        };
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(Error::CorruptedIndex("repository journal header"))?;
+        let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+        if header.entity_type != ENTITY_TYPE_CLAIM || body.is_empty() {
+            continue;
+        }
+        let mut claim = crate::claim::decode_claim_body(body, true)?;
+        if crate::claim::session_claim_producer(&claim) != Some(*actor) {
+            continue;
+        }
+        if let Value::Map(entries) = &mut claim.value {
+            for (key, value) in entries.iter_mut() {
+                if key.as_str() == Some("actor") {
+                    *value = Value::from(ERASED_CALL_IDENTITY);
+                }
+            }
+        }
+        claim.evidence = None;
+        super::put_journal_claim(vault, wtxn, id, None, &claim, header.learned_at)?;
+        crate::vault::entity_revision::remove_entity_revisions(&vault.store, wtxn, &id)?;
+        let raw = vault.get_raw_in(wtxn, &id)?.ok_or(Error::EntityNotFound)?;
+        crate::vault::entity_revision::capture_entity_revision(&vault.store, wtxn, &id, &raw)?;
+    }
+    Ok(())
+}
+
 /// What an actor's erase does with a proposal it opened that has not run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingRepoProposalErase {
@@ -95,8 +181,10 @@ pub const ACTOR_ERASE_PENDING_REPO_PROPOSAL: PendingRepoProposalErase =
 /// applied or failed, keeps its row, critiques and outcome and names no one,
 /// and the queue refuses to run it again. One that has not run goes, with any
 /// operation pointer to it, when [`ACTOR_ERASE_PENDING_REPO_PROPOSAL`] says
-/// so. One-way, in the erase's own transaction. An id whose entity is no
-/// actor scans nothing.
+/// so, and a reviewed stack that listed it is dropped (FIX 4478). Either way
+/// its journal claims name no one (FIX 4479). Each proposal it judged as a
+/// critic keeps that evidence under an opaque ref (FIX 4477). One-way, in the
+/// erase's own transaction. An id whose entity is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -109,17 +197,25 @@ pub(crate) fn erase_proposal_actor_in_txn(
     if super::super::support::names_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
+    let critic = actor.to_hex();
     let mut named = Vec::new();
     for row in PROPOSAL.iter_from(&vault.store, wtxn, &[])? {
         let (id, mut proposal) = row?;
-        if proposal.actor.is(*actor) {
+        let proposer = proposal.actor.is(*actor);
+        if proposer {
             proposal.actor = ProposalActor::Erased;
-            named.push((id, proposal));
+        }
+        if proposal.forget_critic(vault, &critic)? || proposer {
+            named.push((id, proposal, proposer));
         }
     }
     let mut gone = BTreeSet::new();
-    for (id, proposal) in named {
-        let pending = proposal.operation_seq.is_none()
+    for (id, proposal, proposer) in named {
+        if proposer {
+            erase_journal_in_txn(vault, wtxn, &proposal, actor)?;
+        }
+        let pending = proposer
+            && proposal.operation_seq.is_none()
             && matches!(
                 proposal.status,
                 RepoProposalStatus::Proposed | RepoProposalStatus::Approved
@@ -134,6 +230,7 @@ pub(crate) fn erase_proposal_actor_in_txn(
     if gone.is_empty() {
         return Ok(());
     }
+    super::super::reviewed_stack::drop_stacks_listing_in_txn(vault, wtxn, &gone)?;
     let mut pointers = Vec::new();
     for row in PROPOSAL_OP.iter_from(&vault.store, wtxn, &[])? {
         let (key, id) = row?;

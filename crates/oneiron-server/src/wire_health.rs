@@ -533,7 +533,7 @@ fn ask_to(vault: &Vault, check: &HealthCheck) -> Result<Option<AskTo>> {
     };
     Ok(vault.esign_sender(document)?.map(|actor| AskTo {
         role: AskRole::Responsible {
-            actor,
+            actor: oneiron::llm::decision::AnswerActor::Actor(actor),
             project: None,
         },
         ceiling: RoleRank::Owner,

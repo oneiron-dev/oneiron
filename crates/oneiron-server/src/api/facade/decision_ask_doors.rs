@@ -127,10 +127,12 @@ pub(crate) async fn self_decisions_asks(
     )
 }
 
-/// The rows an ask stands on: the principal it is for, its evidence and
-/// the work it decides.
+/// The rows an ask stands on: the principal it is for (none once erased),
+/// its evidence and the work it decides.
 fn ask_rows(ask: &DecisionAsk) -> impl Iterator<Item = EntityId> + '_ {
-    std::iter::once(ask.principal)
+    ask.principal
+        .id()
+        .into_iter()
         .chain(ask.evidence.iter().copied())
         .chain(ask.correlation)
 }
