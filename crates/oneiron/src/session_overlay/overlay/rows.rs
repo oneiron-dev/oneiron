@@ -22,8 +22,11 @@ impl SessionOverlay {
         key: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        // The room's bookkeeping spends none of its budget (`unbudgeted_row`).
-        if !unbudgeted_row(keyspace, key) {
+        // The room's bookkeeping spends none of its budget (`unbudgeted_row`),
+        // and a write's marked bookkeeping put is not refused for it
+        // (`admit_bookkeeping_put`).
+        let bookkeeping = self.takes_bookkeeping_put(keyspace, key);
+        if !bookkeeping && !unbudgeted_row(keyspace, key) {
             self.reject_unbudgetable_payload(key, value)?;
         }
         let mutation = OverlayMutation::Put {
@@ -31,8 +34,59 @@ impl SessionOverlay {
             key: key.to_vec(),
             value: value.to_vec(),
         };
-        self.preflight_segment_mutation(&mutation)?;
+        if !bookkeeping {
+            self.preflight_segment_mutation(&mutation)?;
+        }
         self.stage_mutation(mutation)
+    }
+
+    /// Marks the next put of `key` in `keyspace`, in this thread's active
+    /// segment, as the bookkeeping of the write that segment stages: a run's
+    /// write receipt beside its room row (WILL L11-01 S01-2a, Engine 10-19).
+    /// The room's budget does not refuse that one put, so a room at its
+    /// limit takes exactly the writes it took before, as for
+    /// `unbudgeted_row`; its bytes still count in the room's total once it
+    /// is staged, so every later put meets them.
+    pub(crate) fn admit_bookkeeping_put(
+        self: &Arc<Self>,
+        keyspace: OverlayKeyspace,
+        key: &[u8],
+    ) -> Result<()> {
+        ACTIVE_SEGMENT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(segment) = slot
+                .as_mut()
+                .filter(|segment| Arc::ptr_eq(&segment.overlay, self))
+            else {
+                return Err(Error::InvariantViolation(
+                    "session overlay write requires an active txn segment",
+                ));
+            };
+            segment.bookkeeping = Some((keyspace, key.to_vec()));
+            Ok(())
+        })
+    }
+
+    /// Whether a put of `key` in `keyspace` is the active segment's marked
+    /// bookkeeping put; the mark is spent on it.
+    fn takes_bookkeeping_put(self: &Arc<Self>, keyspace: OverlayKeyspace, key: &[u8]) -> bool {
+        ACTIVE_SEGMENT.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            let Some(segment) = slot
+                .as_mut()
+                .filter(|segment| Arc::ptr_eq(&segment.overlay, self))
+            else {
+                return false;
+            };
+            let marked = segment
+                .bookkeeping
+                .as_ref()
+                .is_some_and(|(marked, row)| *marked == keyspace && row.as_slice() == key);
+            if marked {
+                segment.bookkeeping = None;
+            }
+            marked
+        })
     }
 
     #[allow(

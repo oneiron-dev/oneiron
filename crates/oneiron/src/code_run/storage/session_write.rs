@@ -6,12 +6,19 @@
 //! write's rows and keeps the write's answer as its first row. A write whose
 //! receipt cannot be kept stages nothing, so the room holds no row a replay
 //! of the step would make again.
+//!
+//! The receipt is the write's bookkeeping, as a row's record position is
+//! (#3160): the room's budget does not refuse its put, so a room at its
+//! limit takes exactly the writes it took before, receipt and all, while
+//! the write's own rows are budgeted as before. The receipt's bytes count in
+//! the room's total once staged, so every later write of the room, the
+//! run's own checkpoints included, meets them (Engine 10-19 15:1x).
 
 use std::cell::Cell;
 
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::code_run::types::{SelfAgentVerbCall, SelfCall, SelfDispatchOutcome};
-use crate::session_overlay::JournalEntry;
+use crate::session_overlay::{JournalEntry, OverlayKeyspace};
 use crate::{Error, Result};
 
 use super::records::{REPLAY_RECORDS, replay_generation_matches};
@@ -62,6 +69,13 @@ impl SessionBinding<'_> {
                         )
                         .map(|row| answered.bridge_calls.push(row)),
                     )?;
+                    // The receipt's own put, past the room's budget: a
+                    // replay record row in `vault_meta`, as the side table
+                    // stages it.
+                    kept(self.session.overlay().admit_bookkeeping_put(
+                        OverlayKeyspace::VaultMeta,
+                        &REPLAY_RECORDS.key_bytes(&answered.run_id),
+                    ))?;
                     let view = self.session.read_view()?;
                     kept(REPLAY_RECORDS.put(&view, wtxn, &answered.run_id, &answered))?;
                 }
