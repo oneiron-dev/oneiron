@@ -30,8 +30,8 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
-use axum::http::HeaderMap;
 use axum::http::header::{ACCEPT, CONTENT_TYPE};
+use axum::http::{HeaderMap, request::Parts};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 
@@ -48,7 +48,7 @@ use oneiron::booking::{
 use oneiron::{EntityId, Vault};
 
 use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
-use super::{check_api_owner_act, json_payload};
+use super::{json_payload, scoped_auth::check_request_owner_act};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -219,14 +219,14 @@ pub(crate) fn booking_routes() -> Router<Arc<SyncServer>> {
     )
 )]
 pub(crate) async fn booking_agent_instructions(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     Path(page_token): Path<String>,
 ) -> Result<Response, ApiError> {
-    check_api_owner_act(&headers, &server)?;
+    check_request_owner_act(&parts, &server)?;
     let page_ref = resolve_booking_page(&server, &page_token)?;
     let block = booking_agent_instructions_block(&server, &page_token, page_ref)?;
-    if wants_html_fragment(&headers) {
+    if wants_html_fragment(&parts.headers) {
         let fragment = render_booking_agent_instructions_block(&block)?;
         return Ok(([(CONTENT_TYPE, "text/html; charset=utf-8")], fragment).into_response());
     }
@@ -273,13 +273,13 @@ fn wants_html_fragment(headers: &HeaderMap) -> bool {
     )
 )]
 pub(crate) async fn booking_availability(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingAvailabilityInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server, client)?;
+    let transport = http_transport_context(&parts, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -313,13 +313,13 @@ pub(crate) async fn booking_availability(
     )
 )]
 pub(crate) async fn booking_book(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingBookInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server, client)?;
+    let transport = http_transport_context(&parts, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -348,13 +348,13 @@ pub(crate) async fn booking_book(
     )
 )]
 pub(crate) async fn booking_reschedule(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingRescheduleInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server, client)?;
+    let transport = http_transport_context(&parts, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,
@@ -383,13 +383,13 @@ pub(crate) async fn booking_reschedule(
     )
 )]
 pub(crate) async fn booking_cancel(
-    headers: HeaderMap,
+    parts: Parts,
     State(server): State<Arc<SyncServer>>,
     client: ClientAddress,
     Path(page_token): Path<String>,
     payload: Result<Json<BookingCancelInput>, JsonRejection>,
 ) -> Result<Json<BookingOperationResponse>, ApiError> {
-    let transport = http_transport_context(&headers, &server, client)?;
+    let transport = http_transport_context(&parts, &server, client)?;
     let input = json_payload(payload)?;
     execute_booking_operation(
         &server,

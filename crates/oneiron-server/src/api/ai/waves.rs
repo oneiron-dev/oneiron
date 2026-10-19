@@ -179,6 +179,10 @@ pub(super) async fn status(
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
         return error.into_response();
     }
+    // A managed vault's attested owner reads while he is its live owner.
+    if let Err(error) = crate::api::scoped_auth::require_live_managed_owner(&server, &auth) {
+        return error.into_response();
+    }
     let id = EntityId::from_hex(&reference).and_then(|id| AttemptId::from_bytes(id.as_bytes()));
     let Ok(id) = id else {
         return refusal(

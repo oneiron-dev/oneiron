@@ -31,11 +31,16 @@ impl crate::vault::Vault {
         actor_key: ScopedReadActorKey,
         view: &'a crate::store::SessionStoreView<'a>,
     ) -> ScopedRead<'a> {
-        // A room's rows carry no record-scope stamp (`stamp_put` writes base
-        // only), and a missing stamp is not inferred. A credential that
-        // reads only some worlds cannot place them, so it reads base alone:
-        // the room's rows have no name and no count for it (DEC-0005).
-        let session_view = (!actor_key.has_world_ceiling()).then_some(view);
+        // Every row the room staged carries the position its write staged
+        // beside it (`record_scope::stage_session_position`), and a missing
+        // one is not inferred (WILL L11-01). A credential that reads only
+        // some worlds reads the room's rows while the room placed each of
+        // them itself; a room that restages or hides a base row, or holds a
+        // row it could not place, keeps it on base alone: the room's rows
+        // have no name and no count for it (DEC-0005).
+        let placed = !actor_key.has_world_ceiling()
+            || crate::federation::record_scope::room_rows_placed(view);
+        let session_view = placed.then_some(view);
         ScopedRead {
             vault: self,
             actor_key,
@@ -819,13 +824,26 @@ impl ScopedRead<'_> {
         if crate::claim::decode_claim_body(&row.body, true).is_err() {
             return Ok(true);
         }
-        let record = crate::federation::record_scope::disclosure_scope_for_stored_row(
-            &self.vault.store,
-            txn,
-            *id,
-            row.entity_type,
-            &row.body,
-        )?;
+        // A room's own claim sits at the position its write staged beside
+        // it (WILL L11-01); every other claim at base's.
+        let record = match self.session_view {
+            Some(view) if view.read().room_holds(id)? => {
+                crate::federation::record_scope::disclosure_scope_for_stored_row(
+                    view,
+                    txn,
+                    *id,
+                    row.entity_type,
+                    &row.body,
+                )?
+            }
+            _ => crate::federation::record_scope::disclosure_scope_for_stored_row(
+                &self.vault.store,
+                txn,
+                *id,
+                row.entity_type,
+                &row.body,
+            )?,
+        };
         Ok(record.is_some_and(|record| record.worlds.meet(&granted.worlds).is_bottom()))
     }
 
