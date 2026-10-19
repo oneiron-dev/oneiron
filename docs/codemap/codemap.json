@@ -2473,16 +2473,14 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "CheckpointPolicyHead"
-     ],
+     "notable": [],
      "path": "src/authority/checkpoint_choice.rs",
      "purpose": "Folds the owner's signed choices of his vault's checkpoint root policy (mesh PR2c, §A 06, K06; CALLS \"mesh…",
      "surface": {
-      "crate-vis": 10,
-      "struct": 1
+      "crate-vis": 4,
+      "type": 1
      }
     },
     {
@@ -2803,6 +2801,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/home_pick.rs",
+     "purpose": "Folds the owner's signed picks of his vault's home node (DOOR-101 PR2a; ARCH-0026: \"The owner picks the home…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "HostActionAuthority"
      ],
@@ -3118,8 +3126,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 26,
-      "re-export": 46
+      "crate-vis": 27,
+      "re-export": 47
      }
     },
     {
@@ -3161,6 +3169,19 @@
       "crate-vis": 11,
       "enum": 2,
       "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OwnerChoiceHead"
+     ],
+     "path": "src/authority/owner_choice.rs",
+     "purpose": "The register every vault-wide single-value owner choice keeps: the checkpoint root policy (mesh PR2c…",
+     "surface": {
+      "crate-vis": 13,
       "struct": 1
      }
     },
@@ -20365,8 +20386,8 @@
      "path": "src/dreamer_runner/admission/mod.rs",
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
-      "crate-vis": 8,
-      "fn": 22
+      "crate-vis": 6,
+      "fn": 18
      }
     },
     {
@@ -20499,6 +20520,17 @@
      "surface": {
       "const": 24,
       "crate-vis": 31
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/home.rs",
+     "purpose": "The single MACRO home-node election (ARCH-0026; DOOR-101 PR2a): which node of the vault runs its MACRO…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -21163,6 +21195,7 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
+      "crate-vis": 1,
       "mod": 4,
       "re-export": 10
      }
@@ -21185,10 +21218,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConsolidationHomeNode",
+      "ConsolidationHomePickHead",
+      "ConsolidationHomePickReceipt",
+      "ConsolidationHomePickRequest",
       "ConsolidationHomeView",
       "ConsolidationLineageRequest",
       "ConsolidationLineageView",
@@ -21196,11 +21232,11 @@
       "ConsolidationTryView"
      ],
      "path": "src/dreamer_runner/owner_doors.rs",
-     "purpose": "The owner's reads of the private Dreamer runner (DOOR-101): which node this runner holds as the elected…",
+     "purpose": "The owner's doors over the private Dreamer runner (DOOR-101): which node this runner holds as the elected…",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
-      "struct": 6
+      "fn": 4,
+      "struct": 9
      }
     },
     {
@@ -53353,7 +53389,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1040
+      "fn": 1041
      }
     },
     {
@@ -59704,7 +59740,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 164,
+     "files": 166,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60145,7 +60181,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -61162,7 +61198,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3724,
+   "source_files": 3727,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61351,6 +61387,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HomeNodePick"
+     ],
+     "path": "src/authority/home_pick.rs",
+     "purpose": "The owner's pick of his vault's home node (DOOR-101 PR2a; ARCH-0026: \"The owner picks the home node in…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -61392,7 +61443,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -61751,7 +61802,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -61781,7 +61832,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 34,
+   "source_files": 35,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -69805,7 +69856,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1011
+      "fn": 1012
      }
     },
     {
@@ -70901,7 +70952,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1012
+      "fn": 1013
      }
     },
     {
@@ -74175,7 +74226,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -84000,6 +84051,9 @@
       "ConsolidationEvidenceSource",
       "ConsolidationFrontierRequest",
       "ConsolidationHomeNode",
+      "ConsolidationHomePickHead",
+      "ConsolidationHomePickReceipt",
+      "ConsolidationHomePickRequest",
       "ConsolidationHomeView",
       "ConsolidationJudgement",
       "ConsolidationLineageRequest",
@@ -86647,7 +86701,7 @@
      "purpose": "—",
      "surface": {
       "enum": 816,
-      "struct": 2597
+      "struct": 2600
      }
     },
     {
