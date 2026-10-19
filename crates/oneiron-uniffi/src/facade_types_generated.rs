@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1065 facade rows, 3608 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1017.
+// UniFFI census: 1067 facade rows, 3614 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1019.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -26255,6 +26255,23 @@ pub struct ConsentRegistryDelegation {
     pub comm: CommReach,
 }
 
+/// `oneiron::consent::registry::ConsentRegistryAgentGrant`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsentRegistryAgentGrant {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "delegated_by")]
+    pub delegated_by: String,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+    #[serde(rename = "confers")]
+    pub confers: bool,
+}
+
 /// `oneiron::consent::registry::ConsentRegistryRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConsentRegistryRow {
@@ -26284,6 +26301,12 @@ pub struct ConsentRegistryRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub delegation: Option<ConsentRegistryDelegation>,
+    #[serde(
+        rename = "agent_grant",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_grant: Option<ConsentRegistryAgentGrant>,
 }
 
 /// `oneiron::consent::registry::ConsentRegistry`.
@@ -33554,6 +33577,80 @@ pub struct AgentDreamingSetRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub dreaming_model: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_agent_grant::AgentGrantMintRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGrantMintRequest {
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "authority_scope")]
+    pub authority_scope: Scope,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_agent_grant::AgentGrantView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGrantView {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "agent")]
+    pub agent: String,
+    #[serde(rename = "authority_scope")]
+    pub authority_scope: Scope,
+    #[serde(rename = "delegated_by")]
+    pub delegated_by: String,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+    #[serde(rename = "confers")]
+    pub confers: bool,
+    #[serde(rename = "revoke_command")]
+    pub revoke_command: String,
+}
+
+/// `oneiron::task_verb::sdk_agent_grant::AgentGrantMinted`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGrantMinted {
+    #[serde(rename = "grant")]
+    pub grant: AgentGrantView,
+    #[serde(rename = "act_ref")]
+    pub act_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_agent_grant::AgentGrantRevokeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGrantRevokeRequest {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "seen", default, skip_serializing_if = "Option::is_none")]
+    pub seen: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_agent_grant::AgentGrantRevoked`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentGrantRevoked {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "changed")]
+    pub changed: bool,
+    #[serde(rename = "agent", default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(rename = "act_ref", default, skip_serializing_if = "Option::is_none")]
+    pub act_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_standing::StandingBlockConfigureRequest`.

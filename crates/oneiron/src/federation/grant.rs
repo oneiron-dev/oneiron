@@ -30,8 +30,10 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// The first `FEDERATION_GRANT_REQUIRED_KEYS` entries are required on every
 /// body; `expires_at` and `delegated_by` are role-conditional — required for
 /// [`FederationGrantRole::Delegate`], forbidden for every other role. `guest`
-/// is required only for [`FederationGrantRole::Guest`].
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 9] = [
+/// is required only for [`FederationGrantRole::Guest`]. `owner_agent` marks
+/// the owner's own grant to a named agent (FIX 5628), a Delegate whose
+/// `expires_at` is optional; it is absent on every other body.
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 10] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -41,6 +43,7 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 9] = [
     "delegated_by",
     "authority_scope",
     "guest",
+    "owner_agent",
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -74,6 +77,8 @@ pub(super) const KEY_EXPIRES_AT: &str = FEDERATION_GRANT_BODY_KEYS[5];
 pub(super) const KEY_DELEGATED_BY: &str = FEDERATION_GRANT_BODY_KEYS[6];
 
 pub(super) const KEY_GUEST: &str = FEDERATION_GRANT_BODY_KEYS[8];
+
+pub(super) const KEY_OWNER_AGENT: &str = FEDERATION_GRANT_BODY_KEYS[9];
 
 pub(super) const FEDERATION_GRANT_SCOPE_KEYS: [&str; 2] = ["kind", "vault_id"];
 
@@ -348,7 +353,8 @@ pub struct FederationGrant {
     /// Unix-seconds instant at which a Delegate grant stops conferring.
     ///
     /// Required for [`FederationGrantRole::Delegate`], optional for a
-    /// Connect guest grant (absent: until revoked), forbidden otherwise.
+    /// Connect guest grant and an owner's agent grant (absent: until
+    /// revoked), forbidden otherwise.
     pub expires_at: Option<u64>,
     /// `member_ref` of the parent grant this Delegate was attenuated from.
     ///
@@ -359,6 +365,10 @@ pub struct FederationGrant {
     pub delegated_by: Option<EntityId>,
     /// Ask guest bindings and explicit fact allowlist; absent on every member grant.
     pub guest: Option<FederationGrantGuestPayload>,
+    /// The owner's own Delegate grant to a named agent, minted by
+    /// `vault.agents.grants.mint` from no parent grant (FIX 5628); false on
+    /// every other grant.
+    pub owner_agent: bool,
 }
 
 impl FederationGrant {
@@ -391,6 +401,7 @@ impl FederationGrant {
             expires_at: None,
             delegated_by: None,
             guest: None,
+            owner_agent: false,
         }
     }
 
@@ -415,6 +426,7 @@ impl FederationGrant {
                 asker_ref,
                 disclosed_refs,
             }),
+            owner_agent: false,
         };
         grant.validate()?;
         Ok(grant)
@@ -462,6 +474,7 @@ impl FederationGrant {
             expires_at: Some(expires_at_secs),
             delegated_by: Some(parent.member_ref),
             guest: None,
+            owner_agent: false,
         })
     }
 
@@ -477,10 +490,13 @@ impl FederationGrant {
             return Err(invalid_grant());
         }
         let expects_delegation = matches!(self.role, FederationGrantRole::Delegate);
-        // A Connect guest grant may carry an expiry without a delegator.
-        let expiry_optional = matches!(self.scope, FederationGrantScope::Connect { .. });
+        // A Connect guest grant may carry an expiry without a delegator, and
+        // an owner's agent grant (a Delegate) may stand until revoked.
+        let expiry_optional =
+            matches!(self.scope, FederationGrantScope::Connect { .. }) || self.owner_agent;
         if (!expiry_optional && expects_delegation != self.expires_at.is_some())
             || expects_delegation != self.delegated_by.is_some()
+            || (self.owner_agent && !expects_delegation)
         {
             return Err(invalid_grant());
         }
@@ -590,6 +606,9 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
     if let Some(guest) = &grant.guest {
         entries.push((Value::from(KEY_GUEST), encode_guest_payload(guest)));
     }
+    if grant.owner_agent {
+        entries.push((Value::from(KEY_OWNER_AGENT), Value::from(true)));
+    }
 
     encode_msgpack_value(
         &Value::Map(entries),
@@ -653,6 +672,12 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
     let guest = optional_value(entries, KEY_GUEST)
         .map(decode_guest_payload)
         .transpose()?;
+    // Present only as `true`: a body states the mark or omits it.
+    let owner_agent = match optional_value(entries, KEY_OWNER_AGENT) {
+        None => false,
+        Some(value) if value.as_bool() == Some(true) => true,
+        Some(_) => return Err(invalid_grant()),
+    };
 
     let grant = FederationGrant {
         authority_scope: if legacy {
@@ -672,6 +697,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         expires_at,
         delegated_by,
         guest,
+        owner_agent,
     };
     // Role-conditional presence is enforced here: a five-key Delegate body and
     // a seven-key Owner body both die at `validate`, not at the key allowlist.

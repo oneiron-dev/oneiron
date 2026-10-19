@@ -1049,6 +1049,9 @@ impl Vault {
                 })
                 .map(ConsentRegistryRow::from_support_grant),
         );
+        // An owner's agent grant (FIX 5628) is reviewed here too, with the
+        // agent grant revoke door as its one-tap revoke.
+        rows.extend(self.agent_grant_registry_rows_in_txn(&rtxn, query.include_revoked)?);
         drop(rtxn);
         rows.sort_by(|left, right| {
             right

@@ -66,6 +66,30 @@ pub struct ConsentRegistryRow {
     /// mint; `None` for every other row. Projection only: no grant row
     /// stores or edits it.
     pub delegation: Option<ConsentRegistryDelegation>,
+    /// An owner's agent grant (FIX 5628), projected from its grant row;
+    /// absent on every other row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_grant: Option<ConsentRegistryAgentGrant>,
+}
+
+/// An owner's agent grant as the registry shows it (FIX 5628): the agent it
+/// names, the owner who granted it, its expiry (absent: it stands until
+/// revoked) and whether its scope confers now. Its exact scope is the row's
+/// `scope`.
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+pub struct ConsentRegistryAgentGrant {
+    /// The agent principal granted.
+    pub agent: EntityId,
+    /// The owner PERSON who granted it.
+    pub delegated_by: EntityId,
+    /// When it stops conferring (Unix seconds); absent: durable until revoked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<u64>,
+    /// Whether it confers now: unexpired, with `read` among its verbs and no
+    /// empty world, band, audience or sensitivity axis.
+    pub confers: bool,
 }
 
 /// A support grant's delegation as the registry shows it (OF-606): why the
@@ -131,6 +155,7 @@ impl ConsentRegistryRow {
             grant_ref,
             bypass: row.bypass,
             delegation: None,
+            agent_grant: None,
         }
     }
 
@@ -156,6 +181,7 @@ impl ConsentRegistryRow {
             grant_ref,
             bypass: None,
             delegation: None,
+            agent_grant: None,
         }
     }
 
@@ -199,12 +225,60 @@ impl ConsentRegistryRow {
                 status: grant.status,
                 comm: grant.comm,
             }),
+            agent_grant: None,
+        }
+    }
+
+    /// One owner's agent grant (FIX 5628), from its live grant row. Its
+    /// one-tap revoke is the agent grant revoke door's, never the consent
+    /// grant revoke; it is Active until its expiry, and always when it has
+    /// none.
+    pub(crate) fn from_agent_grant(
+        standing: &crate::federation::AgentGrantStanding,
+        now: u64,
+    ) -> Self {
+        let grant = &standing.grant;
+        let grant_ref = standing.id.to_hex();
+        let mut selectors = render_scope(&grant.authority_scope);
+        selectors.push(format!("delegated_by:{}", standing.delegated_by.to_hex()));
+        selectors.push(grant.expires_at.map_or_else(
+            || "expiry:durable".to_owned(),
+            |expires_at| format!("expiry:{expires_at}"),
+        ));
+        Self {
+            domain: ConsentDomain::Action,
+            subject: format!("{}/agent", grant.member_ref.to_hex()),
+            class: AGENT_GRANT_CLASS.to_owned(),
+            selectors,
+            scope: Some(grant.authority_scope.clone()),
+            status: if standing.stands_at(now) {
+                ConsentGrantStatus::Active
+            } else {
+                ConsentGrantStatus::Revoked
+            },
+            created_at: standing.created_at,
+            revoke_action: ConsentRevokeAction {
+                command: crate::federation::AGENT_GRANT_REVOKE_COMMAND.to_owned(),
+                grant_ref: grant_ref.clone(),
+            },
+            grant_ref,
+            bypass: None,
+            delegation: None,
+            agent_grant: Some(ConsentRegistryAgentGrant {
+                agent: grant.member_ref,
+                delegated_by: standing.delegated_by,
+                expires_at: grant.expires_at,
+                confers: grant.confers_at(now),
+            }),
         }
     }
 }
 
 /// The class a support grant's registry row shows (OF-606).
 pub const SUPPORT_GRANT_CLASS: &str = "support";
+
+/// The class an owner's agent grant's registry row shows (FIX 5628).
+pub const AGENT_GRANT_CLASS: &str = "agent_grant";
 
 fn render_subject(subject: &BoundSubject) -> String {
     match subject {

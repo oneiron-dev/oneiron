@@ -28,6 +28,7 @@ pub(super) mod action_routes;
 mod admission_doors;
 mod affect_doors;
 mod agent_definition_doors;
+mod agent_grant_doors;
 mod agent_verbs;
 mod aging_doors;
 mod artifact_hosting_doors;
