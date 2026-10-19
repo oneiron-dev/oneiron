@@ -3,7 +3,8 @@
 use super::widen::PreparedParentContext;
 use super::widen_record::{invalid, json};
 use super::workflow_record::{
-    DEDUPE, RECORD, WORKFLOW_ATTEMPT_TYPE, WorkflowIntent, WorkflowRecord, dedupe_key_hash,
+    DEDUPE, RECORD, WORKFLOW_ATTEMPT_TYPE, WorkflowIntent, WorkflowRecord, WorkflowTaskBinding,
+    dedupe_key_hash,
 };
 use super::{
     AgentDispatchInput, AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher,
@@ -13,6 +14,8 @@ use crate::attempt_queue::{AttemptInterventionKind, AttemptQueue, InterveneAttem
 use crate::context_projection::normalize_context_spec;
 use crate::dreamer_runner::{EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome};
 use crate::error::Result;
+
+mod workflow_task;
 
 impl AgentDispatcher<'_> {
     pub(super) fn dispatch_workflow(
@@ -96,6 +99,7 @@ impl AgentDispatcher<'_> {
             room: spawn.room,
             objectives: spawn.objectives.clone(),
             comm: spawn.comm,
+            task: None,
         };
         Ok((definition, intent))
     }
@@ -110,7 +114,22 @@ impl AgentDispatcher<'_> {
         spawn: AgentSpawnContext,
         approved_parent: Option<&PreparedParentContext>,
     ) -> Result<AgentDispatchOutcome> {
-        let (definition, intent) = self.workflow_intent(txn, &input, &spawn)?;
+        self.dispatch_workflow_bound_in_txn(txn, input, spawn, approved_parent, None)
+    }
+
+    /// [`Self::dispatch_workflow_in_txn`] for a run bound to the TASK it
+    /// realizes (FIX 4391): the binding joins the intent, and the wrapper
+    /// alone carries the backlink. `None` admits exactly as before.
+    fn dispatch_workflow_bound_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+        approved_parent: Option<&PreparedParentContext>,
+        task: Option<&WorkflowTaskBinding>,
+    ) -> Result<AgentDispatchOutcome> {
+        let (definition, mut intent) = self.workflow_intent(txn, &input, &spawn)?;
+        intent.task = task.cloned();
         if let Some(parent) = input.parent_attempt {
             let parent_input = self
                 .parent_dispatch_input_in_txn(txn, parent)?
@@ -198,7 +217,7 @@ impl AgentDispatcher<'_> {
                     run_id: input.run_id.clone(),
                     now: input.now,
                 },
-                None,
+                task.map(|binding| binding.task_ref.clone()),
             )?
         else {
             return Err(invalid("new workflow unexpectedly deduped"));
@@ -227,6 +246,7 @@ impl AgentDispatcher<'_> {
             active: root.id,
             results: Vec::new(),
             launch: Some(launch.statement),
+            task_settled: None,
         };
         record.active = self.enqueue_prepared_workflow_step(
             txn,

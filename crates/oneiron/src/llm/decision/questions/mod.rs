@@ -20,7 +20,8 @@ mod standing_tests;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub use artifact_refresh::{ArtifactAskRecord, ArtifactAskStanding, artifact_ask_records};
 pub use artifact_refresh::{
-    ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_due_artifact_questions,
+    ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_artifact_question_now,
+    refresh_due_artifact_questions,
 };
 pub use backfill::schedule_backfill;
 pub use graph_ask::validate_decision as validate_unit_decision;
