@@ -12,19 +12,29 @@
 //! whose pad or opening record is missing here, or a world whose edits
 //! outgrow one record, leaves the work waiting (CALLS
 //! WORLD_KEY_REASSERT_INCOMPLETE), its progress committed.
+//!
+//! The holder's read checks (the key ids its own records name, the pad, the
+//! opening record or counted wrap, the recipients that lack a wrap) are one
+//! read ([`HolderRead`]) that its writer and its owner's executor diagnostics
+//! share (FIX 4686); only the writer appends.
 
 use std::collections::BTreeSet;
 
-use super::super::doors::require_mine_reader;
+use ed25519_dalek::SigningKey;
+use oneiron_crypto::HybridPublicKey;
+
+use super::super::doors::{RootRecipient, require_mine_reader};
 use super::super::pads::pad_in_txn;
 use super::super::{
-    MachineSecret, SequenceCounter, WorldKeyBinding, WorldKeyId, WrapRecipient, open_counted,
-    open_world_key, recipients,
+    MachineSecret, SequenceCounter, WorldKey, WorldKeyBinding, WorldKeyId, WrapRecipient,
+    open_counted, open_world_key, recipients,
 };
 use crate::authority::{
-    AuthorityEntryHash, EffectiveRead, invalid_authority, own_world_key_records_in_txn,
+    AuthorityEntryHash, AuthorityView, EffectiveRead, WorldKeyWrapsRecord, invalid_authority,
+    own_world_key_records_in_txn,
 };
 use crate::error::Result;
+use crate::store::Store;
 use crate::{EntityId, Vault};
 
 /// How a re-assertion's key work runs (CALLS WORLD_KEY_REASSERT_MODE).
@@ -71,7 +81,143 @@ impl Reasserted {
     }
 }
 
+/// What a holder's read checks find for one key of a world that its own
+/// records name: the checks its re-assertion and its owner's diagnostics
+/// share (FIX 4686).
+pub(crate) enum HeldKey {
+    /// Counted records named other bytes or another owner for it: the holder
+    /// leaves it as it is.
+    Conflicted,
+    /// No pad of it is here.
+    MissingPad,
+    /// No valid record of this holder's own, checked against the commitment
+    /// the fold holds, and no counted wrap to it, opens it here.
+    NoOpening,
+    /// Opened, with the owner it binds and every recipient the settings
+    /// allow that holds no counted wrap of it.
+    Opened {
+        key: WorldKey,
+        owner: EntityId,
+        missing: Vec<(WrapRecipient, HybridPublicKey)>,
+    },
+}
+
+/// One holder's read of a world it re-asserts, in one transaction: its
+/// snapshot, its install key, its own valid records and its pinned root.
+pub(crate) struct HolderRead {
+    pub(crate) fold: AuthorityView,
+    pub(crate) signing: SigningKey,
+    vault_id: [u8; 32],
+    world: EntityId,
+    own: Vec<(AuthorityEntryHash, WorldKeyWrapsRecord)>,
+    root: Option<RootRecipient>,
+    /// The key ids of the world this holder's own records name, ascending:
+    /// the census comes from its own records alone.
+    pub(crate) ids: BTreeSet<WorldKeyId>,
+}
+
+impl HolderRead {
+    /// The read checks for the key `id`, as this holder (`secret`) finds it
+    /// in `txn`. Reads only: nothing is wrapped or written.
+    pub(crate) fn check(
+        &self,
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        id: WorldKeyId,
+        secret: &MachineSecret,
+    ) -> Result<HeldKey> {
+        let me = WrapRecipient::Machine(secret.machine);
+        let held = self.fold.world_key(&id);
+        if held.is_some_and(|held| held.conflicted) {
+            return Ok(HeldKey::Conflicted);
+        }
+        let Some(pad) = pad_in_txn(store, txn, &id)? else {
+            return Ok(HeldKey::MissingPad);
+        };
+        let opened = self
+            .own
+            .iter()
+            .map(|(_, record)| record)
+            .filter(|record| {
+                record.key == id && held.is_none_or(|held| held.commitment == record.commitment)
+            })
+            .find_map(|record| {
+                let (_, bytes) = record.wraps.iter().find(|(to, _)| *to == me)?;
+                let envelope = oneiron_crypto::Envelope::parse(bytes).ok()?;
+                let binding = WorldKeyBinding {
+                    vault_id: self.vault_id,
+                    key: id,
+                    owner: record.owner,
+                    policy: record.policy,
+                    commitment: record.commitment,
+                };
+                open_world_key(&binding, me, &secret.secret, &envelope, &pad)
+                    .ok()
+                    .map(|key| (key, record.owner))
+            })
+            .or_else(|| {
+                let held = held?;
+                open_counted(&self.fold, held, me, &secret.secret, &pad)
+                    .map(|key| (key, held.owner))
+            });
+        let Some((key, owner)) = opened else {
+            return Ok(HeldKey::NoOpening);
+        };
+        let missing = recipients(&self.fold, self.world, self.root.clone())
+            .into_iter()
+            .filter(|(to, _)| !held.is_some_and(|held| held.wraps.contains_key(to)))
+            .collect();
+        Ok(HeldKey::Opened {
+            key,
+            owner,
+            missing,
+        })
+    }
+}
+
 impl Vault {
+    /// This install's holder read of `world` in `txn`, as `secret`'s
+    /// machine: `None` when the world reads everywhere and counts no key.
+    /// Only an eligible reader mine here under its install key reads it;
+    /// any other is refused.
+    pub(crate) fn holder_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        world: EntityId,
+        secret: &MachineSecret,
+    ) -> Result<Option<HolderRead>> {
+        let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        // A world read everywhere counts no key.
+        if fold.world_privacy(world).read == EffectiveRead::Everywhere {
+            return Ok(None);
+        }
+        require_mine_reader(&fold, world, secret.machine, &signing)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let own = own_world_key_records_in_txn(
+            &self.store,
+            txn,
+            &fold,
+            secret.machine,
+            signing.verifying_key().to_bytes(),
+        )?;
+        let root = self.pinned_root_recipient_in_txn(txn, &fold)?;
+        let ids = own
+            .iter()
+            .map(|(_, record)| record.key)
+            .filter(|id| id.world == world)
+            .collect();
+        Ok(Some(HolderRead {
+            fold,
+            signing,
+            vault_id,
+            world,
+            own,
+            root,
+            ids,
+        }))
+    }
+
     /// Wraps again, in the caller's write transaction, each key of `world`
     /// this install wrapped itself, under the current settings and pin, to
     /// every recipient the settings allow that holds no counted wrap of it.
@@ -87,76 +233,29 @@ impl Vault {
         secret: &MachineSecret,
         request: Option<AuthorityEntryHash>,
     ) -> Result<Reasserted> {
-        let signing = self.door_signing_key_in_txn(txn, secret.machine)?;
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        // A world read everywhere counts no key.
-        if fold.world_privacy(world).read == EffectiveRead::Everywhere {
+        let Some(read) = self.holder_read_in_txn(txn, world, secret)? else {
             return Ok(Reasserted::Done);
-        }
-        require_mine_reader(&fold, world, secret.machine, &signing)?;
-        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let own = own_world_key_records_in_txn(
-            &self.store,
-            txn,
-            &fold,
-            secret.machine,
-            signing.verifying_key().to_bytes(),
-        )?;
-        let root = self.pinned_root_recipient_in_txn(txn, &fold)?;
-        let me = WrapRecipient::Machine(secret.machine);
-        let ids: BTreeSet<WorldKeyId> = own
-            .iter()
-            .map(|(_, record)| record.key)
-            .filter(|id| id.world == world)
-            .collect();
+        };
         let mut seq = SequenceCounter::new();
         let mut appended = Vec::new();
         let mut done = Reasserted::Done;
-        for id in ids {
-            let held = fold.world_key(&id);
-            if held.is_some_and(|held| held.conflicted) {
-                continue;
-            }
-            let Some(pad) = pad_in_txn(&self.store, txn, &id)? else {
-                done = Reasserted::Incomplete;
-                continue;
+        for id in read.ids.iter().copied() {
+            let (key, key_owner, missing) = match read.check(&self.store, txn, id, secret)? {
+                HeldKey::Conflicted => continue,
+                HeldKey::MissingPad | HeldKey::NoOpening => {
+                    done = Reasserted::Incomplete;
+                    continue;
+                }
+                HeldKey::Opened {
+                    key,
+                    owner,
+                    missing,
+                } => (key, owner, missing),
             };
-            let opened = own
-                .iter()
-                .map(|(_, record)| record)
-                .filter(|record| {
-                    record.key == id && held.is_none_or(|held| held.commitment == record.commitment)
-                })
-                .find_map(|record| {
-                    let (_, bytes) = record.wraps.iter().find(|(to, _)| *to == me)?;
-                    let envelope = oneiron_crypto::Envelope::parse(bytes).ok()?;
-                    let binding = WorldKeyBinding {
-                        vault_id,
-                        key: id,
-                        owner: record.owner,
-                        policy: record.policy,
-                        commitment: record.commitment,
-                    };
-                    open_world_key(&binding, me, &secret.secret, &envelope, &pad)
-                        .ok()
-                        .map(|key| (key, record.owner))
-                })
-                .or_else(|| {
-                    let held = held?;
-                    open_counted(&fold, held, me, &secret.secret, &pad).map(|key| (key, held.owner))
-                });
-            let Some((key, key_owner)) = opened else {
-                done = Reasserted::Incomplete;
-                continue;
-            };
-            let missing: Vec<_> = recipients(&fold, world, root.clone())
-                .into_iter()
-                .filter(|(to, _)| !held.is_some_and(|held| held.wraps.contains_key(to)))
-                .collect();
             match self.append_world_key_wraps_in_txn(
                 txn,
-                &fold,
-                &signing,
+                &read.fold,
+                &read.signing,
                 secret.machine,
                 &key,
                 key_owner,

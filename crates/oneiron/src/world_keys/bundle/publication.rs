@@ -27,6 +27,8 @@
 //! executor opens only the keys it holds as an eligible reader), historical
 //! carry integrity, and the root alone never publishing.
 
+#[cfg(feature = "sync")]
+use super::super::{CapsuleRead, LatestRead};
 use super::super::{OwnerWorkReceipt, OwnerWorkUnassigned};
 use super::{OpenedVaultBundle, bundle_carries};
 use crate::authority::{
@@ -276,21 +278,30 @@ impl Vault {
             .collect())
     }
 
-    /// Whether `bundle`, read from `holder`, is this install's publication
-    /// for `request`: it opens here, passes the publisher check, names that
-    /// request and this install sealed it. A bundle that does not open here
-    /// is not.
+    /// What the home's newest generation, `bundle` and `pads` read from
+    /// `holder`, is to this install's publication for `request`: whether it
+    /// is that publication (it opens here, passes the publisher check, names
+    /// that request and this install sealed it), and how each of its outer
+    /// capsules opened here (FIX 4785). A bundle that does not open here is
+    /// not this install's publication. Reads only.
     #[cfg(feature = "sync")]
-    pub(crate) fn bundle_names_request(
+    pub(crate) fn read_latest_for_request(
         &self,
         bundle: &super::SealedVaultBundle,
+        pads: &super::SealedKeyPads,
         holder: Destination,
         request: AuthorityEntryHash,
-    ) -> Result<bool> {
+    ) -> Result<(bool, LatestRead)> {
         let me = self.machine_secret_outside_txn()?.machine;
-        Ok(self
-            .open_vault_bundle(bundle, holder)
-            .is_ok_and(|opened| opened.publisher == me && opened.request == Some(request)))
+        let opened = self.open_vault_bundle(bundle, holder);
+        let named = opened
+            .as_ref()
+            .is_ok_and(|opened| opened.publisher == me && opened.request == Some(request));
+        let read = LatestRead::Read {
+            bundle: CapsuleRead::of(&opened),
+            pads: CapsuleRead::of(&self.open_key_pads(pads)),
+        };
+        Ok((named, read))
     }
 
     /// Appends the enacted result of the bundle publication `request`, in a

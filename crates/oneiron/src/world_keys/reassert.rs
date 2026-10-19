@@ -30,7 +30,7 @@ use crate::error::Result;
 use crate::policy_model::WorldPrivacyReceipt;
 use crate::{EntityId, Vault};
 
-pub(super) use self::holder::{ReassertIncomplete, WORLD_KEY_REASSERT_INCOMPLETE};
+pub(super) use self::holder::{HeldKey, ReassertIncomplete, WORLD_KEY_REASSERT_INCOMPLETE};
 
 impl Vault {
     /// Re-asserts one world's complete settings, which the owner chose, from

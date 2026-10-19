@@ -26,6 +26,7 @@
 //! runs first, on the install it names in any role (`publication`).
 
 mod access;
+mod attempt;
 mod publication;
 mod sweep;
 mod turn;
@@ -500,7 +501,7 @@ impl SlotRelay<'_> {
                     upload.pads.as_bytes(),
                 )
                 .await?
-                && commit_generation(rpc, &generation, latest, upload.kit_root)
+                && commit_generation(rpc, &generation, latest, upload.kit_root, None)
                     .await?
                     .is_some()
             {
@@ -709,26 +710,26 @@ async fn put_object(
 }
 
 /// Commits the generation staged here on `parent`, naming `root`, the
-/// recovery root whose kit may read it: the entry the home acknowledged, or
-/// `None` when the home refused it. A commit that did not reach the home, or
-/// a reply naming no entry, is an error.
+/// recovery root whose kit may read it, and `request`, the owner's ask it
+/// publishes for, which the home records it under (FIX 4787): the entry the
+/// home acknowledged, or `None` when the home refused it. A commit that did
+/// not reach the home, or a reply naming no entry, is an error.
 async fn commit_generation(
     rpc: &mut ResidenceRpc,
     generation: &SealedBundleGeneration,
     parent: Option<SealedBundleGeneration>,
     root: Option<RecoveryRootId>,
+    request: Option<AuthorityEntryHash>,
 ) -> Result<Option<CommittedBundle>, TransportError> {
-    let Ok(reply) = rpc
-        .call(
-            "residence.bundle.commit",
-            json!({
-                "generation": sealed_generation_hex(generation),
-                "parent": parent.as_ref().map(sealed_generation_hex),
-                "root": root.as_ref().map(|root| sealed_digest_hex(&root.0)),
-            }),
-        )
-        .await?
-    else {
+    let mut params = json!({
+        "generation": sealed_generation_hex(generation),
+        "parent": parent.as_ref().map(sealed_generation_hex),
+        "root": root.as_ref().map(|root| sealed_digest_hex(&root.0)),
+    });
+    if let Some(request) = request {
+        params["request"] = json!(sealed_digest_hex(&request));
+    }
+    let Ok(reply) = rpc.call("residence.bundle.commit", params).await? else {
         return Ok(None);
     };
     let reply: BundleCommitReply = serde_json::from_value(reply).map_err(|_| refused())?;
