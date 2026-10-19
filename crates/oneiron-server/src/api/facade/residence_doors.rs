@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, ResidenceAct};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 use oneiron::sync::SyncConnection;
 use oneiron::task_verb::sdk::{
     ResidenceDirectiveView, ResidenceDirectivesRequest, ResidenceIndexAnswer,
@@ -51,13 +51,7 @@ fn machine_connection(
     machine: &oneiron::EntityId,
     act: ResidenceAct,
 ) -> MemoryResult<Reach> {
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = super::owner_binding::facade_owner(server, auth, verb)?;
     match crate::residence_machines::connection(machine) {
         Some(connection) => Ok(Reach::Connection(connection)),
         None => relay(server, &owner, *machine, act).map(Reach::Queued),

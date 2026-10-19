@@ -31,7 +31,7 @@ pub(super) fn http_transport_context(
         .ok_or_else(|| ApiError::internal_server_error("booking peer context unavailable"))?;
     let principal = match host_action {
         Some(action) => Some(action.actor()),
-        None => credential_principal(&auth),
+        None => credential_principal(server, &auth)?,
     };
     Ok(BookingTransportContext {
         source_ip,
@@ -83,9 +83,10 @@ pub(crate) fn credential_transport_context(
     auth: &CoreAuth,
 ) -> Result<BookingAdmissionContext, ApiError> {
     let host_action = crate::api::host_action::require_host_owner_act(server, auth)?;
-    let principal = host_action
-        .map(|action| action.actor())
-        .or_else(|| credential_principal(auth));
+    let principal = match host_action {
+        Some(action) => Some(action.actor()),
+        None => credential_principal(server, auth)?,
+    };
     Ok(BookingAdmissionContext {
         ip_hash: booking_ip_hash(&format!("credential\0{}", auth.principal())),
         credential: Some(auth.principal().to_owned()),
@@ -95,13 +96,31 @@ pub(crate) fn credential_transport_context(
     })
 }
 
-fn credential_principal(auth: &CoreAuth) -> Option<WriteActor> {
+/// The caller's own principal, who pays for what it books. A managed vault's
+/// attested owner pays as the person his request's own owner proof
+/// revalidates now (FIX 4372), never as an id the request merely names; one
+/// the vault does not record as its live owner is refused as the owner door
+/// refuses.
+fn credential_principal(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<Option<WriteActor>, ApiError> {
+    if let Some(holder) = auth.managed_owner() {
+        let refused = || ApiError::forbidden_scope("owner");
+        let owner =
+            crate::api::owner_routes::managed_owner_proof(server, holder)?.ok_or_else(refused)?;
+        let person = owner
+            .revalidate_person(server.vault())
+            .map_err(|_| refused())?;
+        return Ok(Some(WriteActor::new(person, EdgeActorClass::Human)));
+    }
     let class = match auth.actor_class() {
         Some("agent") => EdgeActorClass::Agent,
         Some("system") => EdgeActorClass::System,
         _ => EdgeActorClass::Human,
     };
-    auth.principal_ref()
+    Ok(auth
+        .principal_ref()
         .and_then(|reference| EntityId::from_hex(reference).ok())
-        .map(|actor| WriteActor::new(actor, class))
+        .map(|actor| WriteActor::new(actor, class)))
 }
