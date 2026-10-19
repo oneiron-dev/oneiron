@@ -10,7 +10,8 @@
 //! series' formatting, and the chart's titles, axes and legend.
 
 use super::LiveError;
-use super::convert::{self, Conversion};
+use super::conversion::Conversion;
+use super::convert;
 use super::held::{self, C, children};
 use super::pptx::{ChartKind, ChartSource, NodePayload, WRITTEN_FRAME, WRITTEN_TABLE};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset};

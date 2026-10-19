@@ -226,7 +226,21 @@ pub(in crate::runtime_hooks::verb) fn take(
     vault
         .verb_hook_state
         .session
-        .use_ask(key, token.key, token.ask)
+        .use_ask(vault, key, token.key, token.ask)
+}
+
+/// Forgets the session-only pauses `cutoff` (vault-clock seconds) left
+/// behind, on the saved calls' own horizon (FIX 5528): used ones used
+/// before it, and unused ones paused before it whose ask settled without a
+/// proceed, read as its author with no task-work turn, as [`super::prune`]
+/// reads an open saved call. Pending and approved-but-unused pauses stay.
+/// Returns how many it forgot.
+pub(in crate::runtime_hooks::verb) fn prune(vault: &Vault, cutoff: u64) -> usize {
+    vault.verb_hook_state.session.prune(cutoff, |row| {
+        let status = author_memory(vault, row.author, row.author_class, None)
+            .tasks_ask_status(TaskAskHandle { group_ref: row.ask });
+        matches!(status, Ok(TaskAskStatus::Settled(result)) if !proceeds(&result))
+    })
 }
 
 /// The refusal a pause meets once its session closed.

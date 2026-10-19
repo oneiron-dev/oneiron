@@ -101,13 +101,14 @@ pub struct VaultPageSeal {
 }
 
 /// Where a seal came from: minted for a new vault, the one seal that creates
-/// a vault, unlocked from a mirror by the carried wraps it opened, or made
-/// from the data key a managed node's supervisor delivered (`new` for a new
-/// vault's).
+/// a vault, unlocked from a mirror by the carried wraps it opened or by the
+/// data-key kit's pieces (FIX 5614), which open no wrap, or made from the
+/// data key a managed node's supervisor delivered (`new` for a new vault's).
 #[derive(Clone)]
 enum SealOrigin {
     New,
     Unlocked(Vec<WrapDigest>),
+    Kit,
     Delivered { new: bool },
 }
 
@@ -350,7 +351,9 @@ pub fn reopen_delivered_page_seal(
 /// outside them ([`VaultKeyUnlock::EscrowCapsule`]). The seal opens that
 /// vault, and only while it holds the wrap that opened, envelope for
 /// envelope ([`Vault::settle_page_seal`]); it never creates one, and a
-/// mirror whose vault's data is missing refuses.
+/// mirror whose vault's data is missing refuses. The data-key kit's pieces
+/// ([`VaultKeyUnlock::Kit`]) rebuild the key the mirror's commitment names
+/// and open no wrap: the seal opens the vault on that key.
 pub fn unlock_page_seal(vault_path: &Path, unlock: &VaultKeyUnlock<'_>) -> Result<VaultPageSeal> {
     let mirror = read_mirror(vault_path)?;
     if !has_data(vault_path) {
@@ -358,11 +361,15 @@ pub fn unlock_page_seal(vault_path: &Path, unlock: &VaultKeyUnlock<'_>) -> Resul
     }
     let (key, opened) = mirror.carried.open_recording(&mirror.vault_id, unlock)?;
     let incarnation = select_incarnation(vault_path, &mirror, &key)?;
+    let origin = match unlock {
+        VaultKeyUnlock::Kit { .. } => SealOrigin::Kit,
+        _ => SealOrigin::Unlocked(opened),
+    };
     Ok(VaultPageSeal::derive(
         mirror.vault_id,
         incarnation,
         key,
-        SealOrigin::Unlocked(opened),
+        origin,
     ))
 }
 
@@ -418,9 +425,11 @@ pub(crate) fn admit_new_vault(root: &Path, seal: Option<&VaultPageSeal>) -> Resu
         return Err(refused(ORPHANED));
     }
     match seal.map(|seal| &seal.origin) {
-        Some(SealOrigin::Unlocked(_) | SealOrigin::Delivered { new: false }) => Err(refused(
-            "a page seal read from a mirror opens its vault and creates none",
-        )),
+        Some(SealOrigin::Unlocked(_) | SealOrigin::Kit | SealOrigin::Delivered { new: false }) => {
+            Err(refused(
+                "a page seal read from a mirror opens its vault and creates none",
+            ))
+        }
         Some(SealOrigin::New | SealOrigin::Delivered { new: true }) | None => Ok(()),
     }
 }

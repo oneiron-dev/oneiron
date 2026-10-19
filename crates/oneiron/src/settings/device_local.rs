@@ -84,8 +84,9 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let flagged = device_local_worlds_for(self, &rtxn, endpoint)?;
         let Some(world) = world else {
-            return Ok((!flagged.is_empty())
-                .then(|| worlds_hold_in(self, &rtxn, &flagged, endpoint)));
+            return Ok(
+                (!flagged.is_empty()).then(|| worlds_hold_in(self, &rtxn, &flagged, endpoint))
+            );
         };
         if flagged.contains(&world) {
             let world = std::collections::BTreeSet::from([world]);
@@ -99,8 +100,10 @@ impl Vault {
         }
         let visibility =
             crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &rtxn, &world)?;
-        Ok((visibility.deleted || visibility.archived || visibility.stale)
-            .then_some(ReleaseHold::Placement))
+        Ok(
+            (visibility.deleted || visibility.archived || visibility.stale)
+                .then_some(ReleaseHold::Placement),
+        )
     }
 
     /// Whether a device-local world keeps `id` on this device, so no caller

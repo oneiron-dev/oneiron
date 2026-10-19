@@ -72,9 +72,12 @@ unsupported case is inconclusive, and the gate stays closed.
   approving inside a run invalidates it.
 - `scripts/office/README.md` "Safe Mac setup" applies: Automation and
   Accessibility granted once, no Grant File Access, no other open presentation.
-  The Office half takes the shared lock `~/w7-oracle/lock`. It keeps the lock
-  when PowerPoint custody is uncertain; check the Mac mini, then remove it by
-  hand.
+  The Office half takes the shared lock `~/w7-oracle/lock` and releases it on
+  every exit it can catch (SIGTERM and SIGHUP included; only SIGKILL leaves it,
+  to remove by hand). When PowerPoint custody is uncertain it says so: check
+  the Mac mini; the next pass refuses while PowerPoint holds a presentation.
+  Three custody queries in a row that PowerPoint leaves unanswered stop the
+  pass with an environment verdict: inconclusive, never a pass.
 - PPTArena decks are untrusted. Their candidates open only in the isolated macOS
   test account (network and active content off, logged in, PowerPoint signed in).
   The owner account (`office.owner_accounts`) refuses `--isolated-account`.
