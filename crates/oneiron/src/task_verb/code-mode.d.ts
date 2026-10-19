@@ -2882,7 +2882,7 @@ declare namespace Sdk {
   type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
   type Rebound = { old: string; new: string; old_scope?: string | null; new_scope: string; locator: string; ambiguous?: boolean; candidates?: string[] };
   type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
-  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; screenshot_evidence?: ReceiptEvidence | null };
+  type EffectReceipt = { seq: number; verb: string; url: string; title: string; target?: string | null; target_name?: string | null; target_locator?: string | null; rebound?: Rebound | null; effect_class?: string | null; press: string; screenshot?: string | null; capture_id?: string | null; screenshot_evidence?: ReceiptEvidence | null };
   type LibraryCard = { workflow: string; site: string; subgoal: string; params: string[]; runs: number; failures: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
   type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null };
@@ -2904,8 +2904,8 @@ declare namespace Sdk {
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null; partial?: PartialTree | null; rebindings?: Rebound[] };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
-  type ScreenshotInput = { trigger: ScreenshotTrigger };
-  type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string };
+  type ScreenshotInput = { trigger: ScreenshotTrigger; since_capture?: string | null };
+  type ScreenshotOutput = { image: string; media_type: string; width: number; height: number; bytes: number; trigger: ScreenshotTrigger; url: string; title: string; capture_id: string; unchanged_from?: string | null };
   type ViewInput = { image: string };
   type ImageOutput = { image: string; media_type: string; width: number; height: number; bytes: number; source: string };
   type CropInput = { image: string; x: number; y: number; width: number; height: number };
@@ -3892,7 +3892,7 @@ declare namespace self {
     observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Opens a URL in the run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor. */
     open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Takes a screenshot the session holds, by image ref and never captioned. */
+    /** Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
     /** Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor. */
     select(input: Sdk.SelectInput): Promise<Sdk.ObservationPage | StoredResult>;
@@ -3947,7 +3947,7 @@ declare namespace self {
     observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor. */
     open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
-    /** Takes a screenshot of the window the session holds, by image ref and never captioned. */
+    /** Takes a screenshot of the window the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
     /** Scrolls a window target, or the window, by steps, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor. */
     scroll(input: Sdk.ScrollInput): Promise<Sdk.ObservationPage | StoredResult>;

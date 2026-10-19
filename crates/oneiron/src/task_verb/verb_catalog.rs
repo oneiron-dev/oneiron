@@ -11927,7 +11927,7 @@ impl AgentVerb {
                 "Checks that a window row is present or absent, and holds a given value."
             }
             Self::SelfDesktopScreenshot => {
-                "Takes a screenshot of the window the session holds, by image ref and never captioned."
+                "Takes a screenshot of the window the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope."
             }
             Self::SelfDesktopView => "Reads back a held image by its ref.",
             Self::SelfDesktopCrop => "Crops a held image to a rectangle.",
@@ -12588,7 +12588,7 @@ impl AgentVerb {
                 "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."
             }
             Self::SelfBrowserScreenshot => {
-                "Takes a screenshot the session holds, by image ref and never captioned."
+                "Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope."
             }
             Self::SelfBrowserView => "Reads back a held image by its ref.",
             Self::SelfBrowserCrop => "Crops a held image to a rectangle.",

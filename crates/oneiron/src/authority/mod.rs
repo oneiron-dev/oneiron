@@ -313,8 +313,8 @@ pub(crate) use log_budget::{
 };
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
-    read_pin_and_earlier_in_txn, read_pin_row_in_txn, write_awaited_root_in_txn,
-    write_pinned_root_in_txn,
+    end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
+    write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
@@ -344,7 +344,7 @@ use sequence_observation::{AuthorityLocalObservations, authority_local_observati
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{
-    next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
+    KeyFrontier, next_sequence, own_world_key_records_in_txn, owner_root_record_in_txn,
     owner_root_records_in_txn, scope_head, sign_side_entry, standing_rows,
 };
 #[cfg(feature = "sync")]

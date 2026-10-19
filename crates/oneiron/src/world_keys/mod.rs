@@ -54,8 +54,8 @@ pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{
-    ConfirmedWorldKit, IssuedWorldKit, StoredCost, StoredKit, WORLD_KIT_ESCROW, WorldKitRestore,
-    WorldKitStatus,
+    ConfirmedWorldKit, IssuedWorldKit, IssuingRequest, StoredCost, StoredKit, WORLD_KIT_ESCROW,
+    WorldKitRestore, WorldKitStatus,
 };
 pub(crate) use self::machine::{keystore_error, slot_seed};
 pub use self::machine::{machine_encryption_key, machine_secret};
