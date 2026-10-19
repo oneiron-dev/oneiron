@@ -1134,9 +1134,9 @@ export interface FacadeResults {
   "vault.budgets.rsi.top_up": Facade.RsiLineView;
   "vault.budgets.rsi.hold": Facade.RsiLineView;
   "vault.budgets.rsi.hold.resume": Facade.RsiLineView;
-  "vault.fanout.resume": Facade.FanoutLaunchView;
-  "vault.fanout.resume_as": Facade.FanoutLaunchView;
-  "vault.fanout.ack": Facade.FanoutLaunchView;
+  "vault.fanout.resume": Facade.ActAnswer<Facade.FanoutLaunchView>;
+  "vault.fanout.resume_as": Facade.ActAnswer<Facade.FanoutLaunchView>;
+  "vault.fanout.ack": Facade.ActAnswer<Facade.FanoutLaunchView>;
   "tasks.update": Facade.TaskUpdateReceipt;
   "tasks.accept": Facade.TaskCallReceipt;
   "vault.commit_message": Facade.WitnessReceipt;
@@ -1341,7 +1341,7 @@ export interface FacadeResults {
   "vault.shared.propose_delete": Facade.PendingAuthorityAct;
   "vault.shared.propose_transfer": Facade.PendingAuthorityAct;
   "vault.shared.propose_remove_owner": Facade.PendingAuthorityAct;
-  "vault.shared.execute": Facade.SharedActExecuted;
+  "vault.shared.execute": Facade.ActAnswer<Facade.SharedActExecuted>;
   "vault.shared.receipt": Facade.SharedActExecutionReceipt;
   "vault.shared.outcomes": Facade.SharedActOutcome[];
   "vault.shared.deletion": Facade.SharedVaultDeletion | null;
@@ -1434,7 +1434,7 @@ export interface FacadeResults {
   "vault.off_record.rooms.confirm_save": Facade.OffRecordRoomSaved;
   "vault.off_record.rooms.decline_save": Facade.OffRecordRoomView;
   "vault.records.erase_preview": Facade.RecordErasePreview;
-  "vault.records.erase_confirm": Facade.RecordEraseOutcome;
+  "vault.records.erase_confirm": Facade.ActAnswer<Facade.RecordEraseOutcome>;
   "vault.records.erase_sweep": Facade.RecordEraseSweep | null;
   "vault.research.create_child": Facade.ResearchChildReceipt;
   "vault.research.archive": Facade.ResearchArchive;

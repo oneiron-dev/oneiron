@@ -800,11 +800,11 @@ class Oneiron:
             """Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree."""
         def launch(self, spec: Facade.FanoutLaunchRequest) -> Facade.FanoutLaunchView | None:
             """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."""
-        def resume(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
+        def resume(self, spec: Facade.FanoutResumeRequest) -> Facade.ActAnswer[Facade.FanoutLaunchView]:
             """The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."""
-        def resume_as(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
+        def resume_as(self, spec: Facade.FanoutResumeRequest) -> Facade.ActAnswer[Facade.FanoutLaunchView]:
             """A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember."""
-        def ack(self, spec: Facade.FanoutAckRequest) -> Facade.FanoutLaunchView:
+        def ack(self, spec: Facade.FanoutAckRequest) -> Facade.ActAnswer[Facade.FanoutLaunchView]:
             """The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied."""
     class _VaultBudgetsVerbs:
         @property
@@ -1468,7 +1468,7 @@ class Oneiron:
             """Starts a shared vault's transfer_ownership act: a live Owner hands the vault to another person."""
         def propose_remove_owner(self, spec: Facade.SharedRemoveOwnerRequest) -> Facade.PendingAuthorityAct:
             """Starts a shared vault's remove_owner act, with its export-first answer."""
-        def execute(self, spec: Facade.SharedActRequest) -> Facade.SharedActExecuted:
+        def execute(self, spec: Facade.SharedActRequest) -> Facade.ActAnswer[Facade.SharedActExecuted]:
             """A live Owner runs a matured shared-vault act and gets its receipt."""
         def receipt(self, spec: Facade.SharedReceiptRequest) -> Facade.SharedActExecutionReceipt:
             """One shared-act or membership receipt its reader was told about, by id."""
@@ -1702,7 +1702,7 @@ class Oneiron:
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
-        def erase_confirm(self, spec: Facade.RecordEraseConfirmRequest) -> Facade.RecordEraseOutcome:
+        def erase_confirm(self, spec: Facade.RecordEraseConfirmRequest) -> Facade.ActAnswer[Facade.RecordEraseOutcome]:
             """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
         def erase_sweep(self, spec: Facade.RecordEraseSweepRequest) -> Facade.RecordEraseSweep | None:
             """Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."""

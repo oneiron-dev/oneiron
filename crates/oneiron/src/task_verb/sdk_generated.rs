@@ -22717,20 +22717,26 @@ pub fn vault_budgets_rsi_hold_resume(
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::FanoutResumeRequest,
-) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
-    crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::resume_fanout_launch_embedded(memory, input)?,
+    ))
 }
 pub fn vault_fanout_resume_as(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::FanoutResumeRequest,
-) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
-    crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)?,
+    ))
 }
 pub fn vault_fanout_ack(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::FanoutAckRequest,
-) -> MemoryResult<crate::task_verb::sdk::FanoutLaunchView> {
-    crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::ack_fanout_check_embedded(memory, input)?,
+    ))
 }
 pub fn tasks_update(
     memory: &Memory<'_>,
@@ -24386,13 +24392,15 @@ pub fn vault_shared_propose_remove_owner(
 pub fn vault_shared_execute(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::SharedActRequest,
-) -> MemoryResult<crate::task_verb::sdk::SharedActExecuted> {
-    crate::task_verb::sdk::execute_shared_act(
-        memory.vault(),
-        &memory.embedded_owner("vault.shared.execute")?,
-        None,
-        input,
-    )
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::SharedActExecuted>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::execute_shared_act(
+            memory.vault(),
+            &memory.embedded_owner("vault.shared.execute")?,
+            None,
+            input,
+        )?,
+    ))
 }
 pub fn vault_shared_receipt(
     memory: &Memory<'_>,
@@ -25164,8 +25172,10 @@ pub fn vault_records_erase_preview(
 pub fn vault_records_erase_confirm(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::RecordEraseConfirmRequest,
-) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
-    crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
+) -> MemoryResult<crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::RecordEraseOutcome>> {
+    Ok(crate::task_verb::sdk::ActAnswer::Done(
+        crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)?,
+    ))
 }
 pub fn vault_records_erase_sweep(
     memory: &Memory<'_>,

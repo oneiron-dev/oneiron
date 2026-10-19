@@ -24,7 +24,7 @@ use oneiron::federation::{
 use oneiron::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
-    self, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
+    self, ActAnswer, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
     RecordEraseConfirmRequest, RecordEraseOutcome, RecordErasePreview, RecordEraseRequest,
     SharedActRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationRequest,
     SharedInvitationWithdrawRequest, SharedVaultRequest,
@@ -87,32 +87,30 @@ pub(crate) async fn vault_records_erase_preview(
 
 /// `vault.records.erase_confirm`: the caller's own erase of the record they
 /// previewed. Their proof starts a held record's `erase` act, which
-/// `vault.shared.execute` carries out after its veto window. Beside it, the
-/// rows the preview it confirms was derived from.
+/// `vault.shared.execute` carries out after its veto window, from whatever
+/// surface the proof came from. Beside it, the rows the preview it confirms
+/// was derived from; a caller off this device whose answer would carry a row
+/// that stays here hears only that it ran (FIX 3414).
 pub(crate) async fn vault_records_erase_confirm(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: RecordEraseConfirmRequest,
-) -> Listed<RecordEraseOutcome> {
+) -> Listed<ActAnswer<RecordEraseOutcome>> {
     const VERB: &str = "vault.records.erase_confirm";
     let caller = match person(server, auth, VERB) {
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
-    let server = Arc::clone(server);
-    let locality = auth.locality();
-    off_runtime_listing(VERB, move |producers| {
-        let memory = server
+    let held = Arc::clone(server);
+    let answer = off_runtime_listing(VERB, move |producers| {
+        let memory = held
             .vault()
-            .memory(
-                caller.revalidate_person(server.vault())?,
-                EdgeActorClass::Human,
-            )
-            .at(locality)
+            .memory(caller.revalidate_person(held.vault())?, EdgeActorClass::Human)
             .listing_producers(producers);
         sdk::confirm_record_erase(&memory, &caller, input)
     })
-    .await
+    .await;
+    crate::device_local::act_answer(server.vault(), &auth.destination(), answer)
 }
 
 /// The owner's historical erasure timing, without starting or polling a sweep.

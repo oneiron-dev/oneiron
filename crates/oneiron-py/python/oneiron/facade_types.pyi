@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1051 facade rows, 3554 declarations.
+Census: 1051 facade rows, 3556 declarations.
 Inputs: 987 of 1051 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 941 of 1051 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
@@ -2013,6 +2013,9 @@ class FanoutResumeRequest(TypedDict):
     plan_digest: str
     ruling: FanoutLaunchRuling
     remembered_cap: NotRequired[int | None]
+class DetailsOnDevice(TypedDict):
+    details_on_device: bool
+ActAnswer = DetailsOnDevice | T
 FanoutCheckChoice = Literal["ack", "ack_and_remember"]
 class FanoutAckRequest(TypedDict):
     launch_ref: EntityId
