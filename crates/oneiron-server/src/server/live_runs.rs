@@ -23,16 +23,26 @@
 //! An attach or action waits up to [`LIVE_RUN_GUARD_WAIT`] for the guard
 //! while an entry or another action holds it. Tokio's mutex queues in order,
 //! so a waiting call gets the guard before the runner's next entry.
+//!
+//! An action's planned team writes its start on the run's own seat and
+//! line, as an entry's does, from what the run registered (DOOR-111 S4c-4,
+//! `pattern_action`).
+mod pattern_action;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
 use axum::http::StatusCode;
+use oneiron::agent_def::AgentDefinition;
+use oneiron::agent_dispatch::SpendScopeId;
 use oneiron::attempt_queue::AttemptRecord;
 use oneiron::code_run::live_run::{
     self, CodeRunLiveRunBinding, LIVE_RUN_ISSUED_LEN, LiveRunCredential,
 };
+use oneiron::llm::seat::ModelSeat;
 use oneiron::task_verb::HostBinding;
+use oneiron::team::PatternLaunchRunner;
 use oneiron::{EdgeActorClass, EntityId, Vault, WriteActor};
 use tokio::sync::OwnedMutexGuard;
 
@@ -164,6 +174,13 @@ pub(crate) struct LiveRunEntry {
     /// entries' are.
     planner: Option<PlannerSettings>,
     executor: String,
+    /// The seat the run was born on, the frozen definition it entered with
+    /// and the scope its entries spend under, as its first entry of this
+    /// lease registered them: an action's planned team writes its start on
+    /// them, as an entry's does.
+    model_seat: Option<ModelSeat>,
+    definition: AgentDefinition,
+    spend_scope: Option<SpendScopeId>,
     attached: Mutex<Option<CodeRunLiveRunBinding>>,
     /// Public browser calls share one door so a new HTTP request does not
     /// refill a reviewed batch. Dropped with this registered lease.
@@ -203,9 +220,11 @@ impl LiveRuns {
 
     /// Registers run `run`, which its runner enters as `actor` under the
     /// lease of `leased`, proven by `proof`, planning under `planner` on the
-    /// model `executor`. The same lease keeps its entry, attachment and
-    /// guard; another replaces them, keeping the attachment the run's replay
-    /// row holds only when it names this exact lease.
+    /// model `executor`, on the seat `model_seat` it was born on, from its
+    /// frozen `definition`, spending under `spend_scope`. The same lease
+    /// keeps its entry, attachment and guard; another replaces them, keeping
+    /// the attachment the run's replay row holds only when it names this
+    /// exact lease.
     #[expect(
         clippy::too_many_arguments,
         reason = "each argument is one fact of the registered run"
@@ -219,6 +238,9 @@ impl LiveRuns {
         proof: HostBinding,
         planner: Option<PlannerSettings>,
         executor: String,
+        model_seat: Option<ModelSeat>,
+        definition: AgentDefinition,
+        spend_scope: Option<SpendScopeId>,
     ) -> oneiron::Result<Arc<LiveRunEntry>> {
         self.prune(vault);
         if let Some(entry) = self.get(run)
@@ -235,6 +257,9 @@ impl LiveRuns {
             proof,
             planner,
             executor,
+            model_seat,
+            definition,
+            spend_scope,
             attached: Mutex::new(attached),
             browser: OnceLock::new(),
             serial: Arc::default(),
@@ -478,6 +503,18 @@ impl ResolvedLiveRun {
     /// executes on, for the planner its action's leader rows run on.
     pub(crate) fn planner(&self) -> (Option<&PlannerSettings>, &str) {
         (self.entry.planner.as_ref(), &self.entry.executor)
+    }
+
+    /// The pattern runner its action's planned team writes its start on
+    /// (DOOR-111 S4c-4): the run's own seat, frozen definition and leased
+    /// try, on its entries' line, opened afresh for each start. `None` where
+    /// the run's entries lend none either, so its planned spawns take the
+    /// path a host with no runner takes.
+    pub(crate) fn pattern_runner(
+        &self,
+        server: &super::SyncServer,
+    ) -> Option<Arc<dyn PatternLaunchRunner>> {
+        pattern_action::runner(server, &self.entry)
     }
 
     /// The idempotency key an action through this handle runs under.
