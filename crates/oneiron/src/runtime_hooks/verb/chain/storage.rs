@@ -160,6 +160,11 @@ impl Chain<'_> {
             ("note", run.note.as_deref()),
             ("fail_safe", run.fail_safe),
             ("scope", self.call.scope.as_deref()),
+            (
+                "retry",
+                self.expired
+                    .then_some(ask::session::PRUNED_RECORDED_ASK_NOTE),
+            ),
         ] {
             if let Some(value) = value {
                 fields.insert(name.to_owned(), bounded(value));

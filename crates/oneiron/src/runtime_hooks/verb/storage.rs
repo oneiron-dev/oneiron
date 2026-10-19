@@ -13,7 +13,9 @@
 //! process ([`SessionHookKeep`]). None of them reaches base. Such a call's
 //! hook may ask (L13 PR-D, FIX 4283): the call it paused waits in the same
 //! keep, under the same key, and only its caller's retry there resumes it,
-//! using the answer up once; it goes with its session. While
+//! using the answer up once; it goes with its session. A room's hook asks
+//! the same way, its pause kept in RAM under the room's own stretch with the
+//! route its run captured ([`room_pause`], FIX 5524). While
 //! `KEPT_CALL_HOOK_CONSEQUENCES_RUN` holds (FIX 5525), its hooks' blocks,
 //! proposals, queued tasks and effects land in the vault as on any call;
 //! only their receipts and saved runs stay in the keep.
@@ -62,6 +64,12 @@ use crate::{EntityId, Result, Vault};
 use super::record::{self, HookVerbRunRecord};
 use super::{VerbArgsCheck, VerbCall, VerbHookPre, VerbHookStop, chain};
 
+mod named_pause;
+mod room_pause;
+
+pub(super) use room_pause::PausedRoute;
+pub(crate) use room_pause::RoomHookCall;
+
 /// The one reason a hook's outcome that needs canonical work gives in a
 /// session (CALLS-3 `session_hook_consequence_support`): its receipt's
 /// reason, with the work it named after a colon, and its disposition's.
@@ -91,8 +99,8 @@ pub(crate) struct SessionHooks<'s> {
     /// Dispositions no receipt goes with: a phase whose hooks went unread.
     notes: RefCell<Vec<SessionHookDisposition>>,
     dispositions: RefCell<Vec<SessionHookDisposition>>,
-    /// The pause an explicit resume names, by its ask handle, on a call
-    /// with no room overlay ([`Self::resuming`]); `None` for a new call.
+    /// The pause an explicit resume names, by its ask handle
+    /// ([`Self::resuming`]); `None` for a new call.
     resume: Option<EntityId>,
     /// Set once this call used its resumed answer up in the keep.
     answer_taken: Cell<bool>,
@@ -101,10 +109,12 @@ pub(crate) struct SessionHooks<'s> {
 /// Where one session-only call's hooks read and keep.
 enum HooksTarget<'s> {
     /// An off-record room: its view, and its store along the route its run
-    /// captured at entry.
+    /// captured at entry; its hooks' pauses wait in the in-memory keep under
+    /// `key`, its stretch's own (FIX 5524).
     Room {
         session: &'s OffRecordSession<'s>,
         route: &'s SessionWriteRoute,
+        key: SessionHookKey,
     },
     /// A call with no room overlay: the vault's content, and the in-memory
     /// keep under `key`.
@@ -250,6 +260,9 @@ pub(super) struct SessionVerbAsk {
     pub(super) ask: EntityId,
     /// Set once a retry resumed the call on a proceed answer it used up.
     pub(super) used: bool,
+    /// The route a room's call ran on when its hook asked, in RAM only; a
+    /// resume refuses once it no longer holds (FIX 5524). `None` with no room.
+    pub(super) route: Option<PausedRoute>,
 }
 
 impl SessionHookKeep {
@@ -472,9 +485,17 @@ impl SessionHookKeep {
 
 impl<'s> SessionHooks<'s> {
     /// The hooks of a call in `session`'s room, on `route`, the route its
-    /// run captured.
-    pub(crate) fn new(session: &'s OffRecordSession<'s>, route: &'s SessionWriteRoute) -> Self {
-        Self::on(HooksTarget::Room { session, route })
+    /// run captured; a hook's pause waits under `key`, the stretch's own.
+    pub(crate) fn new(
+        session: &'s OffRecordSession<'s>,
+        route: &'s SessionWriteRoute,
+        key: SessionHookKey,
+    ) -> Self {
+        Self::on(HooksTarget::Room {
+            session,
+            route,
+            key,
+        })
     }
 
     /// The hooks of a session-only call with no room overlay: they read
@@ -497,10 +518,10 @@ impl<'s> SessionHooks<'s> {
     }
 
     /// These hooks, for a call that names `ask`, the handle of the pause it
-    /// resumes (L13 PR-D, FIX 4283): its retry reads that pause in the keep,
-    /// and one the keep no longer holds (its session ended, or the server
-    /// restarted) refuses, never running as a new call. `None` is a new
-    /// call. Only a call with no room overlay reads it.
+    /// resumes (L13 PR-D, FIX 4283; a room's too, FIX 5524): its retry reads
+    /// that pause in the keep, and one the keep no longer holds (its session
+    /// ended, or the server restarted) refuses, never running as a new call.
+    /// `None` is a new call.
     #[must_use]
     pub(crate) fn resuming(mut self, ask: Option<EntityId>) -> Self {
         self.resume = ask;
@@ -614,7 +635,7 @@ impl<'s> SessionHooks<'s> {
                 .try_for_each(|run| put_run(&read, &write, txn, run))
         };
         let kept = match &self.target {
-            HooksTarget::Room { session, route } => session.stage_hook_records(route, rows)?,
+            HooksTarget::Room { session, route, .. } => session.stage_hook_records(route, rows)?,
             HooksTarget::Kept { vault, key } => {
                 vault.verb_hook_state.session.stage(vault, key, rows)?
             }
@@ -660,9 +681,10 @@ impl VerbHookPre {
 
 impl Vault {
     /// [`Self::pre_verb_hooks`] reading and keeping on `storage`, on `turn`,
-    /// the task-work turn the calling operation holds, if any. A session's
-    /// call saves no resume target and opens no ask, so the turn is only
-    /// carried. A session-only call's records ride the pre to its post
+    /// the task-work turn the calling operation holds, if any, which a
+    /// hook's ask runs on. A session's call saves no resume target for
+    /// settlement; its hook's ask pauses it in the keep (L13 PR-D; a room's,
+    /// FIX 5524). A session-only call's records ride the pre to its post
     /// chain; one its pre chain stops keeps them at once. On hooks that
     /// answer with them unread, a failed read of the hooks passes the call
     /// through with its own args, noting why ([`SessionHooks::answering_unread`]).

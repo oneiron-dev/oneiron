@@ -43,7 +43,9 @@ pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
 pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};
-pub(crate) use storage::{HookRecordsKept, SessionHookKey, SessionHooks, VerbHookStorage};
+pub(crate) use storage::{
+    HookRecordsKept, RoomHookCall, SessionHookKey, SessionHooks, VerbHookStorage,
+};
 
 /// One logical verb's id, minted once where the call enters and passed
 /// across transport wrappers and internal dispatch (review fix M7).

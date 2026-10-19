@@ -12,7 +12,10 @@
 //! its chain's commit uses the answer up in the keep, once, before the verb
 //! runs. The pause goes with its session: a resume that names a pause the
 //! keep no longer holds refuses ([`SESSION_PAUSE_GONE`]), never running as a
-//! new call.
+//! new call. A hook in an off-record room asks the same way (FIX 5524): its
+//! pause waits under the room's stretch, with the route its run captured,
+//! and a resume runs only once that route, the route the call runs on now
+//! and the run's place on the room's roster all hold again.
 
 use std::sync::Arc;
 
@@ -27,7 +30,7 @@ use crate::task_verb::{
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, MemoryError, Result, Vault};
 
-use super::super::storage::{SessionHookKey, SessionHooks, SessionVerbAsk};
+use super::super::storage::{PausedRoute, SessionHookKey, SessionHooks, SessionVerbAsk};
 use super::super::{InvocationId, VerbCall, VerbHookStop};
 use super::{
     AskToken, HOLD, PROCEED, Retry, USED, VERB_HOOK_INTENT, author_memory, cut, pending, proceeds,
@@ -45,6 +48,20 @@ const SESSION_PAUSE_GONE: &str = "This hook pause was off the record and lived o
      its session on this server. That session ended or the server restarted; it cannot be \
      resumed. Start a new call.";
 
+/// Whether a recorded call's retry that names its ask after the drain's pass
+/// forgot the call it saved (`ask::prune`, past `VERB_ASK_KEEP`) runs as a
+/// new call, as it did before the thin client named the ask on every retry
+/// (FIX 5693): true keeps that path, false refuses it as a gone pause. A
+/// session-only call's pause that is gone refuses either way.
+const PRUNED_RECORDED_ASK_RUNS_NEW: bool = true;
+
+/// What the hook receipts of a recorded call run as new that way say (FIX
+/// 5693; Engine 10-20): its own text, never the off-record one. Its hooks
+/// run again, so an asking hook asks again; the earlier approval is never
+/// replayed.
+pub(in crate::runtime_hooks::verb) const PRUNED_RECORDED_ASK_NOTE: &str =
+    "The earlier approval expired, so this ran as a new call.";
+
 /// The stop a resume of a gone pause ends with; `hook` names the asking hook
 /// when the keep still knows it.
 fn gone(hook: &str) -> VerbHookStop {
@@ -60,8 +77,9 @@ fn gone(hook: &str) -> VerbHookStop {
 /// answer up in the keep ([`take`]); declined or expired, Skipped. A call
 /// that names the pause it resumes (`hooks`' resume) and finds no such pause
 /// refuses with [`SESSION_PAUSE_GONE`]; one that names none and finds none is
-/// a new call. The ask is read on `turn`, the calling operation's task-work
-/// turn.
+/// a new call. A pause another call under `key` took is that call's: one
+/// that names it takes its own path, as if it named none. The ask is read
+/// on `turn`, the calling operation's task-work turn.
 pub(in crate::runtime_hooks::verb) fn retry(
     vault: &Vault,
     hooks: &SessionHooks<'_>,
@@ -70,10 +88,13 @@ pub(in crate::runtime_hooks::verb) fn retry(
     turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<Retry> {
     let invocation = call.invocation.0;
-    let row = match (
-        vault.verb_hook_state.session.ask(key, invocation),
-        hooks.resumed_ask(),
-    ) {
+    let keep = &vault.verb_hook_state.session;
+    // A pause another call of the same request took is that call's to
+    // resume (FIX 5526): this one takes its own path.
+    let named = hooks
+        .resumed_ask()
+        .filter(|ask| !keep.paused_elsewhere(key, invocation, *ask));
+    let row = match (keep.ask(key, invocation), named) {
         (Some(row), Some(ask)) if row.ask != ask => return Ok(Retry::Stop(gone(&row.hook))),
         (Some(row), _) => row,
         (None, Some(_)) => return Ok(Retry::Stop(gone(""))),
@@ -111,6 +132,8 @@ pub(in crate::runtime_hooks::verb) fn retry(
             }
         });
     }
+    // A room's call resumes only where its pause was taken (FIX 5524).
+    hooks.readmit(row.route.as_ref())?;
     Ok(Retry::Resume {
         binding: row.binding,
         position: row.position,
@@ -131,11 +154,12 @@ pub(in crate::runtime_hooks::verb) fn retry(
 /// invocation's hidden id (`SessionHookKeep::hidden_invocation`), so
 /// settlement finds no saved call and runs nothing, and the vault keeps no
 /// way to run the call again. A session that ended meanwhile opens no ask.
+/// A room's pause keeps `route`, the route its run captured (FIX 5524).
 /// The ask's group, or `Err(reason)` when the ask door refused or the
 /// session ended: nothing was kept.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the call, its key, the hook, its place, the args, the label, the call's turn and the chain's write"
+    reason = "the call, its key, the hook, its place, the args, the label, the call's turn, a room's route and the chain's write"
 )]
 pub(in crate::runtime_hooks::verb) fn open(
     vault: &Vault,
@@ -146,6 +170,7 @@ pub(in crate::runtime_hooks::verb) fn open(
     args: &Value,
     label: &str,
     turn: Option<&Arc<TaskWorkTurn>>,
+    route: Option<PausedRoute>,
     write: &dyn Fn(&mut heed::RwTxn<'_>) -> Result<()>,
 ) -> Result<std::result::Result<EntityId, String>> {
     let (binding_id, binding) = hook;
@@ -184,6 +209,7 @@ pub(in crate::runtime_hooks::verb) fn open(
                 author_class: binding.author_class(),
                 ask,
                 used: false,
+                route: route.clone(),
             },
         )
     };
@@ -254,18 +280,51 @@ fn ended(key: &SessionHookKey) -> Error {
 }
 
 impl Vault {
-    /// The stop of a call that names a hook pause it resumes under
-    /// `invocation` but runs as a call that keeps its record now (L13 PR-D,
+    /// The stop of a call that names `ask`, a hook pause it resumes under
+    /// `invocation`, but runs as a call that keeps its record now (L13 PR-D,
     /// FIX 4283): when the vault holds no call paused under `invocation`,
     /// the pause was a session-only call's whose session ended or whose
     /// server restarted, and it refuses with [`SESSION_PAUSE_GONE`] rather
     /// than run as a new call. `None` when the vault holds one: its own
-    /// retry reads it.
+    /// retry reads it. `None` too, while [`PRUNED_RECORDED_ASK_RUNS_NEW`]
+    /// holds, when `ask` was this recorded call's own, whose saved call the
+    /// drain's pass forgot (FIX 5693): the call runs as new, and its chain's
+    /// receipts carry [`PRUNED_RECORDED_ASK_NOTE`].
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub(crate) fn gone_hook_pause(&self, invocation: InvocationId) -> Result<Option<VerbHookStop>> {
-        Ok((!super::saved(self, invocation)?).then(|| gone("")))
+    pub(crate) fn gone_hook_pause(
+        &self,
+        invocation: InvocationId,
+        ask: EntityId,
+    ) -> Result<Option<VerbHookStop>> {
+        if super::saved(self, invocation)? {
+            return Ok(None);
+        }
+        if PRUNED_RECORDED_ASK_RUNS_NEW && recorded_ask(self, invocation, ask)? {
+            self.verb_hook_state.note_expired(invocation);
+            return Ok(None);
+        }
+        Ok(Some(gone("")))
     }
+}
+
+/// Whether `ask` is the settled ask a recorded call's hook opened under
+/// `invocation`: its intent key names that invocation itself. A
+/// session-only call's ask names its hidden id instead
+/// (`SessionHookKeep::hidden_invocation`), never the caller's.
+fn recorded_ask(vault: &Vault, invocation: InvocationId, ask: EntityId) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(result) = crate::task_verb::ask_settlement_in(vault, &rtxn, ask)? else {
+        return Ok(false);
+    };
+    Ok(result
+        .settlement
+        .requested
+        .intent_key
+        .strip_prefix(VERB_HOOK_INTENT)
+        .and_then(|rest| rest.split_once('/'))
+        .and_then(|(named, _)| InvocationId::parse_hex(named))
+        == Some(invocation))
 }

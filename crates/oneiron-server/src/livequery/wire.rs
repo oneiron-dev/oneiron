@@ -141,8 +141,8 @@ struct RpcBody {
 
 /// What an `rpc.req` carries beside its params for a facade verb (FIX 2059):
 /// the session it is made in, the room whose turn it runs in, the logical
-/// invocation it names and a subscription open on the same connection, each
-/// optional. It is transport context, as the HTTP facade's headers are: the
+/// invocation it names, the hook pause it resumes (FIX 5526) and a
+/// subscription open on the same connection, each optional. It is transport context, as the HTTP facade's headers are: the
 /// actor, its class and its grants stay the bound credential's, and no field
 /// here names a drain permit or the run that creates a lens card. The ids
 /// stay text until the call reads them, so a malformed one is refused where
@@ -160,6 +160,11 @@ pub(crate) struct RpcCallContext {
     /// The logical invocation, as `x-oneiron-invocation` names it.
     #[serde(default)]
     pub(crate) invocation: Option<String>,
+    /// The hook pause the call resumes, as `x-oneiron-hook-ask` names it:
+    /// the ask handle a hook's Pending gave (FIX 5526). It names the pause
+    /// only; the call stays the bound credential's.
+    #[serde(default)]
+    pub(crate) hook_ask: Option<String>,
     /// A subscription open on this connection, by its `sub.open` id.
     #[serde(default)]
     pub(crate) subscription: Option<u64>,

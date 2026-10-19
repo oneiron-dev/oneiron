@@ -154,6 +154,14 @@ const MAX_REDIRECTS = 5;
 const INVOCATION_HEADER = "x-oneiron-invocation";
 
 /**
+ * Names the hook pause a retry resumes (FIX 5526): the ask handle its pending
+ * gave, beside the same invocation. It names the pause only; the call stays
+ * its credential's. A pause the server no longer holds refuses rather than
+ * running as a new call.
+ */
+const HOOK_ASK_HEADER = "x-oneiron-hook-ask";
+
+/**
  * What a redirect leaves of the request, per the fetch redirect rules: `303`
  * turns any non-GET/HEAD into a bodyless `GET`, `301`/`302` do the same to a
  * `POST`, and `307`/`308` preserve method and body exactly. The body headers
@@ -322,31 +330,39 @@ export class HttpBaseClient {
 
   /**
    * Retries the call `pending` names: `POST`s its verb and input again under
-   * its own `x-oneiron-invocation`, so the server finds the ask it stopped on
-   * rather than opening a second one. While the ask is open it answers the same
-   * pending; once the ask is answered proceed, the saved call runs once. Run
-   * one retry of a pending call at a time.
+   * its own `x-oneiron-invocation`, and the ask it stopped on under
+   * `x-oneiron-hook-ask`, so the server finds that ask rather than opening a
+   * second one. While the ask is open it answers the same pending; once the
+   * ask is answered proceed, the saved call runs once. A call that kept no
+   * record paused only while its session lasted: once that pause is gone, the
+   * retry is refused, never run as a new call. Run one retry of a pending
+   * call at a time.
    */
   retry<V extends FacadeVerb>(
     pending: FacadePending<V>,
     init: RequestInit = {},
   ): Promise<Response | FacadePending<V>> {
-    return this.facadeCall(pending.verb, pending.input, init, pending.invocation);
+    return this.facadeCall(pending.verb, pending.input, init, pending.invocation, pending.ask);
   }
 
   /**
-   * One facade call under `invocation`: the original `Response`, or the
-   * `FacadePending` that `facadePending` reads off a `202`.
+   * One facade call under `invocation`, resuming the hook pause `ask` names
+   * when it names one: the original `Response`, or the `FacadePending` that
+   * `facadePending` reads off a `202`.
    */
   private async facadeCall<V extends FacadeVerb>(
     verb: V,
     input: FacadeInput<V>,
     init: RequestInit,
     invocation: string,
+    ask?: string,
   ): Promise<Response | FacadePending<V>> {
     const headers = new Headers(init.headers ?? {});
     headers.set("Content-Type", "application/json");
     headers.set(INVOCATION_HEADER, invocation);
+    if (ask !== undefined) {
+      headers.set(HOOK_ASK_HEADER, ask);
+    }
     const response = await this.request(`/v1/core/facade/${encodeURIComponent(verb)}`, {
       ...init, method: "POST", headers, body: JSON.stringify(input),
     });

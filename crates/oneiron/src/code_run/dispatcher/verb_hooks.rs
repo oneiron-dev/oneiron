@@ -11,6 +11,7 @@
 //! Redact changes only the guest's view, never the run's record. In an
 //! off-record room the run's search takes its hooks in the room ([`session`]).
 
+mod parked;
 mod session;
 
 use serde::Deserialize;
@@ -250,8 +251,8 @@ impl HostSelfDispatcher<'_> {
                 .parked_hooks
                 .borrow()
                 .iter()
-                .find(|(held, _)| *held == key)
-                .map(|(_, invocation)| *invocation);
+                .find(|(held, ..)| *held == key)
+                .map(|(_, invocation, _)| *invocation);
             if let Some(parked) = parked {
                 return Ok(parked);
             }
@@ -271,9 +272,9 @@ impl HostSelfDispatcher<'_> {
                 continue;
             }
             let key = parked_call(row.effect, row.request.clone());
-            parked.retain(|(held, _)| *held != key);
+            parked.retain(|(held, ..)| *held != key);
             if let Some(invocation) = invocation {
-                parked.push((key, invocation));
+                parked.push((key, invocation, parked::ask_of(&row.outcome)));
             }
         }
     }

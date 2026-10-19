@@ -1,8 +1,8 @@
 //! A chain of a session-only call (WILL L11-01 S01-2c): the lanes its hooks
 //! read through, over a room's view; the session rule for an outcome that
 //! needs canonical work; and its runs held for the call to keep, each with
-//! what the call's answer will say of it. A call with no room overlay keeps
-//! its hook's ask in the in-memory keep (L13 PR-D, FIX 4283).
+//! what the call's answer will say of it. A hook's ask pauses its call in the
+//! in-memory keep (L13 PR-D, FIX 4283), a room's under its stretch (FIX 5524).
 
 use serde_json::Value;
 
@@ -95,10 +95,11 @@ impl<'c> Chain<'c> {
     }
 
     /// The canonical work a run's `outcome` needs that this chain's room
-    /// does not do; `None` on the vault, which does it. A session-only call
-    /// with no room overlay keeps its hook's ask in the keep (L13 PR-D), and
-    /// runs its other consequences in the vault while
-    /// [`KEPT_CALL_HOOK_CONSEQUENCES_RUN`] holds.
+    /// does not do; `None` on the vault, which does it. Every session-only
+    /// call keeps its hook's ask in the keep (L13 PR-D; a room's under its
+    /// stretch, FIX 5524). One with no room overlay runs its other
+    /// consequences in the vault while [`KEPT_CALL_HOOK_CONSEQUENCES_RUN`]
+    /// holds; a room keeps 2c's rule for them.
     pub(super) fn room_cannot(&self, outcome: Option<&HookOutcome>) -> Option<&'static str> {
         match self.storage {
             VerbHookStorage::Canonical => None,
@@ -106,24 +107,18 @@ impl<'c> Chain<'c> {
                 .filter(|_| !KEPT_CALL_HOOK_CONSEQUENCES_RUN)
                 .and_then(canonical_work)
                 .filter(|work| *work != "ask"),
-            VerbHookStorage::Session(_) => outcome.and_then(canonical_work),
+            VerbHookStorage::Session(_) => outcome
+                .and_then(canonical_work)
+                .filter(|work| *work != "ask"),
         }
     }
 
-    /// A room opens no ask: the refusal a write's failed blocking hook
-    /// meets there, as when its ask does not open on the vault. `None` on
-    /// the vault, and for a session-only call with no room overlay, whose
-    /// ask the keep holds.
-    pub(super) fn room_ask_refusal(&self) -> Option<String> {
-        matches!(self.storage, VerbHookStorage::Session(hooks) if hooks.kept_key().is_none())
-            .then(|| format!("{SESSION_HOOK_UNAVAILABLE}:ask"))
-    }
-
-    /// Opens the asking hook's ask for a session-only call with no room
-    /// overlay (L13 PR-D, FIX 4283): its resumed answer used up first, as on
+    /// Opens the asking hook's ask for a session-only call (L13 PR-D, FIX
+    /// 4283; a room's, FIX 5524): its resumed answer used up first, as on
     /// the vault, so one another try used meanwhile opens no ask; then the
-    /// ask, its paused call kept under `key` and the chain's blocks and
-    /// intents written in the ask's own write ([`Self::consequences_in_txn`]);
+    /// ask, its paused call kept under `key` (a room's with the route its
+    /// run captured) and the chain's blocks and intents written in the ask's
+    /// own write ([`Self::consequences_in_txn`]; a room's chain holds none);
     /// then the chain's runs held for the call to keep. A refused ask keeps
     /// and writes nothing, and the chain goes on as after any ask that did
     /// not open.
@@ -152,6 +147,7 @@ impl<'c> Chain<'c> {
             args,
             label,
             self.turn.as_ref(),
+            hooks.paused_route(),
             &|txn: &mut heed::RwTxn<'_>| self.consequences_in_txn(txn),
         )? {
             Ok(group) => group,
@@ -163,14 +159,14 @@ impl<'c> Chain<'c> {
 
     /// Uses a resumed session-only call's answer up in the keep, once per
     /// call, in its pre commit before the verb runs, also when no hook runs
-    /// after the asking one (L13 PR-D). When another try used it meanwhile,
-    /// the chain commits nothing and ends Skipped, as on the vault. A room's
-    /// call, which resumes none, passes.
+    /// after the asking one (L13 PR-D; a room's call too, FIX 5524). When
+    /// another try used it meanwhile, the chain commits nothing and ends
+    /// Skipped, as on the vault. A call that resumes none passes.
     pub(super) fn take_session_answer(&self, hooks: &SessionHooks<'_>) -> Result<()> {
-        let (Some(token), Some(key)) = (&self.token, hooks.kept_key()) else {
+        let Some(token) = &self.token else {
             return Ok(());
         };
-        if hooks.take_answer() || ask::session::take(self.vault, key, token) {
+        if hooks.take_answer() || ask::session::take(self.vault, hooks.pause_key(), token) {
             return Ok(());
         }
         self.used.set(true);

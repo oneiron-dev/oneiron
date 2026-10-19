@@ -515,6 +515,11 @@ pub struct HostWriteOrigin {
     /// never from the guest: a hold for consent alone binds a code consent
     /// wait to it.
     code_consent: Option<crate::code_run::CodeConsentCallSite>,
+    /// The hook pause a call the run makes again resumes (FIX 5526): the ask
+    /// an earlier try of the same call in its durable run parked on, read
+    /// from the run's own history, never from the guest. It names the pause
+    /// only, beside the call's invocation.
+    hook_ask: Option<EntityId>,
 }
 
 impl HostWriteOrigin {
@@ -524,7 +529,14 @@ impl HostWriteOrigin {
             task_host: None,
             model_provider: None,
             code_consent: None,
+            hook_ask: None,
         }
+    }
+
+    /// This origin naming the hook pause its call resumes, if it resumes one.
+    pub(crate) const fn with_hook_ask(mut self, ask: Option<EntityId>) -> Self {
+        self.hook_ask = ask;
+        self
     }
 
     /// This origin with the call's place in its durable run, for a call a
@@ -1180,6 +1192,9 @@ impl Memory<'_> {
     pub fn with_host_origin(mut self, origin: HostWriteOrigin) -> Self {
         if let Some(binding) = &origin.task_host {
             self.task_host = Some(binding.clone());
+        }
+        if let Some(ask) = origin.hook_ask {
+            self.hook_ask = Some(ask);
         }
         self.host_origin = Some(origin);
         self
