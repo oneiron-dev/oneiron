@@ -71,8 +71,7 @@ pub(super) async fn exchange(
     release_hook::run(&server);
     // A device-only flag may land while the worker builds the reply: the
     // object is judged again as its bytes are released.
-    if oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, object, peer).unwrap_or(true)
-    {
+    if oneiron::sync::chunks::lfs_object_withheld_for(&server.vault, object, peer).unwrap_or(true) {
         return Err(ApiError::forbidden_scope("lfs chunk selector").into());
     }
     // The declared length makes a reply cut short at the idle limit a broken

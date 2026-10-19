@@ -30,7 +30,6 @@ use std::time::Duration;
 use oneiron::agent_def::birth_under_inherited_list;
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
 use oneiron::claim::CallerLocality;
-use oneiron::settings::ReadDestination;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
     ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
@@ -46,6 +45,7 @@ use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::BudgetDenied;
 use oneiron::llm::seat::{ModelSeat, SeatKind, SeatTask};
 use oneiron::off_record::OffRecordSession;
+use oneiron::settings::ReadDestination;
 use oneiron::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, LlmBackend, LlmError,
     LlmMessage, LlmMessageRole, LlmRequest, ModelLocality, ModelTierRef, ResponseFormat,

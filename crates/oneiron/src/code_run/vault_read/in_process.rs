@@ -410,7 +410,15 @@ impl<'v> InProcessVaultReadAdapter<'v> {
             .map_err(|error| engine_failure(method, &error))?;
         let mut narrowing = hydrated.receipt;
         let row = named_row(method, hydrated.value)?;
-        self.project_hydrate(method, short_id, content_hash, view, reader, row, &mut narrowing)
+        self.project_hydrate(
+            method,
+            short_id,
+            content_hash,
+            view,
+            reader,
+            row,
+            &mut narrowing,
+        )
     }
 
     /// One hydrated item, and the form it serves `reader` in place of an
