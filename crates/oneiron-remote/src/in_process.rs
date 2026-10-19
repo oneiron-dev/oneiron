@@ -83,6 +83,7 @@ impl OneironClient {
         let (bearer, holder) = parse_credential(key)?;
         Ok(Self {
             backend: Backend::Remote(RemoteClient::in_process(transport, &bearer, holder)?),
+            host_root: None,
         })
     }
 }
