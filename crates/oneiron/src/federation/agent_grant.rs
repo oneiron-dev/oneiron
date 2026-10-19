@@ -19,15 +19,25 @@
 //! is untouched: its parent gate, default cap and 90-day cap stay its own.
 //!
 //! The owner reviews each grant in `vault.consent.registry`, with its own
-//! one-tap revoke ([`AGENT_GRANT_REVOKE_COMMAND`]).
+//! one-tap revoke ([`AGENT_GRANT_REVOKE_COMMAND`]). A revoked grant leaves
+//! a bodyless shell; the signed revoke act in the authority log is what
+//! still names it (FIX 5732, 5733).
 
-use crate::authority::{ActSurface, AgentGrantAct, AgentGrantActRef};
+use std::collections::BTreeSet;
+
+use crate::authority::{
+    ActSurface, AgentGrantAct, AgentGrantActRef, AgentGrantChange, AuthorityOp,
+    authority_entry_hash, decode_authority_log_entry_body,
+};
 use crate::batch::{BatchOp, apply_ops};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_FEDERATION_GRANT,
+    ENTITY_TYPE_MACHINE,
+};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{TimeRange, Vault};
 
@@ -174,12 +184,14 @@ impl Vault {
 
     /// The owner revokes the agent grant `grant_ref`: his signed act, then
     /// the row's delete, in one writer, so every grant reader stops counting
-    /// it. A grant already deleted answers unchanged and signs nothing.
+    /// it. A grant this door already revoked (its revoke act stands in the
+    /// authority log) answers unchanged and signs nothing.
     ///
     /// # Errors
-    /// An owner refusal; `EntityNotFound` for an id that names no
-    /// FEDERATION_GRANT, or a live grant this door did not mint (an owner,
-    /// own-device, guest or shared-vault member or delegate grant);
+    /// An owner refusal; `EntityNotFound` for an id that names no live
+    /// FEDERATION_GRANT and no revoked agent grant, or a live grant this
+    /// door did not mint (an owner, own-device, guest or shared-vault member
+    /// or delegate grant);
     /// [`crate::error::RecordError::AuthorityRefused`] when this install
     /// cannot carry the owner's act.
     pub(crate) fn revoke_agent_grant(
@@ -195,18 +207,19 @@ impl Vault {
                     entity_type: ENTITY_TYPE_FEDERATION_GRANT,
                     body,
                 } => body,
-                LiveEntityRow::DeletedShell
-                    if self
-                        .store
-                        .port_entity_record(txn, &grant_ref)?
-                        .is_some_and(|row| row.entity_type == ENTITY_TYPE_FEDERATION_GRANT) =>
+                LiveEntityRow::Live { .. } => return Err(Error::EntityNotFound),
+                // Deleted or gone: a repeat when his revoke act names it.
+                LiveEntityRow::DeletedShell | LiveEntityRow::Absent
+                    if self.revoked_agent_grants_in_txn(txn)?.contains(&grant_ref) =>
                 {
                     return Ok(AgentGrantRevokeOutcome {
                         agent: None,
                         act: None,
                     });
                 }
-                _ => return Err(Error::EntityNotFound),
+                LiveEntityRow::DeletedShell | LiveEntityRow::Absent => {
+                    return Err(Error::EntityNotFound);
+                }
             };
             let grant = decode_federation_grant_body(&body)
                 .ok()
@@ -224,6 +237,42 @@ impl Vault {
                 act: Some(act),
             })
         })
+    }
+
+    /// The agent grants the owner revoked: the grant each GrantRevoke act
+    /// the authority fold counted names (FIX 5732, 5733). An entry whose
+    /// body this vault no longer holds (an adopted checkpoint covers it)
+    /// names none.
+    pub(crate) fn revoked_agent_grants_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let mut revoked = BTreeSet::new();
+        for id in self
+            .store
+            .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
+        {
+            let id = id?;
+            let Some(row) = self.store.port_entity_record(txn, &id)? else {
+                continue;
+            };
+            if row.entity_type != ENTITY_TYPE_AUTHORITY_LOG || row.body.is_empty() {
+                continue;
+            }
+            let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
+                continue;
+            };
+            let AuthorityOp::AgentGrantAct(record) = &entry.op else {
+                continue;
+            };
+            if matches!(record.change, AgentGrantChange::Revoke)
+                && fold.valid_entries.contains(&authority_entry_hash(&entry)?)
+            {
+                revoked.insert(record.grant);
+            }
+        }
+        Ok(revoked)
     }
 
     /// Every live agent grant of this vault, in id order. A row that does
@@ -283,6 +332,25 @@ impl Vault {
             .filter(|standing| include_revoked || standing.stands_at(now))
             .map(|standing| crate::consent::ConsentRegistryRow::from_agent_grant(standing, now))
             .collect())
+    }
+
+    /// The base agents' principals, by name, for the owner (FIX 5734): the
+    /// Coach's and the Dreamer's MACHINE ids, which a grant names as its
+    /// agent. They are fixed ids every replica seeds at open, so the read
+    /// seeds nothing.
+    pub(crate) fn base_agent_principals(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<Vec<(&'static str, EntityId)>> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        Ok(vec![
+            ("coach", crate::dreamer_runner::authority::coach_actor_id()?),
+            (
+                "dreamer",
+                crate::dreamer_runner::authority::dreamer_actor_id()?,
+            ),
+        ])
     }
 
     /// Whether `agent` is a live agent principal of this vault: a live agent
