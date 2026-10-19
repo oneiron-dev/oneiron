@@ -1,6 +1,8 @@
 //! The accessibility tree as rows a program reads: a closed set of roles,
 //! closed menus collapsed, layout and text-run noise left out, and each row
-//! named by a ref built from its role, its name and its named ancestors.
+//! named by a locator built from its role, its name and its named
+//! ancestors. Its live handle is minted once the rows are read
+//! (`driver::handles`); here the row's `ref` stays empty.
 
 use crate::Row;
 use serde_json::Value;
@@ -72,10 +74,12 @@ const STATES: &[&str] = &[
 /// The longest name or text a row carries.
 const NAME_CHARS: usize = 200;
 
-/// A row and the DOM node it was read from.
+/// A row, the DOM node it was read from, and the frame whose document
+/// holds it, when the tree names one.
 pub(crate) struct Line {
     pub(crate) row: Row,
     pub(crate) backend_node: Option<u64>,
+    pub(crate) frame: Option<String>,
 }
 
 struct Node<'a> {
@@ -100,7 +104,7 @@ pub(crate) fn lines(nodes: &[Value]) -> Vec<Line> {
         out: Vec::new(),
         visited: HashSet::new(),
     };
-    walk.visit(root, false);
+    walk.visit(root, false, None);
     walk.out
 }
 
@@ -113,12 +117,15 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn visit(&mut self, raw: &'a Value, in_control: bool) {
+    /// Visits `raw` and the rows under it. `frame` is the frame of the
+    /// nearest node above that named one: a document's nodes are its frame's.
+    fn visit(&mut self, raw: &'a Value, in_control: bool, frame: Option<&'a str>) {
         if let Some(id) = raw.get("nodeId").and_then(Value::as_str)
             && !self.visited.insert(id)
         {
             return;
         }
+        let frame = raw.get("frameId").and_then(Value::as_str).or(frame);
         let ignored = raw.get("ignored").and_then(Value::as_bool).unwrap_or(false);
         let node = Node {
             raw,
@@ -133,7 +140,7 @@ impl<'a> Walk<'a> {
                 && !node.name.is_empty()
                 && !(node.role == "StaticText" && in_control);
             if control || read {
-                self.emit(&node);
+                self.emit(&node, frame);
             }
             if SCOPES.contains(&node.role) && !node.name.is_empty() {
                 self.scope.push(format!("{} \"{}\"", node.role, node.name));
@@ -149,7 +156,7 @@ impl<'a> Walk<'a> {
                 .flatten()
             {
                 if let Some(child) = child.as_str().and_then(|id| self.by_id.get(id)) {
-                    self.visit(child, in_control || control);
+                    self.visit(child, in_control || control, frame);
                 }
             }
         }
@@ -158,7 +165,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    fn emit(&mut self, node: &Node<'_>) {
+    fn emit(&mut self, node: &Node<'_>, frame: Option<&str>) {
         let mut key = self.scope.join(" > ");
         key.push_str(&format!(" > {} \"{}\"", node.role, node.name));
         // Identical twins (same role, name and named ancestors) are told apart
@@ -179,7 +186,8 @@ impl<'a> Walk<'a> {
             .collect();
         let value = field(node.raw, "value").filter(|v| !v.is_empty()).map(clip);
         let row = Row {
-            target: format!("e{}", &hash[..12]),
+            target: String::new(),
+            locator: format!("e{}", &hash[..12]),
             role: node.role.to_owned(),
             name: node.name.clone(),
             value,
@@ -187,7 +195,11 @@ impl<'a> Walk<'a> {
             depth: u16::try_from(self.scope.len()).unwrap_or(u16::MAX),
         };
         let backend_node = node.raw.get("backendDOMNodeId").and_then(Value::as_u64);
-        self.out.push(Line { row, backend_node });
+        self.out.push(Line {
+            row,
+            backend_node,
+            frame: frame.map(str::to_owned),
+        });
     }
 }
 

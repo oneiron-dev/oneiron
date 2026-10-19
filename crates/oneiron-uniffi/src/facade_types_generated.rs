@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1061 facade rows, 3559 generated types.
+// UniFFI census: 1061 facade rows, 3563 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1013.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -54190,11 +54190,22 @@ pub struct LiveRunRequestOpenInput {
     pub spec: OpenInput,
 }
 
+/// `oneiron_browser::observation::RowSplice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RowSplice {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "delete_count")]
+    pub delete_count: u64,
+}
+
 /// `oneiron_browser::Row`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct Row {
     #[serde(rename = "ref")]
     pub r#ref: String,
+    #[serde(rename = "locator")]
+    pub locator: String,
     #[serde(rename = "role")]
     pub role: String,
     #[serde(rename = "name")]
@@ -54205,6 +54216,29 @@ pub struct Row {
     pub states: Option<Vec<String>>,
     #[serde(rename = "depth")]
     pub depth: u16,
+}
+
+/// `oneiron_browser::observation::Rebound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Rebound {
+    #[serde(rename = "old")]
+    pub old: String,
+    #[serde(rename = "new")]
+    pub new: String,
+    #[serde(rename = "old_scope", default, skip_serializing_if = "Option::is_none")]
+    pub old_scope: Option<String>,
+    #[serde(rename = "new_scope")]
+    pub new_scope: String,
+    #[serde(rename = "locator")]
+    pub locator: String,
+    #[serde(rename = "ambiguous", default, skip_serializing_if = "Option::is_none")]
+    pub ambiguous: Option<bool>,
+    #[serde(
+        rename = "candidates",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub candidates: Option<Vec<String>>,
 }
 
 /// `oneiron_browser::receipt_evidence::ReceiptEvidence`.
@@ -54246,6 +54280,14 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub target_name: Option<String>,
+    #[serde(
+        rename = "target_locator",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub target_locator: Option<String>,
+    #[serde(rename = "rebound", default, skip_serializing_if = "Option::is_none")]
+    pub rebound: Option<Rebound>,
     #[serde(
         rename = "effect_class",
         default,
@@ -54303,16 +54345,22 @@ pub struct PartialTree {
 pub struct Observation2 {
     #[serde(rename = "seq")]
     pub seq: u64,
+    #[serde(rename = "scope")]
+    pub scope: String,
+    #[serde(rename = "base_seq", default, skip_serializing_if = "Option::is_none")]
+    pub base_seq: Option<u64>,
     #[serde(rename = "url")]
     pub url: String,
     #[serde(rename = "title")]
     pub title: String,
     #[serde(rename = "full")]
     pub full: bool,
+    #[serde(rename = "splice", default, skip_serializing_if = "Option::is_none")]
+    pub splice: Option<RowSplice>,
     #[serde(rename = "rows")]
     pub rows: Vec<Row>,
-    #[serde(rename = "removed", default, skip_serializing_if = "Option::is_none")]
-    pub removed: Option<Vec<String>>,
+    #[serde(rename = "offset", default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
     #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<EffectReceipt>,
     #[serde(rename = "library", default, skip_serializing_if = "Option::is_none")]
@@ -54321,6 +54369,10 @@ pub struct Observation2 {
     pub no_tree: Option<bool>,
     #[serde(rename = "partial", default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    #[serde(rename = "walk_next", default, skip_serializing_if = "Option::is_none")]
+    pub walk_next: Option<String>,
+    #[serde(rename = "rebound", default, skip_serializing_if = "Option::is_none")]
+    pub rebound: Option<Rebound>,
 }
 
 /// `oneiron_browser::ObservationPage`.
@@ -54332,12 +54384,24 @@ pub struct ObservationPage {
     pub observation2: Observation2,
 }
 
+/// `oneiron_browser::observation::ObservationBase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ObservationBase {
+    #[serde(rename = "scope")]
+    pub scope: String,
+    #[serde(rename = "seq")]
+    pub seq: u64,
+}
+
 /// `oneiron_browser::ObserveInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ObserveInput {
-    #[serde(rename = "since", default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<u64>,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<ObservationBase>,
+    #[serde(rename = "full", default, skip_serializing_if = "Option::is_none")]
+    pub full: Option<bool>,
     #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
@@ -54391,6 +54455,8 @@ pub struct FindOutput {
 pub struct ClickInput {
     #[serde(rename = "ref")]
     pub r#ref: String,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<ObservationBase>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ClickInput`.
@@ -54413,6 +54479,8 @@ pub struct PointInput {
     pub x: f64,
     #[serde(rename = "y")]
     pub y: f64,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<ObservationBase>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `PointInput`.
@@ -54435,6 +54503,8 @@ pub struct TypeInput {
     pub text: String,
     #[serde(rename = "clear", default, skip_serializing_if = "Option::is_none")]
     pub clear: Option<bool>,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<ObservationBase>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `TypeInput`.
@@ -54455,6 +54525,8 @@ pub struct SelectInput {
     pub r#ref: String,
     #[serde(rename = "option")]
     pub option: String,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<ObservationBase>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SelectInput`.
@@ -54510,6 +54582,12 @@ pub struct WaitForOutput {
     pub next: Option<String>,
     #[serde(rename = "partial", default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    #[serde(
+        rename = "rebindings",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rebindings: Option<Vec<Rebound>>,
 }
 
 /// `oneiron_browser::ExpectInput`.
@@ -54547,6 +54625,12 @@ pub struct ExpectOutput {
     pub row: Option<Row>,
     #[serde(rename = "partial", default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    #[serde(
+        rename = "rebindings",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rebindings: Option<Vec<Rebound>>,
 }
 
 /// `oneiron_browser::ScreenshotTrigger`.
@@ -54825,6 +54909,8 @@ pub struct BatchInput {
     pub subgoal: Option<String>,
     #[serde(rename = "steps")]
     pub steps: Vec<BatchStep>,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<ObservationBase>,
     #[serde(rename = "until_ms", default, skip_serializing_if = "Option::is_none")]
     pub until_ms: Option<u64>,
     #[serde(rename = "no_model", default, skip_serializing_if = "Option::is_none")]
@@ -54850,6 +54936,15 @@ pub enum SubgoalStatus {
     NeedsAgent,
     #[serde(rename = "NEEDS_YOU")]
     NeedsYou,
+}
+
+/// `oneiron_browser::observation::StepRebound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StepRebound {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "rebound")]
+    pub rebound: Rebound,
 }
 
 /// `oneiron_browser::BatchOutput`.
@@ -54881,6 +54976,12 @@ pub struct BatchOutput {
     pub until_ms: Option<u64>,
     #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+    #[serde(
+        rename = "rebindings",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rebindings: Option<Vec<StepRebound>>,
 }
 
 /// `oneiron_browser::library::LibraryFindInput`.
@@ -55039,6 +55140,8 @@ pub struct LibraryRunInput {
     pub workflow: String,
     #[serde(rename = "args", default, skip_serializing_if = "Option::is_none")]
     pub args: Option<std::collections::HashMap<String, String>>,
+    #[serde(rename = "base", default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<ObservationBase>,
 }
 
 /// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRunInput`.
