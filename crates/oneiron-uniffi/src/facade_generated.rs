@@ -3851,6 +3851,26 @@ export_facade! {
     let output = client.vault_delete(&input)?;
     Lift::lift(output)
 };
+"vault.writes.critical_confirm.pending" => fn vault_writes_critical_confirm_pending(&self, input: CriticalWriteConfirmPendingRequest) -> Option<CriticalWriteConfirmPending> = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmPendingRequest = crate::codec::lower_record("vault.writes.critical_confirm.pending", input)?;
+    let output = client.vault_writes_critical_confirm_pending(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.pending", &output)
+};
+"vault.writes.critical_confirm.clear" => fn vault_writes_critical_confirm_clear(&self, input: CriticalWriteConfirmRequest) -> CriticalWriteConfirmSettlement = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmRequest = crate::codec::lower_record("vault.writes.critical_confirm.clear", input)?;
+    let output = client.vault_writes_critical_confirm_clear(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.clear", &output)
+};
+"vault.writes.critical_confirm.decline" => fn vault_writes_critical_confirm_decline(&self, input: CriticalWriteConfirmRequest) -> CriticalWriteConfirmSettlement = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmRequest = crate::codec::lower_record("vault.writes.critical_confirm.decline", input)?;
+    let output = client.vault_writes_critical_confirm_decline(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.decline", &output)
+};
+"vault.writes.critical_confirm.receipt" => fn vault_writes_critical_confirm_receipt(&self, input: CriticalWriteConfirmReceiptRequest) -> CriticalWriteConfirmReceipt = |client| {
+    let input: oneiron::memory::CriticalWriteConfirmReceiptRequest = crate::codec::lower_record("vault.writes.critical_confirm.receipt", input)?;
+    let output = client.vault_writes_critical_confirm_receipt(&input)?;
+    crate::codec::lift_record("vault.writes.critical_confirm.receipt", &output)
+};
 "vault.writes.pending" => fn vault_writes_pending(&self, limit: u32) -> Vec<PendingWrite> = |client| {
     let input: oneiron::task_verb::sdk::ReceiptsRequest = limit.lower()?;
     let output = client.vault_writes_pending(&input)?;

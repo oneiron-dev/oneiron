@@ -2886,8 +2886,19 @@ class Oneiron:
         def ingest(self, spec: Facade.TranscriptFileDropInput) -> Facade.TranscriptIngestOutcome:
             """Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate."""
     class _VaultWritesVerbs:
+        @property
+        def critical_confirm(self) -> "Oneiron._VaultWritesCriticalConfirmVerbs": ...
         def pending(self, input: Facade.ReceiptsRequest) -> list[Facade.PendingWrite]:
             """Gated writes parked for consent, newest first."""
+    class _VaultWritesCriticalConfirmVerbs:
+        def pending(self, spec: Facade.CriticalWriteConfirmPendingRequest) -> Facade.CriticalWriteConfirmPending | None:
+            """The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline."""
+        def clear(self, spec: Facade.CriticalWriteConfirmRequest) -> Facade.CriticalWriteConfirmSettlement:
+            """The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."""
+        def decline(self, spec: Facade.CriticalWriteConfirmRequest) -> Facade.CriticalWriteConfirmSettlement:
+            """The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt."""
+        def receipt(self, spec: Facade.CriticalWriteConfirmReceiptRequest) -> Facade.CriticalWriteConfirmReceipt:
+            """The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim."""
     class _VaultRefsVerbs:
         def resolve(self, spec: Facade.ResolveRecordRefRequest) -> Facade.ScopedReadResult[Facade.RecordRefPreview]:
             """The bounded preview of one record ref, read through the caller's own scope; unreadable and missing look the same."""

@@ -776,6 +776,10 @@ both bindings and their export-census tests in one change.
 - `vault.claims.read_filtered`
 - `vault.claims.history`
 - `vault.delete`
+- `vault.writes.critical_confirm.pending`
+- `vault.writes.critical_confirm.clear`
+- `vault.writes.critical_confirm.decline`
+- `vault.writes.critical_confirm.receipt`
 - `vault.writes.pending`
 - `vault.hydrate`
 - `vault.get`

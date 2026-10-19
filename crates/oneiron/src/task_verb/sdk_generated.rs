@@ -4281,6 +4281,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SafeDeleteRequest>(),
             ),
             (
+                "vault.writes.critical_confirm.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmPendingRequest,
+                >(),
+            ),
+            (
+                "vault.writes.critical_confirm.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmRequest,
+                >(),
+            ),
+            (
+                "vault.writes.critical_confirm.decline",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmRequest,
+                >(),
+            ),
+            (
+                "vault.writes.critical_confirm.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CriticalWriteConfirmReceiptRequest,
+                >(),
+            ),
+            (
                 "vault.writes.pending",
                 crate::code_run::vault_read::request_schema::<ReceiptsRequest>(),
             ),
@@ -5886,6 +5910,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.claims.demote",
     "vault.claims.list_filtered",
     "vault.claims.read_filtered",
+    "vault.writes.critical_confirm.pending",
+    "vault.writes.critical_confirm.clear",
+    "vault.writes.critical_confirm.decline",
+    "vault.writes.critical_confirm.receipt",
     "vault.search.vector.config",
     "vault.vectors.put",
     "vault.search.hybrid",
@@ -7496,6 +7524,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.claims.read_filtered" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>,
+        >(),
+        "vault.writes.critical_confirm.pending" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::CriticalWriteConfirmPending>,
+        >(),
+        "vault.writes.critical_confirm.clear" => crate::code_run::vault_read::request_schema::<
+            crate::memory::CriticalWriteConfirmSettlement,
+        >(),
+        "vault.writes.critical_confirm.decline" => crate::code_run::vault_read::request_schema::<
+            crate::memory::CriticalWriteConfirmSettlement,
+        >(),
+        "vault.writes.critical_confirm.receipt" => crate::code_run::vault_read::request_schema::<
+            crate::memory::CriticalWriteConfirmReceipt,
         >(),
         "vault.search.vector.config" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>,
@@ -13357,6 +13397,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.writes.critical_confirm.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.writes.critical_confirm.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.writes.critical_confirm.decline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.writes.critical_confirm.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.writes.pending" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -17282,6 +17350,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.delete" => {
             let _input: SafeDeleteRequest = decode(value.clone())?;
         }
+        "vault.writes.critical_confirm.pending" => {
+            let _input: crate::memory::CriticalWriteConfirmPendingRequest = decode(value.clone())?;
+        }
+        "vault.writes.critical_confirm.clear" => {
+            let _input: crate::memory::CriticalWriteConfirmRequest = decode(value.clone())?;
+        }
+        "vault.writes.critical_confirm.decline" => {
+            let _input: crate::memory::CriticalWriteConfirmRequest = decode(value.clone())?;
+        }
+        "vault.writes.critical_confirm.receipt" => {
+            let _input: crate::memory::CriticalWriteConfirmReceiptRequest = decode(value.clone())?;
+        }
         "vault.writes.pending" => {
             let input: ReceiptsRequest = decode(value.clone())?;
             crate::memory::caps::check_limit_nonzero(
@@ -19419,6 +19499,21 @@ pub fn invoke(
         "vault.claims.read_filtered" => encode(vault_claims_read_filtered(memory, decode(value)?)?),
         "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
+        "vault.writes.critical_confirm.pending" => encode(vault_writes_critical_confirm_pending(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.writes.critical_confirm.clear" => {
+            encode(vault_writes_critical_confirm_clear(memory, decode(value)?)?)
+        }
+        "vault.writes.critical_confirm.decline" => encode(vault_writes_critical_confirm_decline(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.writes.critical_confirm.receipt" => encode(vault_writes_critical_confirm_receipt(
+            memory,
+            decode(value)?,
+        )?),
         "vault.writes.pending" => encode(vault_writes_pending(memory, decode(value)?)?),
         "vault.hydrate" => encode(vault_hydrate(memory, decode(value)?)?),
         "vault.get" => encode(vault_get(memory, decode(value)?)?),
@@ -26373,6 +26468,36 @@ pub fn vault_delete(
         &["/entity_ref"],
     )?;
     memory.safe_delete(&input.entity_ref, input.reason)
+}
+pub fn vault_writes_critical_confirm_pending(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmPendingRequest,
+) -> MemoryResult<Option<crate::memory::CriticalWriteConfirmPending>> {
+    memory.critical_write_confirm_pending_as_owner(
+        &memory.embedded_owner("vault.writes.critical_confirm.pending")?,
+        &input,
+    )
+}
+pub fn vault_writes_critical_confirm_clear(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmRequest,
+) -> MemoryResult<crate::memory::CriticalWriteConfirmSettlement> {
+    crate::task_verb::sdk::host_only(memory, "vault.writes.critical_confirm.clear", &input)
+}
+pub fn vault_writes_critical_confirm_decline(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmRequest,
+) -> MemoryResult<crate::memory::CriticalWriteConfirmSettlement> {
+    crate::task_verb::sdk::host_only(memory, "vault.writes.critical_confirm.decline", &input)
+}
+pub fn vault_writes_critical_confirm_receipt(
+    memory: &Memory<'_>,
+    input: crate::memory::CriticalWriteConfirmReceiptRequest,
+) -> MemoryResult<crate::memory::CriticalWriteConfirmReceipt> {
+    memory.critical_write_confirm_receipt_as_owner(
+        &memory.embedded_owner("vault.writes.critical_confirm.receipt")?,
+        &input,
+    )
 }
 pub fn vault_writes_pending(
     memory: &Memory<'_>,

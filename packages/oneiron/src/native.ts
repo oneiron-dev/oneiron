@@ -800,6 +800,10 @@ vaultClaimsListFiltered(input: unknown): unknown
 vaultClaimsReadFiltered(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown
+vaultWritesCriticalConfirmPending(input: unknown): unknown
+vaultWritesCriticalConfirmClear(input: unknown): unknown
+vaultWritesCriticalConfirmDecline(input: unknown): unknown
+vaultWritesCriticalConfirmReceipt(input: unknown): unknown
 vaultWritesPending(input: unknown): unknown
 vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown

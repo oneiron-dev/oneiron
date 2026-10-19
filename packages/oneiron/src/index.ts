@@ -2117,6 +2117,16 @@ export class Oneiron {
     /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
     delete: (input: Facade.SafeDeleteRequest): Facade.DeleteReceipt => this.#call(() => this.#client.vaultDelete(input) as Facade.DeleteReceipt),
     writes: {
+      critical_confirm: {
+        /** The owner reads a candidate's exact critical confirmation, with its nonce, effect digest, policy frontier and deadline. */
+        pending: (input: Facade.CriticalWriteConfirmPendingRequest): Facade.CriticalWriteConfirmPending | null => this.#call(() => this.#client.vaultWritesCriticalConfirmPending(input) as Facade.CriticalWriteConfirmPending | null),
+        /** The owner clears exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+        clear: (input: Facade.CriticalWriteConfirmRequest): Facade.CriticalWriteConfirmSettlement => this.#call(() => this.#client.vaultWritesCriticalConfirmClear(input) as Facade.CriticalWriteConfirmSettlement),
+        /** The owner declines exactly the nonce and frontier-bound critical claim confirmation and receives its fold-verified signed receipt. */
+        decline: (input: Facade.CriticalWriteConfirmRequest): Facade.CriticalWriteConfirmSettlement => this.#call(() => this.#client.vaultWritesCriticalConfirmDecline(input) as Facade.CriticalWriteConfirmSettlement),
+        /** The owner reads a critical confirmation's existing signed authority receipt without settling or rewriting the claim. */
+        receipt: (input: Facade.CriticalWriteConfirmReceiptRequest): Facade.CriticalWriteConfirmReceipt => this.#call(() => this.#client.vaultWritesCriticalConfirmReceipt(input) as Facade.CriticalWriteConfirmReceipt),
+      },
       /** Gated writes parked for consent, newest first. */
       pending: (input: Facade.ReceiptsRequest): Facade.PendingWrite[] => this.#call(() => this.#client.vaultWritesPending(input) as Facade.PendingWrite[]),
     },
