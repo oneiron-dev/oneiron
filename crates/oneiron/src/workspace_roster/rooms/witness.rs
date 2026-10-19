@@ -603,9 +603,11 @@ fn quote_read_in_txn(
         None => crate::context_board::room_ceiling_in(vault, txn, room, actor)?,
     }
     .ok_or_else(invalid)?;
-    let ceiling = key
+    let mut ceiling = key
         .room_turn()
         .map_or_else(|| now.clone(), |held| held.narrowed_by(&now));
+    // The quoted words reach the roster: the read is held (FIX 5636).
+    ceiling.personal = false;
     let lane = vault
         .scoped_read(key.clone().in_room_turn(ceiling))
         .with_claim_status(crate::claim::ClaimReadStatus::Recorded);
