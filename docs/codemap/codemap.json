@@ -80720,7 +80720,7 @@
      "path": "src/config/merge.rs",
      "purpose": "Layered merge: file, environment, and argv values into `ServeConfig`",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 6,
       "struct": 1
      }
@@ -80897,7 +80897,7 @@
      "path": "src/config/models/voice.rs",
      "purpose": "`[models.voice]`: the server's own voice loop (OF-410)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -82575,7 +82575,7 @@
      "path": "src/managed/settings.rs",
      "purpose": "The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -84866,13 +84866,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/public.rs",
      "purpose": "Credential-bound public sessions",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -89769,11 +89769,18 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CtlBound",
+      "CtlBoundKind",
+      "CtlBoundPhase",
+      "CtlBoundResource",
+      "CtlRefusal",
+      "CtlRefusalKind",
       "CtlRequest",
       "CtlResponse",
+      "CtlResumeOn",
       "ShedBlockerWire",
       "ShedCause",
       "ShedStatus"
@@ -89781,9 +89788,10 @@
      "path": "src/lib/ctl.rs",
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
-      "enum": 4,
-      "fn": 2,
-      "struct": 1
+      "const": 1,
+      "enum": 9,
+      "fn": 6,
+      "struct": 3
      }
     },
     {
