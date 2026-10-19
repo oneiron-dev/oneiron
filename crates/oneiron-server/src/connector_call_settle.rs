@@ -13,7 +13,9 @@
 //! between leaves a settled row, whose next pass delivers its receipt with no
 //! reply body (`result_not_retained`); nothing is resent to rebuild one. The
 //! acknowledgement keeps who called it, so `connector.call_status` serves the
-//! settled wait to that caller and the owner alone (FIX 2279).
+//! settled wait to that caller and the owner alone (FIX 2279). The reply is
+//! delivered beside the rows the call's passes picked (FIX 5455), which the
+//! resumed run and `connector.call_status` list.
 //!
 //! A call still held, or a send the ledger retries, stays pending. Each such
 //! resume runs the call's gate again, so a call that stays held is retried
@@ -169,8 +171,8 @@ fn settle_connector_calls(
                 continue;
             }
         }
-        let outcome = match vault.resume_connector_call(&call.call_ref, &mut host) {
-            Ok(outcome) => outcome,
+        let (outcome, rows) = match vault.resume_connector_call_listing(&call.call_ref, &mut host) {
+            Ok(resumed) => resumed,
             Err(error) => {
                 tracing::warn!(call_ref = %call.call_ref.to_hex(), %error, "connector call resume failed");
                 backoffs.defer(call.call_ref, now);
@@ -188,7 +190,9 @@ fn settle_connector_calls(
         }
         let reply = serde_json::to_value(&reply)
             .map_err(|_| IntentLedgerError::InvalidRecord("connector call reply"))?;
-        deliveries.deliver(call.call_ref, &reply, now_ms())?;
+        // The reply rides beside the rows the call's passes picked, kept
+        // through every resume (FIX 5455): unknown stays unknown.
+        deliveries.deliver_listing(call.call_ref, &reply, rows.as_deref(), now_ms())?;
         // Its caller stays bound once the row goes, so `connector.call_status`
         // reads the settled wait for that caller and the owner alone.
         vault.ack_connector_call_delivery_keeping_caller(&call.call_ref)?;
