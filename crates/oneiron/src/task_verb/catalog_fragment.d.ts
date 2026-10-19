@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1102 code-mode rows (1077 host rows, 25 run rows), 3695 declarations.
-// Replies: 985 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1103 code-mode rows (1078 host rows, 25 run rows), 3697 declarations.
+// Replies: 986 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1537,11 +1537,11 @@ declare namespace Sdk {
   type SeatWorkload = { from: number; until: number; calls?: number | null; input_tokens?: number | null; output_tokens?: number | null; complete: boolean; receipt_refs: string[] };
   type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; losses: string[]; risk?: string | null };
   type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } };
-  type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; digest: string };
+  type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; source_rows?: EntityId[] | null; digest: string };
   type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone";
   type OfferIntent = { switch: { seat: EvalSeat; from: OfferModelPin; to: OfferModelPin } } | { train: { seat: EvalSeat; base: OfferModelPin; recipe_ref: string; destination: ComputeDestination } };
   type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: EntityId; authentication: string; offer_digest: string; intent?: OfferIntent | null; at: number };
-  type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; note?: string | null; at: number };
+  type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; note?: string | null; at: number; source_rows?: EntityId[] | null };
   type OfferView = { offer: TrainingOffer; answer?: OfferAnswerRecord | null; checks: OfferCheck[] };
   type OfferRef = { offer: EntityId };
   type OfferPassRequest = Record<string, never>;
@@ -2260,6 +2260,8 @@ declare namespace Sdk {
   type AgentGrantMinted = { grant: AgentGrantView; act_ref: string };
   type AgentGrantRevokeRequest = { grant_ref: EntityId; seen?: string | null };
   type AgentGrantRevoked = { grant_ref: EntityId; changed: boolean; agent?: EntityId | null; act_ref?: string | null };
+  type BaseAgentPrincipal = { name: string; id: EntityId };
+  type BaseAgentList = { agents: BaseAgentPrincipal[] };
   type StandingBlockConfigureRequest = { agent_ref: EntityId; world_ref: EntityId; name: string; token_floor: number };
   type StandingBlockRequest = { agent_ref: EntityId; world_ref: EntityId };
   type StandingBlocksRequest = { agent_ref: EntityId };
@@ -4199,6 +4201,8 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   agents: {
+    /** The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent. */
+    base(input: Sdk.EmptyRequest): Promise<Sdk.BaseAgentList | StoredResult>;
     /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
     create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     dreaming: {

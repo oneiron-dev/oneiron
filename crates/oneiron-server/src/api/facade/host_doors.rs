@@ -1020,6 +1020,7 @@ pub(crate) async fn ai_verdict(
     };
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |server, auth, reader| {
+            let mut evidence = Vec::new();
             // An image is pulled through the caller's own lane before any model
             // reads it, unless it is the run's own held screenshot.
             let lane = match (&input.image, &held) {
@@ -1034,7 +1035,7 @@ pub(crate) async fn ai_verdict(
                 ),
                 _ => None,
             };
-            crate::decision_verdict::run_verdict(
+            let verdict = crate::decision_verdict::run_verdict(
                 server,
                 caller.0,
                 caller.1,
@@ -1044,10 +1045,17 @@ pub(crate) async fn ai_verdict(
                 &input,
                 // A facade caller's verdict bills the vault owner.
                 None,
-                &mut Vec::new(),
-            )
+                &mut evidence,
+            );
+            Ok((verdict, evidence))
         })
         .await;
+    // The rows the evidence refs and image resolved to, short refs
+    // included, refused verdict or not (FIX 5461).
+    let answer = answer.and_then(|(verdict, evidence)| {
+        listed.extend(evidence);
+        verdict
+    });
     listed.extend(beside);
     (answer, listed)
 }
@@ -1368,6 +1376,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.legal_holds.lift_and_erase"
         | "vault.agents.grants.mint"
         | "vault.agents.grants.revoke"
+        | "vault.agents.base"
         | "vault.residence.mode"
         | "vault.residence.open"
         | "vault.residence.index"

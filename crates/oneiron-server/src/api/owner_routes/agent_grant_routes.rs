@@ -7,7 +7,9 @@
 //! install (`machine_routes::act_surface`). Each route runs its
 //! `vault.agents.grants.*` row's verb hooks once around the one engine
 //! operation the SDK and MCP doors also call. The grants are reviewed in
-//! the consent registry, each with its own one-tap revoke.
+//! the consent registry, each with its own one-tap revoke. `GET
+//! /v1/owner/agents/base` names the base agents' ids a grant takes (FIX
+//! 5734).
 
 use std::sync::Arc;
 
@@ -16,8 +18,8 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
-use axum::routing::post;
-use oneiron::task_verb::sdk::{self, AgentGrantMintRequest, AgentGrantRevokeRequest};
+use axum::routing::{get, post};
+use oneiron::task_verb::sdk::{self, AgentGrantMintRequest, AgentGrantRevokeRequest, EmptyRequest};
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
@@ -30,6 +32,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/agent-grants/mint", post(mint))
         .route("/agent-grants/revoke", post(revoke))
+        .route("/agents/base", get(base))
 }
 
 /// `POST /v1/owner/agent-grants/mint`: grants one live agent principal
@@ -84,6 +87,20 @@ async fn revoke(
                 sdk::revoke_agent_grant_as(vault, &owner, surface, request).map_err(memory_refusal)
             },
         )
+    })
+    .await?;
+    Ok(Json(response))
+}
+
+/// `GET /v1/owner/agents/base`: the base agents' principal ids, the Coach
+/// first, each as a grant's `agent` takes it.
+async fn base(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        hooked_row(vault, actor, "vault.agents.base", EmptyRequest {}, |_| {
+            sdk::read_base_agents_as(vault, &owner).map_err(memory_refusal)
+        })
     })
     .await?;
     Ok(Json(response))

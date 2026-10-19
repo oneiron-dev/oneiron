@@ -21,7 +21,8 @@ use oneiron_organ_host::{HostError, OrganSpec, OrganTier, pack_spec};
 
 use super::SyncServer;
 
-/// Where pack organ builds are written: `ONEIRON_ORGAN_DIR`, else
+/// Where pack organ builds are written on a host that names no directory
+/// ([`SyncServer::with_organ_dir`]): `ONEIRON_ORGAN_DIR`, else
 /// `oneiron-organs` under the OS temp directory.
 const ORGAN_DIR_ENV: &str = "ONEIRON_ORGAN_DIR";
 
@@ -39,8 +40,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The directory pack organ builds are written under.
-pub(crate) fn organ_dir() -> PathBuf {
+/// The directory pack organ builds are written under on a host that names
+/// none.
+fn ambient_organ_dir() -> PathBuf {
     std::env::var_os(ORGAN_DIR_ENV)
         .filter(|value| !value.is_empty())
         .map_or_else(
@@ -80,6 +82,22 @@ type PackOrganTick =
     Arc<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
 
 impl SyncServer {
+    /// Writes pack organ builds under `dir`, the seal's among them: the
+    /// host's own directory (managed serve's, FIX 3565), in place of the
+    /// environment's and the OS temp directory.
+    #[must_use]
+    pub(crate) fn with_organ_dir(mut self, dir: PathBuf) -> Self {
+        self.organ_dir = Some(dir);
+        self
+    }
+
+    /// The directory pack organ builds are written under: the host's own,
+    /// else `ONEIRON_ORGAN_DIR`, else `oneiron-organs` under the OS temp
+    /// directory.
+    pub(crate) fn organ_dir(&self) -> PathBuf {
+        self.organ_dir.clone().unwrap_or_else(ambient_organ_dir)
+    }
+
     /// Brings the host in step with the vault's Active packs: every organ a
     /// pack carries a build of for this platform is installed, the first
     /// pack to name an organ winning; one whose pack now carries another
@@ -104,7 +122,7 @@ impl SyncServer {
             }
         };
         let platform = host_platform();
-        let dir = organ_dir();
+        let dir = self.organ_dir();
         let mut carried = BTreeSet::new();
         let mut unbuilt = Vec::new();
         for entry in &entries {

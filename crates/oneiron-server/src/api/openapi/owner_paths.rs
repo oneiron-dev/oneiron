@@ -30,6 +30,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/agents/base",
+        summary: "The base agents' principal ids for the owner (FIX 5734): `agents`, each `{name, id}`, the Coach first, then the Dreamer; `id` (32 hex) is what `/agent-grants/mint` takes as `agent`.",
+        row: Some("vault.agents.base"),
+    },
+    OwnerRoute {
+        method: "get",
         path: "/authority/handoff-alarms",
         summary: "Every saved alarm in the shape and order vault.authority.handoff_alarms answers (OF-158): unix seconds, oldest raised first, then by signer.",
         row: Some("vault.authority.handoff_alarms"),

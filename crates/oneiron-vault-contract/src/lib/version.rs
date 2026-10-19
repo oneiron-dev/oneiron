@@ -11,8 +11,9 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// reap answers a write it refuses with the bound it names, where v2 answered
 /// `Ok { ok: false }`. v3 also carries the vault's live training setting
 /// ([`ManagedTrainingSetting`](crate::ManagedTrainingSetting)) on every ledger
-/// report, required on `LedgerUpdate` and `PrepareReap` alike. Supervisor and
-/// vault move to v3 together; no v2 reader is kept.
+/// report, required on `LedgerUpdate` and `PrepareReap` alike, and how the
+/// vault came up ([`ManagedReadiness`](crate::ManagedReadiness)) on every
+/// `Ping`. Supervisor and vault move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

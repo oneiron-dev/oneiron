@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1067 facade rows, 3642 declarations.
-Inputs: 1002 of 1067 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 957 of 1067 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1068 facade rows, 3644 declarations.
+Inputs: 1003 of 1068 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 958 of 1068 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -7492,6 +7492,7 @@ class TrainingOffer(TypedDict):
     what_changed: NotRequired[str | None]
     check_at: int
     offered_at: int
+    source_rows: NotRequired[list[EntityId] | None]
     digest: str
 OfferAnswer = Literal["keep_baseline", "approve_switch", "approve_train", "decline", "postpone"]
 OfferIntentSwitchBody = TypedDict("OfferIntentSwitchBody", {"seat": EvalSeat, "from": OfferModelPin, "to": OfferModelPin})
@@ -7522,6 +7523,7 @@ class OfferCheck(TypedDict):
     held: NotRequired[bool | None]
     note: NotRequired[str | None]
     at: int
+    source_rows: NotRequired[list[EntityId] | None]
 class OfferView(TypedDict):
     offer: TrainingOffer
     answer: NotRequired[OfferAnswerRecord | None]
@@ -10790,6 +10792,11 @@ class AgentGrantRevoked(TypedDict):
     changed: bool
     agent: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class BaseAgentPrincipal(TypedDict):
+    name: str
+    id: EntityId
+class BaseAgentList(TypedDict):
+    agents: list[BaseAgentPrincipal]
 class StandingBlockConfigureRequest(TypedDict):
     agent_ref: EntityId
     world_ref: EntityId
