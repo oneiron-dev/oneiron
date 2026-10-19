@@ -354,13 +354,15 @@ pub(crate) fn task_lifecycle_receipts(
     query: &ReceiptQuery,
 ) -> crate::Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
-    let start = query
-        .start_at
-        .map_or(Bound::Unbounded, |start| Bound::Included((start, String::new())));
+    let start = query.start_at.map_or(Bound::Unbounded, |start| {
+        Bound::Included((start, String::new()))
+    });
     let end = query
         .end_at
         .and_then(|end| end.checked_add(1))
-        .map_or(Bound::Unbounded, |next| Bound::Excluded((next, String::new())));
+        .map_or(Bound::Unbounded, |next| {
+            Bound::Excluded((next, String::new()))
+        });
     let mut out = Vec::new();
     // The time of the last row taken: the oldest a full page holds, since
     // rows come newest first. An older row cannot displace any of it; one as

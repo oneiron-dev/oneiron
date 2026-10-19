@@ -51,6 +51,7 @@ mod checkpoint_root_attest;
 mod checkpoint_root_intake;
 mod checkpoint_root_status;
 mod claim_write;
+mod conversation_training;
 mod critical_confirm_door;
 mod engine_machine;
 mod entry_transition;
@@ -200,6 +201,7 @@ pub use checkpoint_root_status::{
     ROOT_CHECKPOINT_MISSING_SIGNER, ROOT_CHECKPOINT_POLICY_CHANGE, RootCheckpointMissingSigner,
     RootCheckpointPolicyChange,
 };
+pub use conversation_training::ConversationTrainingView;
 pub use fold_engine::*;
 pub use fold_state::*;
 pub use forwarded_caller::{
