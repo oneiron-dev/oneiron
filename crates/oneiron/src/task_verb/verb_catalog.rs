@@ -187,6 +187,9 @@ pub enum AgentVerb {
     VaultWeaveDigestRender,
     VaultWeaveLinkCorrections,
     SelfInboxLens,
+    VaultSkillsBootstrap,
+    VaultSkillHubsDefaultGet,
+    VaultSkillsRestoredefaults,
     VaultSkillHubsPut,
     VaultSkillHubsGet,
     VaultSkillHubsPublishersAdmit,
@@ -1218,6 +1221,9 @@ impl AgentVerb {
         Self::VaultWeaveDigestRender,
         Self::VaultWeaveLinkCorrections,
         Self::SelfInboxLens,
+        Self::VaultSkillsBootstrap,
+        Self::VaultSkillHubsDefaultGet,
+        Self::VaultSkillsRestoredefaults,
         Self::VaultSkillHubsPut,
         Self::VaultSkillHubsGet,
         Self::VaultSkillHubsPublishersAdmit,
@@ -2252,6 +2258,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => "vault.weave.digest.render",
             Self::VaultWeaveLinkCorrections => "vault.weave.link.corrections",
             Self::SelfInboxLens => "self.inbox.lens",
+            Self::VaultSkillsBootstrap => "vault.skills.bootstrap",
+            Self::VaultSkillHubsDefaultGet => "vault.skill_hubs.default.get",
+            Self::VaultSkillsRestoredefaults => "vault.skills.restoreDefaults",
             Self::VaultSkillHubsPut => "vault.skill_hubs.put",
             Self::VaultSkillHubsGet => "vault.skill_hubs.get",
             Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
@@ -3311,6 +3320,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillHubsDefaultGet
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -4369,6 +4381,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillHubsDefaultGet
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -5230,6 +5245,8 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
@@ -5527,6 +5544,9 @@ impl AgentVerb {
                 | Self::VaultWeaveDigestRender
                 | Self::VaultWeaveLinkCorrections
                 | Self::SelfInboxLens
+                | Self::VaultSkillsBootstrap
+                | Self::VaultSkillHubsDefaultGet
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsGet
                 | Self::VaultSkillHubsPublishersAdmit
@@ -6427,6 +6447,7 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultWeaveDigestRender
+                | Self::VaultSkillsRestoredefaults
                 | Self::VaultSkillHubsPut
                 | Self::VaultSkillHubsPublishersAdmit
                 | Self::VaultSkillHubsPublishersRevoke
@@ -7161,6 +7182,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::VaultSkillsBootstrap => &["spec"],
+            Self::VaultSkillHubsDefaultGet => &["spec"],
+            Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
@@ -8193,6 +8217,9 @@ impl AgentVerb {
             Self::VaultWeaveDigestRender => &["spec"],
             Self::VaultWeaveLinkCorrections => &["spec"],
             Self::SelfInboxLens => &["spec"],
+            Self::VaultSkillsBootstrap => &["spec"],
+            Self::VaultSkillHubsDefaultGet => &["spec"],
+            Self::VaultSkillsRestoredefaults => &["spec"],
             Self::VaultSkillHubsPut => &["spec"],
             Self::VaultSkillHubsGet => &["spec"],
             Self::VaultSkillHubsPublishersAdmit => &["spec"],
@@ -9585,6 +9612,15 @@ impl AgentVerb {
             }
             Self::SelfInboxLens => {
                 "Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."
+            }
+            Self::VaultSkillsBootstrap => {
+                "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."
+            }
+            Self::VaultSkillHubsDefaultGet => {
+                "Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."
+            }
+            Self::VaultSkillsRestoredefaults => {
+                "The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone."
             }
             Self::VaultSkillHubsPut => {
                 "The owner registers or revises a hub source; hub trust never grants activation authority."

@@ -493,11 +493,11 @@ class Oneiron:
         @property
         def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
         @property
+        def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
+        @property
         def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs": ...
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs": ...
-        @property
-        def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
         @property
         def projects(self) -> "Oneiron._VaultProjectsVerbs": ...
         @property
@@ -1139,104 +1139,11 @@ class Oneiron:
     class _VaultInboxConcernsVerbs:
         def review(self, spec: Facade.EmptyRequest | None = None) -> Facade.DreamerAttemptRef:
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
-    class _VaultSkillHubsVerbs:
-        def put(self, spec: Facade.SkillHubPutRequest) -> Facade.SkillHubConfigured:
-            """The owner registers or revises a hub source; hub trust never grants activation authority."""
-        def get(self, spec: Facade.SkillHubRequest) -> Facade.SkillHubRecord:
-            """Reads one configured hub as the owner."""
-        @property
-        def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs": ...
-        @property
-        def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs": ...
-    class _VaultSkillHubsPublishersVerbs:
-        def admit(self, spec: Facade.SkillPublisherRequest) -> Facade.SkillPublisherAdmission:
-            """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""
-        def revoke(self, spec: Facade.SkillPublisherRequest) -> Facade.HubConsentReceipt:
-            """The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running."""
-    class _VaultSkillHubsRefsVerbs:
-        def get(self, spec: Facade.HubRefRequest) -> Facade.TrackedHubRef | None:
-            """Reads one hub ref policy, pin and separate seen and trusted revisions as the owner."""
-        def set(self, spec: Facade.HubRefSetRequest) -> Facade.TrackedHubRef:
-            """The owner changes one hub ref policy and pin without fetching or trusting new bytes."""
-    class _VaultPacksVerbs:
-        def install(self, spec: Facade.HubImportRequest) -> Facade.PackPutReceipt:
-            """The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent."""
-        def sync(self, spec: Facade.HubPackRequest) -> Facade.PackPutReceipt:
-            """The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent."""
-        def get(self, spec: Facade.HubPackRequest) -> Facade.PackInstallReceipt | None:
-            """Reads an installed pack and its exact source, pin, publisher and requested powers as the owner."""
-        @property
-        def hooks(self) -> "Oneiron._VaultPacksHooksVerbs": ...
-        def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
-            """The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."""
-        @property
-        def connector(self) -> "Oneiron._VaultPacksConnectorVerbs": ...
-        def remove(self, spec: Facade.PackRemoveRequest) -> Facade.PackInstallReceipt:
-            """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
-        @property
-        def sections(self) -> "Oneiron._VaultPacksSectionsVerbs": ...
-        @property
-        def setup(self) -> "Oneiron._VaultPacksSetupVerbs": ...
-    class _VaultPacksHooksVerbs:
-        def bind(self, spec: Facade.HubHookBindRequest) -> list[Facade.EntityId]:
-            """The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."""
-        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.HubHookBindingRow]:
-            """Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants."""
-        @property
-        def grant(self) -> "Oneiron._VaultPacksHooksGrantVerbs": ...
-        def qualify(self, spec: Facade.HubHookQualifyRequest) -> Facade.HubHookQualificationReceipt:
-            """The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."""
-    class _VaultPacksHooksGrantVerbs:
-        def set(self, spec: Facade.HookGrantSetRequest) -> Facade.HookGrantView:
-            """The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant."""
-        def get(self, spec: Facade.HookGrantRequest) -> Facade.HookGrantView:
-            """Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set."""
-    class _VaultPacksConnectorVerbs:
-        def prepare(self, spec: Facade.ConnectorPackPrepareRequest) -> Facade.ConnectorPackView:
-            """Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."""
-        def get(self, spec: Facade.ConnectorPackGetRequest) -> Facade.ConnectorPackView:
-            """Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows."""
-        def qualify(self, spec: Facade.ConnectorPackQualifyRequest) -> Facade.ConnectorPackView:
-            """Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant."""
-        def accept(self, spec: Facade.ConnectorPackAcceptRequest) -> Facade.ConnectorPackView:
-            """Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent."""
-        def update(self, spec: Facade.ConnectorPackUpdateRequest) -> Facade.ConnectorPackDelta:
-            """Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities."""
-        @property
-        def grants(self) -> "Oneiron._VaultPacksConnectorGrantsVerbs": ...
-    class _VaultPacksConnectorGrantsVerbs:
-        def get(self, spec: Facade.ConnectorPackGrantsGetRequest) -> Facade.ConnectorPackGrants:
-            """Reads current per-capability authority for one actor on the reviewed connector pack source."""
-        def put(self, spec: Facade.ConnectorPackGrantsPutRequest) -> Facade.ConnectorPackGrants:
-            """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
-    class _VaultPacksSectionsVerbs:
-        def propose(self, spec: Facade.PluginSectionProposeRequest) -> Facade.PluginSectionProposal:
-            """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
-        def list(self, spec: Facade.PluginSectionListRequest) -> Facade.PluginSectionsView:
-            """Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."""
-        def grant(self, spec: Facade.PluginSectionGrantRequest) -> Facade.PluginSectionGrant:
-            """The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."""
-        def revoke(self, spec: Facade.PluginSectionRevokeRequest) -> Facade.PluginSectionRevoked:
-            """The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."""
-        def suggest(self, spec: Facade.PluginSectionSuggestRequest) -> Facade.PluginSectionSuggestion:
-            """Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."""
-        @property
-        def suggestions(self) -> "Oneiron._VaultPacksSectionsSuggestionsVerbs": ...
-    class _VaultPacksSectionsSuggestionsVerbs:
-        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.PluginSuggestionsView:
-            """The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."""
-        def set(self, spec: Facade.PluginSuggestionsSetRequest) -> Facade.PluginSuggestionsView:
-            """The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."""
-    class _VaultPacksSetupVerbs:
-        def prepare(self, spec: Facade.PackSetupRequest) -> Facade.PackSetupReceipt:
-            """The owner opens, or resumes, a pack's guided setup; opening grants nothing."""
-        def get(self, spec: Facade.PackSetupRequest) -> Facade.PackSetupReceipt:
-            """A pack's guided setup as it stands, for the owner."""
-        def answer(self, spec: Facade.PackSetupAnswerRequest) -> Facade.PackSetupReceipt:
-            """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
-        def verify(self, spec: Facade.PackSetupVerifyRequest) -> Facade.PackSetupReceipt:
-            """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
     class _VaultSkillsVerbs:
+        def bootstrap(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.BootstrapSkillView]:
+            """Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills."""
+        def restoreDefaults(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.HubImportReceipt]:
+            """The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone."""
         def import_(self, spec: Facade.HubImportRequest) -> Facade.HubSkillImported:
             """The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."""
         def sync(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillSyncReceipt:
@@ -1345,6 +1252,108 @@ class Oneiron:
     class _VaultSkillsAttributionPositiveVerbs:
         def retire(self, spec: Facade.PositiveRetireRequest) -> Facade.PositiveRetireReceipt:
             """The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."""
+    class _VaultSkillHubsVerbs:
+        @property
+        def default(self) -> "Oneiron._VaultSkillHubsDefaultVerbs": ...
+        def put(self, spec: Facade.SkillHubPutRequest) -> Facade.SkillHubConfigured:
+            """The owner registers or revises a hub source; hub trust never grants activation authority."""
+        def get(self, spec: Facade.SkillHubRequest) -> Facade.SkillHubRecord:
+            """Reads one configured hub as the owner."""
+        @property
+        def publishers(self) -> "Oneiron._VaultSkillHubsPublishersVerbs": ...
+        @property
+        def refs(self) -> "Oneiron._VaultSkillHubsRefsVerbs": ...
+    class _VaultSkillHubsDefaultVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.DefaultSkillHub:
+            """Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source."""
+    class _VaultSkillHubsPublishersVerbs:
+        def admit(self, spec: Facade.SkillPublisherRequest) -> Facade.SkillPublisherAdmission:
+            """The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."""
+        def revoke(self, spec: Facade.SkillPublisherRequest) -> Facade.HubConsentReceipt:
+            """The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running."""
+    class _VaultSkillHubsRefsVerbs:
+        def get(self, spec: Facade.HubRefRequest) -> Facade.TrackedHubRef | None:
+            """Reads one hub ref policy, pin and separate seen and trusted revisions as the owner."""
+        def set(self, spec: Facade.HubRefSetRequest) -> Facade.TrackedHubRef:
+            """The owner changes one hub ref policy and pin without fetching or trusting new bytes."""
+    class _VaultPacksVerbs:
+        def install(self, spec: Facade.HubImportRequest) -> Facade.PackPutReceipt:
+            """The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent."""
+        def sync(self, spec: Facade.HubPackRequest) -> Facade.PackPutReceipt:
+            """The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent."""
+        def get(self, spec: Facade.HubPackRequest) -> Facade.PackInstallReceipt | None:
+            """Reads an installed pack and its exact source, pin, publisher and requested powers as the owner."""
+        @property
+        def hooks(self) -> "Oneiron._VaultPacksHooksVerbs": ...
+        def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
+            """The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."""
+        @property
+        def connector(self) -> "Oneiron._VaultPacksConnectorVerbs": ...
+        def remove(self, spec: Facade.PackRemoveRequest) -> Facade.PackInstallReceipt:
+            """The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."""
+        @property
+        def sections(self) -> "Oneiron._VaultPacksSectionsVerbs": ...
+        @property
+        def setup(self) -> "Oneiron._VaultPacksSetupVerbs": ...
+    class _VaultPacksHooksVerbs:
+        def bind(self, spec: Facade.HubHookBindRequest) -> list[Facade.EntityId]:
+            """The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."""
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.HubHookBindingRow]:
+            """Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants."""
+        @property
+        def grant(self) -> "Oneiron._VaultPacksHooksGrantVerbs": ...
+        def qualify(self, spec: Facade.HubHookQualifyRequest) -> Facade.HubHookQualificationReceipt:
+            """The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."""
+    class _VaultPacksHooksGrantVerbs:
+        def set(self, spec: Facade.HookGrantSetRequest) -> Facade.HookGrantView:
+            """The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant."""
+        def get(self, spec: Facade.HookGrantRequest) -> Facade.HookGrantView:
+            """Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set."""
+    class _VaultPacksConnectorVerbs:
+        def prepare(self, spec: Facade.ConnectorPackPrepareRequest) -> Facade.ConnectorPackView:
+            """Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate."""
+        def get(self, spec: Facade.ConnectorPackGetRequest) -> Facade.ConnectorPackView:
+            """Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows."""
+        def qualify(self, spec: Facade.ConnectorPackQualifyRequest) -> Facade.ConnectorPackView:
+            """Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant."""
+        def accept(self, spec: Facade.ConnectorPackAcceptRequest) -> Facade.ConnectorPackView:
+            """Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent."""
+        def update(self, spec: Facade.ConnectorPackUpdateRequest) -> Facade.ConnectorPackDelta:
+            """Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities."""
+        @property
+        def grants(self) -> "Oneiron._VaultPacksConnectorGrantsVerbs": ...
+    class _VaultPacksConnectorGrantsVerbs:
+        def get(self, spec: Facade.ConnectorPackGrantsGetRequest) -> Facade.ConnectorPackGrants:
+            """Reads current per-capability authority for one actor on the reviewed connector pack source."""
+        def put(self, spec: Facade.ConnectorPackGrantsPutRequest) -> Facade.ConnectorPackGrants:
+            """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
+    class _VaultPacksSectionsVerbs:
+        def propose(self, spec: Facade.PluginSectionProposeRequest) -> Facade.PluginSectionProposal:
+            """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
+        def list(self, spec: Facade.PluginSectionListRequest) -> Facade.PluginSectionsView:
+            """Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."""
+        def grant(self, spec: Facade.PluginSectionGrantRequest) -> Facade.PluginSectionGrant:
+            """The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."""
+        def revoke(self, spec: Facade.PluginSectionRevokeRequest) -> Facade.PluginSectionRevoked:
+            """The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild."""
+        def suggest(self, spec: Facade.PluginSectionSuggestRequest) -> Facade.PluginSectionSuggestion:
+            """Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal."""
+        @property
+        def suggestions(self) -> "Oneiron._VaultPacksSectionsSuggestionsVerbs": ...
+    class _VaultPacksSectionsSuggestionsVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.PluginSuggestionsView:
+            """The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all."""
+        def set(self, spec: Facade.PluginSuggestionsSetRequest) -> Facade.PluginSuggestionsView:
+            """The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted."""
+    class _VaultPacksSetupVerbs:
+        def prepare(self, spec: Facade.PackSetupRequest) -> Facade.PackSetupReceipt:
+            """The owner opens, or resumes, a pack's guided setup; opening grants nothing."""
+        def get(self, spec: Facade.PackSetupRequest) -> Facade.PackSetupReceipt:
+            """A pack's guided setup as it stands, for the owner."""
+        def answer(self, spec: Facade.PackSetupAnswerRequest) -> Facade.PackSetupReceipt:
+            """The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here."""
+        def verify(self, spec: Facade.PackSetupVerifyRequest) -> Facade.PackSetupReceipt:
+            """Checks one pack connection with the engine's fixed read-only provider call for its declared check."""
     class _VaultProjectsVerbs:
         @property
         def goal(self) -> "Oneiron._VaultProjectsGoalVerbs": ...

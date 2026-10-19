@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
-use oneiron::skill_hub::{HubImportReceipt, default_skill_hub_commit, default_skill_hub_id};
+use oneiron::skill_hub::{HubImportReceipt, default_skill_hub_id};
 use oneiron::{EntityId, TimeRange, Vault};
 use serde::Deserialize;
 
@@ -52,7 +52,7 @@ async fn restore_defaults(
                     .into_iter()
                     .next()
                     .ok_or(oneiron::Error::InvariantViolation(
-                        "restored bootstrap skill has no source receipt",
+                        "restored default skill has no source receipt",
                     ))
             })
             .collect()
@@ -118,7 +118,7 @@ fn hub_skill_receipt(
             receipt.hub_id == hub
                 && receipt.ref_string == subtree
                 && receipt.pin_type == "commit"
-                && receipt.pin_value.as_deref() == Some(default_skill_hub_commit())
+                && receipt.pin_value.is_some()
         })
         .ok_or(oneiron::Error::InvariantViolation(
             "default hub skill has no pinned source receipt",

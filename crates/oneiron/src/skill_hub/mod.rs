@@ -42,7 +42,7 @@ pub(crate) use claim_refinement::{
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions};
 pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
 pub use default_hub::{
-    ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit,
+    DefaultSkillHub, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit,
     default_skill_hub_id,
 };
 pub use git_fetch::GitEndpointSkillHubAdapter;
