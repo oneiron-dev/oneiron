@@ -97,7 +97,9 @@ pub struct SealedCustodyChange<'a> {
     pub holder: EntityId,
     /// The exact permits the input binds, ascending by machine.
     pub recipients: &'a [CustodyRecipientPermit],
-    /// The input's envelope bytes, sealed to the holder's key.
+    /// The input's bytes, sealed to the holder's key: one envelope, or for
+    /// a body past one envelope's plaintext bound, the frame of numbered
+    /// envelopes a door seals such a body as (FIX 5521).
     pub input: &'a [u8],
 }
 
