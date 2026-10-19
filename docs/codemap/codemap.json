@@ -2780,8 +2780,18 @@
      "path": "src/authority/fold_engine.rs",
      "purpose": "Top-level fold orchestration",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/fold_engine/causal.rs",
+     "purpose": "Whether a row names a hash beneath its own parents: the one structural \"beneath these parents\" predicate a…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -4344,7 +4354,17 @@
      "path": "src/authority/world_key_support.rs",
      "purpose": "The authority side of the world-key doors (world privacy P6b): the sequence and parents a key record takes…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/world_key_support/frontier.rs",
+     "purpose": "The frontier parents a world key record may name in place of the rows its evidence rests on (FIX 5464, CALLS…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -4388,9 +4408,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/world_refold.rs",
-     "purpose": "A world edit, a world key record, a grant travel choice, or a root request or the owner's cancel of one…",
+     "purpose": "A world edit, a world key record, a grant travel choice, or a root request, the owner's cancel of one or its…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -60728,7 +60748,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WorldKeyStatus"
@@ -60736,9 +60756,19 @@
      "path": "src/world_keys/doors.rs",
      "purpose": "The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/doors/append.rs",
+     "purpose": "A key record's appends: one machine's wraps of one key, as side entries of the key's world, split across…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -62068,7 +62098,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 182,
+     "files": 184,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63510,7 +63540,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63524,9 +63554,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 196,
+   "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3906,
+   "source_files": 3909,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65931,6 +65961,16 @@
   "oneiron-browser": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/capture.rs",
+     "purpose": "Repeat screenshots (AB-004)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -65976,7 +66016,7 @@
      "path": "src/driver/handles.rs",
      "purpose": "Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -65986,7 +66026,7 @@
      "path": "src/driver/pages.rs",
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -66158,6 +66198,13 @@
     }
    ],
    "modules": {
+    "capture": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Repeat screenshots (AB-004)"
+    },
     "cdp": {
      "files": 1,
      "impl_vault": false,
@@ -66224,7 +66271,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 12,
+   "source_files": 13,
    "test_files": 0
   },
   "oneiron-code-check": {

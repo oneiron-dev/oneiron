@@ -40,6 +40,7 @@
 //! through the same driver. Handing it back ends the takeover with its
 //! record, which is its receipt.
 
+use crate::capture::{self, Capture, Captures};
 use crate::driver::pages::{
     Base, Observations, Read, find_cursor, is_walk, session_token, wait_cursor,
 };
@@ -216,6 +217,8 @@ pub struct DesktopSession {
     /// This session's token, in its observations' scopes.
     token: String,
     media: VecDeque<Held>,
+    /// The session's screenshot capture ids.
+    captures: Captures,
     /// The observations a later one may edit, and the paged answers a
     /// cursor may still read on.
     pages: Observations,
@@ -416,12 +419,13 @@ fn url_of(app: &str, key: WindowKey) -> String {
     format!("app:{app}#{}", key.name())
 }
 
-/// An image the session holds: its content ref, its PNG bytes and what of
-/// which window it shows.
+/// An image the session holds: its content ref, its PNG bytes, what of
+/// which window it shows, and, for a screenshot, its capture.
 struct Held {
     image: String,
     png: Arc<Vec<u8>>,
     frame: Frame,
+    capture: Option<Capture>,
 }
 
 /// What a held image shows: a screen rectangle of `window`, as the window
@@ -477,6 +481,7 @@ impl DesktopSession {
         // The guest's display and accessibility bus come up before its
         // driver answers.
         let mcp = Mcp::attach(reader, writer, Instant::now() + LAUNCH)?;
+        let token = session_token();
         Ok(Self {
             mcp,
             guest: lease,
@@ -488,7 +493,8 @@ impl DesktopSession {
             receipt_sink: None,
             window: None,
             seq: 0,
-            token: session_token(),
+            captures: Captures::new(&token),
+            token,
             media: VecDeque::new(),
             pages: Observations::default(),
             wait_cap: config.wait_cap,
@@ -1012,12 +1018,15 @@ impl DesktopSession {
         observation: &mut Observation,
     ) {
         self.receipt_seq += 1;
-        let screenshot = self
+        // Never compared: each receipt's screenshot is a capture of its own.
+        let (screenshot, capture_id) = self
             .screenshot(ScreenshotInput {
                 trigger: ScreenshotTrigger::EffectReceipt,
+                since_capture: None,
             })
             .ok()
-            .map(|shot| shot.image);
+            .map(|shot| (shot.image, shot.capture_id))
+            .unzip();
         let mut receipt = EffectReceipt {
             seq: self.receipt_seq,
             verb: verb.to_owned(),
@@ -1030,6 +1039,7 @@ impl DesktopSession {
             effect_class: effect_class.map(str::to_owned),
             press: press.as_str().to_owned(),
             screenshot,
+            capture_id,
             screenshot_evidence: None,
         };
         // The pixels are kept before the receipt is stored, while the
@@ -1048,12 +1058,13 @@ impl DesktopSession {
         observation.receipt = Some(receipt);
     }
 
-    /// Holds `png`, showing `frame`, under its content ref; returns ref,
-    /// width, height, bytes.
+    /// Holds `png`, showing `frame`, under its content ref, with its
+    /// `capture` when it is a screenshot; returns ref, width, height, bytes.
     fn remember(
         &mut self,
         png: Arc<Vec<u8>>,
         frame: Frame,
+        capture: Option<Capture>,
     ) -> Result<(String, u32, u32, u64), BrowserError> {
         let (width, height) = png_dimensions(&png)
             .ok_or_else(|| BrowserError::Protocol("image is not a PNG".to_owned()))?;
@@ -1063,6 +1074,7 @@ impl DesktopSession {
             image: image.clone(),
             png,
             frame,
+            capture,
         });
         if self.media.len() > MEDIA {
             self.media.pop_front();
@@ -1076,6 +1088,14 @@ impl DesktopSession {
             .find(|held| held.image == image)
             .map(|held| (held.png.to_vec(), held.frame.clone()))
             .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
+    }
+
+    /// The held screenshot capture `id` names, with its content ref.
+    fn held_capture(&self, id: &str) -> Option<(String, Capture)> {
+        self.media.iter().find_map(|held| {
+            let capture = held.capture.as_ref().filter(|capture| capture.id == id)?;
+            Some((held.image.clone(), capture.clone()))
+        })
     }
 
     /// The rows `keep` admits as the window reads now, and where its walk
@@ -1490,8 +1510,12 @@ impl BrowserDriver for DesktopSession {
         let base = Base::of_observe(&input)?;
         match input.cursor.as_deref() {
             // A partial observation's `walk_next` walks the window again,
-            // longer, as a new observation.
-            Some(cursor) if is_walk(cursor) => self.walk_next(cursor),
+            // longer, as a new observation, which the caller reads whole.
+            Some(cursor) if is_walk(cursor) => {
+                let observation = self.walk_next(cursor)?;
+                self.pages.deliver(observation.seq);
+                Ok(observation)
+            }
             // Unpaged, a page cursor reads the whole rest of its observation.
             Some(cursor) => self.pages.rest(cursor),
             None => self.observation(&base),
@@ -1743,6 +1767,8 @@ impl BrowserDriver for DesktopSession {
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {
         self.live()?;
+        // The capture it names, read before this one can age it out.
+        let base = capture::compared(&input).and_then(|id| self.held_capture(id));
         let Snapshot {
             key,
             app,
@@ -1768,16 +1794,27 @@ impl BrowserDriver for DesktopSession {
             scale,
             source: Arc::clone(&png),
         };
-        let (image, width, height, bytes) = self.remember(png, frame)?;
+        let url = url_of(&app, key);
+        let taken = self.captures.next(Some(capture::Scope {
+            shows: format!("window:{}.{}.{}|{url}", self.token, key.pid, key.id),
+            rect: [bounds.x, bounds.y, bounds.w, bounds.h],
+            scroll: None,
+            size: png_dimensions(&png).unwrap_or_default(),
+            scale,
+            masking: capture::MASKING,
+        }));
+        let (image, width, height, bytes) = self.remember(png, frame, Some(taken.clone()))?;
         Ok(ScreenshotOutput {
+            unchanged_from: capture::unchanged_from(base, &image, &taken),
             image,
             media_type: "image/png".to_owned(),
             width,
             height,
             bytes,
             trigger: input.trigger,
-            url: url_of(&app, key),
+            url,
             title,
+            capture_id: taken.id,
         })
     }
 
@@ -1806,7 +1843,8 @@ impl BrowserDriver for DesktopSession {
             input.width,
             input.height,
         );
-        let (image, width, height, bytes) = self.remember(Arc::new(encode_png(&region)?), frame)?;
+        let (image, width, height, bytes) =
+            self.remember(Arc::new(encode_png(&region)?), frame, None)?;
         Ok(ImageOutput {
             image,
             media_type: "image/png".to_owned(),
@@ -1839,7 +1877,8 @@ impl BrowserDriver for DesktopSession {
         let width = ((input.width as f32 * scale).round() as u32).clamp(1, 4096);
         let height = ((input.height as f32 * scale).round() as u32).clamp(1, 4096);
         let zoomed = region.resize_exact(width, height, image::imageops::FilterType::Lanczos3);
-        let (image, width, height, bytes) = self.remember(Arc::new(encode_png(&zoomed)?), frame)?;
+        let (image, width, height, bytes) =
+            self.remember(Arc::new(encode_png(&zoomed)?), frame, None)?;
         Ok(ImageOutput {
             image,
             media_type: "image/png".to_owned(),
