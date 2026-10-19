@@ -286,8 +286,9 @@ pub(crate) async fn build_server(
     server_config: crate::config::SyncServerConfig,
     owner_host: crate::owner::schedule::OwnerHost,
 ) -> anyhow::Result<(SyncServer, Option<tokio::task::JoinHandle<()>>)> {
-    // The one credential-broker context the System One seat, the embedder
-    // and the GPU pods send their vault-secret keys through.
+    // The one credential-broker context the `[models]` providers, the System
+    // One seat, the embedder and the GPU pods send their vault-secret keys
+    // through.
     let broker = crate::models::BrokerContext::for_serve(&vault, config);
     let (embedder, gpu_poller) = build_embedder(&vault, config, broker.as_ref()).await?;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;

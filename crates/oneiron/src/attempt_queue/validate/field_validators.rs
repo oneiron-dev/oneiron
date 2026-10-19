@@ -122,9 +122,6 @@ pub(super) const ERR_RESUME_ARTIFACT_REF_EMPTY: &str = "resume artifact ref must
 
 pub(super) const ERR_RESUME_ARTIFACT_REF_TOO_LONG: &str = "resume artifact ref exceeds 512 bytes";
 
-pub(in crate::attempt_queue) const ERR_CANCEL_RECEIPTS_FULL: &str =
-    "attempt cancel receipts are full; refusal evidence is never dropped";
-
 pub(super) const ERR_CANCEL_RECEIPT_SEQUENCE: &str =
     "attempt cancel receipt sequence must be strictly increasing";
 
