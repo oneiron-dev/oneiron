@@ -1,6 +1,9 @@
 {
+  "approved_font_inventories": {
+    "decktest": "bfbab21586946543d5b6c821a226532b7b84ca930f2aa1a9dd56674e7da6baf7",
+    "olety": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637"
+  },
   "environment": {
-    "font_inventory_sha256": "dc5fb53ab863df6d9701cb2ef1db8fcccf169cee5e0720e3388760b09230fc28",
     "harness": "one-2531-v1",
     "locale": "",
     "macos": "27.0",
@@ -10,5 +13,5 @@
     "powerpoint": "16.113.2",
     "raster_scale": 2
   },
-  "version": 1
+  "version": 2
 }

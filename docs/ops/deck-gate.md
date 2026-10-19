@@ -41,10 +41,35 @@ unsupported case is inconclusive, and the gate stays closed.
 
 ## Before you start
 
-- The Mac mini's PowerPoint, macOS, PDFKit, font inventory, observer and locale
-  must match `scripts/office/environment.json`. The Office half refuses before
-  opening anything when they differ. Update the pin only after checking a
-  deliberate upgrade (`scripts/office/README.md`).
+- The Mac mini's PowerPoint, macOS, PDFKit, observer and locale must match
+  `scripts/office/environment.json`, and so must the running account's font
+  inventory. The Office half refuses before opening anything when they differ.
+  Update the pin only after checking a deliberate upgrade
+  (`scripts/office/README.md`).
+- The font inventory is per account: the SHA-256 of sorted JSON rows
+  `{root_label, relative_path, bytes, sha256}` over the font files in
+  `/System/Library/Fonts`, `/Library/Fonts`, the account's `~/Library/Fonts`
+  and the PowerPoint bundle's `Contents/Resources/DFonts` and `Fonts`. A
+  missing root or an unreadable file is a row of its own; mtime is never
+  identity. `environment.json` holds one approved digest per account in
+  `approved_font_inventories`, and each receipt records its `font_account` and
+  `font_inventory_sha256`, judged against that account's approval. The digest
+  is measured once per Office pass; the pass also writes the rows to
+  `office-results/font-inventory.json`.
+- Approve each account once, and again after a deliberate font or Office
+  change, on vel in a source checkout of the commit you will run, as that
+  account. The refusal prints the observed digest and this command:
+
+  ```sh
+  python3 -I scripts/office/deck_oracle.py fonts
+  python3 -I scripts/office/deck_oracle.py fonts --approve scripts/office/environment.json
+  ```
+
+  The first command prints the rows and the digest; check them. The second
+  records only this account's digest. Do it for `olety` (over ssh) and for
+  `decktest` (in its own logged-in Terminal), then commit `environment.json`
+  and start a new run: a run directory pins its copy of the script, so
+  approving inside a run invalidates it.
 - `scripts/office/README.md` "Safe Mac setup" applies: Automation and
   Accessibility granted once, no Grant File Access, no other open presentation.
   The Office half takes the shared lock `~/w7-oracle/lock`. It keeps the lock
@@ -74,16 +99,39 @@ cd /Users/olety/Desktop/temp/deck-gate && fleet run --who deck-gate --goal "OF-5
 
 The job clones oneiron at `$sha`, runs `deck_gate.py acquire` for the PPTArena
 originals (kept beside the synced tree in `deck-gate-corpus/`; the download
-never opens a deck), builds `deck-gate-cases` and runs it. Its last line is
+never opens a deck), builds `deck-gate-cases` and runs it. Its first line names
+the run directory:
 
 ```
-## DECK-GATE-ENGINE rc=<rc> acquire=<rc> host=<host> out=<run directory on the host> bytes=<size>
+## DECK-GATE-ENGINE start host=<host> sha=<sha> out=<run directory on the host>
+```
+
+The runner journals each case as it finishes to `results.jsonl` in that
+directory: a header line with the run's pins, then one synced line per case
+(its step outcomes, candidates, calibration fixtures, notes and `elapsed_ms`),
+written after the files it names. Stderr gets one progress line per case
+(`deck-gate-cases: <case> <outcome> <ms> ms`). At the end the runner folds the
+journal into `manifest.json`, written whole, and journals a run-complete line.
+The job's last line is
+
+```
+## DECK-GATE-ENGINE rc=<rc> acquire=<rc> host=<host> out=<run directory on the host> journal_lines=<n> bytes=<size>
 ```
 
 `rc=0`: every engine half passed. `rc=1`: the run directory is complete, but an
 engine half failed or stayed open, so the receipt will say so. Carry it on so the
-recorded receipt names the failure. Any other rc (`clone-failed`, `out-exists`,
-`2`) wrote no run.
+recorded receipt names the failure. `clone-failed` and `out-exists` wrote no
+run. `rc=2` (the runner stopped on an error) and `rc=stopped` (the job was
+killed or timed out) leave an incomplete run: `results.jsonl` holds every case
+that finished and no `manifest.json`.
+
+An incomplete run is evidence, not a gate run. Pull it as in step 2 and run
+`plan` on it: `deck_gate.py` reports the finished cases from the journal's
+complete lines (a line cut by the stop is the case in progress, never counted)
+with their outcomes per step, then refuses with exit 2. `office` and
+`assemble` refuse it the same way, so no Office pass and no receipt come from
+an incomplete run. Fix what stopped it and run the engine half again under a
+new `$run`.
 
 ## 2. Bring the run to the Mac and check it
 
@@ -93,7 +141,8 @@ python3 -B /Users/olety/Desktop/temp/deck-gate/$run/office/deck_gate.py plan /Us
 ```
 
 `plan` checks every pinned file and prints the engine outcome of each step. It
-opens nothing. It must print no `PROBLEM` line.
+opens nothing. It must print no `PROBLEM` line. On an incomplete run it prints
+the journal's finished cases and refuses (exit 2).
 
 ## 3. Office half on the Mac mini (owner account, through the fleet)
 

@@ -156,9 +156,22 @@ pub(super) fn noop(
     typed: Option<&[Vec<String>]>,
     lane: Lane,
     steps: &[u8],
-    mut owed: Vec<OfficeCheck>,
+    owed: Vec<OfficeCheck>,
 ) -> Res<()> {
     let id = format!("{}.noop", deck.id);
+    run.case(&id, |run| {
+        noop_case(run, &id, deck, typed, (lane, steps), owed)
+    })
+}
+
+fn noop_case(
+    run: &mut Run,
+    id: &str,
+    deck: &Deck,
+    typed: Option<&[Vec<String>]>,
+    (lane, steps): (Lane, &[u8]),
+    mut owed: Vec<OfficeCheck>,
+) -> Res<()> {
     let outcome = match project(
         &deck.deck,
         &deck.package,
@@ -170,7 +183,7 @@ pub(super) fn noop(
         Err(error) => {
             run.record(
                 lane.step(BASELINE),
-                &id,
+                id,
                 failed(format!("the no-op export refused: {error}")),
             );
             return Ok(());
@@ -191,10 +204,10 @@ pub(super) fn noop(
     } else {
         StepOutcome::Passed
     };
-    run.record(lane.step(BASELINE), &id, verdict);
+    run.record(lane.step(BASELINE), id, verdict);
     if !deck.defects.is_empty() {
         run.note(
-            &id,
+            id,
             format!(
                 "step 5 judges only new defects; the deck already has: {}",
                 deck.defects.join("; ")
@@ -215,7 +228,7 @@ pub(super) fn noop(
         }
     }
     run.candidate(Emit {
-        id: &id,
+        id,
         bytes: &outcome.bytes,
         steps,
         lane,
