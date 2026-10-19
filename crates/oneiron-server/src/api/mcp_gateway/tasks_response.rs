@@ -303,6 +303,15 @@ pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
 ) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
+    // A managed vault's attested owner carries no slip: he reads with his
+    // own key, held to this request's owner proof (WILL-PLAN L14 row 01).
+    if let Some(auth) = actor
+        .auth
+        .as_ref()
+        .filter(|auth| auth.managed_owner().is_some())
+    {
+        return crate::api::scoped_read_for_core_auth(vault, auth).map_err(mcp_api_error);
+    }
     let refused = || {
         McpGatewayError::new(
             -32001,

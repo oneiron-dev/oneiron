@@ -1,8 +1,9 @@
 //! JSON-RPC envelope types and request dispatch.
 
+use super::owner_call::resolve_mcp_caller;
 use super::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call,
-    mcp_error_response, mcp_params, mcp_validated_call_args, resolve_mcp_gateway_actor,
+    mcp_error_response, mcp_params, mcp_validated_call_args,
 };
 use crate::api::facade::{self, DoorClaim};
 use crate::auth::Locality;
@@ -440,8 +441,17 @@ async fn mcp_endpoint(
     let claim = match mcp_named_invocation(&request) {
         None => None,
         Some(invocation) => {
-            let call =
-                mcp_invocation_body(mode, locality, &headers, &request, raw_arguments.as_deref());
+            let owner = crate::auth::attested_owner(&connection, &server)
+                .map(|owner| owner.to_hex())
+                .unwrap_or_default();
+            let call = mcp_invocation_body(
+                mode,
+                locality,
+                &headers,
+                &owner,
+                &request,
+                raw_arguments.as_deref(),
+            );
             match facade::claim_door_invocation(&server, invocation, call).await {
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
@@ -532,12 +542,14 @@ fn mcp_named_invocation(request: &McpJsonRpcRequest) -> Option<InvocationId> {
 }
 
 /// The call a claimed MCP invocation names: the endpoint, the credential
-/// headers and session the actor resolves from, where the caller sits, and
+/// headers and session the actor resolves from, the owner a managed vault's
+/// supervisor attested for it (empty for none), where the caller sits, and
 /// the call itself.
 fn mcp_invocation_body(
     mode: McpSurfaceMode,
     locality: CallerLocality,
     headers: &HeaderMap,
+    owner: &str,
     request: &McpJsonRpcRequest,
     raw_arguments: Option<&str>,
 ) -> [u8; 32] {
@@ -552,6 +564,7 @@ fn mcp_invocation_body(
             mode.as_str().as_bytes(),
             header(MCP_CREDENTIAL_HEADER),
             header(AUTHORIZATION.as_str()),
+            owner.as_bytes(),
             header(crate::api::write_facet::SESSION_HEADER),
             request.method.as_bytes(),
             params.as_bytes(),
@@ -657,9 +670,10 @@ pub(crate) async fn handle_mcp_request(
 
     match request.method.as_str() {
         "initialize" => {
-            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
-                .await?
-                .toward(peer);
+            let actor =
+                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
+                    .await?
+                    .toward(peer);
             // It states the credential's scope, so it is released as every
             // result is (DEC-0005).
             let result = json!({
@@ -681,28 +695,32 @@ pub(crate) async fn handle_mcp_request(
         }
         "notifications/initialized" => Ok(json!({})),
         "oneiron/wakes" => {
-            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
-                .await?
-                .toward(peer);
+            let actor =
+                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
+                    .await?
+                    .toward(peer);
             super::wakes::poll(server, &actor, request.params).await
         }
         // Deliberately actor-free: a listing that echoed the caller back would
         // not be byte-identical across credentials, and the whole point of an
         // immutable registration is that it is the same bytes for everyone.
-        // The credential is still REQUIRED, just never reflected.
+        // A caller is still REQUIRED (its credential, or the owner a managed
+        // vault's supervisor attested), just never reflected.
         "tools/list" => {
-            let _actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
-                .await?
-                .toward(peer);
+            let _actor =
+                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
+                    .await?
+                    .toward(peer);
             Ok(json!({
                 "surfaceMode": mode.as_str(),
                 "tools": server.mcp_surface(mode).listing(),
             }))
         }
         "tools/call" => {
-            let actor = resolve_mcp_gateway_actor(mode, &request_id, headers, locality, server)
-                .await?
-                .toward(peer);
+            let actor =
+                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
+                    .await?
+                    .toward(peer);
             // OF-538: what the call's receipt states of its request, taken
             // before the params are consumed.
             let tool = request

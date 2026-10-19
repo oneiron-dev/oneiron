@@ -1,6 +1,8 @@
-//! Deployment-tier participation is separate from permission to train.
+//! The owner's "Help improve Oneiron" switch (`export_opt_in`, with
+//! [`default_exports`] when he has not chosen) decides whether a vault
+//! exports, and is separate from permission to train.
 //!
-//! What a deployment exports is the content-free tier-1 aggregate
+//! What a vault exports is the content-free tier-1 aggregate
 //! ([`Vault::export_tier1_failure_counts`](crate::Vault::export_tier1_failure_counts)):
 //! closed dimensions and counts. Nothing samples transcript text for export.
 //! Telemetry never carries world text (owner ruling 2026-10-14), and redacting

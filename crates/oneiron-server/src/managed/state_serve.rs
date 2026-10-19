@@ -158,7 +158,8 @@ pub struct ManagedState {
 pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 
 /// The vault owner a supervisor-signed `ManagedOwnerAction` names for one
-/// facade or owner request, verified at ingress; never the host root.
+/// facade, owner or console request, verified at ingress; never the host
+/// root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
 
@@ -181,15 +182,57 @@ fn owner_attestable(method: &Method, path: &str) -> bool {
     (*method == Method::POST && path.starts_with(FACADE_PREFIX))
         || path.starts_with(OWNER_PREFIX)
         || action_or_frame_attestable(method, path)
+        || console_attestable(method, path)
+}
+
+/// The console's own reads and acts outside those nests, each matched
+/// exactly by method and path, every `{..}` one non-empty path segment
+/// (WILL-PLAN L14 row 01): `GET /api/search/vector`, `/api/search/text`,
+/// `/api/entity/{id}`, `/api/edges/{id}`, `/api/core/discover`,
+/// `/api/booking/{page_token}/agent-instructions`, `/v1/llm/defaults`,
+/// `/v1/ai/waves/{attempt}` and `/v1/ai/video/{job}`; `POST
+/// /v1/core/pairing/links`, `/v1/core/slips/revoke`,
+/// `/v1/core/org-admin/{org}/policy`, the four
+/// `/api/booking/{page_token}/{availability|book|reschedule|cancel}` and
+/// `/mcp`. No root-admin door (the schema, skills, usage, lease repair,
+/// operator recovery) is here, and no credential transport (`/ws`, git):
+/// those stay as they are without a slip.
+fn console_attestable(method: &Method, path: &str) -> bool {
+    let between = |prefix: &str, suffix: &str| {
+        path.strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(suffix))
+            .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
+    };
+    if *method == Method::GET {
+        matches!(
+            path,
+            "/api/search/vector" | "/api/search/text" | "/api/core/discover" | "/v1/llm/defaults"
+        ) || between("/api/entity/", "")
+            || between("/api/edges/", "")
+            || between("/api/booking/", "/agent-instructions")
+            || between("/v1/ai/waves/", "")
+            || between("/v1/ai/video/", "")
+    } else if *method == Method::POST {
+        matches!(
+            path,
+            "/v1/core/pairing/links" | "/v1/core/slips/revoke" | "/mcp"
+        ) || between("/v1/core/org-admin/", "/policy")
+            || ["/availability", "/book", "/reschedule", "/cancel"]
+                .into_iter()
+                .any(|operation| between("/api/booking/", operation))
+    } else {
+        false
+    }
 }
 
 /// The owner's action and frame transports, each matched exactly (WILL-PLAN
 /// L13 row 01): `POST /v1/core/actions/{verb}`, `POST
 /// /v1/core/lens-frames/{card_id}/events` and `DELETE
 /// /v1/core/lens-frames/{card_id}`, each `{..}` one non-empty path segment.
-/// No other `/v1/core/*` route: the action list, a live run's attach and
-/// every REST route stay unattested. The assertion is verified over the
-/// method, path, placing headers and exact body as for the facade.
+/// No other `/v1/core/*` route but the console's few
+/// ([`console_attestable`]): the action list, a live run's attach and every
+/// other REST route stay unattested. The assertion is verified over the
+/// method, path, raw query, placing headers and exact body as for the facade.
 fn action_or_frame_attestable(method: &Method, path: &str) -> bool {
     let segment = |rest: &str| !rest.is_empty() && !rest.contains('/');
     if *method == Method::POST {
@@ -557,10 +600,11 @@ async fn refuse_frozen_writes(
                 }
             }
         }
-        // A facade or owner request the supervisor attests is the vault
-        // owner's own (`ManagedOwnerAction`): verified the same way, over the
-        // method, path, placing headers and exact body. Only a verified one
-        // names the owner, as a request extension the credential reads.
+        // A facade, owner or console request the supervisor attests is the
+        // vault owner's own (`ManagedOwnerAction`): verified the same way,
+        // over the method, path, raw query, placing headers and exact body.
+        // Only a verified one names the owner, as a request extension the
+        // credential reads.
         if owner_attestable(request.method(), request.uri().path()) {
             let assertion = request
                 .headers()
@@ -590,6 +634,7 @@ async fn refuse_frozen_writes(
                     &oneiron_vault_contract::ManagedOwnerRequest {
                         method: parts.method.as_str(),
                         path: parts.uri.path(),
+                        query: parts.uri.query().unwrap_or(""),
                         headers: [room_turn, invocation, session],
                         body: &bytes,
                     },

@@ -626,6 +626,10 @@ pub(super) async fn video_job(
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
         return error.into_response();
     }
+    // A managed vault's attested owner reads while he is its live owner.
+    if let Err(error) = crate::api::scoped_auth::require_live_managed_owner(&server, &auth) {
+        return error.into_response();
+    }
     match server.ai.model_runtime().media().poll(&job).await {
         Ok(MediaJobState::Done { response }) => Json(serde_json::json!({
             "state": "done",

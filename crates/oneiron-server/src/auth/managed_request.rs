@@ -16,7 +16,7 @@
 //! person's, the request is refused.
 
 use axum::http::header::AUTHORIZATION;
-use axum::http::{HeaderMap, request::Parts};
+use axum::http::{Extensions, HeaderMap, request::Parts};
 
 use super::{BindingProof, CoreAuth, bearer_token, caller_locality, proved_peer};
 use crate::error::{ApiError, ApiErrorDetails};
@@ -169,36 +169,79 @@ impl CoreAuth {
     /// placed where its connection sits, toward the machine it proved, at
     /// the invitee door its path names and inside the session it names.
     pub(super) async fn for_request(parts: &Parts, server: &SyncServer) -> Result<Self, ApiError> {
-        let path = parts
-            .extensions
-            .get::<axum::extract::OriginalUri>()
-            .map_or_else(|| parts.uri.path(), |uri| uri.0.path());
-        // Only managed ingress installs this, and only on a verified
-        // supervisor assertion.
-        let attested = parts
-            .extensions
-            .get::<crate::managed::ManagedOwnerHolder>()
-            .filter(|_| server.managed_issuer.is_some())
-            .map(|holder| holder.0);
         let auth = Self::for_server_async(&parts.headers, server).await?;
-        let auth = match attested {
-            None => auth,
+        auth.of_request(
+            &parts.headers,
+            &parts.extensions,
+            request_path(parts),
+            server,
+        )
+    }
+
+    /// [`Self::for_request`]'s caller on a managed vault, for a door that
+    /// judges its caller without awaiting, from the request's headers,
+    /// extensions and path: a managed vault's callers never reach the
+    /// account-key door, so it is the same one caller. `None` on any other
+    /// vault, whose door keeps its own header path.
+    pub(crate) fn for_managed_request(
+        headers: &HeaderMap,
+        extensions: &Extensions,
+        path: &str,
+        server: &SyncServer,
+    ) -> Option<Result<Self, ApiError>> {
+        server.managed_issuer.as_ref()?;
+        Some(
+            Self::for_server(headers, server)
+                .and_then(|auth| auth.of_request(headers, extensions, path, server)),
+        )
+    }
+
+    /// The credential a request's headers carry, as that request's one
+    /// caller ([`Self::for_request`]), placed.
+    fn of_request(
+        self,
+        headers: &HeaderMap,
+        extensions: &Extensions,
+        path: &str,
+        server: &SyncServer,
+    ) -> Result<Self, ApiError> {
+        let auth = match attested_owner(extensions, server) {
+            None => self,
             // The caller's own slip stays the caller, with its own bounds;
             // the attestation lends it nothing.
-            Some(holder) if carries_caller_slip(&parts.headers) => {
-                if auth.principal_ref() != Some(holder.to_hex().as_str()) {
+            Some(holder) if carries_caller_slip(headers) => {
+                if self.principal_ref() != Some(holder.to_hex().as_str()) {
                     return Err(caller_conflicts_with_owner());
                 }
-                auth
+                self
             }
-            Some(holder) => auth.as_managed_owner(holder),
+            Some(holder) => self.as_managed_owner(holder),
         };
         Ok(auth
-            .at(caller_locality(&parts.headers, &parts.extensions))
-            .toward(proved_peer(&parts.headers, &parts.extensions))
+            .at(caller_locality(headers, extensions))
+            .toward(proved_peer(headers, extensions))
             .at_invitee_door(path)
-            .in_off_record_session(crate::api::call_receipt::request_session_ref(
-                &parts.headers,
-            )))
+            .in_off_record_session(crate::api::call_receipt::request_session_ref(headers)))
     }
+}
+
+/// The path a request named, before any nest took its prefix.
+pub(crate) fn request_path(parts: &Parts) -> &str {
+    parts
+        .extensions
+        .get::<axum::extract::OriginalUri>()
+        .map_or_else(|| parts.uri.path(), |uri| uri.0.path())
+}
+
+/// The vault owner a supervisor attested this one request for, as managed
+/// ingress verified it (`ManagedOwnerAction`), or `None`. Only managed
+/// ingress installs it, and only on a verified assertion.
+pub(crate) fn attested_owner(
+    extensions: &Extensions,
+    server: &SyncServer,
+) -> Option<oneiron::EntityId> {
+    extensions
+        .get::<crate::managed::ManagedOwnerHolder>()
+        .filter(|_| server.managed_issuer.is_some())
+        .map(|holder| holder.0)
 }
