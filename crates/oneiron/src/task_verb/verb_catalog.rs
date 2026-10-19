@@ -188,6 +188,10 @@ pub enum AgentVerb {
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
     VaultWeaveSchedulesClear,
+    VaultWeaveSettingChangesList,
+    VaultWeaveSettingChangesAnswer,
+    VaultWeaveSettingChangesUndo,
+    VaultWeaveDigestFeedbackPut,
     VaultWeaveOwnerDigestRender,
     VaultInboxConcernsReview,
     VaultInboxLens,
@@ -698,6 +702,8 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultRoomsThreadAudienceAdd,
+    VaultRoomsThreadAudienceRemove,
     VaultProjectsPropose,
     VaultProjectsProposals,
     VaultProjectsDismissCard,
@@ -1266,6 +1272,10 @@ impl AgentVerb {
         Self::VaultWeaveSchedulesList,
         Self::VaultWeaveSchedulesPut,
         Self::VaultWeaveSchedulesClear,
+        Self::VaultWeaveSettingChangesList,
+        Self::VaultWeaveSettingChangesAnswer,
+        Self::VaultWeaveSettingChangesUndo,
+        Self::VaultWeaveDigestFeedbackPut,
         Self::VaultWeaveOwnerDigestRender,
         Self::VaultInboxConcernsReview,
         Self::VaultInboxLens,
@@ -1776,6 +1786,8 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultRoomsThreadAudienceAdd,
+        Self::VaultRoomsThreadAudienceRemove,
         Self::VaultProjectsPropose,
         Self::VaultProjectsProposals,
         Self::VaultProjectsDismissCard,
@@ -2347,6 +2359,10 @@ impl AgentVerb {
             Self::VaultWeaveSchedulesList => "vault.weave.schedules.list",
             Self::VaultWeaveSchedulesPut => "vault.weave.schedules.put",
             Self::VaultWeaveSchedulesClear => "vault.weave.schedules.clear",
+            Self::VaultWeaveSettingChangesList => "vault.weave.setting_changes.list",
+            Self::VaultWeaveSettingChangesAnswer => "vault.weave.setting_changes.answer",
+            Self::VaultWeaveSettingChangesUndo => "vault.weave.setting_changes.undo",
+            Self::VaultWeaveDigestFeedbackPut => "vault.weave.digest_feedback.put",
             Self::VaultWeaveOwnerDigestRender => "vault.weave.owner.digest.render",
             Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
             Self::VaultInboxLens => "vault.inbox.lens",
@@ -2875,6 +2891,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultRoomsThreadAudienceAdd => "vault.rooms.thread_audience.add",
+            Self::VaultRoomsThreadAudienceRemove => "vault.rooms.thread_audience.remove",
             Self::VaultProjectsPropose => "vault.projects.propose",
             Self::VaultProjectsProposals => "vault.projects.proposals",
             Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
@@ -3453,6 +3471,10 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesList
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
@@ -3963,6 +3985,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -4558,6 +4582,10 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesList
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
@@ -5068,6 +5096,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -5463,6 +5493,7 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveSchedulesList
+                | Self::VaultWeaveSettingChangesList
                 | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
                 | Self::VaultSkillsBootstrap
@@ -5768,6 +5799,10 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesList
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
@@ -6264,6 +6299,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -6716,6 +6753,9 @@ impl AgentVerb {
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultWeaveDigestRender
@@ -7030,6 +7070,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
@@ -7477,6 +7519,10 @@ impl AgentVerb {
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
             Self::VaultWeaveSchedulesClear => &["spec"],
+            Self::VaultWeaveSettingChangesList => &["spec"],
+            Self::VaultWeaveSettingChangesAnswer => &["spec"],
+            Self::VaultWeaveSettingChangesUndo => &["spec"],
+            Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
@@ -7987,6 +8033,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -8556,6 +8604,10 @@ impl AgentVerb {
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
             Self::VaultWeaveSchedulesClear => &["spec"],
+            Self::VaultWeaveSettingChangesList => &["spec"],
+            Self::VaultWeaveSettingChangesAnswer => &["spec"],
+            Self::VaultWeaveSettingChangesUndo => &["spec"],
+            Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
@@ -9066,6 +9118,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -9997,6 +10051,18 @@ impl AgentVerb {
             }
             Self::VaultWeaveSchedulesClear => {
                 "Stops one reader's digest schedule under the owner's proof, keeping its saved periods."
+            }
+            Self::VaultWeaveSettingChangesList => {
+                "Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."
+            }
+            Self::VaultWeaveSettingChangesAnswer => {
+                "Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."
+            }
+            Self::VaultWeaveSettingChangesUndo => {
+                "Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."
+            }
+            Self::VaultWeaveDigestFeedbackPut => {
+                "Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."
             }
             Self::VaultWeaveOwnerDigestRender => {
                 "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due."
@@ -11486,7 +11552,13 @@ impl AgentVerb {
                 "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."
             }
             Self::VaultRoomsSpeak => {
-                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."
+                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."
+            }
+            Self::VaultRoomsThreadAudienceAdd => {
+                "Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."
+            }
+            Self::VaultRoomsThreadAudienceRemove => {
+                "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."
             }
             Self::VaultProjectsPropose => {
                 "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."
@@ -11822,31 +11894,31 @@ impl AgentVerb {
                 "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopObserve => {
-                "Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again."
+                "Observes the desktop guest's window as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with next; a cut tree walk answers partial, and walk_next walks it longer."
             }
             Self::SelfDesktopFind => {
                 "Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
             }
             Self::SelfDesktopClick => {
-                "Clicks one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor."
+                "Clicks one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopClickAt => {
-                "Clicks a point of a held screenshot, mapped onto the window; a long window's observation comes in pages, read on with observe and its next cursor."
+                "Clicks a point of a held screenshot, mapped onto the window, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopType => {
-                "Types text into one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor."
+                "Types text into one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopSelect => {
-                "Sets the value of a combo box or list target by its option label; a long window's observation comes in pages, read on with observe and its next cursor."
+                "Sets the value of a combo box or list target by its option label and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopKey => {
-                "Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor."
+                "Presses one key, with modifiers, on a window target or the window's focus, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopHotkey => {
-                "Presses a key combination in the current window; a long window's observation comes in pages, read on with observe and its next cursor."
+                "Presses a key combination in the current window and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopScroll => {
-                "Scrolls a window target, or the window, by steps; a long window's observation comes in pages, read on with observe and its next cursor."
+                "Scrolls a window target, or the window, by steps, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopWaitFor => {
                 "Waits until a window row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
@@ -11861,7 +11933,7 @@ impl AgentVerb {
             Self::SelfDesktopCrop => "Crops a held image to a rectangle.",
             Self::SelfDesktopZoom => "Zooms into a rectangle of a held image.",
             Self::SelfDesktopBatch => {
-                "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
+                "Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor."
             }
             Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
             Self::SelfDesktopWindow => {
@@ -12489,31 +12561,31 @@ impl AgentVerb {
                 "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."
             }
             Self::SelfBrowserOpen => {
-                "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."
+                "Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserObserve => {
-                "Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."
+                "Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched."
             }
             Self::SelfBrowserFind => {
-                "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
+                "Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."
             }
             Self::SelfBrowserClick => {
-                "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
+                "Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."
             }
             Self::SelfBrowserClickAt => {
-                "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."
+                "Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserType => {
-                "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
+                "Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."
             }
             Self::SelfBrowserSelect => {
-                "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."
+                "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserWaitFor => {
-                "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
+                "Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next."
             }
             Self::SelfBrowserExpect => {
-                "Checks that a page row is present or absent, and holds a given value."
+                "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."
             }
             Self::SelfBrowserScreenshot => {
                 "Takes a screenshot the session holds, by image ref and never captioned."
@@ -12522,13 +12594,13 @@ impl AgentVerb {
             Self::SelfBrowserCrop => "Crops a held image to a rectangle.",
             Self::SelfBrowserZoom => "Zooms into a rectangle of a held image.",
             Self::SelfBrowserBatch => {
-                "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
+                "Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one."
             }
             Self::SelfBrowserLibraryFind => {
                 "The replay library's programs for a site, or for the attached run's open page's site."
             }
             Self::SelfBrowserLibraryPropose => {
-                "Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition."
+                "Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition."
             }
             Self::SelfBrowserLibraryRetire => {
                 "Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."
@@ -12537,7 +12609,7 @@ impl AgentVerb {
                 "The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."
             }
             Self::SelfBrowserLibraryRun => {
-                "Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner."
+                "Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner."
             }
             Self::SelfBrowserHandover => {
                 "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."

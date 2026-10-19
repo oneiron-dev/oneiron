@@ -67,7 +67,11 @@ pub(super) fn authorize(
 /// ([`CoreAuth::for_attested_request`]): the person himself while the vault
 /// records him as its live owner, his registered principal and every owner
 /// scope, judged by the same checks a bearer is. Every other request is
-/// judged by its headers, as before.
+/// judged by its headers, as before. Either way the caller carries the
+/// machine the binding door already proved for this request, if any
+/// ([`crate::auth::proved_peer`], FIX 4937): its objects are released as that
+/// machine may read them, and a request with no proof stays a destination
+/// nobody proved.
 pub(super) fn authorize_request(
     parts: &Parts,
     server: &SyncServer,
@@ -80,7 +84,8 @@ pub(super) fn authorize_request(
         server,
     ) {
         Some(attested) => admit(attested?, access),
-        None => authorize(&parts.headers, server, access),
+        None => authorize(&parts.headers, server, access)
+            .map(|auth| auth.toward(crate::auth::proved_peer(&parts.headers, &parts.extensions))),
     }
 }
 

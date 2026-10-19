@@ -12,14 +12,42 @@
 //! a TURN never syncs ahead of its own audience, and a TURN a session
 //! overlay stages carries the room it is read against (FIX 3122).
 //!
-//! # Fixed once stamped
+//! # Edited by ordered events
 //!
-//! Nothing edits a stamped audience: there is no verb for it, and no admin,
-//! host or owner widens it. No grant, mention, task, offer or Ready receipt
-//! adds anyone to it. Reading or writing a private thread needs a place in
-//! its audience and current room membership both; a thread a reader is off
-//! reads as one that does not exist.
+//! The root's audience is the thread's seed (FIX 5545, owner ruling
+//! 2026-10-19). Anyone in the audience, and the vault's Owner or an Admin,
+//! adds or removes people at any time: each edit is a TURN of the thread,
+//! and readers fold the seed and the edits in TURN id order
+//! ([`super::audience_events`]). An add shares the whole thread or its turns
+//! from the add on, and a remove ends every read of that person's. One added
+//! from a later turn on reads no turn before its add, the root included. No
+//! grant, mention, task, offer or Ready receipt adds anyone. Reading or
+//! writing a private thread needs a place in its audience and current room
+//! membership both, save the vault's Owner or an Admin, whom a place in the
+//! audience admits without a seat in the room; a thread a reader is off
+//! reads as one that does not exist. The Owner and an Admin see that a
+//! room's private threads exist, by root id alone.
+//!
+//! # Two rules
+//!
+//! Every check reads a private thread under one of two rules (FIX 5545,
+//! Engine ruling 2026-10-19: one added "from now on" sees nothing from
+//! before the add, the opener included).
+//!
+//! - CURRENT, the structural rule: whether an actor is in the thread now.
+//!   Entry, rosters, ceilings, appends, recipients, mentions and
+//!   participation read it, and so does every helper handed the root to
+//!   name the thread.
+//! - CONTENT, the strict rule: whether an actor reads one turn of it. The
+//!   root is a turn like any other, so a member added from a later turn on
+//!   reads none before its add. Every read of a turn's words meets it.
+//!
+//! A turn a member does not read for its add is still a place in the thread
+//! for it: the thread lists, opens and folds over its other turns, with that
+//! one kept as a bare node, never served ([`super::thread_reads`]).
 
+use super::audience_doors::vault_owner_or_admin_in;
+use super::audience_events::{FoldedAudience, fold_audience_in};
 use super::*;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
@@ -154,18 +182,19 @@ pub(crate) fn validate_private_audience_in(
     Ok(())
 }
 
-/// What the root `root` of a thread in `room` names, read strictly: a live
-/// TURN with one live carrier whose own binding names it, carried by
-/// `room` or stamped with `room` as its canonical room. A saved off-record
-/// stretch's root keeps its stretch shell as carrier and the room in its
-/// binding (FIX 3560). Anything else does not resolve and reads as missing,
-/// so a turn that declares it is withheld, never read as public.
-fn root_audience_in(
+/// The audience the root `root` of a thread in `room` has now, its seed
+/// with its edits folded in (FIX 5545), read strictly: a live TURN with one
+/// live carrier whose own binding names it, carried by `room` or stamped
+/// with `room` as its canonical room. A saved off-record stretch's root
+/// keeps its stretch shell as carrier and the room in its binding (FIX
+/// 3560). Anything else does not resolve and reads as missing, so a turn
+/// that declares it is withheld, never read as public.
+pub(super) fn root_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     root: EntityId,
-) -> Result<Option<BTreeSet<EntityId>>> {
+) -> Result<Option<FoldedAudience>> {
     let LiveEntityRow::Live {
         entity_type: ENTITY_TYPE_TURN,
         body,
@@ -177,7 +206,10 @@ fn root_audience_in(
         Some(binding) if binding.root == root => {
             let carrier = crate::conversation_dag::conversation_of(&vault.store, txn, &root)?;
             if carrier == room || binding.room == room {
-                Ok(binding.audience)
+                binding
+                    .audience
+                    .map(|seed| fold_audience_in(vault, txn, root, &seed))
+                    .transpose()
             } else {
                 Err(Error::EntityNotFound)
             }
@@ -186,16 +218,54 @@ fn root_audience_in(
     }
 }
 
-/// The audience the thread holding `record`, a turn of `room`, names:
-/// `None` for a trunk turn, a public thread's, or a record that is no TURN,
-/// whose own read rules decide. A thread turn reads its root's binding; a
-/// root that is gone or does not resolve is [`Error::EntityNotFound`], as
-/// a missing `record` is.
+/// Which of the two rules (module docs) a check reads a thread under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ThreadRule {
+    /// CURRENT: who is in the thread now, whatever record of it is named.
+    Current,
+    /// CONTENT: who reads the turn named, the root included.
+    Content,
+    /// CURRENT for the root, which names the thread, and CONTENT for any
+    /// other turn.
+    ByRecord,
+}
+
+/// Who in the audience of the thread holding `record`, a turn of `room`,
+/// reads it now (FIX 5545): the CURRENT audience when `record` is the root,
+/// which names the thread, and for any other turn the CONTENT one, each
+/// member but one added from a later turn on. `None` for a trunk turn, a
+/// public thread's, or a record that is no TURN, whose own read rules
+/// decide. A thread turn reads its root's binding and edits; a root that is
+/// gone or does not resolve is [`Error::EntityNotFound`], as a missing
+/// `record` is.
 pub(crate) fn thread_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     record: EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    thread_audience_by_in(vault, txn, room, record, ThreadRule::ByRecord)
+}
+
+/// [`thread_audience_in`] under the CURRENT rule whatever record of the
+/// thread is named: everyone in it now. What a root-addressed recipient or
+/// mention check reads.
+pub(crate) fn thread_audience_now_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    record: EntityId,
+) -> Result<Option<BTreeSet<EntityId>>> {
+    thread_audience_by_in(vault, txn, room, record, ThreadRule::Current)
+}
+
+/// [`thread_audience_in`] under `rule`.
+fn thread_audience_by_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    record: EntityId,
+    rule: ThreadRule,
 ) -> Result<Option<BTreeSet<EntityId>>> {
     let body = match live_entity_row_in_txn(&vault.store, txn, &record)? {
         LiveEntityRow::Live {
@@ -205,17 +275,25 @@ pub(crate) fn thread_audience_in(
         LiveEntityRow::Live { .. } => return Ok(None),
         LiveEntityRow::Absent | LiveEntityRow::DeletedShell => return Err(Error::EntityNotFound),
     };
-    match thread_binding(&body)? {
-        None => Ok(None),
-        Some(binding) => root_audience_in(vault, txn, room, binding.root),
-    }
+    let Some(binding) = thread_binding(&body)? else {
+        return Ok(None);
+    };
+    Ok(
+        root_audience_in(vault, txn, room, binding.root)?.map(|folded| match rule {
+            ThreadRule::Current => folded.current(),
+            ThreadRule::ByRecord if record == binding.root => folded.current(),
+            ThreadRule::ByRecord | ThreadRule::Content => folded.reading(record),
+        }),
+    )
 }
 
 /// Whether `actor` reads and writes the thread holding `record` in `room`:
-/// always off a private thread; on one, only from its audience and while it
-/// is still one of the room's members. A pen stands in both through the
-/// PERSON it is anchored to ([`names_actor_in`]). No host, owner, seat or
-/// receipt standing stands in for either.
+/// always off a private thread; on one, only from the audience that reads
+/// `record` ([`thread_audience_in`]: CURRENT for the root, CONTENT for any
+/// other turn) and while it is still one of the room's members, or the
+/// vault's Owner or an Admin (FIX 5545). A pen stands in each through the
+/// PERSON it is anchored to ([`names_actor_in`]). No host, seat or receipt
+/// standing stands in for the audience.
 pub(crate) fn thread_audience_allows_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -223,14 +301,28 @@ pub(crate) fn thread_audience_allows_in(
     record: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    let Some(ids) = thread_audience_in(vault, txn, room, record)? else {
+    audience_allows_by_in(vault, txn, room, record, actor, ThreadRule::ByRecord)
+}
+
+/// [`thread_audience_allows_in`] under `rule`.
+fn audience_allows_by_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    record: EntityId,
+    actor: EntityId,
+    rule: ThreadRule,
+) -> Result<bool> {
+    let Some(ids) = thread_audience_by_in(vault, txn, room, record, rule)? else {
         return Ok(true);
     };
     let members: BTreeSet<_> = vault
         .room_audience_members_in_txn(txn, room)?
         .into_iter()
         .collect();
-    Ok(names_actor_in(vault, txn, &ids, actor)? && names_actor_in(vault, txn, &members, actor)?)
+    Ok(names_actor_in(vault, txn, &ids, actor)?
+        && (names_actor_in(vault, txn, &members, actor)?
+            || vault_owner_or_admin_in(vault, txn, actor)?))
 }
 
 /// Refuses `actor` off the audience of the thread holding `record` in
@@ -251,9 +343,9 @@ pub(crate) fn require_thread_audience_in(
 }
 
 /// `members` narrowed to the audience of the thread holding `record` in
-/// `room`, or all of them off a private thread: the members a private
-/// thread's ceiling binds, a pen among them when its PERSON is named. It
-/// seats no one.
+/// `room` that reads `record` ([`thread_audience_in`]), or all of them off
+/// a private thread: the members a private thread's ceiling binds, a pen
+/// among them when its PERSON is named. It seats no one.
 pub(crate) fn thread_members_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -274,10 +366,10 @@ pub(crate) fn thread_members_in(
 }
 
 /// Whether every one of `viewers` reads the thread rooted at `root`,
-/// wherever it is: a public thread is read by anyone, a private one by its
-/// audience while each is still a member of its room, and by no one when
-/// there are no viewers. A root that is gone or does not resolve is read by
-/// none.
+/// wherever it is, under the CURRENT rule: a public thread is read by
+/// anyone, a private one by its audience now while each is still a member
+/// of its room, and by no one when there are no viewers. A root that is
+/// gone or does not resolve is read by none.
 pub(crate) fn thread_root_readable_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -290,8 +382,9 @@ pub(crate) fn thread_root_readable_in(
 /// [`thread_root_readable_in`] with the root and its carrier read in `dbs`,
 /// a session's composed view or base (FIX 3122): a live TURN whose own
 /// binding names it, held by one live conversation, the room itself or a
-/// stretch's shell. The audience is checked against the room the binding
-/// names, on base, since authority reads base (ARCH-0052).
+/// stretch's shell. The audience, its edits folded in, is checked against
+/// the room the binding names, on base, since authority reads base
+/// (ARCH-0052).
 pub(crate) fn thread_root_readable_with_read_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
@@ -299,18 +392,70 @@ pub(crate) fn thread_root_readable_with_read_in(
     root: EntityId,
     viewers: &[EntityId],
 ) -> Result<bool> {
+    thread_readable_by_in(vault, dbs, txn, root, None, viewers)
+}
+
+/// [`thread_root_readable_with_read_in`] for the turn `turn` of the thread
+/// rooted at `root`, under the CONTENT rule (FIX 5545): each viewer added
+/// from a later turn on reads no turn before its add, the root included.
+pub(crate) fn thread_turn_readable_with_read_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+    turn: EntityId,
+    viewers: &[EntityId],
+) -> Result<bool> {
+    thread_readable_by_in(vault, dbs, txn, root, Some(turn), viewers)
+}
+
+/// The two above in one: the thread's audience now for `turn` `None`, and
+/// the audience that reads `turn` otherwise.
+fn thread_readable_by_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+    turn: Option<EntityId>,
+    viewers: &[EntityId],
+) -> Result<bool> {
+    let Some(binding) = resolved_root_in(dbs, txn, root)? else {
+        return Ok(false);
+    };
+    let audience = binding
+        .audience
+        .map(|seed| fold_audience_in(vault, txn, root, &seed))
+        .transpose()?
+        .map(|folded| match turn {
+            None => folded.current(),
+            Some(turn) => folded.reading(turn),
+        });
+    match private_members_readable_in(vault, txn, binding.room, audience.as_ref(), viewers) {
+        Err(Error::EntityNotFound) => Ok(false),
+        result => result,
+    }
+}
+
+/// The binding of the root `root` as `dbs` holds it, strictly: a live TURN
+/// whose own binding names it, held by one live conversation. `None` for
+/// anything else.
+pub(super) fn resolved_root_in(
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+) -> Result<Option<ThreadBinding>> {
     let LiveEntityRow::Live {
         entity_type: ENTITY_TYPE_TURN,
         body,
     } = live_entity_row_in_txn(dbs, txn, &root)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let Some(binding) = thread_binding(&body)? else {
-        return Ok(false);
+        return Ok(None);
     };
     if binding.root != root {
-        return Ok(false);
+        return Ok(None);
     }
     let owners = crate::conversation_dag::edge_ids(
         dbs,
@@ -329,21 +474,17 @@ pub(crate) fn thread_root_readable_with_read_in(
             }
         )
     {
-        return Ok(false);
+        return Ok(None);
     }
-    match private_members_readable_in(vault, txn, binding.room, binding.audience.as_ref(), viewers)
-    {
-        Err(Error::EntityNotFound) => Ok(false),
-        result => result,
-    }
+    Ok(Some(binding))
 }
 
 /// Whether every one of `viewers` reads a thread of `room` naming
 /// `audience`: anyone a public one (`None`), and a private one only from
-/// its audience while each is still one of the room's members, a pen
-/// through its PERSON ([`names_actor_in`]); no one when there are no
-/// viewers. The one member rule a thread's root and a stretch's staged
-/// thread turn both read.
+/// its audience while each is still one of the room's members, or is the
+/// vault's Owner or an Admin (FIX 5545), a pen through its PERSON
+/// ([`names_actor_in`]); no one when there are no viewers. The one member
+/// rule a thread's root and a stretch's staged thread turn both read.
 pub(super) fn private_members_readable_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -363,7 +504,8 @@ pub(super) fn private_members_readable_in(
         .collect();
     for &viewer in viewers {
         if !names_actor_in(vault, txn, ids, viewer)?
-            || !names_actor_in(vault, txn, &members, viewer)?
+            || !(names_actor_in(vault, txn, &members, viewer)?
+                || vault_owner_or_admin_in(vault, txn, viewer)?)
         {
             return Ok(false);
         }
@@ -372,8 +514,9 @@ pub(super) fn private_members_readable_in(
 }
 
 /// Whether `actor` may write in the thread the stored record `id` sits in:
-/// a TURN by its own binding, a MESSAGE by the TURN it is part of. True for
-/// a record off any private thread, or one not stored yet.
+/// a TURN by its own binding, a MESSAGE by the TURN it is part of, each
+/// TURN one `actor` reads under the CONTENT rule, the root included (FIX
+/// 5545). True for a record off any private thread, or one not stored yet.
 pub(crate) fn record_thread_admits_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -401,7 +544,14 @@ pub(crate) fn record_thread_admits_in(
             continue;
         };
         if let Some(binding) = thread_binding(&body)?
-            && !thread_root_readable_in(vault, txn, binding.root, &[actor])?
+            && !thread_turn_readable_with_read_in(
+                vault,
+                &vault.store.read(),
+                txn,
+                binding.root,
+                turn,
+                &[actor],
+            )?
         {
             return Ok(false);
         }
@@ -415,7 +565,8 @@ pub(crate) fn record_thread_admits_in(
 pub(crate) enum ThreadPlace {
     /// A trunk turn, or one in a public thread.
     Room,
-    /// A turn of the private thread rooted here, which this reader reads.
+    /// A turn of the private thread rooted here, which this reader reads;
+    /// from [`Memory::thread_reach_in`], one of a thread it is in.
     Private(EntityId),
     /// A turn of a private thread this reader is off, or one whose root is
     /// gone.
@@ -423,14 +574,38 @@ pub(crate) enum ThreadPlace {
 }
 
 impl Memory<'_> {
-    /// Where the room turn `turn` of `room` reads for this reader: a private
-    /// thread reads only when the actor and, for a handle bound to a room
-    /// turn, every member that turn discloses to stand in its audience.
+    /// Where the room turn `turn` of `room` reads for this reader, under the
+    /// CONTENT rule: a turn of a private thread reads only when this reader
+    /// stands in the audience that reads that turn, the root included (FIX
+    /// 5545). The gate a turn's words meet.
     pub(crate) fn thread_place_in(
         &self,
         txn: &heed::RoTxn<'_>,
         room: EntityId,
         turn: EntityId,
+    ) -> Result<ThreadPlace> {
+        self.thread_place_by_in(txn, room, turn, ThreadRule::Content)
+    }
+
+    /// [`Self::thread_place_in`] under the CURRENT rule: the private thread
+    /// `turn` sits in when this reader is in it now, whatever turn of it is
+    /// named. Where a turn is placed, never whether its words read.
+    pub(crate) fn thread_reach_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+        turn: EntityId,
+    ) -> Result<ThreadPlace> {
+        self.thread_place_by_in(txn, room, turn, ThreadRule::Current)
+    }
+
+    /// [`Self::thread_place_in`] with this reader read under `rule`.
+    fn thread_place_by_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+        turn: EntityId,
+        rule: ThreadRule,
     ) -> Result<ThreadPlace> {
         let body = match live_entity_row_in_txn(&self.vault().store, txn, &turn)? {
             LiveEntityRow::Live {
@@ -444,7 +619,7 @@ impl Memory<'_> {
         };
         match root_audience_in(self.vault(), txn, room, binding.root) {
             Ok(None) => Ok(ThreadPlace::Room),
-            Ok(Some(_)) if self.reads_thread_audience_in(txn, room, binding.root)? => {
+            Ok(Some(_)) if self.reads_thread_by_in(txn, room, turn, rule)? => {
                 Ok(ThreadPlace::Private(binding.root))
             }
             Ok(Some(_)) | Err(Error::EntityNotFound) => Ok(ThreadPlace::Withheld),
@@ -453,8 +628,12 @@ impl Memory<'_> {
     }
 
     /// Whether this reader stands in the audience of the thread holding
-    /// `record` in `room`: the actor and, for a handle bound to a room turn,
-    /// every member that turn discloses to. Meeting a thread's worlds and
+    /// `record` in `room`: the actor in the audience that reads `record`
+    /// ([`thread_audience_in`]: CURRENT for the root, which names the
+    /// thread, CONTENT for any other turn) and, for a handle bound to a room
+    /// turn, every member that turn discloses to in the thread's audience
+    /// now (FIX 5545). A held member added from a later turn on does not
+    /// withhold `record` from the actor. Meeting a thread's worlds and
     /// clearance alone would not keep a held disclosure inside it.
     pub(crate) fn reads_thread_audience_in(
         &self,
@@ -462,12 +641,28 @@ impl Memory<'_> {
         room: EntityId,
         record: EntityId,
     ) -> Result<bool> {
-        let held = self
-            .room_turn()
-            .into_iter()
-            .flat_map(|turn| turn.roster.iter().copied());
-        for reader in std::iter::once(self.actor()).chain(held) {
-            if !thread_audience_allows_in(self.vault(), txn, room, record, reader)? {
+        self.reads_thread_by_in(txn, room, record, ThreadRule::ByRecord)
+    }
+
+    /// [`Self::reads_thread_audience_in`] with the actor read under `rule`;
+    /// the members a held turn discloses to read under CURRENT whatever it
+    /// is.
+    fn reads_thread_by_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+        record: EntityId,
+        rule: ThreadRule,
+    ) -> Result<bool> {
+        let vault = self.vault();
+        if !audience_allows_by_in(vault, txn, room, record, self.actor(), rule)? {
+            return Ok(false);
+        }
+        let Some(turn) = self.room_turn() else {
+            return Ok(true);
+        };
+        for &reader in &turn.roster {
+            if !audience_allows_by_in(vault, txn, room, record, reader, ThreadRule::Current)? {
                 return Ok(false);
             }
         }

@@ -1065,6 +1065,10 @@ fn mcp_agent_verb_input(
         "vault.weave.schedules.list" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.put" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.schedules.clear" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.setting_changes.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.setting_changes.answer" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.setting_changes.undo" => a.spec.clone().ok_or_else(invalid),
+        "vault.weave.digest_feedback.put" => a.spec.clone().ok_or_else(invalid),
         "vault.weave.owner.digest.render" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.concerns.review" => a.spec.clone().ok_or_else(invalid),
         "vault.inbox.lens" => a.spec.clone().ok_or_else(invalid),
@@ -1649,6 +1653,8 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.rooms.thread_audience.add" => a.spec.clone().ok_or_else(invalid),
+        "vault.rooms.thread_audience.remove" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.propose" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.proposals" => a.spec.clone().ok_or_else(invalid),
         "vault.projects.dismiss_card" => a.spec.clone().ok_or_else(invalid),
@@ -2676,6 +2682,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.schedules.clear" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.setting_changes.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.setting_changes.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.setting_changes.undo" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.weave.digest_feedback.put" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.weave.owner.digest.render" => {
@@ -4214,6 +4232,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             if let Some(value) = input.get("conversation_ref") {
                 arguments.insert("room_ref".to_owned(), value.clone());
             }
+        }
+        "vault.rooms.thread_audience.add" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.rooms.thread_audience.remove" => {
+            arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.projects.propose" => {
             arguments.insert("spec".to_owned(), input.clone());
@@ -6864,7 +6888,7 @@ async fn execute_agent_verb_row(
                     actor.actor_ref,
                     actor.actor_class,
                     proof,
-                    actor.locality(),
+                    actor.destination(),
                     None,
                     input,
                     actor.home_caller(),
@@ -7663,7 +7687,7 @@ async fn execute_agent_verb_row(
                         &input,
                         proof,
                         surface,
-                        actor.locality(),
+                        actor.destination(),
                     )
                     .map(|(output, listed)| {
                         served.extend(listed);
@@ -7672,7 +7696,7 @@ async fn execute_agent_verb_row(
                 (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),
                 (None, Some(action)) => server
                     .vault
-                    .export_with_host_action_listing(&input, &action, surface, actor.locality())
+                    .export_with_host_action_listing(&input, &action, surface, actor.destination())
                     .map(|(output, listed)| {
                         served.extend(listed);
                         output
@@ -7692,7 +7716,7 @@ async fn execute_agent_verb_row(
                             &input,
                             &owner,
                             surface,
-                            actor.locality(),
+                            actor.destination(),
                         )
                         .map(|(output, listed)| {
                             served.extend(listed);
@@ -8393,6 +8417,117 @@ async fn execute_agent_verb_row(
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(
                     &memory,
                     "vault.weave.schedules.clear",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.setting_changes.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_weave_setting_changes_list(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.setting_changes.list",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.setting_changes.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveDigestSettingAnswer =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_weave_setting_changes_answer(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.setting_changes.answer",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.setting_changes.undo" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.undo", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveDigestSettingUndo =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_weave_setting_changes_undo(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.setting_changes.undo",
+                    ),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.weave.digest_feedback.put" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.weave.digest_feedback.put", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::claim::WeaveDigestFeedback =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_weave_digest_feedback_put(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "vault.weave.digest_feedback.put",
                 ),
                 input,
             )
@@ -17428,6 +17563,29 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_speak(&memory, input)
                 .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.thread_audience.add" => {
+            let input: oneiron::workspace_roster::ThreadAudienceAddRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_thread_audience_add(&memory, input)
+                .map_err(mcp_facade_error)?;
+            server
+                .ai
+                .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.thread_audience.remove" => {
+            let input: oneiron::workspace_roster::ThreadAudienceRemoveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                oneiron::task_verb::sdk::vault_rooms_thread_audience_remove(&memory, input)
+                    .map_err(mcp_facade_error)?;
             server
                 .ai
                 .turn_landed_by(server.vault(), actor.actor_ref, actor.actor_class);

@@ -11,7 +11,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::device_only::device_only_withholds;
-use super::{ReadDestination, device_only_worlds_in};
+use super::{ReadDestination, ReleaseHold, device_only_worlds_in, worlds_hold_in};
 
 impl Vault {
     /// Whether every row of `rows` may leave this device now: none is one a
@@ -66,23 +66,41 @@ impl Vault {
         world: Option<EntityId>,
         endpoint: &ReadDestination,
     ) -> Result<bool> {
+        Ok(self.model_call_hold_for(world, endpoint)?.is_none())
+    }
+
+    /// Why [`Self::model_call_may_leave_for`] keeps a model call here, or
+    /// `None` while it may go to `endpoint` (FIX 4939): the owner's recipient
+    /// choice for the world that stays (for a call that names none, the
+    /// first world that stays), else an integrity hold for a world nobody
+    /// can place, each judged in the verdict's own snapshot. Content-free:
+    /// never a world's id or name. Naming the reason never changes the
+    /// verdict.
+    pub fn model_call_hold_for(
+        &self,
+        world: Option<EntityId>,
+        endpoint: &ReadDestination,
+    ) -> Result<Option<ReleaseHold>> {
         let rtxn = self.store.env.read_txn()?;
         let flagged = device_local_worlds_for(self, &rtxn, endpoint)?;
         let Some(world) = world else {
-            return Ok(flagged.is_empty());
+            return Ok((!flagged.is_empty())
+                .then(|| worlds_hold_in(self, &rtxn, &flagged, endpoint)));
         };
         if flagged.contains(&world) {
-            return Ok(false);
+            let world = std::collections::BTreeSet::from([world]);
+            return Ok(Some(worlds_hold_in(self, &rtxn, &world, endpoint)));
         }
         if world == crate::claim::base_world_id() {
-            return Ok(true);
+            return Ok(None);
         }
         if self.get_entity_type_in_txn(&rtxn, &world)? != Some(crate::registry::ENTITY_TYPE_WORLD) {
-            return Ok(false);
+            return Ok(Some(ReleaseHold::Placement));
         }
         let visibility =
             crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, &rtxn, &world)?;
-        Ok(!(visibility.deleted || visibility.archived || visibility.stale))
+        Ok((visibility.deleted || visibility.archived || visibility.stale)
+            .then_some(ReleaseHold::Placement))
     }
 
     /// Whether a device-local world keeps `id` on this device, so no caller

@@ -3,7 +3,7 @@
 pub mod mesh;
 pub use mesh::{
     COST_DECLARED, CatalogRefresh, LLM_ALPN, LlmMeshHandler, LlmMeshService, LlmNodes, MESH_PEER,
-    MeshLlmTransport, MeshPeerTransport, VaultLlmNodes, advertises,
+    MeshLlmTransport, MeshPeerProof, MeshPeerTransport, VaultLlmNodes, advertises,
 };
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmGenerateFuture,

@@ -327,8 +327,14 @@ impl Write for ChannelWriter {
 }
 
 /// Streams one stored object out. The worker holds `hold` until it has
-/// written the last byte or its client stopped reading.
-pub(super) fn download(vault: Arc<Vault>, oid: LfsOid, hold: ReadHold, idle: Duration) -> Body {
+/// written the last byte or its client stopped reading. Each piece is judged
+/// for `peer`, the machine the request proved (FIX 4937).
+pub(super) fn download(
+    vault: Arc<Vault>,
+    (oid, peer): (LfsOid, oneiron::authority::PeerMachine),
+    hold: ReadHold,
+    idle: Duration,
+) -> Body {
     let (sender, receiver) = mpsc::channel(2);
     let reader = Arc::clone(&vault);
     let runtime = Handle::current();
@@ -349,23 +355,21 @@ pub(super) fn download(vault: Arc<Vault>, oid: LfsOid, hold: ReadHold, idle: Dur
         // never takes this worker with it.
         let _ = transfer::send_within(&writer.runtime, &writer.chunks, Err(ending), idle);
     }));
-    // Each buffered chunk is released only while no device-only world keeps
-    // the object; a flag set mid-download ends the body with an error.
+    // Each buffered chunk is released only while no world withheld from the
+    // peer keeps the object; a flag set mid-download ends the body with an
+    // error that says why (FIX 4939).
     Body::from_stream(stream::unfold(receiver, move |mut receiver| {
         let vault = Arc::clone(&vault);
         async move {
-            let item = receiver.recv().await?;
-            let item = match item {
-                Ok(_)
-                    if oneiron::sync::chunks::lfs_object_withheld(&vault, oid).unwrap_or(true) =>
-                {
-                    receiver.close();
-                    Err(io::Error::new(
-                        io::ErrorKind::PermissionDenied,
-                        "lfs object kept on this device",
-                    ))
-                }
-                item => item,
+            let item = match receiver.recv().await? {
+                Ok(piece) => match super::support::lfs_piece_hold(&vault, oid, peer) {
+                    Some(kept) => {
+                        receiver.close();
+                        Err(kept)
+                    }
+                    None => Ok(piece),
+                },
+                ended => ended,
             };
             Some((item, receiver))
         }

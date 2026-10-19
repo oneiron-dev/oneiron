@@ -3047,6 +3047,70 @@
       "openapi": true
     },
     {
+      "name": "vault.weave.setting_changes.list",
+      "description": "Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::claim::WeaveDigestSettingChange>",
+      "call": "crate::task_verb::sdk::weave_setting_changes(memory, &memory.embedded_owner(\"vault.weave.setting_changes.list\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.setting_changes.answer",
+      "description": "Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing.",
+      "input": "crate::claim::WeaveDigestSettingAnswer",
+      "output": "crate::claim::WeaveDigestSettingChange",
+      "call": "crate::task_verb::sdk::weave_setting_change_answer(memory, &memory.embedded_owner(\"vault.weave.setting_changes.answer\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.setting_changes.undo",
+      "description": "Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since.",
+      "input": "crate::claim::WeaveDigestSettingUndo",
+      "output": "crate::claim::WeaveDigestSettingChange",
+      "call": "crate::task_verb::sdk::weave_setting_change_undo(memory, &memory.embedded_owner(\"vault.weave.setting_changes.undo\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.weave.digest_feedback.put",
+      "description": "Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are.",
+      "input": "crate::claim::WeaveDigestFeedback",
+      "output": "crate::claim::WeaveDigestFeedback",
+      "call": "crate::task_verb::sdk::weave_digest_feedback_put(memory, &memory.embedded_owner(\"vault.weave.digest_feedback.put\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.weave.owner.digest.render",
       "description": "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due.",
       "input": "EmptyRequest",
@@ -10961,7 +11025,7 @@
     },
     {
       "name": "vault.rooms.speak",
-      "description": "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later.",
+      "description": "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove.",
       "input": "crate::memory::WitnessTurn",
       "output": "crate::memory::WitnessReceipt",
       "call": "memory.rooms_speak(&input)?",
@@ -10970,6 +11034,34 @@
       "mcp_fields": {
         "spec": "$",
         "room_ref": "=conversation_ref"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.thread_audience.add",
+      "description": "Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it.",
+      "input": "crate::workspace_roster::ThreadAudienceAddRequest",
+      "output": "crate::workspace_roster::ThreadAudienceReceipt",
+      "call": "memory.rooms_thread_audience_add(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.thread_audience.remove",
+      "description": "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it.",
+      "input": "crate::workspace_roster::ThreadAudienceRemoveRequest",
+      "output": "crate::workspace_roster::ThreadAudienceReceipt",
+      "call": "memory.rooms_thread_audience_remove(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
       },
       "mcp_scope": "unrestricted",
       "section": false
@@ -12717,7 +12809,7 @@
     },
     {
       "name": "self.browser.open",
-      "description": "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Opens a URL in the run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "crate::task_verb::sdk::BrowserOpenInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.open(input))?",
@@ -12727,14 +12819,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>",
-        "description": "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "description": "Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.observe",
-      "description": "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
+      "description": "Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched.",
       "input": "crate::task_verb::sdk::BrowserObserveInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "driver.observe_page(input)?",
@@ -12744,14 +12836,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserObserveInput>",
-        "description": "Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched.",
+        "description": "Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.find",
-      "description": "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page.",
+      "description": "Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page.",
       "input": "crate::task_verb::sdk::BrowserFindInput",
       "output": "crate::task_verb::sdk::BrowserFindOutput",
       "call": "driver.find(input)?",
@@ -12761,14 +12853,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserFindInput>",
-        "description": "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page.",
+        "description": "Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.click",
-      "description": "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
       "input": "crate::task_verb::sdk::BrowserClickInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click(input))?",
@@ -12778,14 +12870,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserClickInput>",
-        "description": "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "description": "Clicks one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.click_at",
-      "description": "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "crate::task_verb::sdk::BrowserPointInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click_at(input))?",
@@ -12795,14 +12887,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserPointInput>",
-        "description": "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "description": "Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.type",
-      "description": "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
       "input": "crate::task_verb::sdk::BrowserTypeInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.type_text(input))?",
@@ -12812,14 +12904,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserTypeInput>",
-        "description": "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "description": "Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.select",
-      "description": "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor.",
       "input": "crate::task_verb::sdk::BrowserSelectInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.select(input))?",
@@ -12829,14 +12921,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSelectInput>",
-        "description": "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor.",
+        "description": "Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.wait_for",
-      "description": "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor.",
+      "description": "Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next.",
       "input": "crate::task_verb::sdk::BrowserWaitForInput",
       "output": "crate::task_verb::sdk::BrowserWaitForOutput",
       "call": "driver.wait_for(input)?",
@@ -12846,14 +12938,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserWaitForInput>",
-        "description": "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor.",
+        "description": "Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.expect",
-      "description": "Checks that a page row is present or absent, and holds a given value.",
+      "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
       "input": "crate::task_verb::sdk::BrowserExpectInput",
       "output": "crate::task_verb::sdk::BrowserExpectOutput",
       "call": "driver.expect(input)?",
@@ -12863,7 +12955,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserExpectInput>",
-        "description": "Checks that a page row is present or absent, and holds a given value.",
+        "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -12938,7 +13030,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
+      "description": "Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one.",
       "input": "crate::task_verb::sdk::BrowserBatchInput",
       "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "driver.batch(input)?",
@@ -12948,7 +13040,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
-        "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
+        "description": "Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -12972,7 +13064,7 @@
     },
     {
       "name": "self.browser.library.propose",
-      "description": "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition.",
+      "description": "Offers a solved run's program to the replay library, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition.",
       "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",
       "output": "crate::task_verb::sdk::BrowserLibraryProposeOutput",
       "call": "driver.library_propose(input)?",
@@ -12982,7 +13074,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
-        "description": "Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition.",
+        "description": "Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13023,7 +13115,7 @@
     },
     {
       "name": "self.browser.library.run",
-      "description": "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner.",
+      "description": "Runs a replay library program live with its arguments, resolving its locators as each step runs; its last observation edits the caller's base, and a missed postcondition goes back to the planner.",
       "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
       "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
       "call": "driver.library_run(input)?",
@@ -13033,7 +13125,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
-        "description": "Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner.",
+        "description": "Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13068,7 +13160,7 @@
     },
     {
       "name": "self.desktop.observe",
-      "description": "Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again.",
+      "description": "Observes the desktop guest's window as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with next; a cut tree walk answers partial, and walk_next walks it longer.",
       "input": "oneiron_browser::ObserveInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "driver.observe_page(input)?",
@@ -13090,7 +13182,7 @@
     },
     {
       "name": "self.desktop.click",
-      "description": "Clicks one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Clicks one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::ClickInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click(input))?",
@@ -13101,7 +13193,7 @@
     },
     {
       "name": "self.desktop.click_at",
-      "description": "Clicks a point of a held screenshot, mapped onto the window; a long window's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Clicks a point of a held screenshot, mapped onto the window, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::PointInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.click_at(input))?",
@@ -13112,7 +13204,7 @@
     },
     {
       "name": "self.desktop.type",
-      "description": "Types text into one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Types text into one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::TypeInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.type_text(input))?",
@@ -13123,7 +13215,7 @@
     },
     {
       "name": "self.desktop.select",
-      "description": "Sets the value of a combo box or list target by its option label; a long window's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Sets the value of a combo box or list target by its option label and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::SelectInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.select(input))?",
@@ -13134,7 +13226,7 @@
     },
     {
       "name": "self.desktop.key",
-      "description": "Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Presses one key, with modifiers, on a window target or the window's focus, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::KeyInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.press_key(input))?",
@@ -13145,7 +13237,7 @@
     },
     {
       "name": "self.desktop.hotkey",
-      "description": "Presses a key combination in the current window; a long window's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Presses a key combination in the current window and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::HotkeyInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.hotkey(input))?",
@@ -13156,7 +13248,7 @@
     },
     {
       "name": "self.desktop.scroll",
-      "description": "Scrolls a window target, or the window, by steps; a long window's observation comes in pages, read on with observe and its next cursor.",
+      "description": "Scrolls a window target, or the window, by steps, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::ScrollInput",
       "output": "oneiron_browser::ObservationPage",
       "call": "oneiron_browser::paged(driver, |driver| driver.scroll(input))?",
@@ -13233,7 +13325,7 @@
     },
     {
       "name": "self.desktop.batch",
-      "description": "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
+      "description": "Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor.",
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::BatchOutput",
       "call": "driver.batch(input)?",

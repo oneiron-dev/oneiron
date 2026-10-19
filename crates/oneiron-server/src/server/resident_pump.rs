@@ -1178,6 +1178,7 @@ fn passing(error: &LlmError, now: u64) -> Option<(&'static str, Option<u64>)> {
         LlmError::Retryable(RetryableLlmError::KeptOnDevice {
             retry_after,
             resets_at,
+            ..
         }) if retry_after.is_some() || !resets_at.is_empty() => {
             ("agent_run_kept_on_device", retry_after, resets_at)
         }

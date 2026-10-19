@@ -66,9 +66,10 @@ pub enum RunDenied {
     #[error("a run never edits its own declaration")]
     DeclarationEditRefused,
     /// A fallback to this offer would take the call's work off the device
-    /// while its world stays here.
-    #[error("the call's world stays on this device")]
-    KeptOnDevice,
+    /// while its world stays here, for a content-free reason (FIX 4939):
+    /// the owner's recipient choice for that world, or an integrity hold.
+    #[error("the call's world stays on this device: {reason}")]
+    KeptOnDevice { reason: &'static str },
 }
 
 impl From<RunDenied> for LlmError {
@@ -80,10 +81,13 @@ impl From<RunDenied> for LlmError {
             | RunDenied::AllocationRefused { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
             RunDenied::Dispatch { refused } => Self::BudgetDenied(refused.into()),
             // A privacy hold stays one: never a budget refusal.
-            RunDenied::KeptOnDevice => Self::Retryable(RetryableLlmError::KeptOnDevice {
-                retry_after: None,
-                resets_at: Vec::new(),
-            }),
+            RunDenied::KeptOnDevice { reason } => {
+                Self::Retryable(RetryableLlmError::KeptOnDevice {
+                    retry_after: None,
+                    resets_at: Vec::new(),
+                    reason: Some(reason.to_owned()),
+                })
+            }
             RunDenied::UndeclaredTeacher { .. }
             | RunDenied::UnknownSelector { .. }
             | RunDenied::OfferMismatch

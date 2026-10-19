@@ -1,17 +1,21 @@
 //! Browser verbs for code mode (`self.browser.*`), and the CDP driver
 //! behind them (feature `driver`).
 //!
-//! A program reads the page as an outline of rows. Each row has a stable
-//! `ref` built from its role, its accessible name and its named ancestors,
-//! never from its position, so a ref read in one observation still names the
-//! same element after the page changes around it. Every action waits for the
-//! page to settle and returns the next observation as a diff.
+//! A program reads the page as an outline of rows. Each row has a live
+//! `ref`, a handle bound to its DOM node in its document and never reused
+//! within the session, and a `locator` built from its role, its accessible
+//! name and its named ancestors, never from its position, which replay
+//! programs store (AB-001). An act on a handle whose node is gone acts on
+//! the row its locator names now and says so (`rebound`). Every action waits
+//! for the page to settle and returns the next observation, whole or as an
+//! ordered edit of one the caller holds (AB-002).
 //!
 //! The same verbs drive a Linux desktop (`self.desktop.*`, OF-523): one
 //! window of an isolated desktop guest, read as rows from its accessibility
 //! tree through cua-driver, with keys, hotkeys, scrolling and the guest's
 //! windows on top.
 
+use crate::observation::rows_named;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -25,6 +29,7 @@ mod driver;
 mod library;
 #[cfg(feature = "driver")]
 mod mcp;
+mod observation;
 #[cfg(feature = "driver")]
 mod outline;
 mod receipt_evidence;
@@ -41,6 +46,9 @@ pub use library::{
     ProposeOutput, RetiredCard, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
     WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, site_of,
 };
+pub use observation::{
+    HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound, is_live_handle,
+};
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
@@ -50,8 +58,13 @@ pub use session::{BrowserGuest, BrowserSession};
 /// One element a program can read or act on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Row {
+    /// The row's live handle: on a page, its DOM node in its document, never
+    /// reused within the session; on a desktop, its locator.
     #[serde(rename = "ref")]
     pub target: String,
+    /// The row's semantic locator (its role, name and named ancestors): what
+    /// a replay program stores, resolved on the page as it is then.
+    pub locator: String,
     pub role: String,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -61,17 +74,32 @@ pub struct Row {
     pub depth: u16,
 }
 
-/// The page as rows. With `full` false it is a diff against the observation
-/// `since` named: `rows` are new or changed, `removed` are refs now gone.
+/// The page as rows, in outline order. With `full` it holds every row. Without,
+/// it is an ordered edit of observation `base_seq` of the same `scope`, which
+/// the caller holds whole: `splice` names the base's rows that give way to
+/// `rows`. `seq` names this observation, for a later one to edit.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Observation {
     pub seq: u64,
+    /// What the rows were read from: on a page, `page:` and the session,
+    /// tab and documents (frame, loader and document root) they came from;
+    /// on a desktop, `window:` and the session and window. An observation of
+    /// another scope is whole.
+    pub scope: String,
+    /// The observation this one edits; absent when it is whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_seq: Option<u64>,
     pub url: String,
     pub title: String,
     pub full: bool,
+    /// The base's rows that `rows` replace; absent when it is whole.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub splice: Option<RowSplice>,
     pub rows: Vec<Row>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub removed: Vec<String>,
+    /// Where this page's rows start among the observation's own `rows`, on
+    /// an observation answered in pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<u64>,
     /// The receipt of the effect that produced this observation, naming the
     /// page it acted on. A plain `observe` carries none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -87,11 +115,20 @@ pub struct Observation {
     pub no_tree: bool,
     /// The desktop window's tree as far as its walk got (Rule 5): the walk
     /// stopped before the tree's end, so rows past the cut are missing and
-    /// the observation is whole, never a diff, since a ref past the cut is
-    /// not gone. Every page carries it, and the last page's `next` walks
-    /// the window again, longer, for the rest.
+    /// the observation is whole, never an edit, and never a base for one.
+    /// Every page carries it, and the last page's `walk_next` walks the
+    /// window again, longer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    /// On the last page of a partial observation: the cursor `observe`
+    /// takes to walk the window again, longer, as a new whole observation
+    /// with its own `seq`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub walk_next: Option<String>,
+    /// The handle the act named no longer stood, and the act took the row
+    /// its locator names now; or its locator named several rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebound: Option<Rebound>,
 }
 
 /// Where a desktop window's tree walk stopped short of its end (Rule 5):
@@ -149,10 +186,18 @@ pub struct EffectReceipt {
     pub verb: String,
     pub url: String,
     pub title: String,
+    /// The live handle of the row the effect acted on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_name: Option<String>,
+    /// That row's semantic locator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_locator: Option<String>,
+    /// The handle the call named no longer stood, and the effect acted on
+    /// the row its locator names now; or its locator named several rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebound: Option<Rebound>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_class: Option<String>,
     /// The press the effect ran under: `per_send`, `per_batch` or `none`.
@@ -163,22 +208,28 @@ pub struct EffectReceipt {
     pub screenshot_evidence: Option<ReceiptEvidence>,
 }
 
-/// Observes the page: whole, as a diff against the observation `since`
-/// names, or, with `cursor`, the next page of an observation an earlier
-/// answer paged (its `next`). A cursor reads the page as it was then.
+/// Observes the page: as an edit of `base`, or, with none named, of the last
+/// observation the session's caller read whole; whole with `full`; or, with
+/// `cursor`, the next page of an observation an earlier answer paged (its
+/// `next`), as the page was then, or a partial one's longer walk (its
+/// `walk_next`). A base no longer held, of another scope, or partial gives
+/// a whole observation.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObserveInput {
     #[serde(default)]
-    pub since: Option<u64>,
+    pub base: Option<ObservationBase>,
+    #[serde(default)]
+    pub full: bool,
     #[serde(default)]
     pub cursor: Option<String>,
 }
 
 /// One page of an observation (Rule 5): the observation with as many of its
-/// rows, then its removed refs, as fit one answer. A long outline is never
-/// cut: `next` names where the rest goes on, and `observe({cursor: next})`
-/// reads it. Every page of one observation has its `seq`.
+/// rows as fit one answer. A long outline is never cut: `next` names where
+/// the rest goes on, and `observe({cursor: next})` reads it. Every page of
+/// one observation repeats its `seq`, `scope`, `base_seq` and `splice`, with
+/// its own `offset`; the caller applies an edit once it holds every page.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ObservationPage {
     #[serde(flatten)]
@@ -235,11 +286,17 @@ pub struct FindOutput {
     pub partial: Option<PartialTree>,
 }
 
+/// Clicks the row `ref` names: a live handle, or a locator, which names the
+/// first row carrying it now.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClickInput {
     #[serde(rename = "ref")]
     pub target: String,
+    /// The observation the answer edits, as `observe`'s `base`; by default
+    /// the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 /// A click at a point of a held image, as a routine Box's centre gives it:
@@ -253,6 +310,10 @@ pub struct PointInput {
     pub image: String,
     pub x: f64,
     pub y: f64,
+    /// The observation the answer edits, as `observe`'s `base`; by default
+    /// the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -264,6 +325,10 @@ pub struct TypeInput {
     /// Replace the field's text instead of inserting at the caret.
     #[serde(default)]
     pub clear: bool,
+    /// The observation the answer edits, as `observe`'s `base`; by default
+    /// the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 /// Picks the option of a `<select>` whose label, text or value is `option`.
@@ -273,12 +338,18 @@ pub struct SelectInput {
     #[serde(rename = "ref")]
     pub target: String,
     pub option: String,
+    /// The observation the answer edits, as `observe`'s `base`; by default
+    /// the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 /// Waits until some row `targets` names is on the page, or, with none named,
-/// some row matches `role` and `name`, as `find` matches them. With
-/// `cursor` alone it waits for nothing and reads the next page of an
-/// earlier answer, as `find` does.
+/// some row matches `role` and `name`, as `find` matches them. A target is a
+/// live handle, matched by its own row, or by the row its locator names now
+/// once its node is gone (a rebinding), or a locator. With `cursor` alone it
+/// waits for nothing and reads the next page of an earlier answer, as
+/// `find` does.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WaitForInput {
@@ -307,12 +378,16 @@ pub struct WaitForOutput {
     /// `partial` says.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    /// Each target that matched by its locator, not its own row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rebindings: Vec<Rebound>,
 }
 
-/// A check on the page as it is now: the row named by `ref`, or else the
-/// first row `role` and `name` match, is present (or absent) and, when
-/// `value` is given, holds exactly that value. Its answer holds at most
-/// that one row, which is always one page.
+/// A check on the page as it is now: the row named by `ref` (a live handle,
+/// or the row its locator names once its node is gone, or a locator), or
+/// else the first row `role` and `name` match, is present (or absent) and,
+/// when `value` is given, holds exactly that value. Its answer holds at
+/// most that one row, which is always one page.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectInput {
@@ -337,6 +412,9 @@ pub struct ExpectOutput {
     /// `partial` says: a row past the cut reads as absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub partial: Option<PartialTree>,
+    /// The `ref` matched by its locator, not its own row.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rebindings: Vec<Rebound>,
 }
 
 /// Why a screenshot may be taken. There is no screenshot by default: a step
@@ -445,6 +523,10 @@ pub struct KeyInput {
     pub modifiers: Vec<String>,
     #[serde(default, rename = "ref")]
     pub target: Option<String>,
+    /// The observation the answer edits, as `observe`'s `base`; by default
+    /// the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 /// A key combination, as `["ctrl", "s"]`: two keys or more, the last one
@@ -453,6 +535,10 @@ pub struct KeyInput {
 #[serde(deny_unknown_fields)]
 pub struct HotkeyInput {
     pub keys: Vec<String>,
+    /// The observation the answer edits, as `observe`'s `base`; by default
+    /// the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -486,6 +572,10 @@ pub struct ScrollInput {
     pub amount: Option<u32>,
     #[serde(default, rename = "ref")]
     pub target: Option<String>,
+    /// The observation the answer edits, as `observe`'s `base`; by default
+    /// the last one the caller read whole.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
 }
 
 /// The desktop's windows, or only those of the app `app` names.
@@ -658,7 +748,9 @@ impl SendPolicy {
 }
 
 /// One step of a batched subgoal program. A mid planner writes one batch per
-/// subgoal; each step still crosses its own gated door.
+/// subgoal; each step still crosses its own gated door. A step's `ref` and
+/// `targets` take live handles or locators; a replay program holds locators
+/// only, resolved as each step runs.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "step", rename_all = "snake_case")]
 pub enum BatchStep {
@@ -768,6 +860,7 @@ pub struct DecideStep {
     pub option: Option<String>,
 }
 
+/// One batched program: one or more steps, run in order.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BatchInput {
@@ -775,6 +868,11 @@ pub struct BatchInput {
     #[serde(default)]
     pub subgoal: Option<String>,
     pub steps: Vec<BatchStep>,
+    /// The observation the batch's last observation edits, as `observe`'s
+    /// `base`; by default the last one the caller read whole. The steps
+    /// between never move it.
+    #[serde(default)]
+    pub base: Option<ObservationBase>,
     /// The subgoal's one clock, as the Unix milliseconds it ends at, when an
     /// earlier batch of the subgoal started it. Absent, the first routine
     /// step starts it; every later step reads the same one.
@@ -823,6 +921,11 @@ pub struct BatchOutput {
     /// `observe` reads the next page from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+    /// Each step whose target resolved by its locator, not its own row: an
+    /// effect's (as its receipt says too), a wait's, a check's or a routine
+    /// step's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rebindings: Vec<StepRebound>,
 }
 
 /// Looks one routine step takes before it goes up to the planner.
@@ -959,9 +1062,6 @@ pub fn paged<D: BrowserDriver + ?Sized>(
     Ok(driver.paged(observation))
 }
 
-/// Steps one batched subgoal program may hold.
-pub const BATCH_MAX_STEPS: usize = 64;
-
 /// The verbs a browser serves. The CDP driver implements it for a Chromium
 /// guest, and the desktop driver for a Linux desktop guest through
 /// cua-driver; each refuses the other's own verbs.
@@ -981,6 +1081,12 @@ pub trait BrowserDriver: Send {
     fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError>;
     /// The PNG bytes of a held image, while the driver holds them.
     fn image_bytes(&self, image: &str) -> Option<Vec<u8>>;
+
+    /// What the driver knows of a live handle it minted: its locator and
+    /// last scope. A driver with no live handles knows none.
+    fn handle_info(&self, _handle: &str) -> Option<HandleInfo> {
+        None
+    }
 
     /// `observation` as its first page. A driver that pages keeps the rest
     /// for `observe_page` to read on; one that does not answers it whole.
@@ -1086,17 +1192,19 @@ pub trait BrowserDriver: Send {
     /// Runs one batched program for a subgoal, step by step through this
     /// driver's own verbs, so a host wrapper's door still gates each effect,
     /// and its routine steps through `decider` under the subgoal's one clock.
-    /// The batch stops at the first refused, timed-out, unmet or sent-up step.
+    /// The batch stops at the first refused, timed-out, unmet or sent-up
+    /// step, never for its count: it holds one or more steps.
     fn batch_with(
         &mut self,
         input: BatchInput,
         decider: &mut dyn RoutineDecider,
     ) -> Result<BatchOutput, BrowserError> {
-        if input.steps.is_empty() || input.steps.len() > BATCH_MAX_STEPS {
-            return Err(BrowserError::Input(format!(
-                "a batch holds 1 to {BATCH_MAX_STEPS} steps"
-            )));
+        if input.steps.is_empty() {
+            return Err(BrowserError::Input(
+                "a batch holds one or more steps".to_owned(),
+            ));
         }
+        let base = input.base;
         let mut output = BatchOutput {
             status: SubgoalStatus::Done,
             completed: 0,
@@ -1107,6 +1215,7 @@ pub trait BrowserDriver: Send {
             decisions: Vec::new(),
             until_ms: input.until_ms,
             next: None,
+            rebindings: Vec::new(),
         };
         let mut routine = Routine {
             decider,
@@ -1114,11 +1223,20 @@ pub trait BrowserDriver: Send {
             no_model: input.no_model,
             misses: 0,
             decisions: Vec::new(),
+            base: base.clone(),
+            rebindings: Vec::new(),
         };
         for (index, step) in input.steps.into_iter().enumerate() {
+            // The targets this step matched by their locators.
+            let mut rebindings = Vec::new();
             let outcome: Result<Option<Observation>, BrowserError> = match step {
                 BatchStep::Open { url } => self.open(OpenInput { url }).map(Some),
-                BatchStep::Click { target } => self.click(ClickInput { target }).map(Some),
+                BatchStep::Click { target } => self
+                    .click(ClickInput {
+                        target,
+                        base: base.clone(),
+                    })
+                    .map(Some),
                 BatchStep::Type {
                     target,
                     text,
@@ -1128,11 +1246,16 @@ pub trait BrowserDriver: Send {
                         target,
                         text,
                         clear,
+                        base: base.clone(),
                     })
                     .map(Some),
-                BatchStep::Select { target, option } => {
-                    self.select(SelectInput { target, option }).map(Some)
-                }
+                BatchStep::Select { target, option } => self
+                    .select(SelectInput {
+                        target,
+                        option,
+                        base: base.clone(),
+                    })
+                    .map(Some),
                 BatchStep::WaitFor {
                     targets,
                     role,
@@ -1146,7 +1269,8 @@ pub trait BrowserDriver: Send {
                         timeout_ms,
                         cursor: None,
                     })
-                    .and_then(|waited| {
+                    .and_then(|mut waited| {
+                        rebindings.append(&mut waited.rebindings);
                         if waited.timed_out {
                             Err(BrowserError::Timeout("a batch wait_for step".to_owned()))
                         } else {
@@ -1167,7 +1291,8 @@ pub trait BrowserDriver: Send {
                         value,
                         absent,
                     })
-                    .and_then(|expected| {
+                    .and_then(|mut expected| {
+                        rebindings.append(&mut expected.rebindings);
                         if expected.met {
                             Ok(None)
                         } else {
@@ -1186,9 +1311,15 @@ pub trait BrowserDriver: Send {
                         key,
                         modifiers,
                         target,
+                        base: base.clone(),
                     })
                     .map(Some),
-                BatchStep::Hotkey { keys } => self.hotkey(HotkeyInput { keys }).map(Some),
+                BatchStep::Hotkey { keys } => self
+                    .hotkey(HotkeyInput {
+                        keys,
+                        base: base.clone(),
+                    })
+                    .map(Some),
                 BatchStep::Scroll {
                     direction,
                     amount,
@@ -1198,12 +1329,23 @@ pub trait BrowserDriver: Send {
                         direction,
                         amount,
                         target,
+                        base: base.clone(),
                     })
                     .map(Some),
                 BatchStep::Decide(step) => routine.step(self, step).map(Some),
             };
             output.decisions.append(&mut routine.decisions);
             output.until_ms = routine.until_ms;
+            rebindings.append(&mut routine.rebindings);
+            if let Ok(Some(observation)) = &outcome {
+                rebindings.extend(observation.rebound.clone());
+            }
+            output
+                .rebindings
+                .extend(rebindings.into_iter().map(|rebound| StepRebound {
+                    step: index,
+                    rebound,
+                }));
             match outcome {
                 Ok(observation) => {
                     output.completed += 1;
@@ -1246,13 +1388,16 @@ pub trait BrowserDriver: Send {
 pub const ROUTINE_MAX_CANDIDATES: usize = 61;
 
 /// A batch's routine steps: the decider, the subgoal's one clock, the NONE
-/// and reobserve answers in a row, and the decisions taken.
+/// and reobserve answers in a row, the decisions taken, the batch's base,
+/// and the targets an acting step matched by their locators.
 struct Routine<'d> {
     decider: &'d mut dyn RoutineDecider,
     until_ms: Option<u64>,
     no_model: bool,
     misses: u32,
     decisions: Vec<serde_json::Value>,
+    base: Option<ObservationBase>,
+    rebindings: Vec<Rebound>,
 }
 
 impl Routine<'_> {
@@ -1296,7 +1441,7 @@ impl Routine<'_> {
         let mut trigger = step.locate.then_some(ScreenshotTrigger::OutlineThin);
         let no_row = |page: &Observation| {
             BrowserError::AskUp(if page.partial.is_some() {
-                "no row before the cut of the window's tree walk matches the step; observe and walk on with its cursor".to_owned()
+                "no row before the cut of the window's tree walk matches the step; observe and walk on with its walk_next".to_owned()
             } else {
                 "no row on the page matches the step".to_owned()
             })
@@ -1304,7 +1449,11 @@ impl Routine<'_> {
         let mut waited = false;
         let mut looks = 0;
         while looks < ROUTINE_LOOKS {
-            let page = driver.observe(ObserveInput::default())?;
+            // A look the caller never sees: whole, and never its base.
+            let page = driver.observe(ObserveInput {
+                full: true,
+                ..ObserveInput::default()
+            })?;
             // A desktop window with no tree is read by its pixels: a step
             // that only clicks locates its target in a screenshot there.
             let blind = page.no_tree
@@ -1317,20 +1466,28 @@ impl Routine<'_> {
                 _ if blind => Some(ScreenshotTrigger::NoAccessibilityTree),
                 _ => trigger,
             };
-            let candidates: Vec<(String, Row)> = if locate {
-                Vec::new()
-            } else {
-                page.rows
+            // Named targets match their own rows, or, a handle whose node
+            // is gone, the row its locator names now, as a rebinding.
+            let (candidates, rebindings): (Vec<(String, Row)>, Vec<Rebound>) = if locate {
+                (Vec::new(), Vec::new())
+            } else if step.targets.is_empty() {
+                let matched = page
+                    .rows
                     .iter()
-                    .filter(|row| {
-                        if step.targets.is_empty() {
-                            query.matches(row)
-                        } else {
-                            step.targets.contains(&row.target)
-                        }
-                    })
+                    .filter(|row| query.matches(row))
                     .map(|row| (candidate(row), row.clone()))
-                    .collect()
+                    .collect();
+                (matched, Vec::new())
+            } else {
+                let (named, rebindings) =
+                    rows_named(&step.targets, &page.rows, &page.scope, |target| {
+                        driver.handle_info(target)
+                    });
+                let named = named
+                    .into_iter()
+                    .map(|row| (candidate(&row), row))
+                    .collect();
+                (named, rebindings)
             };
             if !locate && candidates.is_empty() {
                 // One bounded wait for the step's targets, or its role and
@@ -1375,14 +1532,21 @@ impl Routine<'_> {
                         .ok_or_else(|| {
                             BrowserError::Decider(format!("{candidate} is not a candidate"))
                         })?;
+                    self.rebindings.extend(rebindings);
+                    let base = self.base.clone();
                     return match (step.text, step.option) {
                         (Some(text), _) => driver.type_text(TypeInput {
                             target,
                             text,
                             clear: step.clear,
+                            base,
                         }),
-                        (None, Some(option)) => driver.select(SelectInput { target, option }),
-                        (None, None) => driver.click(ClickInput { target }),
+                        (None, Some(option)) => driver.select(SelectInput {
+                            target,
+                            option,
+                            base,
+                        }),
+                        (None, None) => driver.click(ClickInput { target, base }),
                     };
                 }
                 RoutineAnswer::Point { x, y } if locate => {
@@ -1390,14 +1554,19 @@ impl Routine<'_> {
                     let (image, _) = shot.ok_or_else(|| {
                         BrowserError::Decider("a point without a screenshot".to_owned())
                     })?;
-                    return driver.click_at(PointInput { image, x, y });
+                    return driver.click_at(PointInput {
+                        image,
+                        x,
+                        y,
+                        base: self.base.clone(),
+                    });
                 }
                 // A window whose tree walk was cut offered only the rows
                 // before the cut: none of them fits, so the step goes up
                 // rather than look again at the same cut.
                 RoutineAnswer::None if !locate && page.partial.is_some() => {
                     return Err(BrowserError::AskUp(
-                        "the window's tree walk stopped before its end and no row before the cut fits; observe and walk on with its cursor".to_owned(),
+                        "the window's tree walk stopped before its end and no row before the cut fits; observe and walk on with its walk_next".to_owned(),
                     ));
                 }
                 RoutineAnswer::None | RoutineAnswer::Reobserve => {
@@ -1475,8 +1644,10 @@ impl Routine<'_> {
     }
 }
 
-/// A row as a routine Choice offers it: its role and name, then its ref,
-/// which tells twins apart. An option holds at most 256 bytes.
+/// A row as a routine Choice offers it: its role and name, then its
+/// locator, which tells twins apart and reads the same in every session,
+/// so a rule standing for the step still answers it. An option holds at
+/// most 256 bytes.
 fn candidate(row: &Row) -> String {
     let mut label = format!("{} \"{}\"", row.role, row.name);
     if label.len() > 200 {
@@ -1487,7 +1658,7 @@ fn candidate(row: &Row) -> String {
         label.truncate(end);
         label.push('…');
     }
-    format!("{label} [{}]", row.target)
+    format!("{label} [{}]", row.locator)
 }
 
 impl BrowserError {
@@ -1532,14 +1703,18 @@ impl WaitForInput {
         }
     }
 
-    /// Whether `row` is one the wait is for: a row `targets` names, or, with
-    /// none named, a row `role` and `name` match.
+    /// Whether `row` is one the wait is for: a row `targets` names by its
+    /// ref or its locator, or, with none named, a row `role` and `name`
+    /// match. A page's driver matches a live handle whose node is gone by
+    /// its locator too (`rows_named`).
     #[must_use]
     pub fn matches(&self, row: &Row) -> bool {
         if self.targets.is_empty() {
             self.query().matches(row)
         } else {
-            self.targets.contains(&row.target)
+            self.targets
+                .iter()
+                .any(|target| *target == row.target || *target == row.locator)
         }
     }
 }

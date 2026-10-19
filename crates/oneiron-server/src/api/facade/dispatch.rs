@@ -2074,7 +2074,7 @@ async fn vault_recall(
             actor,
             class,
             auth.verified_slip().cloned(),
-            auth.locality(),
+            auth.destination(),
             call.room_turn()?,
             facade_input(value)?,
             call.home_caller(),
@@ -3135,26 +3135,27 @@ async fn vault_export(
     }
     let hooks = facade_hooks_pre(server, call, "vault.export", value).await?;
     let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
-    // Beside the archive, the rows its snapshot read past the
-    // caller's locality: every owner path lists them. A slip keeps
-    // its own path; a host action with no slip (the dev mode)
-    // takes the engine's host-action export; the attested owner
-    // takes the engine's request-proof export, at its own
-    // locality. Each arm's receipt records the owner's act, with
-    // where he spoke from as this request proved it (audit only;
-    // FIX 4625, 4626).
+    // Beside the archive, the rows its snapshot read past where
+    // the caller's rows go (its locality, with the machine its
+    // connection proved; FIX 4937): every owner path lists them.
+    // A slip keeps its own path; a host action with no slip (the
+    // dev mode) takes the engine's host-action export; the
+    // attested owner takes the engine's request-proof export,
+    // toward its own destination. Each arm's receipt records the
+    // owner's act, with where he spoke from as this request proved
+    // it (audit only; FIX 4625, 4626).
     let surface = call.surface();
     let (output, rows) = match (proof, action, owner) {
         (Some(proof), _, _) if proof.claims().holder_ref == "host" => server
             .vault
-            .export_with_verified_host_owner_listing(&input, proof, surface, auth.locality())?,
+            .export_with_verified_host_owner_listing(&input, proof, surface, auth.destination())?,
         (Some(proof), _, _) => {
             let (actor, class) = facade_actor(server, auth)?;
             let producers = oneiron::memory::ProducerRows::default();
             let output = server
                 .vault
                 .memory(actor, class)
-                .at(auth.locality())
+                .for_destination(&auth.destination())
                 .listing_producers(&producers)
                 .export_with_verified_owner(&input, proof, surface)?;
             (output, producers.take())
@@ -3163,13 +3164,13 @@ async fn vault_export(
             &input,
             &action,
             surface,
-            auth.locality(),
+            auth.destination(),
         )?,
         (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(
             &input,
             &owner,
             surface,
-            auth.locality(),
+            auth.destination(),
         )?,
         (None, None, None) => {
             return Err(FacadeApiError::forbidden(
@@ -4379,6 +4380,130 @@ async fn vault_weave_schedules_clear(
     oneiron::task_verb::sdk::validate_input("vault.weave.schedules.clear", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.weave.schedules.clear", value).await?;
     let (output, listed) = super::host_doors::vault_weave_schedules_clear(
+        server,
+        auth,
+        caller,
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_setting_changes_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.setting_changes.list")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.list", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.weave.setting_changes.list", value).await?;
+    let (output, listed) = super::host_doors::vault_weave_setting_changes_list(
+        server,
+        auth,
+        caller,
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_setting_changes_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.setting_changes.answer")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.answer", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.weave.setting_changes.answer", value).await?;
+    let (output, listed) = super::host_doors::vault_weave_setting_changes_answer(
+        server,
+        auth,
+        caller,
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_setting_changes_undo(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.setting_changes.undo")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.setting_changes.undo", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.weave.setting_changes.undo", value).await?;
+    let (output, listed) = super::host_doors::vault_weave_setting_changes_undo(
+        server,
+        auth,
+        caller,
+        Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+            &server.vault,
+            &hooks,
+        )),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_weave_digest_feedback_put(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.weave.digest_feedback.put")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.weave.digest_feedback.put", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.weave.digest_feedback.put", value).await?;
+    let (output, listed) = super::host_doors::vault_weave_digest_feedback_put(
         server,
         auth,
         caller,
@@ -16270,6 +16395,52 @@ async fn vault_rooms_speak(
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_thread_audience_add(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_audience.add",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_thread_audience_remove(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_audience.remove",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_projects_propose(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -25202,6 +25373,18 @@ pub(crate) async fn call_verb(
         "vault.weave.schedules.list" => vault_weave_schedules_list(server, call, input).await,
         "vault.weave.schedules.put" => vault_weave_schedules_put(server, call, input).await,
         "vault.weave.schedules.clear" => vault_weave_schedules_clear(server, call, input).await,
+        "vault.weave.setting_changes.list" => {
+            vault_weave_setting_changes_list(server, call, input).await
+        }
+        "vault.weave.setting_changes.answer" => {
+            vault_weave_setting_changes_answer(server, call, input).await
+        }
+        "vault.weave.setting_changes.undo" => {
+            vault_weave_setting_changes_undo(server, call, input).await
+        }
+        "vault.weave.digest_feedback.put" => {
+            vault_weave_digest_feedback_put(server, call, input).await
+        }
         "vault.weave.owner.digest.render" => {
             vault_weave_owner_digest_render(server, call, input).await
         }
@@ -25998,6 +26181,12 @@ pub(crate) async fn call_verb(
         "vault.rooms.reply_strips" => vault_rooms_reply_strips(server, call, input).await,
         "vault.rooms.claim" => vault_rooms_claim(server, call, input).await,
         "vault.rooms.speak" => vault_rooms_speak(server, call, input).await,
+        "vault.rooms.thread_audience.add" => {
+            vault_rooms_thread_audience_add(server, call, input).await
+        }
+        "vault.rooms.thread_audience.remove" => {
+            vault_rooms_thread_audience_remove(server, call, input).await
+        }
         "vault.projects.propose" => vault_projects_propose(server, call, input).await,
         "vault.projects.proposals" => vault_projects_proposals(server, call, input).await,
         "vault.projects.dismiss_card" => vault_projects_dismiss_card(server, call, input).await,

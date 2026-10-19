@@ -24,8 +24,8 @@ mod context_pack_filter;
 mod diagnostic_reads;
 mod facet_gate;
 mod graph_reads;
-mod note_visibility;
 mod named_reads;
+mod note_visibility;
 mod pinned_reads;
 mod point_reads;
 mod reactions;
@@ -36,8 +36,10 @@ mod versions;
 mod weave_digest;
 pub(crate) use weave_digest::invalidate_weave_digest_source_in_txn;
 pub use weave_digest::{
-    StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestReader,
-    WeaveDigestSchedule, WeaveScheduleHold,
+    StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER,
+    WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestFeedback,
+    WeaveDigestReader, WeaveDigestSchedule, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
+    WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings, WeaveScheduleHold,
 };
 mod weave_correction;
 mod weave_lens;
@@ -54,6 +56,7 @@ mod weave_report;
 mod weave_serve;
 mod weave_trigger;
 pub(crate) use claim_admission::ClaimReadStatus;
+pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};

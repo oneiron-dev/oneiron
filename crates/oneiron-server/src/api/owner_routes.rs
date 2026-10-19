@@ -649,9 +649,9 @@ async fn pending_runs(
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<Vec<runs::PendingRun>> {
     owner(&auth, &server)?;
-    let locality = auth.locality();
+    let destination = auth.destination();
     Ok(Json(
-        blocking(move || runs::pending(server.vault(), locality)).await?,
+        blocking(move || runs::pending(server.vault(), destination)).await?,
     ))
 }
 
@@ -670,10 +670,10 @@ async fn review_run(
 ) -> OwnerReply<runs::RunReview> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
-    let locality = auth.locality();
+    let destination = auth.destination();
     let review = blocking(move || {
         let run = runs::RunName::from_fields(query.run_id.as_deref(), query.run_ref.as_deref())?;
-        runs::review(server.vault(), &owner, run, locality)
+        runs::review(server.vault(), &owner, run, destination)
     })
     .await?;
     Ok(Json(review))
@@ -712,7 +712,7 @@ async fn decide_run(
 ) -> OwnerReply<runs::RunResolved> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let locality = auth.locality();
+    let destination = auth.destination();
     let resolved = blocking(move || {
         let run =
             runs::RunName::from_fields(request.run_id.as_deref(), request.run_ref.as_deref())?;
@@ -722,7 +722,7 @@ async fn decide_run(
             run,
             &request.bundle_id,
             action,
-            locality,
+            destination,
         )
     })
     .await?;
@@ -861,9 +861,9 @@ async fn preview_persona(
 ) -> OwnerReply<persona::Preview> {
     owner(&auth, &server)?;
     let query = query_params(query)?;
-    let locality = auth.locality();
+    let destination = auth.destination();
     let preview =
-        blocking(move || persona::preview(server.vault(), &query.subject, locality)).await?;
+        blocking(move || persona::preview(server.vault(), &query.subject, destination)).await?;
     Ok(Json(preview))
 }
 
@@ -874,9 +874,9 @@ async fn export_persona(
 ) -> OwnerReply<persona::Exported> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let locality = auth.locality();
+    let destination = auth.destination();
     let exported =
-        blocking(move || persona::export(server.vault(), &owner, &request, locality)).await?;
+        blocking(move || persona::export(server.vault(), &owner, &request, destination)).await?;
     Ok(Json(exported))
 }
 

@@ -179,15 +179,20 @@ mod rooms;
 pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
 pub(crate) use rooms::{
-    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in, overlay_thread_binding_in,
-    record_thread_admits_in, require_thread_audience_in, stamp_thread, thread_audience_allows_in,
-    thread_audience_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
-    validate_private_audience_in,
+    ROOM_THREAD_AUDIENCE_KEY, ROOM_THREAD_KEY, ThreadBinding, ThreadPlace,
+    audience_event_put_refusal, names_actor_in, overlay_thread_binding_in, record_thread_admits_in,
+    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
+    thread_audience_now_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
+    thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
 };
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomPage, RoomSpeakingRole, RoomStanding,
     RoomThread, RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads,
     RoomTrunk, RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
+};
+pub use rooms::{
+    ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
+    ThreadAudienceRemoveRequest,
 };
 
 pub(crate) use rooms::RoomThreadTask;
