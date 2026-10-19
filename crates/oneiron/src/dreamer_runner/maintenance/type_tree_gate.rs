@@ -11,6 +11,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
+use super::type_tree_prior::{
+    DonorTree, PROJECT_TREE_DONOR_WEIGHT, donor_path, donor_prior_winner,
+};
 use super::type_tree_upkeep::{
     TEAM_SHAPE_CHARGES_FAILED_TEAMS, TEAM_SHAPE_GATE_ADMITS, TeamShapeReserve, TreeGateOutcome,
     TypeEvidence, recount,
@@ -28,7 +31,7 @@ use crate::skill_optimize::{
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeDecisions,
     SkillReplayPair, receipt_is_held_out, score_gate_skill_edit_in_cycle,
 };
-use crate::task_type::{DecisionAxis, TaskTypeRef, TaskTypeTree};
+use crate::task_type::{DecisionAxis, TaskTypeRef, TaskTypeTree, TreeScope};
 use crate::team::TeamReceipt;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 
@@ -144,6 +147,9 @@ pub(super) struct TreeReplayScorer<'a> {
     arms: [(String, TaskTypeTree); 2],
     /// Settled team receipts, keyed by their leader's pack receipt.
     teams: BTreeMap<String, Vec<TeamReceipt>>,
+    /// The vault tree a project-scoped arm's thin leaves borrow from
+    /// ([`Self::with_donor`]); `None` reads every arm as before.
+    donor: Option<&'a DonorTree>,
 }
 
 impl<'a> TreeReplayScorer<'a> {
@@ -203,7 +209,19 @@ impl<'a> TreeReplayScorer<'a> {
             },
             arms: [(incumbent.version, in_force), (record.version, tree)],
             teams,
+            donor: None,
         })
+    }
+
+    /// This scorer with `donor` lent to its project-scoped arms: their thin
+    /// leaves read their picks with the donor's counts blended in on their
+    /// exact donor path ([`donor_prior_winner`]), and their view names the
+    /// donor's head, its tree version, the weight and each path borrowed on.
+    /// A vault-scoped arm reads as before.
+    #[must_use]
+    pub(super) fn with_donor(mut self, donor: Option<&'a DonorTree>) -> Self {
+        self.donor = donor;
+        self
     }
 
     /// The proposal's picks counted on `eligible` (the vault tree's receipts
@@ -222,6 +240,11 @@ impl<'a> TreeReplayScorer<'a> {
     /// What `tree` places and picks for each of `receipts`' teams. No
     /// outcome is read: the judge never sees a success label.
     fn view(&self, tree: &TaskTypeTree, receipts: &[String]) -> Value {
+        // Only a project's own tree borrows; the vault tree reads as before.
+        let donor = self
+            .donor
+            .filter(|_| matches!(tree.scope, TreeScope::Project { .. }));
+        let lent = donor.map(|donor| &donor.tree);
         let runs: Vec<Value> = receipts
             .iter()
             .map(|receipt| {
@@ -230,51 +253,84 @@ impl<'a> TreeReplayScorer<'a> {
                     .get(receipt)
                     .into_iter()
                     .flatten()
-                    .map(|team| team_view(tree, team))
+                    .map(|team| team_view(tree, team, lent))
                     .collect();
                 json!({"receipt": receipt, "teams": teams})
             })
             .collect();
-        json!({"moves": self.moves, "tree_version": tree.version, "runs": runs})
+        let mut view = json!({"moves": self.moves, "tree_version": tree.version, "runs": runs});
+        if let (Some(donor), Value::Object(fields)) = (donor, &mut view) {
+            fields.insert(
+                "donor".to_owned(),
+                json!({
+                    "skill": donor.skill.to_hex(),
+                    "tree_version": donor.version,
+                    "weight": PROJECT_TREE_DONOR_WEIGHT,
+                }),
+            );
+        }
+        view
     }
 }
 
-/// The winner `tree` reads on each decision for `node`; null where it reads
-/// none, or for a run outside the tree.
-fn picks(tree: &TaskTypeTree, node: Option<&str>) -> Value {
+/// The winner `tree` reads on each decision for `node`, with `donor` lent
+/// ([`donor_prior_winner`]); null where it reads none, or for a run outside
+/// the tree.
+fn picks(tree: &TaskTypeTree, node: Option<&str>, donor: Option<&TaskTypeTree>) -> Value {
     Value::Object(
         DecisionAxis::ALL
             .into_iter()
             .map(|axis| {
-                let winner = node.and_then(|node| tree.effective_winner(node, axis));
+                let winner = node.and_then(|node| donor_prior_winner(tree, node, axis, donor));
                 (axis.as_str().to_owned(), json!(winner))
             })
             .collect(),
     )
 }
 
+/// `view`, a node's view, with the donor path its picks borrowed on beside
+/// them, when they did.
+fn with_donor_path(
+    mut view: Value,
+    tree: &TaskTypeTree,
+    node: Option<&str>,
+    donor: Option<&TaskTypeTree>,
+) -> Value {
+    let path = node
+        .zip(donor)
+        .and_then(|(node, donor)| donor_path(tree, node, donor));
+    if let (Some(path), Value::Object(fields)) = (path, &mut view) {
+        fields.insert("donor_path".to_owned(), json!(path));
+    }
+    view
+}
+
 /// One team as `tree` reads it: the type it falls under, that type's picks,
-/// and the subtypes a split made under it.
-fn team_view(tree: &TaskTypeTree, team: &TeamReceipt) -> Value {
+/// and the subtypes a split made under it, each read with `donor` lent.
+fn team_view(tree: &TaskTypeTree, team: &TeamReceipt, donor: Option<&TaskTypeTree>) -> Value {
     let node = tree.resolve_ref(&TaskTypeRef::from(&team.type_ref));
     let subtypes: Vec<Value> = node
         .map_or_else(Vec::new, |node| tree.children(&node.node_id))
         .into_iter()
         .map(|child| {
-            json!({
+            let id = Some(child.node_id.as_str());
+            let view = json!({
                 "type": child.name,
                 "split_on": child.split_axis.map(DecisionAxis::as_str),
-                "picks": picks(tree, Some(child.node_id.as_str())),
-            })
+                "picks": picks(tree, id, donor),
+            });
+            with_donor_path(view, tree, id, donor)
         })
         .collect();
-    json!({
+    let id = node.map(|node| node.node_id.as_str());
+    let view = json!({
         "pattern": team.pattern.as_str(),
         "models": team.models,
         "type": node.map(|node| node.name.as_str()),
-        "picks": picks(tree, node.map(|node| node.node_id.as_str())),
+        "picks": picks(tree, id, donor),
         "subtypes": subtypes,
-    })
+    });
+    with_donor_path(view, tree, id, donor)
 }
 
 impl HeldOutReplayNotes for TreeReplayScorer<'_> {
