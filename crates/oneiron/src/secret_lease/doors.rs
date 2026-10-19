@@ -48,6 +48,21 @@ impl Vault {
         self.inject_admitted(wtxn, &id, &rec, secret_ref, effector, apply)
     }
 
+    /// [`Vault::inject_secret_at_door`], beside the custody record its name
+    /// resolved to at the door (FIX 5455): the row a connector call's send
+    /// presented, by id, never its value.
+    pub fn inject_secret_at_door_resolved(
+        &self,
+        secret_ref: &str,
+        effector: &str,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<(EntityId, DoorInjectionReceipt)> {
+        let wtxn = self.store.env.write_txn()?;
+        let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, secret_ref)?;
+        let receipt = self.inject_admitted(wtxn, &id, &rec, secret_ref, effector, apply)?;
+        Ok((id, receipt))
+    }
+
     /// [`Vault::inject_secret_at_door`] on one custody record named by its
     /// id, not by its live name: a handle names the record it was minted
     /// for, so a name re-registered since never reaches its door. A revoked

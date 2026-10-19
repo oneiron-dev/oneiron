@@ -52,4 +52,6 @@ pub use self::wait_delivery::{
 pub(crate) use self::wait_delivery::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
-pub(crate) use self::wait_delivery::{deliver_wait_in_txn, settled_wait_reply_in_txn};
+pub(crate) use self::wait_delivery::{
+    deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
+};

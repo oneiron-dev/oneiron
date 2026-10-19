@@ -551,7 +551,9 @@ impl Vault {
         let Some(route) = self.route_connector_call(&binding.name)? else {
             return escalate("connector_not_routable");
         };
-        let (payload_data_class, _, _) = self.connector_tool_class(&key, &route, &binding.tool)?;
+        // An elicitation answer is no connector.call answer: it lists none.
+        let (payload_data_class, _, _) =
+            self.connector_tool_class(&key, &route, &binding.tool, &mut Vec::new())?;
         let call = ScopedMcpCall {
             server: &binding.server,
             tool: &binding.tool,

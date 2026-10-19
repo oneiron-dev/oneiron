@@ -170,7 +170,7 @@ pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
-pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
+pub(crate) use connector_call_doors::{connector_answer_as, connector_call_listing_as};
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use model_stream_doors::ModelStreams;
 pub(crate) use secret_use_doors::self_use_as;

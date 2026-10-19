@@ -18,7 +18,7 @@ use crate::code_run::{
     CodeConsentDraft, CodeConsentPendingEffect, CodeConsentPrincipal, CodeConsentRememberOffer,
     CodeConsentWaitView, code_consent_admission_in_txn, mint_code_consent_wait_in_txn,
     offered_choices, original_authority_holds_in_txn, read_code_consent_wait_in_txn,
-    refuse_code_consent_wait_in_txn, settle_code_consent_wait_in_txn,
+    refuse_code_consent_wait_in_txn, settle_code_consent_wait_listing_in_txn,
 };
 use crate::connector_key::SlateDisposition;
 use crate::entity_id::EntityId;
@@ -363,18 +363,20 @@ impl Vault {
         mut pending: PendingConnectorCall,
         host: &mut H,
         answered: bool,
-    ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
+    ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
         let Some(wait_id) = pending.code_consent_wait else {
             return self.drive_connector_call(Some(*call_ref), None, pending, host);
         };
+        // A settled or expiring row answers, and settles its wait, with the
+        // rows its passes kept (FIX 5455).
         if let Some(settled) = &pending.settled {
             let outcome = settled.outcome();
-            self.settle_code_wait(wait_id, &outcome)?;
-            return Ok(outcome);
+            self.settle_code_wait(wait_id, &outcome, pending.source_rows.as_deref())?;
+            return Ok((outcome, pending.source_rows));
         }
         if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
-            self.settle_code_wait(wait_id, &expired)?;
-            return Ok(expired);
+            self.settle_code_wait(wait_id, &expired, pending.source_rows.as_deref())?;
+            return Ok((expired, pending.source_rows));
         }
         let row = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
@@ -388,11 +390,12 @@ impl Vault {
         };
         if let Some((true, authority_holds, row)) = row {
             if !answered {
-                return Ok(ConnectorCallOutcome::Held {
+                let held = ConnectorCallOutcome::Held {
                     call_ref: *call_ref,
                     decision_ref: None,
                     reasons: vec![CODE_WAIT_SETTLING.to_owned()],
-                });
+                };
+                return Ok((held, pending.source_rows));
             }
             if !authority_holds {
                 self.with_write_txn(|txn| {
@@ -403,28 +406,33 @@ impl Vault {
                         &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
                     )
                 })?;
-                return Ok(ConnectorCallOutcome::Refused {
+                let stopped = ConnectorCallOutcome::Refused {
                     decision_ref: None,
                     reasons: vec![CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED.to_owned()],
-                });
+                };
+                return Ok((stopped, pending.source_rows));
             }
             pending.code = Some(Box::new(CodePass::Settle {
                 frozen_digest: row.binding.frozen_input_digest,
             }));
         }
-        let outcome = self.drive_connector_call(Some(*call_ref), None, pending, host)?;
-        self.settle_code_wait(wait_id, &outcome)?;
-        Ok(outcome)
+        let (outcome, rows) = self.drive_connector_call(Some(*call_ref), None, pending, host)?;
+        self.settle_code_wait(wait_id, &outcome, rows.as_deref())?;
+        Ok((outcome, rows))
     }
 
     /// Settles wait `wait_id` with `outcome` in a writer of its own, when the
-    /// outcome is terminal.
+    /// outcome is terminal, its reply beside the rows the call's passes
+    /// picked (FIX 5455).
     fn settle_code_wait(
         &self,
         wait_id: EntityId,
         outcome: &ConnectorCallOutcome,
+        rows: Option<&[EntityId]>,
     ) -> Result<(), IntentLedgerError> {
-        self.with_write_txn(|txn| settle_code_consent_wait_in_txn(self, txn, wait_id, outcome))?;
+        self.with_write_txn(|txn| {
+            settle_code_consent_wait_listing_in_txn(self, txn, wait_id, outcome, rows)
+        })?;
         Ok(())
     }
 

@@ -390,6 +390,9 @@ impl RoutineDecider for LadderDecider {
                         held,
                         line.as_ref(),
                     );
+                    // Only the verdict is read here; its rows are not.
+                    let answered =
+                        answered.map(|(output, rows)| (output, rows.unwrap_or_default()));
                     let _ = sender.send(answered.map_err(super::mcp_facade_error));
                 });
             }

@@ -48,6 +48,11 @@ pub struct WaitDelivery {
     /// The reply as JSON text.
     pub reply: String,
     pub delivered_at_ms: u64,
+    /// The rows the reply was derived from, as its settler listed them
+    /// (FIX 5455): the rows a connector call's passes picked. `None` when
+    /// its settler listed none: the reply then adds no row to its run's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 impl RawValue for WaitDelivery {
@@ -132,12 +137,26 @@ pub(crate) fn deliver_wait_in_txn(
     reply: &serde_json::Value,
     now_ms: u64,
 ) -> Result<usize> {
+    deliver_wait_listing_in_txn(vault, txn, wait_id, reply, None, now_ms)
+}
+
+/// [`deliver_wait_in_txn`], `reply` kept beside `rows`, the rows its settler
+/// listed it derived from (FIX 5455), when it lists them.
+pub(crate) fn deliver_wait_listing_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+    reply: &serde_json::Value,
+    rows: Option<&[EntityId]>,
+    now_ms: u64,
+) -> Result<usize> {
     let settled = match SETTLED.get(&vault.store, txn, &(SETTLED_TAG, wait_id))? {
         Some(settled) => settled,
         None => {
             let mut settled = WaitDelivery {
                 reply: reply_text(reply)?,
                 delivered_at_ms: now_ms,
+                source_rows: rows.map(<[EntityId]>::to_vec),
             };
             SETTLED.admit(vault, txn, &(SETTLED_TAG, wait_id), &mut settled)?;
             SETTLED.put(&vault.store, txn, &(SETTLED_TAG, wait_id), &settled)?;
@@ -265,16 +284,18 @@ impl ExecutorStorage<'_> {
         &self,
         wait_id: EntityId,
         reply: &serde_json::Value,
+        rows: Option<&[EntityId]>,
         now_ms: u64,
     ) -> Result<usize> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
-                deliver_wait_in_txn(vault, txn, wait_id, reply, now_ms)
+                deliver_wait_listing_in_txn(vault, txn, wait_id, reply, rows, now_ms)
             }),
             Self::Session(binding) => binding.answered(|| {
                 let fresh = WaitDelivery {
                     reply: reply_text(reply)?,
                     delivered_at_ms: now_ms,
+                    source_rows: rows.map(<[EntityId]>::to_vec),
                 };
                 put_if_absent_routed(binding, &SETTLED, &(SETTLED_TAG, wait_id), &fresh)?;
                 let settled = binding
@@ -413,7 +434,20 @@ impl<'a> WaitDeliveries<'a> {
         reply: &serde_json::Value,
         now_ms: u64,
     ) -> Result<usize> {
-        self.storage.deliver_wait(wait_id, reply, now_ms)
+        self.storage.deliver_wait(wait_id, reply, None, now_ms)
+    }
+
+    /// [`Self::deliver`], `reply` kept beside `rows`, the rows its settler
+    /// listed it derived from (FIX 5455): the resumed run counts them among
+    /// its own, and `connector.call_status` lists them.
+    pub fn deliver_listing(
+        &self,
+        wait_id: EntityId,
+        reply: &serde_json::Value,
+        rows: Option<&[EntityId]>,
+        now_ms: u64,
+    ) -> Result<usize> {
+        self.storage.deliver_wait(wait_id, reply, rows, now_ms)
     }
 
     /// Registers a run as parked on `key`'s wait; `true` when its reply is
@@ -557,6 +591,7 @@ pub(crate) fn deliver_changed_wait_in_txn(
     let changed = WaitDelivery {
         reply: reply_text(reply)?,
         delivered_at_ms: now_ms,
+        source_rows: None,
     };
     let mut delivered = 0;
     for ((_, _, run), parked) in WAITERS.scan_from(&vault.store, txn, &waiter_prefix(wait_id))? {

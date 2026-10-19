@@ -71,7 +71,7 @@ impl Vault {
         {
             return Err(invalid("invalid folder ask selection"));
         }
-        let (version, bytes) = self.office_head(output, OfficeFormat::Xlsx)?;
+        let (version, bytes, mut read_rows) = self.office_head(output, OfficeFormat::Xlsx)?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let cells = named_sheet_cells(&bytes, request.sheet, &|cell: &CellRef| {
             cell.col == answer_col && rows.contains(&cell.row)
@@ -112,13 +112,17 @@ impl Vault {
                 });
                 continue;
             };
-            let Some(file) = self.read_blob_artifact_version(&item.artifact, head.version)? else {
+            let Some((file, rows)) =
+                self.read_blob_artifact_version_listing(&item.artifact, head.version)?
+            else {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_file".into(),
                 });
                 continue;
             };
+            // The file's head version is read for its unit (FIX 5455).
+            read_rows.extend(rows);
             let pin = EvidenceVersion {
                 id: item.artifact,
                 body_hash: *blake3::hash(&file).as_bytes(),
@@ -191,6 +195,7 @@ impl Vault {
             proposal: self.stage_sheet_answers(output, bundle, ask.run_ref, version, frontier)?,
             abstained,
             refused,
+            read_rows,
         })
     }
 }

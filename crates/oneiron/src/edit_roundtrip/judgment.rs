@@ -230,7 +230,7 @@ impl Vault {
         {
             return Err(invalid("invalid sheet ask selection"));
         }
-        let (version, bytes) = self.office_head(artifact, OfficeFormat::Xlsx)?;
+        let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Xlsx)?;
         let frontier = *blake3::hash(&bytes).as_bytes();
         let in_rows = |row: u32| (rows.start.row..=rows.end.row).contains(&row);
         let header_row = request.header_row;
@@ -345,6 +345,7 @@ impl Vault {
             proposal: self.stage_sheet_answers(artifact, bundle, ask.run_ref, version, frontier)?,
             abstained,
             refused,
+            read_rows,
         })
     }
 

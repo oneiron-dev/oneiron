@@ -11,6 +11,7 @@
 //! Drawn slides are kept by the vault, the export's memo key and the
 //! renderer ([`DRAWN`]): a call on an unchanged deck projects and converts
 //! nothing, and draws only the slides no earlier call drew.
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -29,6 +30,8 @@ use crate::memory::{
     MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use oneiron_docedit::deck::DeckView;
+use oneiron_docedit::edit::transaction::{AssetRef, Assets};
+use oneiron_docedit::graphic::AssetRecord;
 use oneiron_docedit::live::deck_export::export_key;
 use oneiron_docedit::live::{
     ExportKey, ExportOutcome, ExportProfile, HeldAssets, LiveDeck, preflight, project,
@@ -153,16 +156,23 @@ impl Memory<'_> {
             &input.slides,
             Instant::now(),
         );
+        // The rows the answer is drawn from (FIX 5455): the package the deck
+        // projects over, read now, and the live-born pictures' assets of the
+        // export the slides were drawn from, which a held entry kept.
+        let mut listed = projection.rows.clone();
         let (count, mut images, export) = match held {
-            Some((count, images)) => (count, images, None),
+            Some((count, images, rows)) => {
+                listed.extend(rows);
+                (count, images, None)
+            }
             None => {
-                let export = vault.project_preview(&artifact, &projection)?;
+                let (export, assets) = vault.project_preview(&artifact, &projection)?;
                 let count = Package::open(&export.bytes, vault.docedit_package_limits()?)
                     .ok()
                     .and_then(|package| DeckView::read(&package).ok())
                     .map(|view| u64::try_from(view.slides.len()).unwrap_or(u64::MAX))
                     .ok_or_else(|| failed("the deck's export could not be read back"))?;
-                (count, BTreeMap::new(), Some(export))
+                (count, BTreeMap::new(), Some((export, assets)))
             }
         };
         let mut named = BTreeSet::new();
@@ -180,7 +190,7 @@ impl Memory<'_> {
             .filter(|slide| !images.contains_key(slide))
             .collect();
         if !missing.is_empty() {
-            let export = match export {
+            let (export, assets) = match export {
                 Some(export) => export,
                 None => vault.project_preview(&artifact, &projection)?,
             };
@@ -189,12 +199,15 @@ impl Memory<'_> {
                 return Err(failed("the renderer drew another number of slides"));
             }
             let drawn: Vec<(u64, Vec<u8>)> = missing.into_iter().zip(drawn).collect();
+            let kept = [projection.rows.as_slice(), assets.as_slice()].concat();
             DRAWN.lock().unwrap_or_else(PoisonError::into_inner).keep(
                 slot,
                 count,
                 &drawn,
+                kept,
                 Instant::now(),
             );
+            listed.extend(assets);
             images.extend(drawn);
         }
         let slides = input
@@ -217,6 +230,7 @@ impl Memory<'_> {
                 })
             })
             .collect::<MemoryResult<Vec<_>>>()?;
+        self.produced_from(listed);
         Ok(DeckPreview {
             frontier: projection.frontier,
             export_key: blake3::Hash::from(key).to_hex().to_string(),
@@ -237,6 +251,9 @@ struct Projection {
     deck: LiveDeck,
     package: Package,
     key: ExportKey,
+    /// The rows `package` was read as: its retained or imported version's
+    /// CLAIM and ASSET (FIX 5455).
+    rows: Vec<EntityId>,
 }
 
 impl Vault {
@@ -259,11 +276,9 @@ impl Vault {
             };
             (head, body, candidate)
         };
-        let package = Package::open(
-            &self.deck_source(artifact, &source, body.retained)?,
-            self.docedit_package_limits()?,
-        )
-        .map_err(|_| invalid("the PPTX package could not be read"))?;
+        let (bytes, rows) = self.deck_source_listing(artifact, &source, body.retained)?;
+        let package = Package::open(&bytes, self.docedit_package_limits()?)
+            .map_err(|_| invalid("the PPTX package could not be read"))?;
         let deck = candidate.unwrap_or(body.deck);
         let key = export_key(
             &deck,
@@ -277,34 +292,63 @@ impl Vault {
             deck,
             package,
             key,
+            rows,
         })
     }
 
     /// The export `projection` keys, its live-born pictures' assets read
-    /// now.
+    /// now, beside the rows each asset it resolved is (FIX 5455).
     fn project_preview(
         &self,
         artifact: &EntityId,
         projection: &Projection,
-    ) -> Result<ExportOutcome> {
-        let assets = {
+    ) -> Result<(ExportOutcome, Vec<EntityId>)> {
+        let (assets, rows) = {
             let txn = self.store.env.read_txn()?;
-            HeldAssets::resolve(
-                &VaultAssets {
+            let listing = ListingAssets {
+                held: VaultAssets {
                     vault: self,
                     txn: &txn,
                 },
-                &[&projection.deck],
-            )
+                rows: RefCell::new(Vec::new()),
+            };
+            let assets = HeldAssets::resolve(&listing, &[&projection.deck]);
+            (assets, listing.rows.into_inner())
         };
-        project(
+        let export = project(
             &projection.deck,
             &projection.package,
             &artifact.to_hex(),
             &ExportProfile::default(),
             &assets,
         )
-        .map_err(live)
+        .map_err(live)?;
+        Ok((export, rows))
+    }
+}
+
+/// [`VaultAssets`], listing the rows of each picture asset it resolves: the
+/// image artifact, the version CLAIM and the ASSET, read in its transaction.
+struct ListingAssets<'v, 't> {
+    held: VaultAssets<'v, 't>,
+    rows: RefCell<Vec<EntityId>>,
+}
+
+impl Assets for ListingAssets<'_, '_> {
+    fn resolve(&self, asset: &AssetRef) -> Option<(AssetRecord, Vec<u8>)> {
+        let resolved = self.held.resolve(asset)?;
+        let artifact = EntityId::from_hex(&resolved.0.artifact).ok()?;
+        let version = self
+            .held
+            .vault
+            .blob_artifact_version_metadata_in_txn(self.held.txn, &artifact, resolved.0.version)
+            .ok()??;
+        let asset_row =
+            crate::blob_artifact::blob_artifact_asset_entity_id(&version.content_hash).ok()?;
+        self.rows
+            .borrow_mut()
+            .extend([artifact, version.claim_id, asset_row]);
+        Some(resolved)
     }
 }
 
@@ -320,6 +364,9 @@ struct Entry {
     slides: u64,
     images: BTreeMap<u64, Vec<u8>>,
     read_at: Instant,
+    /// The rows the drawn export was read from: its package's version and
+    /// each live-born picture's asset (FIX 5455). Ids only.
+    rows: BTreeSet<EntityId>,
 }
 
 impl Entry {
@@ -329,14 +376,15 @@ impl Entry {
 }
 
 impl Drawn {
-    /// The export's slide count and those of `asked` it holds drawn, when it
-    /// holds the export; entries idle past [`DRAWN_IDLE`] go first.
+    /// The export's slide count, those of `asked` it holds drawn and the
+    /// rows they were drawn from, when it holds the export; entries idle past
+    /// [`DRAWN_IDLE`] go first.
     fn held(
         &mut self,
         slot: &Slot,
         asked: &[u64],
         now: Instant,
-    ) -> Option<(u64, BTreeMap<u64, Vec<u8>>)> {
+    ) -> Option<(u64, BTreeMap<u64, Vec<u8>>, Vec<EntityId>)> {
         let mut freed = 0;
         self.entries.retain(|_, entry| {
             let kept = now.duration_since(entry.read_at) < DRAWN_IDLE;
@@ -352,18 +400,27 @@ impl Drawn {
             .iter()
             .filter_map(|&slide| Some((slide, entry.images.get(&slide)?.clone())))
             .collect();
-        Some((entry.slides, images))
+        Some((entry.slides, images, entry.rows.iter().copied().collect()))
     }
 
-    /// Keep `drawn` for the export of `slides` slides; past [`DRAWN_BYTES`],
-    /// the least recently read exports go.
-    fn keep(&mut self, slot: Slot, slides: u64, drawn: &[(u64, Vec<u8>)], now: Instant) {
+    /// Keep `drawn` for the export of `slides` slides, beside the rows it was
+    /// drawn from; past [`DRAWN_BYTES`], the least recently read exports go.
+    fn keep(
+        &mut self,
+        slot: Slot,
+        slides: u64,
+        drawn: &[(u64, Vec<u8>)],
+        rows: Vec<EntityId>,
+        now: Instant,
+    ) {
         let entry = self.entries.entry(slot).or_insert_with(|| Entry {
             slides,
             images: BTreeMap::new(),
             read_at: now,
+            rows: BTreeSet::new(),
         });
         entry.read_at = now;
+        entry.rows.extend(rows);
         for (slide, image) in drawn {
             self.bytes = self.bytes.saturating_add(image.len());
             if let Some(old) = entry.images.insert(*slide, image.clone()) {

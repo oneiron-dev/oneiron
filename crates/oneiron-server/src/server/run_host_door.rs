@@ -170,6 +170,7 @@ impl AgentVerbDoor for RunHostDoor {
             let _ = sender.send(match board {
                 Some(board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
+                        .map(|(output, rows)| (output, Some(rows)))
                 }
                 None => answer_as_agent(
                     &server,
@@ -189,10 +190,7 @@ impl AgentVerbDoor for RunHostDoor {
             }));
         };
         match answered {
-            Ok((output, rows)) => Ok(Ok(AgentVerbAnswer {
-                output,
-                rows: Some(rows),
-            })),
+            Ok((output, rows)) => Ok(Ok(AgentVerbAnswer { output, rows })),
             // A verb hook's stop goes back to the run as the typed stop, and
             // a model call no provider answered as the typed outage, which
             // the run parks on (FIX 3194).
@@ -345,7 +343,9 @@ fn board_as_agent(
 
 /// Answers one host row for `actor`, with its verb hooks once around it, on
 /// a fresh surface under the agent that carries `origin` and `invocation`.
-/// The rows it answers with are the ones that surface listed as served;
+/// The rows it answers with are the ones that surface listed as served, and
+/// those its row picked beside the surface's reads (`None` when those are
+/// not known);
 /// `held` is the run's own screenshot an `ai.verdict` may name, and `line`
 /// the run's own line its `ai.speech` spends on. Blocking: call it on a
 /// blocking thread of the server's runtime.
@@ -362,7 +362,7 @@ pub(crate) fn answer_as_agent(
     input: Value,
     held: Option<HeldImage>,
     line: Option<&RunAdmission>,
-) -> MemoryResult<(Value, Vec<EntityId>)> {
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
     // The agent's task work waits its turn in the vault's line (Rule 5), as
     // a served caller's does, and runs on it.
     let turn = verb
@@ -377,8 +377,9 @@ pub(crate) fn answer_as_agent(
         None => memory,
     };
     let name = verb.as_str();
-    // The rows an `ai.verdict`'s evidence refs and image resolved to (FIX 5461).
-    let mut evidence = Vec::new();
+    // The rows an `ai.verdict`'s evidence refs and image resolved to (FIX
+    // 5461), and a connector call's passes picked (FIX 5455).
+    let mut evidence = Some(Vec::new());
     let output = if served_by_host(verb) {
         verb_hook_boundary::row(&memory, name, input, |input| {
             sdk::validate_input(name, &input)?;
@@ -394,8 +395,11 @@ pub(crate) fn answer_as_agent(
             .ai
             .turn_landed_by(server.vault(), actor.entity_ref(), actor.actor_class());
     }
-    let mut rows = producers.take();
-    rows.append(&mut evidence);
+    let rows = evidence.map(|mut evidence| {
+        let mut rows = producers.take();
+        rows.append(&mut evidence);
+        rows
+    });
     Ok((output, rows))
 }
 
@@ -448,7 +452,8 @@ fn served_by_host(verb: AgentVerb) -> bool {
 
 /// One row the host serves, asked for the agent: never for a principal or
 /// a time the input names. An `ai.verdict` keeps the rows its evidence
-/// resolved to in `evidence`.
+/// resolved to in `evidence`, and a connector call the rows its passes
+/// picked, or `None` there when those are not known.
 fn host_row(
     server: &SyncServer,
     actor: WriteActor,
@@ -456,7 +461,7 @@ fn host_row(
     verb: AgentVerb,
     input: Value,
     line: Option<&RunAdmission>,
-    evidence: &mut Vec<EntityId>,
+    evidence: &mut Option<Vec<EntityId>>,
 ) -> MemoryResult<Value> {
     let (principal, class) = (actor.entity_ref(), actor.actor_class());
     let vault = server.vault();
@@ -497,7 +502,7 @@ fn host_row(
                 &request,
                 // It bills the payer the run's line binds (FIX 3574).
                 line.and_then(RunAdmission::payer),
-                evidence,
+                evidence.get_or_insert_with(Vec::new),
             )?)
         }
         AgentVerb::VaultGraphAsk => {
@@ -624,12 +629,21 @@ fn host_row(
                 now,
             )?)?)
         }
-        // The agent's own grant and gate, under the step's invocation.
-        AgentVerb::ConnectorCall => encode(crate::api::connector_call_as(
-            server,
-            memory,
-            decode(input)?,
-        )?),
+        // The agent's own grant and gate, under the step's invocation; the
+        // rows its passes picked join the row's (FIX 5455).
+        AgentVerb::ConnectorCall => {
+            let (reply, picked) =
+                crate::api::connector_call_listing_as(server, memory, decode(input)?)?;
+            match picked {
+                Some(mut picked) => {
+                    if let Some(rows) = evidence.as_mut() {
+                        rows.append(&mut picked);
+                    }
+                }
+                None => *evidence = None,
+            }
+            encode(reply)
+        }
         // The agent's own handle; a connector call under its grant and gate.
         AgentVerb::SelfUse => encode(crate::api::self_use_as(server, memory, decode(input)?)?),
         AgentVerb::VaultHooksReplay => Err(owners(verb, "hook replays are the owner's")),

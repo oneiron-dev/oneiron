@@ -37,6 +37,7 @@ mod references;
 mod store_keys;
 mod verbs;
 mod version_codec;
+mod version_rows;
 mod versions;
 
 pub(crate) use self::body::validate_blob_artifact_body_bytes;

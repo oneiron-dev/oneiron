@@ -35,6 +35,7 @@ mod storage;
 mod support;
 mod team_submit;
 mod types;
+mod wait_rows;
 
 #[cfg(test)]
 mod tests;
@@ -65,7 +66,8 @@ pub(crate) use self::consent_wait::{
     mint_code_consent_wait_in_txn, offered_choices, original_authority_holds_in_txn,
     read_code_consent_wait_in_txn, record_code_consent_admission_in_txn,
     refuse_code_consent_wait_in_txn, seal_parked_code_consent_in_txn,
-    settle_code_consent_wait_in_txn, verify_code_consent_consumed, verify_parked_code_consent,
+    settle_code_consent_wait_listing_in_txn, verify_code_consent_consumed,
+    verify_parked_code_consent,
 };
 pub use self::consent_wait::{
     CodeConsentAnswerInput, CodeConsentChoice, CodeConsentEffectHost, CodeConsentSavedCredential,
@@ -114,7 +116,8 @@ pub use self::storage::{
     bind_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::storage::{
-    FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn, settled_wait_reply_in_txn,
+    FinishedOutput, code_run_body_file_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
+    settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -130,6 +133,7 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
+pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
 // rather than hard-coding a hash.

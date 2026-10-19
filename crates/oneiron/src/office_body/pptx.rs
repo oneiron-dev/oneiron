@@ -421,16 +421,34 @@ impl Vault {
         head: &OfficeBodyHead,
         retained: Option<doc::Retained>,
     ) -> Result<Vec<u8>> {
-        let Some(retained) = retained else {
-            return self.body_source(artifact, head);
+        self.deck_source_listing(artifact, head, retained)
+            .map(|(bytes, _)| bytes)
+    }
+
+    /// [`Self::deck_source`], beside the rows the package's version is (its
+    /// version CLAIM and ASSET, FIX 5455): the retained export the deck is
+    /// bound to, or the imported source.
+    fn deck_source_listing(
+        &self,
+        artifact: &EntityId,
+        head: &OfficeBodyHead,
+        retained: Option<doc::Retained>,
+    ) -> Result<(Vec<u8>, Vec<EntityId>)> {
+        let (version, hash, corrupt) = match retained {
+            Some(retained) => (retained.version, retained.hash, "deck retained version"),
+            None => (
+                head.source_version,
+                head.source_hash,
+                "office body source version",
+            ),
         };
-        let bytes = self
-            .read_blob_artifact_version(artifact, retained.version)?
+        let (bytes, rows) = self
+            .read_blob_artifact_version_listing(artifact, version)?
             .ok_or(Error::EntityNotFound)?;
-        if *blake3::hash(&bytes).as_bytes() != retained.hash {
-            return Err(Error::CorruptedIndex("deck retained version"));
+        if *blake3::hash(&bytes).as_bytes() != hash {
+            return Err(Error::CorruptedIndex(corrupt));
         }
-        Ok(bytes)
+        Ok((bytes, rows))
     }
 
     /// `ops` with every creation naming a fresh identity, so the log, a fork's

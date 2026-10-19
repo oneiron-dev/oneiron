@@ -72,7 +72,7 @@ impl Vault {
         {
             return Err(invalid("invalid paragraph ask selection"));
         }
-        let (version, bytes) = self.office_head(artifact, OfficeFormat::Docx)?;
+        let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Docx)?;
         let limits = {
             let rtxn = self.store.env.read_txn()?;
             self.docx_archive_limits_in_txn(&rtxn, Some(ask.principal))?
@@ -169,6 +169,7 @@ impl Vault {
                 proposal: None,
                 abstained,
                 refused,
+                read_rows,
             });
         }
         let transaction = json!({ "ops": ops, "revision": { "author": author } }).to_string();
@@ -197,6 +198,7 @@ impl Vault {
             proposal: Some(proposal),
             abstained,
             refused,
+            read_rows,
         })
     }
 }

@@ -256,8 +256,8 @@ export class HttpBaseClient {
    * or a `FacadePending` when a verb hook stopped it on an ask;
    * `FacadeResult<"vault.recall">` types its 2xx body.
    */
-  readonly facade = facadeTree<"response", RequestInit>((verb, input, init, invocation) =>
-    this.facadeCall(verb, input, init ?? {}, invocation),
+  readonly facade = facadeTree<"response", RequestInit>((verb, input, init, invocation, ask) =>
+    this.facadeCall(verb, input, init ?? {}, invocation, ask),
   );
 
   readonly baseUrl: URL;
