@@ -35,6 +35,20 @@ pub(super) fn park_open_conflict(
         .ok_or_else(|| super::support::invalid_consolidation("open conflict has no evidence"))?;
     let meet = verified.meet();
     let evidence = verified.envelope(Vec::new());
+    // Each candidate the round drops rides whole beside its id (FIX 496), so
+    // a responder sees its value and may keep it. A member that does not
+    // encode leaves the marker as it was before, never unwritten.
+    let alternatives = match super::retained_conflict::alternatives_entry(members, attempt) {
+        Ok(entry) => Some(entry),
+        Err(_) => {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                subject = %conflict.identity.subject.to_hex(),
+                "an open conflict's candidates were not retained"
+            );
+            None
+        }
+    };
     let mut provenance = vec![
         (Value::from("surface"), Value::from("dreamer")),
         (
@@ -52,56 +66,61 @@ pub(super) fn park_open_conflict(
     let mut candidate = ClaimCandidate::new(
         crate::claim::PREDICATE_CONFLICT_OPEN,
         ClaimSubject::Entity(conflict.identity.subject),
-        Value::Map(vec![
-            (
-                Value::from("predicate"),
-                if members.iter().all(|member| {
-                    super::conflict::candidate_facts(&member.candidate)
-                        .is_ok_and(|facts| facts.predicate == conflict.identity.predicate)
-                }) {
-                    Value::from(conflict.identity.predicate.clone())
-                } else {
-                    Value::Nil
-                },
-            ),
-            (
-                Value::from("predicates"),
-                Value::Array(
-                    members
-                        .iter()
-                        .map(|member| {
-                            super::conflict::candidate_facts(&member.candidate)
-                                .map(|facts| Value::from(facts.predicate))
-                        })
-                        .collect::<Result<Vec<_>>>()?,
+        Value::Map(
+            vec![
+                (
+                    Value::from("predicate"),
+                    if members.iter().all(|member| {
+                        super::conflict::candidate_facts(&member.candidate)
+                            .is_ok_and(|facts| facts.predicate == conflict.identity.predicate)
+                    }) {
+                        Value::from(conflict.identity.predicate.clone())
+                    } else {
+                        Value::Nil
+                    },
                 ),
-            ),
-            (
-                Value::from("prior_head"),
-                conflict
-                    .prior_head
-                    .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
-            ),
-            (
-                Value::from("prior_heads"),
-                Value::Array(
+                (
+                    Value::from("predicates"),
+                    Value::Array(
+                        members
+                            .iter()
+                            .map(|member| {
+                                super::conflict::candidate_facts(&member.candidate)
+                                    .map(|facts| Value::from(facts.predicate))
+                            })
+                            .collect::<Result<Vec<_>>>()?,
+                    ),
+                ),
+                (
+                    Value::from("prior_head"),
                     conflict
-                        .prior_heads
-                        .iter()
-                        .map(|id| Value::Binary(id.as_bytes().to_vec()))
-                        .collect(),
+                        .prior_head
+                        .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
                 ),
-            ),
-            (
-                Value::from("candidates"),
-                Value::Array(
-                    members
-                        .iter()
-                        .map(|c| Value::Binary(c.claim_id.as_bytes().to_vec()))
-                        .collect(),
+                (
+                    Value::from("prior_heads"),
+                    Value::Array(
+                        conflict
+                            .prior_heads
+                            .iter()
+                            .map(|id| Value::Binary(id.as_bytes().to_vec()))
+                            .collect(),
+                    ),
                 ),
-            ),
-        ]),
+                (
+                    Value::from("candidates"),
+                    Value::Array(
+                        members
+                            .iter()
+                            .map(|c| Value::Binary(c.claim_id.as_bytes().to_vec()))
+                            .collect(),
+                    ),
+                ),
+            ]
+            .into_iter()
+            .chain(alternatives)
+            .collect(),
+        ),
         1.0,
     )
     .with_evidence(evidence);

@@ -648,6 +648,11 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::CONTINUE_ATTEMPT {
             return crate::dreamer_wake::nightly::continue_nightly(attempt, ctx);
         }
+        // A Timer wake's plan parent (FIX 336): its children and remainder
+        // landed with it at enqueue, so running it only completes it.
+        if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::PLAN_ATTEMPT {
+            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
             return self.run_sieve_rungs(attempt, ctx).await;
         }

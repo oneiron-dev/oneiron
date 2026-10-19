@@ -45,6 +45,7 @@ mod neighbourhood;
 pub(crate) mod nightly_merge;
 mod note_parts;
 mod note_review;
+mod note_text;
 mod open_conflict;
 mod parallel;
 mod partition;
@@ -55,6 +56,7 @@ pub(crate) mod redirty;
 mod resident_dream;
 mod resident_for_human;
 pub(crate) mod resources;
+mod retained_conflict;
 mod revert;
 pub(crate) mod reviewed;
 mod roles;
@@ -101,6 +103,7 @@ pub use resident_dream::{
 pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in_txn};
 pub use resident_for_human::run_free_time_for_human;
 pub use resources::ScopedConsolidationWrite;
+pub use retained_conflict::RetainedAlternative;
 pub use revert::{
     DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
 };
