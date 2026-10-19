@@ -13,6 +13,7 @@ use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::task_verb::highway_runner::workflow_try::WorkflowTaskBind;
 use crate::write_envelope::WriteActor;
 use serde::{Deserialize, Serialize};
 
@@ -106,32 +107,40 @@ pub(super) struct WorkflowIntent {
 /// A run's binding to the TASK it realizes: the TASK and the actor whose
 /// Owner standing admitted it, as hex, and that actor's class byte, which
 /// the wrapper's take, fence, settlement and report run under: an owner's
-/// Human, an agent's Agent.
+/// or a member's Human, an agent's Agent. A member's run also requires a
+/// payer (FIX 5316): every step's model calls must read one from the root
+/// the member funds, and none falls to the owner's account. Only the
+/// wrapper keeps the fact; its steps find it through their wrapper.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WorkflowTaskBinding {
     pub task_ref: String,
     pub bound_by: String,
     pub bound_class: u8,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub payer_required: bool,
 }
 
 impl WorkflowTaskBinding {
-    pub(super) fn new(task: crate::EntityId, bound_by: WriteActor) -> Self {
+    pub(super) fn new(bind: &WorkflowTaskBind) -> Self {
         Self {
-            task_ref: task.to_hex(),
-            bound_by: bound_by.entity_ref().to_hex(),
-            bound_class: bound_by.actor_class() as u8,
+            task_ref: bind.task.to_hex(),
+            bound_by: bind.bound_by.entity_ref().to_hex(),
+            bound_class: bind.bound_by.actor_class() as u8,
+            payer_required: bind.payer_required,
         }
     }
 
-    /// The TASK and the actor who bound it, under its class.
-    pub(super) fn ids(&self) -> Result<(crate::EntityId, WriteActor)> {
+    /// The TASK, the actor who bound it under its class, and whether its
+    /// steps must read a payer.
+    pub(super) fn bind(&self) -> Result<WorkflowTaskBind> {
         let class = EdgeActorClass::try_from_u8(self.bound_class)
             .ok_or_else(|| invalid("workflow TASK binding names no actor class"))?;
-        Ok((
-            crate::EntityId::from_hex(&self.task_ref)?,
-            WriteActor::new(crate::EntityId::from_hex(&self.bound_by)?, class),
-        ))
+        Ok(WorkflowTaskBind {
+            task: crate::EntityId::from_hex(&self.task_ref)?,
+            bound_by: WriteActor::new(crate::EntityId::from_hex(&self.bound_by)?, class),
+            payer_required: self.payer_required,
+        })
     }
 }
 

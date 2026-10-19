@@ -14931,6 +14931,33 @@ async fn vault_workflows_dispatch(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_workflows_dispatch_bound(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    facade_scoped_credential(auth)?;
+    facade_outside_room_turn(call, "vault.workflows.dispatch_bound")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.workflows.dispatch_bound", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.workflows.dispatch_bound", value).await?;
+    let (output, listed) = super::host_doors::vault_workflows_dispatch_bound(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_door_input(&mut hooks)?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_workflows_status(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -25429,6 +25456,9 @@ pub(crate) async fn call_verb(
         "vault.workflows.get" => vault_workflows_get(server, call, input).await,
         "vault.workflows.update" => vault_workflows_update(server, call, input).await,
         "vault.workflows.dispatch" => vault_workflows_dispatch(server, call, input).await,
+        "vault.workflows.dispatch_bound" => {
+            vault_workflows_dispatch_bound(server, call, input).await
+        }
         "vault.workflows.status" => vault_workflows_status(server, call, input).await,
         "vault.task_types.pin" => vault_task_types_pin(server, call, input).await,
         "vault.task_types.get" => vault_task_types_get(server, call, input).await,
