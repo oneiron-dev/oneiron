@@ -43,10 +43,9 @@ pub use cancel::{
     FinishAttemptLanding, FinishLandingOutcome, ForceAttemptCancel, ForceCancelAuthority,
     ForceCancelGrounds, ForceCancelOutcome, LANDING_RESERVE_PERCENT, LEASE_LANDING_WARNING_PERCENT,
     LandingOutcome, LandingReserveSpendOutcome, LandingTrigger, LandingWarningOutcome,
-    LeaseWarningOutcome, MAX_ATTEMPT_CANCEL_RECEIPTS, MAX_LANDING_RESERVE_PERCENT,
-    MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS, RecordAttemptResumePoint, RejectAttemptCancel,
-    RequestAttemptCancel, SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD, SpendAttemptLandingReserve,
-    TERMINAL_CANCEL_RECEIPT_RESERVE, WarnAttemptBudgetPressure, WarnAttemptLeaseExpiry,
+    LeaseWarningOutcome, MAX_LANDING_RESERVE_PERCENT, RecordAttemptResumePoint,
+    RejectAttemptCancel, RequestAttemptCancel, SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
+    SpendAttemptLandingReserve, WarnAttemptBudgetPressure, WarnAttemptLeaseExpiry,
     WarnExpiringAttemptLeases,
 };
 pub use engine::AttemptQueue;
@@ -81,14 +80,6 @@ pub(crate) fn validate_signal_cancel(actor: &str, reason: Option<&str>) -> crate
     validate::validate_optional_failure_reason(reason)
 }
 
-pub(crate) fn signal_cancel_headroom(receipts: usize, pending: usize) -> bool {
-    receipts.saturating_add(pending) < cancel::MAX_NONTERMINAL_ATTEMPT_CANCEL_RECEIPTS
-}
-
-pub(crate) fn signal_cancel_receipts_full(error: &crate::Error) -> bool {
-    matches!(error, crate::Error::Artifact(crate::error::ArtifactError::InvalidAttemptQueueRecord(reason))
-        if *reason == validate::ERR_CANCEL_RECEIPTS_FULL)
-}
 pub(crate) use engine::dreamer_run_root_id_in_txn;
 /// Storage-ABI pin re-exported for `crate::store`; its only consumer outside
 /// this module is `store`'s row-header test.

@@ -636,6 +636,7 @@ impl AttemptQueue<'_> {
                         let authority = ForceCancelAuthority::lease_expiry();
                         validate_force_authority(&authority)?;
                         force_cancel_record(
+                            &self.store.limit_watch,
                             &mut record,
                             authority.grounds(),
                             authority.actor().to_owned(),

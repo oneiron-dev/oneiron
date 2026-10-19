@@ -1,6 +1,11 @@
 //! Imported and hub-derived instruction authority at the single SKILL materialization door.
+use std::collections::BTreeMap;
+
+use super::HubPackage;
 use super::package_codec::invalid;
+use crate::agent_dispatch::{TASK_TYPE_TREE_FILE, team_shape_skill};
 use crate::side_table::{self, Raw, SideTable, StagedRow};
+use crate::task_type::{TaskTypeTree, TreeScope};
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     claim::ClaimSource,
@@ -31,6 +36,7 @@ pub(crate) enum HubAdmissionKind {
     Optimized,
     Refined,
     Rollback,
+    ProjectTreeFork,
 }
 #[derive(Debug)]
 pub(crate) struct HubAdmissionProof {
@@ -75,6 +81,12 @@ impl HubAdmissionProof {
     /// over the displaced revision's own content.
     pub(in crate::skill_hub) fn rollback(id: EntityId, data: &[u8]) -> Self {
         Self::new(id, data, HubAdmissionKind::Rollback)
+    }
+    /// A project tree fork's activation, minted only by
+    /// [`crate::Vault::admit_project_tree_fork_in_txn`] once the fork passed
+    /// its four checks.
+    pub(in crate::skill_hub) fn project_tree_fork(id: EntityId, data: &[u8]) -> Self {
+        Self::new(id, data, HubAdmissionKind::ProjectTreeFork)
     }
     pub(in crate::skill_hub) fn consent(
         store: &Store,
@@ -188,6 +200,180 @@ impl crate::Vault {
             mode,
         )
     }
+
+    /// Puts `fork`, a project's fork of the vault team-shape skill, in force
+    /// (ARCH-0079 #task-type, OF-420), in the caller's write. It admits only
+    /// when all four hold: (a) the fork is a Candidate cut from the vault's
+    /// in-force team-shape head; (b) its package is the head's with only
+    /// `task-type-tree.json` and SKILL.md's `name:` and `version:` lines
+    /// changed; (c) its tree is scoped to `project`; (d) `held_out`, the
+    /// head's and the fork's scores on the project's held-out runs, is a
+    /// strict win, both finite in [0, 1]. The scoring runs before the write,
+    /// outside it. The admitted fork must load: an approval the owner has not
+    /// given keeps it a Candidate. The caller attaches it to the project.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::error::ArtifactError::InvalidSkillBody`] when a check fails;
+    /// the materialization door's refusals; storage errors.
+    pub(crate) fn admit_project_tree_fork_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fork: &EntityId,
+        project: EntityId,
+        held_out: (f32, f32),
+        occurred: crate::TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        let (before, after) = held_out;
+        if !(0.0..=1.0).contains(&before) || !(0.0..=1.0).contains(&after) || after <= before {
+            return Err(invalid(
+                "a project tree fork goes in force only on a strict held-out win",
+            ));
+        }
+        let staged = self.read_skill_record_in_txn(txn, fork)?;
+        let Some(head) = team_shape_head_in_txn(self, txn)?
+            .filter(|head| staged.forked_from == Some(*head))
+            .filter(|_| staged.lifecycle_status == SkillLifecycle::Candidate)
+        else {
+            return Err(invalid(
+                "a project tree fork is an open fork of the in-force team-shape head",
+            ));
+        };
+        let head_record = self.read_skill_record_in_txn(txn, &head)?;
+        let (Some(base), Some(package)) = (
+            self.runtime_skill_package_in_txn(txn, &head, &head_record)?,
+            self.runtime_skill_package_in_txn(txn, fork, &staged)?,
+        ) else {
+            return Err(invalid(
+                "a project tree fork and its head both carry a package",
+            ));
+        };
+        if !tree_only_edit(&base, &package)? {
+            return Err(invalid(
+                "a project tree fork changes only its tree and its SKILL.md name and version",
+            ));
+        }
+        let project_ref = project.to_hex();
+        let scoped = package
+            .files
+            .iter()
+            .find(|file| file.path == TASK_TYPE_TREE_FILE)
+            .and_then(|file| serde_json::from_slice::<TaskTypeTree>(&file.content).ok())
+            .is_some_and(|tree| {
+                matches!(
+                    &tree.scope,
+                    TreeScope::Project { project_ref: Some(scope), .. } if *scope == project_ref
+                )
+            });
+        if !scoped {
+            return Err(invalid(
+                "a project tree fork's tree is scoped to its project",
+            ));
+        }
+        let mut admitted = staged;
+        admitted.lifecycle_status = SkillLifecycle::Active;
+        if !crate::skill::skill_loadable(&admitted) {
+            return Err(invalid(
+                "a project tree fork the owner has not approved stays a Candidate",
+            ));
+        }
+        let data = crate::skill::encode_skill_record(&admitted)?;
+        let proof = HubAdmissionProof::project_tree_fork(*fork, &data);
+        self.admit_hub_skill_record_in_txn(txn, occurred, learned_at, data, proof)
+    }
+}
+
+/// The vault team-shape skill's newest admitted revision in `txn`, read as
+/// the tree loader reads it: the bootstrap skill's supersession chain,
+/// followed forward to its last loadable revision.
+fn team_shape_head_in_txn(vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> Result<Option<EntityId>> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut cursor = team_shape_skill()?;
+    let mut head = None;
+    while seen.insert(cursor) {
+        let Some(record) = vault.get_skill_record_in_txn(txn, &cursor)? else {
+            break;
+        };
+        if crate::skill::skill_loadable(&record) {
+            head = Some(cursor);
+        }
+        let mut next = None;
+        for peer in crate::ports::EdgeStoreRead::port_edge_peers(
+            &vault.store,
+            txn,
+            &cursor,
+            crate::ports::EdgeDirection::In,
+            crate::edge::EdgeKind::Supersedes,
+        )? {
+            let peer = peer?;
+            if !seen.contains(&peer) {
+                next = Some(peer);
+                break;
+            }
+        }
+        match next {
+            Some(next) => cursor = next,
+            None => break,
+        }
+    }
+    Ok(head)
+}
+
+/// Whether `fork`'s package is `head`'s with only the task-type tree and
+/// SKILL.md's `name:` and `version:` lines changed, and carries a tree.
+fn tree_only_edit(head: &HubPackage, fork: &HubPackage) -> Result<bool> {
+    let (base, edited) = (files_beside_tree(head), files_beside_tree(fork));
+    if base.len() != edited.len()
+        || !fork
+            .files
+            .iter()
+            .any(|file| file.path == TASK_TYPE_TREE_FILE)
+    {
+        return Ok(false);
+    }
+    for (path, content) in base {
+        let Some(other) = edited.get(path) else {
+            return Ok(false);
+        };
+        let same = if path == "SKILL.md" {
+            without_identity(content)? == without_identity(other)?
+        } else {
+            content == *other
+        };
+        if !same {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// A package's files other than its task-type tree, by path.
+fn files_beside_tree(package: &HubPackage) -> BTreeMap<&str, &[u8]> {
+    package
+        .files
+        .iter()
+        .filter(|file| file.path != TASK_TYPE_TREE_FILE)
+        .map(|file| (file.path.as_str(), file.content.as_slice()))
+        .collect()
+}
+
+/// SKILL.md without its frontmatter `name:` and `version:` lines, the two a
+/// project tree fork may change; a SKILL.md with no frontmatter as it is.
+fn without_identity(content: &[u8]) -> Result<String> {
+    let text = std::str::from_utf8(content).map_err(|_| invalid("SKILL.md is not UTF-8"))?;
+    let Some(front) = super::folder::source_frontmatter(text)? else {
+        return Ok(text.to_owned());
+    };
+    let kept: Vec<&str> = front
+        .split('\n')
+        .filter(|line| !line.starts_with("name:") && !line.starts_with("version:"))
+        .collect();
+    Ok(format!(
+        "{}\n---\n{}",
+        kept.join("\n"),
+        &text[4 + front.len() + 5..]
+    ))
 }
 fn origin(record: &SkillRecord) -> Vec<u8> {
     let mut out = vec![u8::from(record.source == ClaimSource::Imported)];
