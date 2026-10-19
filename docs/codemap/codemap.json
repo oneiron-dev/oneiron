@@ -65961,6 +65961,16 @@
   "oneiron-browser": {
    "files": [
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/capture.rs",
+     "purpose": "Repeat screenshots (AB-004)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -66006,7 +66016,7 @@
      "path": "src/driver/handles.rs",
      "purpose": "Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -66016,7 +66026,7 @@
      "path": "src/driver/pages.rs",
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -66188,6 +66198,13 @@
     }
    ],
    "modules": {
+    "capture": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Repeat screenshots (AB-004)"
+    },
     "cdp": {
      "files": 1,
      "impl_vault": false,
@@ -66254,7 +66271,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 12,
+   "source_files": 13,
    "test_files": 0
   },
   "oneiron-code-check": {
