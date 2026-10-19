@@ -36,7 +36,10 @@ use crate::server::SyncServer;
 /// presented; unknown when they are not known. The call runs as it asked
 /// from any surface; for a caller off this device whose reply names or
 /// lists a row that stays here, only the answer narrows, to the word that
-/// it ran ([`crate::device_local::act_answer`]).
+/// it ran ([`crate::device_local::act_answer`]). A held or pending call's
+/// answer names the call ref its caller parks on and polls by, and no row
+/// content, so it answers as before; what the ref leads to narrows where
+/// it is read or delivered.
 pub(crate) async fn connector_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -65,7 +68,12 @@ pub(crate) async fn connector_call(
         Ok((reply, None)) => (Ok(reply), None),
         Err(refusal) => (Err(refusal), Some(listed)),
     };
-    crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
+    match answer {
+        (Ok(reply), rows) if reply.wait_ref().is_some() => (Ok(ActAnswer::Done(reply)), rows),
+        answer => {
+            crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
+        }
+    }
 }
 
 /// [`connector_call`]'s call as it answered before FIX 5455: its reply in
