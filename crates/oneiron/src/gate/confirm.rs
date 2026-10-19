@@ -393,11 +393,8 @@ impl Vault {
                     }
                     self.complete_deferred_claim_in_txn(wtxn, &binding.claim_id, true, now)?;
                 }
-                self.store.remove_pending_gate_consent_in_txn(
-                    wtxn,
-                    &binding.claim_id,
-                    removal,
-                )?;
+                self.store
+                    .remove_pending_gate_consent_in_txn(wtxn, &binding.claim_id, removal)?;
                 self.store
                     .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
                 // A held provenance claim stamped no flags on its edge.

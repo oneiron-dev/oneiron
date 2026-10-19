@@ -339,7 +339,13 @@ impl crate::Vault {
         self.with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let id = self.mint_federation_delegate_in_txn(
-                txn, holder, parent_grant_id, member_ref, now, expires_at, Some(requested),
+                txn,
+                holder,
+                parent_grant_id,
+                member_ref,
+                now,
+                expires_at,
+                Some(requested),
             )?;
             let raw = self.get_raw_in(txn, &id)?.ok_or(Error::EntityNotFound)?;
             let grant = super::decode_federation_grant_body(
@@ -359,11 +365,20 @@ impl crate::Vault {
         expires_at: u64,
     ) -> Result<EntityId> {
         self.mint_federation_delegate_in_txn(
-            txn, holder, parent_grant_id, member_ref, now, expires_at, None,
+            txn,
+            holder,
+            parent_grant_id,
+            member_ref,
+            now,
+            expires_at,
+            None,
         )
     }
 
-    #[expect(clippy::too_many_arguments, reason = "one shared transactional Delegate mint")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one shared transactional Delegate mint"
+    )]
     fn mint_federation_delegate_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -429,7 +444,9 @@ impl crate::Vault {
             .meet(&self.grant_default_scope_in_txn(txn, Role::Delegate, vault_id, member_ref)?);
         if let Some(requested) = requested {
             if !requested.is_narrowing_of(&grant.authority_scope) {
-                return Err(Error::InvalidConfig("delegate scope exceeds its ceiling".into()));
+                return Err(Error::InvalidConfig(
+                    "delegate scope exceeds its ceiling".into(),
+                ));
             }
             grant.authority_scope = grant.authority_scope.meet(requested);
         }
