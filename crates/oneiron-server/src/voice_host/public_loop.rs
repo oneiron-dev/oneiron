@@ -5,22 +5,29 @@ use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::*;
 use oneiron::voice_cascade::media::VoiceMediaOutput;
 use oneiron::voice_cascade::{AsrUpdate, Brain, ControlEvent, StopReason};
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use super::media_bridge::{HeardWork, MediaBridge, MediaEvent, MediaTts};
 use super::public::{Command, invalid, unavailable};
 use super::public_events::Journal;
+use super::public_hold::SessionHold;
 use super::wire::{ControlOut, WireControl, WireMedia, WireOut};
 use super::{ChatBrain, VoiceHost, VoiceMediaIn, VoiceOutputs, VoicePlayout};
 use crate::managed::ManagedShutdown;
 use crate::server::SyncServer;
 
 type Pending<'a> = Pin<Box<dyn Future<Output = (String, MemoryResult<AsrUpdate>)> + Send + 'a>>;
+
+/// How soon an idle session whose brain is still answering asks again
+/// whether it rests.
+const REST_RECHECK: Duration = Duration::from_secs(1);
 
 pub(super) struct PublicLoop {
     pub(super) host: VoiceHost,
@@ -30,6 +37,8 @@ pub(super) struct PublicLoop {
     pub(super) journal: Arc<Mutex<Journal>>,
     pub(super) session_ref: String,
     pub(super) live: Option<oneiron::conversation::LiveSpeakerCall>,
+    /// The session's admission (`public_hold`).
+    pub(super) hold: Arc<SessionHold>,
 }
 
 impl PublicLoop {
@@ -74,6 +83,8 @@ impl PublicLoop {
         let mut microphone: Option<String> = None;
         let mut cuts = VecDeque::new();
         let mut entries = self.host.entry_wakes();
+        let mut held = self.hold.watch();
+        let mut not_before = Instant::now();
         loop {
             // Flushes and stops are published before another PCM dequeue or
             // input ACK. Old packets retain their own weak epoch fence.
@@ -82,8 +93,23 @@ impl PublicLoop {
                 .lock()
                 .map_err(|_| unavailable())?
                 .finished(&self.host);
+            let release_at = self.hold.release_at().map(|at| at.max(not_before));
             tokio::select! {
                 () = shutdown.triggered() => break,
+                // No door named the session for a while: once it rests, no
+                // brain turn answering or winding down, it releases its
+                // admission, and nothing here runs until a door names it
+                // again and takes one.
+                () = tokio::time::sleep_until(release_at.unwrap_or_else(Instant::now)), if release_at.is_some() => {
+                    if shutdown.is_triggered() || !self.outputs.brain.at_rest() {
+                        not_before = Instant::now() + REST_RECHECK;
+                    } else if self.hold.release_if_idle() {
+                        tokio::select! {
+                            () = shutdown.triggered() => break,
+                            _ = held.wait_for(|held| *held) => {}
+                        }
+                    }
+                }
                 woke = super::next_entry_wake(&mut entries) => {
                     self.host.entry_woke(woke, &mut entries, Some(&mut self.bridge), &mut self.outputs);
                 }

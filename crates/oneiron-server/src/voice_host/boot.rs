@@ -7,22 +7,26 @@
 //! owner's capability slip and a fresh transport binding proof, admitted by
 //! the doors the HTTP API uses (`bind_transport_once`, then the owner door),
 //! at the on-device locality of a kernel-checked local socket. The socket's
-//! 0600 mode alone proves no owner. A bad or missing token closes the socket
-//! before any audio is admitted; an admitted call is answered `accepted`.
+//! 0600 mode alone proves no owner. A refused hello (a bad or missing token
+//! among them) is answered with one line, `{"op":"refused","code":..,
+//! "reason":..}` ([`Refusal`]), and the socket closes before any audio is
+//! admitted; an admitted call is answered `accepted`.
 //! On a managed vault (FIX 2391) the hello carries no slip. It carries
 //! `managed_owner`, a supervisor's `ManagedOwnerAction` for the vault's
-//! owner, signed over the room and roster the hello names and its
-//! `issued_at`; the vault takes it once, near its time, through the
-//! verifier managed serve hands in. The call's auth is the host root
-//! projected onto that person, off-device, and the owner door then admits
-//! it as it admits a managed facade request. A managed host also takes the
-//! owner's own enrolled device (FIX 1949 = B): its slip and binding proof,
-//! admitted by the same doors, and `machine`, its install key's claim over
-//! that very proof, for a machine that stands here as the owner's own. That
-//! call reads off this device, toward the machine, and ends once the
-//! machine no longer stands so. An invited person's slip stays refused by
-//! the owner door, and a hello mixing an attestation with a slip is
-//! refused. A plain host takes no managed hello and no machine claim.
+//! owner, signed over the room and roster the hello names, its `issued_at`
+//! and its `nonce`, 16 fresh random bytes as 32 lowercase hex characters;
+//! the vault takes it once, near its time, through the verifier managed
+//! serve hands in. The call's auth is the attested owner as the managed
+//! facade takes him (`CoreAuth::for_attested_owner`), off-device, and the
+//! owner door then admits it as it admits a managed facade request. A
+//! managed host also takes the owner's own enrolled device (FIX 1949 = B):
+//! its slip and binding proof, admitted by the same doors, and `machine`,
+//! its install key's claim over that very proof, for a machine that stands
+//! here as the owner's own. That call reads off this device, toward the
+//! machine, and ends once the machine no longer stands so. An invited
+//! person's slip stays refused by the owner door, and a hello mixing an
+//! attestation with a slip, or a slip with a nonce, is refused. A plain host
+//! takes no managed hello and no machine claim.
 //! The hello may name the `room` the call is heard in and the voice
 //! `roster` its speakers are matched under. A room the caller cannot read
 //! closes the socket. A bound call is live in its room until it ends: each
@@ -50,7 +54,7 @@ use oneiron::voice_cascade::{
     VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault, WriteActor};
-use oneiron_vault_contract::ManagedOwnerAction;
+use oneiron_vault_contract::{MANAGED_VOICE_NONCE_BYTES, ManagedOwnerAction};
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -58,11 +62,12 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::backend::CallBackend;
+use super::hello_refusal::{Refusal, refuse, refused};
 use super::{
     ChatBrain, ChatBrainBindings, VoiceHost, VoiceHostBindings, VoiceServeBindings,
     VoiceWireBindings,
 };
-use crate::ai_host::payer_funding::room_launch_funding;
+use crate::ai_host::payer_funding::{PayerFault, room_launch_funding};
 use crate::auth::{BindingProof, CoreAuth, CoreScope, MachineClaim};
 use crate::config::models::VoiceSettings;
 use crate::managed::{ManagedShutdown, ShutdownSignal};
@@ -108,6 +113,11 @@ enum Hello {
         /// When the supervisor attested the hello, in Unix seconds.
         #[serde(default)]
         issued_at: Option<u64>,
+        /// The attestation's fresh nonce, 32 lowercase hex characters,
+        /// signed after `issued_at`: required beside `managed_owner`, and
+        /// carried by no other hello.
+        #[serde(default)]
+        nonce: Option<String>,
         sample_rate: u32,
         channels: u16,
         /// The room the call is heard in, by its id.
@@ -120,10 +130,19 @@ enum Hello {
 }
 
 /// A managed host's check of a hello's supervisor attestation: the owner it
-/// names, given the room and roster the hello names (empty when absent) and
-/// its `issued_at`, or `None`.
-pub(crate) type ManagedVoiceVerifier =
-    Arc<dyn Fn(&ManagedOwnerAction, &str, &str, u64) -> Option<EntityId> + Send + Sync>;
+/// names, given the room and roster the hello names (empty when absent), its
+/// `issued_at` and its nonce's raw bytes, or `None`.
+pub(crate) type ManagedVoiceVerifier = Arc<
+    dyn Fn(
+            &ManagedOwnerAction,
+            &str,
+            &str,
+            u64,
+            &[u8; MANAGED_VOICE_NONCE_BYTES],
+        ) -> Option<EntityId>
+        + Send
+        + Sync,
+>;
 
 /// What a call is admitted under, and how its hello is authenticated.
 #[derive(Clone)]
@@ -221,16 +240,13 @@ async fn accept(
     }
 }
 
-fn refused(reason: &str) -> io::Error {
-    io::Error::new(io::ErrorKind::PermissionDenied, format!("voice: {reason}"))
-}
-
 fn failed(reason: impl std::fmt::Display) -> io::Error {
     io::Error::other(format!("voice: {reason}"))
 }
 
 /// One call: hello, admission, the call's host and bindings, then serving
-/// until the sibling hangs up or the server stops.
+/// until the sibling hangs up or the server stops. A hello refused before
+/// the call is admitted is answered with its `refused` line, then closed.
 async fn call(
     server: &Arc<SyncServer>,
     settings: &VoiceSettings,
@@ -239,79 +255,18 @@ async fn call(
     shutdown: &ManagedShutdown,
 ) -> io::Result<()> {
     // Held until the call and its teardown end, first taken and last dropped.
-    let _admission = (doors.admit)().ok_or_else(|| refused("writes are frozen"))?;
-    let Hello::Hello {
-        token,
-        binding,
-        machine,
-        managed_owner,
-        issued_at,
-        sample_rate,
-        channels,
-        room,
-        roster,
-    } = tokio::time::timeout(HELLO_TIMEOUT, hello(&mut stream))
-        .await
-        .map_err(|_| refused("no hello"))??;
-    let vault = server.vault();
-    let (auth, device) = match (
-        token,
-        binding,
-        machine,
-        managed_owner,
-        issued_at,
-        &doors.managed,
-    ) {
-        // The same doors as the HTTP API: the slip with a fresh binding
-        // proof, admitted once, then the owner door.
-        (Some(token), Some(binding), None, None, None, None) => {
-            if !token.starts_with("v2.slip.") {
-                return Err(refused("not a capability slip"));
-            }
-            let auth = CoreAuth::bind_transport_once(&token, &binding, vault)
-                .map_err(|_| refused("credential"))?
-                .at(CallerLocality::OnDevice);
-            (auth, None)
+    let admission = (doors.admit)();
+    let opened = if admission.is_some() {
+        open(server, settings, doors, &mut stream, shutdown).await
+    } else {
+        Err(refused(Refusal::WritesFrozen))
+    };
+    let (auth, device, prepared) = match opened {
+        Ok(opened) => opened,
+        Err(error) => {
+            refuse(&mut stream, &error).await;
+            return Err(error);
         }
-        // A managed vault's owner on his own enrolled device (FIX 1949 =
-        // B): the same doors, and the machine his hello names proves itself
-        // over this very proof and stands here as his own. The supervisor
-        // forwarded it, so the call reads off this device, toward it.
-        (Some(token), Some(binding), Some(machine), None, None, Some(_)) => {
-            if server.managed_issuer.is_none() {
-                return Err(refused("credential"));
-            }
-            if !token.starts_with("v2.slip.") {
-                return Err(refused("not a capability slip"));
-            }
-            let auth = CoreAuth::bind_transport_once(&token, &binding, vault)
-                .map_err(|_| refused("credential"))?;
-            let device = crate::auth::owned_machine(&machine, &token, &binding, vault)
-                .ok_or_else(|| refused("not the owner's enrolled device"))?;
-            (auth.toward(device), Some(device))
-        }
-        // The managed facade's door: the host root projected onto the
-        // person the supervisor attests, once the attestation checks out.
-        (None, None, None, Some(action), Some(issued_at), Some(verify)) => {
-            if server.managed_issuer.is_none() {
-                return Err(refused("credential"));
-            }
-            if room.as_deref() == Some("") || roster.as_deref() == Some("") {
-                return Err(refused("room"));
-            }
-            let holder = verify(
-                &action,
-                room.as_deref().unwrap_or_default(),
-                roster.as_deref().unwrap_or_default(),
-                issued_at,
-            )
-            .ok_or_else(|| refused("managed owner"))?;
-            let auth = CoreAuth::for_server(&axum::http::HeaderMap::new(), server)
-                .map_err(|_| refused("credential"))?
-                .as_managed_owner(holder);
-            (auth, None)
-        }
-        _ => return Err(refused("credential")),
     };
     let PreparedCall {
         host,
@@ -319,18 +274,7 @@ async fn call(
         media,
         live: _live_call,
         ..
-    } = prepare_call(
-        server,
-        settings,
-        &auth,
-        oneiron::task_verb::sdk::LiveVoiceStartRequest {
-            sample_rate,
-            channels,
-            room_ref: room,
-            roster_ref: roster,
-        },
-        shutdown,
-    )?;
+    } = prepared;
     // The reply is written before the stream is handed over: nothing else
     // is written to it until then.
     stream.write_all(b"{\"op\":\"accepted\"}\n").await?;
@@ -352,6 +296,111 @@ async fn call(
         }
     });
     connection.serve_until(host, stop).await
+}
+
+/// The hello, read and admitted: its credential through the doors its
+/// fields name, then the call's dependencies ([`prepare_call`]). The caller,
+/// the enrolled machine its call reads toward, and the prepared call; each
+/// refusal is a [`Refusal`].
+async fn open(
+    server: &Arc<SyncServer>,
+    settings: &VoiceSettings,
+    doors: &CallDoors,
+    stream: &mut UnixStream,
+    shutdown: &ManagedShutdown,
+) -> io::Result<(CoreAuth, Option<PeerMachine>, PreparedCall)> {
+    let Hello::Hello {
+        token,
+        binding,
+        machine,
+        managed_owner,
+        issued_at,
+        nonce,
+        sample_rate,
+        channels,
+        room,
+        roster,
+    } = tokio::time::timeout(HELLO_TIMEOUT, hello(stream))
+        .await
+        .map_err(|_| refused(Refusal::NoHello))??;
+    let vault = server.vault();
+    let (auth, device) = match (
+        token,
+        binding,
+        machine,
+        managed_owner,
+        issued_at,
+        nonce,
+        &doors.managed,
+    ) {
+        // The same doors as the HTTP API: the slip with a fresh binding
+        // proof, admitted once, then the owner door.
+        (Some(token), Some(binding), None, None, None, None, None) => {
+            if !token.starts_with("v2.slip.") {
+                return Err(refused(Refusal::NotCapabilitySlip));
+            }
+            let auth = CoreAuth::bind_transport_once(&token, &binding, vault)
+                .map_err(|_| refused(Refusal::Credential))?
+                .at(CallerLocality::OnDevice);
+            (auth, None)
+        }
+        // A managed vault's owner on his own enrolled device (FIX 1949 =
+        // B): the same doors, and the machine his hello names proves itself
+        // over this very proof and stands here as his own. The supervisor
+        // forwarded it, so the call reads off this device, toward it.
+        (Some(token), Some(binding), Some(machine), None, None, None, Some(_)) => {
+            if server.managed_issuer.is_none() {
+                return Err(refused(Refusal::Credential));
+            }
+            if !token.starts_with("v2.slip.") {
+                return Err(refused(Refusal::NotCapabilitySlip));
+            }
+            let auth = CoreAuth::bind_transport_once(&token, &binding, vault)
+                .map_err(|_| refused(Refusal::Credential))?;
+            let device = crate::auth::owned_machine(&machine, &token, &binding, vault)
+                .ok_or_else(|| refused(Refusal::NotEnrolledDevice))?;
+            (auth.toward(device), Some(device))
+        }
+        // The managed facade's attested owner, once the attestation over
+        // the hello's room, roster, time and fresh nonce checks out.
+        (None, None, None, Some(action), Some(issued_at), nonce, Some(verify)) => {
+            if server.managed_issuer.is_none() {
+                return Err(refused(Refusal::Credential));
+            }
+            if room.as_deref() == Some("") || roster.as_deref() == Some("") {
+                return Err(refused(Refusal::Room));
+            }
+            let nonce = nonce
+                .as_deref()
+                .and_then(oneiron_vault_contract::managed_voice_nonce)
+                .ok_or_else(|| refused(Refusal::Nonce))?;
+            let holder = verify(
+                &action,
+                room.as_deref().unwrap_or_default(),
+                roster.as_deref().unwrap_or_default(),
+                issued_at,
+                &nonce,
+            )
+            .ok_or_else(|| refused(Refusal::ManagedOwner))?;
+            let auth = CoreAuth::for_attested_owner(holder, server)
+                .map_err(|_| refused(Refusal::Credential))?;
+            (auth, None)
+        }
+        _ => return Err(refused(Refusal::Credential)),
+    };
+    let prepared = prepare_call(
+        server,
+        settings,
+        &auth,
+        oneiron::task_verb::sdk::LiveVoiceStartRequest {
+            sample_rate,
+            channels,
+            room_ref: room,
+            roster_ref: roster,
+        },
+        shutdown,
+    )?;
+    Ok((auth, device, prepared))
 }
 
 /// Call dependencies built only after the existing owner and credential gates.
@@ -378,19 +427,19 @@ pub(super) fn prepare_call(
     } = input;
     let vault = server.vault();
     for scope in [CoreScope::Read, CoreScope::Write] {
-        auth.require(scope).map_err(|_| refused("scope"))?;
+        auth.require(scope).map_err(|_| refused(Refusal::Scope))?;
     }
-    let owner = crate::api::owner(auth, server).map_err(|_| refused("owner"))?;
+    let owner = crate::api::owner(auth, server).map_err(|_| refused(Refusal::Owner))?;
     let actor = auth
         .principal_ref()
         .and_then(|principal| EntityId::from_hex(principal).ok())
-        .ok_or_else(|| refused("principal"))?;
+        .ok_or_else(|| refused(Refusal::Principal))?;
     let payer = WriteActor::new(actor, EdgeActorClass::Human);
     let (agent, instructions) = instructions(auth, vault)?;
     if roster.as_deref().is_some_and(|roster| {
         roster.is_empty() || roster.trim() != roster || roster.len() > MAX_ROSTER_REF_BYTES
     }) {
-        return Err(refused("roster"));
+        return Err(refused(Refusal::Roster));
     }
     let container = room
         .as_deref()
@@ -404,7 +453,13 @@ pub(super) fn prepare_call(
         Some(binding) => crate::server::blocking(|| {
             room_launch_funding(vault, binding.container, None, agent, actor)
         })
-        .map_err(|fault| refused(&fault.to_string()))?,
+        .map_err(|fault| {
+            tracing::info!(%fault, "voice: the room's funding refused the call");
+            refused(match fault {
+                PayerFault::Missing { .. } => Refusal::PayerMissing,
+                PayerFault::Needed { .. } => Refusal::PayerNeeded,
+            })
+        })?,
         None => None,
     };
     // The call is live in its room from here, whichever way it then ends:
@@ -509,12 +564,13 @@ fn bind_room(
     caller: EntityId,
     room: &str,
 ) -> io::Result<VoiceContainerBinding> {
-    let room = EntityId::from_hex(room).map_err(|_| refused("room"))?;
-    let read = crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| refused("room"))?;
+    let room = EntityId::from_hex(room).map_err(|_| refused(Refusal::Room))?;
+    let read =
+        crate::api::scoped_read_for_core_auth(vault, auth).map_err(|_| refused(Refusal::Room))?;
     // A room the caller cannot read is one that does not exist.
     let members = vault
         .room_audience_members_under(&read, room, Some(caller))
-        .map_err(|_| refused("room"))?;
+        .map_err(|_| refused(Refusal::Room))?;
     let mut candidates = Vec::new();
     for party in vault.room_parties(&members).map_err(failed)? {
         if let RoomParty::Contact(contact) = party
@@ -574,13 +630,17 @@ async fn call_revoked(auth: &CoreAuth, server: &SyncServer, device: Option<PeerM
 async fn hello(stream: &mut UnixStream) -> io::Result<Hello> {
     let mut frame = Vec::new();
     loop {
-        let byte = stream.read_u8().await?;
+        // A stream that closes before its hello said none.
+        let byte = stream
+            .read_u8()
+            .await
+            .map_err(|_| refused(Refusal::NoHello))?;
         if byte == b'\n' {
             break;
         }
         frame.push(byte);
     }
-    serde_json::from_slice(&frame).map_err(|_| refused("not a hello"))
+    serde_json::from_slice(&frame).map_err(|_| refused(Refusal::NotHello))
 }
 
 /// The answering agent and its instructions, as the chat route reads them:
@@ -594,7 +654,7 @@ fn instructions(auth: &CoreAuth, vault: &Vault) -> io::Result<(EntityId, Option<
         .dispatchable_definition(&AgentDispatchTarget::Custom(id))
         .map_err(failed)?;
     if !auth.can_read_entity(vault, &id).unwrap_or(false) {
-        return Err(refused("agent not readable"));
+        return Err(refused(Refusal::Agent));
     }
     Ok((
         id,
