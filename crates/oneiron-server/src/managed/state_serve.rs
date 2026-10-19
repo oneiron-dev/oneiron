@@ -1162,6 +1162,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let owner_host = super::owner_storage::owner_host(&config, rehearsal_config);
     // A direct `[linear]` mirror's response custody, private beside them.
     super::owner_storage::linear_responses(&config);
+    // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes
+    // before any worker starts or ready is said (FIX 5677).
+    owner_host.sweep_rehearsals(&vault);
     // The one credential-broker context, built from the opened vault: the
     // `[models]` providers, the System One seat, the embedder and the GPU
     // pods read their `key_secret` keys at its custody door, call by call.
