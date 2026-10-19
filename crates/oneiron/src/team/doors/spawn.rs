@@ -27,7 +27,7 @@ use super::{PlanObservation, TypeStamp};
 
 const NO_PLANNER: &str =
     "this host serves no planner seats; nothing is reserved under this intent key";
-const NO_PLANNER_FIX: &str = "Ask through a server whose [models.planner] seats name an AGENT_DEF this vault holds; the intent key is still free.";
+const NO_PLANNER_FIX: &str = "Ask through a server with an engine-native code-mode host and [models.planner] seats that name an AGENT_DEF this vault holds; the intent key is still free.";
 
 /// One knob of the owner's ask (ARCH-0079 #seed-pin): a seed is where the
 /// planner starts, weighted in runs; a pin is never overridden.

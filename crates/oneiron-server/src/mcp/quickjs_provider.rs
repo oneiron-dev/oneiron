@@ -338,6 +338,13 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         );
         Ok(config)
     }
+    fn template_model(
+        &self,
+        _vault: &Vault,
+        _caller: EntityId,
+    ) -> oneiron::Result<oneiron::ModelId> {
+        Ok(self.config.model.clone())
+    }
 }
 
 struct UnavailableRuntime;
