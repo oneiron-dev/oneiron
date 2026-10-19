@@ -79436,7 +79436,7 @@
      "path": "src/config/mod.rs",
      "purpose": "Server configuration: resolved types, CLI flags, and the file/env/argv merge",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 14,
       "re-export": 24
      }
@@ -81160,7 +81160,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/managed/settings.rs",
@@ -81205,7 +81205,7 @@
      "purpose": "Managed vault open gates: credentials, the canary marker, and the DEK MAC",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -88400,7 +88400,7 @@
      "purpose": "Host-attested account actions: one managed widen request, and one request the vault owner makes in person…",
      "surface": {
       "const": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -88411,7 +88411,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 8,
+      "mod": 9,
       "re-export": 7
      }
     },
@@ -88444,6 +88444,17 @@
      "surface": {
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/settings_policy.rs",
+     "purpose": "What a managed vault's settings file (`--settings-file`) may not set, as dotted fields of the server's…",
+     "surface": {
+      "const": 2,
+      "fn": 1
      }
     },
     {
@@ -88516,7 +88527,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88525,7 +88536,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 20,
+   "source_files": 21,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
