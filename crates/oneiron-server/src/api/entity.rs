@@ -1,8 +1,8 @@
 use super::ViewQuery;
+use super::core_engine_error;
 use super::query_params;
 use super::scoped_auth::check_request_owner_act;
 use super::scoped_read_for_legacy_api;
-use super::core_engine_error;
 use crate::auth::Locality;
 use crate::error::ApiError;
 use crate::projection;
@@ -131,9 +131,9 @@ pub(crate) async fn get_entity(
         .inspect_err(|error| tracing::error!(kind = ?error.kind(), "get entity failed"))
         .map_err(|error| core_engine_error("get entity failed", error))?;
     let slot = read.value.into_iter().next().unwrap_or(Ok(None));
-    let response = match slot.map(|row| {
-        row.and_then(|row| row.body.map(|data| (row.entity_type, row.learned_at, data)))
-    }) {
+    let response = match slot
+        .map(|row| row.and_then(|row| row.body.map(|data| (row.entity_type, row.learned_at, data))))
+    {
         Err(refusal) => core_engine_error("get entity failed", refusal).into_response(),
         Ok(None) => ApiError::not_found("entity", Some(&id_hex)).into_response(),
         Ok(Some((_, _, data))) if view == View::Standard => {
