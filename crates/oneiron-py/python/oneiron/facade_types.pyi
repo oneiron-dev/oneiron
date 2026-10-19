@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1049 facade rows, 3539 declarations.
-Inputs: 985 of 1049 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 939 of 1049 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1050 facade rows, 3552 declarations.
+Inputs: 986 of 1050 fully typed, 64 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 940 of 1050 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 107; unread shapes: 0.
 """
 
@@ -16054,6 +16054,89 @@ class DreamerAttemptView(TypedDict):
     created_at: int
     updated_at: int
     parked: NotRequired[DreamerParkedAttemptView | None]
+class ConsolidationWakeStatusRequest(TypedDict):
+    job_ref: NotRequired[str | None]
+    wake_ref: NotRequired[str | None]
+    limit: NotRequired[int | None]
+    cursor: NotRequired[str | None]
+class DreamerWakeEndView(TypedDict):
+    unix_ms: int
+    elapsed_ms: int
+    stop: NotRequired[str | None]
+class DreamerWakeHeaderView(TypedDict):
+    trigger: str
+    scope: str
+    worker: str
+    node_id: str
+    budget_id: str
+    origin_unix_ms: NotRequired[int | None]
+    ceiling_ms: int
+    ceiling_unix_ms: NotRequired[int | None]
+    entered_unix_ms: int
+    entered_elapsed_ms: int
+    ended: NotRequired[DreamerWakeEndView | None]
+class DreamerWakeResumeView(TypedDict):
+    wake_ref: str
+    at: int
+    worker: str
+class DreamerWakeCheckpointView(TypedDict):
+    park_ref: str
+    job_ref: str
+    attempt_count: int
+    wake_ref: str
+    parked_at: int
+    saved_steps: list[str]
+    resumed: NotRequired[DreamerWakeResumeView | None]
+class DreamerWakeGenerationView(TypedDict):
+    job_ref: str
+    attempt_count: int
+    wake_ref: str
+    worker: str
+    run_id: NotRequired[str | None]
+    admitted_elapsed_ms: int
+    checkpoint: NotRequired[DreamerWakeCheckpointView | None]
+    after_cut: NotRequired[DreamerWakeCheckpointView | None]
+DreamerWakeCallStateView = Literal["claimed", "settled", "aborted", "unsettled"]
+class DreamerWakeCallEndView(TypedDict):
+    state: DreamerWakeCallStateView
+    at_unix_ms: int
+    used_units: NotRequired[int | None]
+    claim_ref: NotRequired[str | None]
+class DreamerWakeCallView(TypedDict):
+    call_ref: str
+    job_ref: str
+    attempt_count: int
+    step_hash: str
+    ordinal: int
+    lease_id: str
+    admitted_elapsed_ms: int
+    end: NotRequired[DreamerWakeCallEndView | None]
+class DreamerWakeLeaseViewOpen(TypedDict):
+    state: Literal["open"]
+    reserve_units: int
+    dispatched: bool
+class DreamerWakeLeaseViewSettled(TypedDict):
+    state: Literal["settled"]
+    used_units: int
+class DreamerWakeLeaseViewAborted(TypedDict):
+    state: Literal["aborted"]
+DreamerWakeLeaseView = DreamerWakeLeaseViewOpen | DreamerWakeLeaseViewSettled | DreamerWakeLeaseViewAborted
+class DreamerWakeLiveCallView(TypedDict):
+    call_ref: str
+    lease_id: str
+    lease: NotRequired[DreamerWakeLeaseView | None]
+class DreamerWakeLiveView(TypedDict):
+    elapsed_ms: int
+    remaining_ms: int
+    calls: list[DreamerWakeLiveCallView]
+class DreamerWakeView(TypedDict):
+    wake_ref: str
+    header: DreamerWakeHeaderView
+    generation: NotRequired[DreamerWakeGenerationView | None]
+    members: NotRequired[list[DreamerWakeGenerationView]]
+    calls: NotRequired[list[DreamerWakeCallView]]
+    next_cursor: NotRequired[str | None]
+    live: NotRequired[DreamerWakeLiveView | None]
 class SettledStepRequest(TypedDict):
     job_ref: str
     step_hash: str
@@ -17860,6 +17943,7 @@ class BoardSubscriptionReply(TypedDict):
 class LensFrameEventRequest(TypedDict):
     event: GeneratedUiActionEvent
     idempotencyKey: str
+    selectedContext: NotRequired[list[str]]
 LensFrameEventReplyLocal = TypedDict("LensFrameEventReplyLocal", {"$state": GeneratedUiStateSnapshot})
 class LensFrameEventReplyTool(TypedDict):
     outcome: Any

@@ -937,6 +937,7 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultConsolidationWakeStatus,
     VaultRunsStep,
     VaultRunsCheckpoint,
     VaultConsolidationHomeGet,
@@ -2009,6 +2010,7 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultConsolidationWakeStatus,
         Self::VaultRunsStep,
         Self::VaultRunsCheckpoint,
         Self::VaultConsolidationHomeGet,
@@ -3106,6 +3108,7 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultConsolidationWakeStatus => "vault.consolidation.wake.status",
             Self::VaultRunsStep => "vault.runs.step",
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationHomeGet => "vault.consolidation.home.get",
@@ -4164,6 +4167,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationWakeStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
@@ -5263,6 +5267,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationWakeStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
@@ -6450,6 +6455,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationWakeStatus
                 | Self::VaultRunsStep
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationHomeGet
@@ -8183,6 +8189,7 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationWakeStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
@@ -9256,6 +9263,7 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationWakeStatus => &["spec"],
             Self::VaultRunsStep => &["spec"],
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationHomeGet => &["spec"],
@@ -11712,7 +11720,7 @@ impl AgentVerb {
             Self::VaultQuestionsRead => "",
             Self::VaultQuestionsAnswers => "",
             Self::VaultQuestionsRefresh => {
-                "Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."
+                "Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."
             }
             Self::VaultQuestionsOutcomes => {
                 "Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label."
@@ -12105,6 +12113,9 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultConsolidationWakeStatus => {
+                "Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now."
             }
             Self::VaultRunsStep => {
                 "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."

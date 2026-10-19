@@ -21037,6 +21037,28 @@ async fn vault_consolidation_status(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_consolidation_wake_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.consolidation.wake.status",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_runs_step(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -25760,6 +25782,9 @@ pub(crate) async fn call_verb(
         "vault.artifacts.read" => vault_artifacts_read(server, call, input).await,
         "vault.consolidation.enqueue" => vault_consolidation_enqueue(server, call, input).await,
         "vault.consolidation.status" => vault_consolidation_status(server, call, input).await,
+        "vault.consolidation.wake.status" => {
+            vault_consolidation_wake_status(server, call, input).await
+        }
         "vault.runs.step" => vault_runs_step(server, call, input).await,
         "vault.runs.checkpoint" => vault_runs_checkpoint(server, call, input).await,
         "vault.consolidation.home.get" => vault_consolidation_home_get(server, call, input).await,

@@ -740,9 +740,15 @@ class TaskAskPersonEvidence(TypedDict):
 
 # OF-181: a host-rendered lens card's event and close. These keep the wire's
 # camelCase keys: they are the server route's bodies, not snake_case DTOs.
+# `selectedContext` (FIX 3268): the clicker's selectionRefs on this card,
+# context for a model round trip only; empty when absent.
 LensFrameEventRequest = TypedDict(
     "LensFrameEventRequest",
-    {"event": Facade.GeneratedUiActionEvent, "idempotencyKey": str},
+    {
+        "event": Facade.GeneratedUiActionEvent,
+        "idempotencyKey": str,
+        "selectedContext": NotRequired[list[str]],
+    },
 )
 LensFrameLocalReply = TypedDict("LensFrameLocalReply", {"$state": Facade.GeneratedUiStateSnapshot})
 LensFrameToolReply = TypedDict(
@@ -3057,8 +3063,8 @@ class Oneiron:
         def backfill(self, spec: Facade.QuestionBackfillRequest) -> Facade.ScheduledBackfill: ...
         def read(self, spec: Facade.QuestionReadRequest) -> Facade.QuestionRecord | None: ...
         def answers(self, spec: Facade.QuestionAnswersRequest) -> list[Facade.QuestionAnswer]: ...
-        def refresh(self, spec: Facade.QuestionRefreshRequest) -> list[Facade.AnswerRecord]:
-            """Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."""
+        def refresh(self, spec: Facade.QuestionRefreshRequest) -> list[Facade.QuestionAnswer]:
+            """Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."""
         @property
         def outcomes(self) -> "Oneiron._VaultQuestionsOutcomesVerbs": ...
         def schedule(self, spec: Facade.QuestionScheduleRequest) -> Facade.QuestionScheduleHead | None:
@@ -3218,6 +3224,8 @@ class Oneiron:
         def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
             """Reads the status of one consolidation attempt by its durable job reference."""
         @property
+        def wake(self) -> "Oneiron._VaultConsolidationWakeVerbs": ...
+        @property
         def home(self) -> "Oneiron._VaultConsolidationHomeVerbs": ...
         def lineage(self, spec: Facade.ConsolidationLineageRequest) -> Facade.ConsolidationLineageView | None:
             """The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."""
@@ -3231,6 +3239,9 @@ class Oneiron:
             """Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority."""
         def evidence(self, spec: Facade.ConsolidationEvidenceRequest) -> Facade.ScopedReadResult[list[Facade.ConsolidationEvidenceSource]]:
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
+    class _VaultConsolidationWakeVerbs:
+        def status(self, spec: Facade.ConsolidationWakeStatusRequest) -> Facade.DreamerWakeView | None:
+            """Reads one page of a consolidation wake pass observation by attempt or wake reference: its clock and ceiling, admitted attempts, each model call with its lease, the Checkpoint parks it cut and the pass as it runs now."""
     class _VaultConsolidationHomeVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ConsolidationHomeView:
             """The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."""

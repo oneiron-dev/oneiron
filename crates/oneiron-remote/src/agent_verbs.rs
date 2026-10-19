@@ -2472,7 +2472,7 @@ impl OneironClient {
                     Vec<oneiron::receipt::QuestionAnswer>,
                 >(client, verb, &input),
                 "vault.questions.refresh" => remote_agent_verb_output::<
-                    Vec<oneiron::llm::decision::questions::AnswerRecord>,
+                    Vec<oneiron::receipt::QuestionAnswer>,
                 >(client, verb, &input),
                 "vault.questions.outcomes" => remote_agent_verb_output::<
                     oneiron::receipt::QuestionOutcomes,
@@ -2841,6 +2841,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.consolidation.status" => remote_agent_verb_output::<
                     Option<oneiron::memory::DreamerAttemptView>,
+                >(client, verb, &input),
+                "vault.consolidation.wake.status" => remote_agent_verb_output::<
+                    Option<oneiron::memory::DreamerWakeView>,
                 >(client, verb, &input),
                 "vault.runs.step" => remote_agent_verb_output::<
                     Option<oneiron::llm::model_step::SettledStepView>,
@@ -12985,7 +12988,7 @@ impl OneironClient {
     pub fn vault_questions_refresh(
         &self,
         input: &oneiron::receipt::QuestionRefreshRequest,
-    ) -> Result<Vec<oneiron::llm::decision::questions::AnswerRecord>, MemoryError> {
+    ) -> Result<Vec<oneiron::receipt::QuestionAnswer>, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -14499,6 +14502,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.status", value)
+    }
+    pub fn vault_consolidation_wake_status(
+        &self,
+        input: &oneiron::memory::ConsolidationWakeStatusRequest,
+    ) -> Result<Option<oneiron::memory::DreamerWakeView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consolidation.wake.status", value)
     }
     pub fn vault_runs_step(
         &self,
