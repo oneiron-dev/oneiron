@@ -36,10 +36,8 @@ use crate::server::SyncServer;
 /// presented; unknown when they are not known. The call runs as it asked
 /// from any surface; for a caller off this device whose reply names or
 /// lists a row that stays here, only the answer narrows, to the word that
-/// it ran ([`crate::device_local::act_answer`]). A held or pending call's
-/// answer names the call ref its caller parks on and polls by, and no row
-/// content, so it answers as before; what the ref leads to narrows where
-/// it is read or delivered.
+/// it ran ([`crate::device_local::act_answer`]). Some answers are left
+/// unjudged and answer as before ([`answers_as_before`]).
 pub(crate) async fn connector_call(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -69,11 +67,29 @@ pub(crate) async fn connector_call(
         Err(refusal) => (Err(refusal), Some(listed)),
     };
     match answer {
-        (Ok(reply), rows) if reply.wait_ref().is_some() => (Ok(ActAnswer::Done(reply)), rows),
+        (Ok(reply), rows) if answers_as_before(&reply) => (Ok(ActAnswer::Done(reply)), rows),
         answer => {
             crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
         }
     }
+}
+
+/// Whether a connector's `awaiting_input` reply narrows like any other act
+/// answer. Off (FIX-LIST line 5824): its caller keeps the questions, the
+/// handle it answers them by through `connector.answer`, and their expiry,
+/// as before, until an answer shape that keeps the handle and narrows only
+/// the questions naming a kept row exists.
+const AWAITING_INPUT_REPLY_NARROWS: bool = false;
+
+/// Whether `reply` answers as before, unjudged. A held or pending call's
+/// reply names the call ref its caller parks on and polls by, and no row
+/// content; what the ref leads to narrows where it is read or delivered. A
+/// connector's questions keep their answer path
+/// ([`AWAITING_INPUT_REPLY_NARROWS`]).
+fn answers_as_before(reply: &ConnectorCallReply) -> bool {
+    reply.wait_ref().is_some()
+        || (!AWAITING_INPUT_REPLY_NARROWS
+            && matches!(reply, ConnectorCallReply::AwaitingInput { .. }))
 }
 
 /// [`connector_call`]'s call as it answered before FIX 5455: its reply in
