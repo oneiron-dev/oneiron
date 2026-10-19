@@ -61,8 +61,8 @@ pub use self::residence::{
     SealedBundleRelay, SearchSource, ThinItem, fetch_sealed_bundle_with_kit,
 };
 pub(crate) use self::residence::{
-    catch_up_authority, fetch_owed_machine_history, pinned_checkpoint_pending, relay_sealed_bundle,
-    retry_refused_retains, search_resident,
+    catch_up_authority, exchange_checkpoint_roots, fetch_owed_machine_history,
+    pinned_checkpoint_pending, relay_sealed_bundle, retry_refused_retains, search_resident,
 };
 pub use self::sync_frames::next_backoff;
 pub use self::types::{

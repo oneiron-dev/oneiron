@@ -215,7 +215,7 @@ async fn adopt_pinned_checkpoint(
 /// The checkpoint image the home keeps at `checkpoint` and the attestations
 /// it keeps for it, read a part at a time. `None` when the home refuses the
 /// read or keeps no such image.
-async fn fetch_authority_checkpoint(
+pub(super) async fn fetch_authority_checkpoint(
     rpc: &mut ResidenceRpc,
     checkpoint: &[u8; 32],
 ) -> Result<Option<(Vec<u8>, Vec<AuthorityCheckpointAttestation>)>, TransportError> {
