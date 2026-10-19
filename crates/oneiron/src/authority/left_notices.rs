@@ -118,6 +118,17 @@ impl Vault {
         Ok(chain.into_iter().map(|(_, bytes)| bytes).collect())
     }
 
+    /// The signed ReRoot rows that hand this vault's root on to `signer`, in
+    /// chain order from the genesis root's own handoff: what a courtesy ask
+    /// or answer `signer` signed rides behind, so a former peer that pinned
+    /// any earlier root still verifies it (FIX 3014). Empty when no handoff
+    /// names `signer`.
+    pub(crate) fn root_handoff_to(&self, signer: &AuthorityKey) -> Result<Vec<Vec<u8>>> {
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.leave_notice_handoff_in_txn(&txn, &fold, signer, &BTreeSet::new())
+    }
+
     /// The heads this vault's authority fold stands at: what a removed
     /// member's leave-notice request names, so its home sends only the
     /// handoff past them (FIX 2053).

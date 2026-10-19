@@ -1,7 +1,8 @@
 //! The peer-facing courtesy deletion routes (OF-273). Keyless like the open
 //! inbox: the signed body is the authentication, checked against the key
-//! this vault pinned for the pact it names. Nothing is deleted on receipt;
-//! an ask is filed for the owner's review.
+//! this vault pinned for the pact it names, or the root a kept succession
+//! hands that key on to (FIX 3014). Nothing is deleted on receipt; an ask
+//! is filed for the owner's review.
 
 use std::sync::Arc;
 
@@ -12,18 +13,20 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use oneiron::deletion::{
-    COOP_DELETION_PEER_PATH, COOP_DELETION_REPLY_PEER_PATH, CooperativeDeletionIngress,
+    COOP_DELETION_PEER_PATH, COOP_DELETION_REPLY_PEER_PATH, COOP_DELETION_SUCCESSION_PEER_PATH,
+    CooperativeDeletionIngress,
 };
 
 use crate::server::SyncServer;
 
-/// One signed ask or answer, with room to spare: the codec caps a decode at 32 KiB.
+/// One signed ask, answer or succession page: the codec caps a decode at 32 KiB.
 const MAX_BODY_BYTES: usize = 32 * 1024;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route(COOP_DELETION_PEER_PATH, post(take_request))
         .route(COOP_DELETION_REPLY_PEER_PATH, post(take_reply))
+        .route(COOP_DELETION_SUCCESSION_PEER_PATH, post(take_succession))
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
 }
 
@@ -58,6 +61,27 @@ pub(super) async fn take_request(State(server): State<Arc<SyncServer>>, body: By
 pub(super) async fn take_reply(State(server): State<Arc<SyncServer>>, body: Bytes) -> Response {
     land(server, body, |vault, bytes, now| {
         vault.receive_cooperative_deletion_reply(bytes, now)
+    })
+    .await
+}
+
+/// `POST /v1/federation/courtesy-delete/succession`: one page of a former
+/// peer's root succession, sent ahead of an ask or an answer (FIX 3014).
+#[utoipa::path(post, path = "/v1/federation/courtesy-delete/succession",
+    operation_id = "federation_courtesy_delete_succession",
+    request_body(content = Vec<u8>, description = "One page of the former peer's signed ReRoot rows, in the courtesy codec, in chain order. No bearer: each row is signed, and only rows that walk on from the key this vault pinned for the pact the page names are kept. They change no pact and enter no authority log.", content_type = "application/octet-stream"),
+    responses(
+        (status = 202, description = "Kept: the page carried the next handoffs from the pinned key."),
+        (status = 200, description = "Nothing new to keep."),
+        (status = 403, description = "No pact with this peer, or a row does not verify as its signed ReRoot."),
+        (status = 409, description = "A row forks a handoff already kept."),
+        (status = 503, description = "The vault could not keep it now; send it again.")))]
+pub(super) async fn take_succession(
+    State(server): State<Arc<SyncServer>>,
+    body: Bytes,
+) -> Response {
+    land(server, body, |vault, bytes, _now| {
+        vault.receive_cooperative_deletion_succession(bytes)
     })
     .await
 }

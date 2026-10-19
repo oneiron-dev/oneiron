@@ -4,6 +4,7 @@ mod actor_fields;
 mod coop_delivery;
 mod coop_reply;
 mod coop_request;
+mod coop_succession;
 mod delete;
 mod derived_rows;
 mod erase;
@@ -43,6 +44,11 @@ pub use coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     decode_self_signed_cooperative_deletion_request, encode_cooperative_deletion_request_body,
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
+};
+// Courtesy across a former peer's host re-root (FIX 3014).
+pub use coop_succession::{
+    COOP_DELETION_SUCCESSION_PEER_PATH, COOP_DELETION_SUCCESSION_SCHEMA_VERSION,
+    CooperativeDeletionSuccession,
 };
 pub use delete::{
     DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview, HeldBytes, LfsChunkImpact,

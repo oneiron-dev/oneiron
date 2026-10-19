@@ -1,7 +1,11 @@
 //! Delivers queued courtesy deletion asks and answers (OF-273). Each try
 //! POSTs the signed bytes unchanged to the destination frozen when they were
 //! queued, with redirects off; the engine settles the ledger. Runs on the
-//! housekeeping pass's blocking worker.
+//! housekeeping pass's blocking worker. On a vault whose root a re-root
+//! handed on, each try first POSTs the succession pages to the peer's
+//! succession route, in order, so a peer that pinned an earlier root still
+//! verifies the try (FIX 3014); a page the peer does not take settles the
+//! try as its answer would.
 
 use std::time::Duration;
 
@@ -17,6 +21,33 @@ fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// One POST of `body` to `destination`, read as a try's result.
+fn post(
+    client: &reqwest::blocking::Client,
+    destination: &str,
+    body: &[u8],
+) -> CooperativeDeletionTry {
+    match client
+        .post(destination)
+        .header("Content-Type", "application/msgpack")
+        .header("User-Agent", "oneiron-courtesy-delete")
+        .body(body.to_vec())
+        .send()
+    {
+        Ok(response) if response.status().is_success() => CooperativeDeletionTry::Delivered,
+        Ok(response) => {
+            let status = response.status().as_u16();
+            if (400..500).contains(&status) && !matches!(status, 408 | 429) {
+                CooperativeDeletionTry::Refused(status)
+            } else {
+                CooperativeDeletionTry::Failed(format!("http {status}"))
+            }
+        }
+        Err(error) if error.is_timeout() => CooperativeDeletionTry::Failed("timeout".to_owned()),
+        Err(_) => CooperativeDeletionTry::Failed("network".to_owned()),
+    }
 }
 
 impl SyncServer {
@@ -44,28 +75,22 @@ impl SyncServer {
             }
             let result = match client.as_ref() {
                 None => CooperativeDeletionTry::Failed("client".to_owned()),
-                Some(client) => match client
-                    .post(&delivery.destination)
-                    .header("Content-Type", "application/msgpack")
-                    .header("User-Agent", "oneiron-courtesy-delete")
-                    .body(delivery.bytes.clone())
-                    .send()
-                {
-                    Ok(response) if response.status().is_success() => {
-                        CooperativeDeletionTry::Delivered
+                Some(client) => match vault.cooperative_deletion_succession(&delivery) {
+                    Err(error) => {
+                        tracing::warn!(kind = ?error.kind(), "courtesy delete succession failed");
+                        CooperativeDeletionTry::Failed("succession".to_owned())
                     }
-                    Ok(response) => {
-                        let status = response.status().as_u16();
-                        if (400..500).contains(&status) && !matches!(status, 408 | 429) {
-                            CooperativeDeletionTry::Refused(status)
-                        } else {
-                            CooperativeDeletionTry::Failed(format!("http {status}"))
-                        }
-                    }
-                    Err(error) if error.is_timeout() => {
-                        CooperativeDeletionTry::Failed("timeout".to_owned())
-                    }
-                    Err(_) => CooperativeDeletionTry::Failed("network".to_owned()),
+                    Ok(succession) => succession
+                        .iter()
+                        .flat_map(|succession| {
+                            succession
+                                .pages
+                                .iter()
+                                .map(move |page| (succession.destination.as_str(), page))
+                        })
+                        .map(|(destination, page)| post(client, destination, page))
+                        .find(|result| *result != CooperativeDeletionTry::Delivered)
+                        .unwrap_or_else(|| post(client, &delivery.destination, &delivery.bytes)),
                 },
             };
             match vault.settle_cooperative_deletion_delivery(&delivery, result, unix_now()) {

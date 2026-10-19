@@ -439,8 +439,9 @@ impl Vault {
     }
 
     /// Files a peer's signed ask for the owner's review, after verifying it
-    /// against the key this vault pinned for that peer. Nothing is deleted
-    /// here, whatever the ask says.
+    /// against the key this vault pinned for that peer, or the root a kept
+    /// succession hands it on to (FIX 3014). Nothing is deleted here,
+    /// whatever the ask says.
     pub fn receive_cooperative_deletion_request(
         &self,
         bytes: &[u8],
@@ -453,8 +454,10 @@ impl Vault {
         let Some(pact) = fold.federation_pacts.get(&pact_id) else {
             return Ok(CooperativeDeletionIngress::Unauthenticated);
         };
-        let Ok(body) = decode_and_verify_cooperative_deletion_request(bytes, &pact.peer_owner_key)
-        else {
+        let Some(signer) = self.courtesy_pact_signer(&pact_id, pact)? else {
+            return Ok(CooperativeDeletionIngress::Unauthenticated);
+        };
+        let Ok(body) = decode_and_verify_cooperative_deletion_request(bytes, &signer) else {
             return Ok(CooperativeDeletionIngress::Unauthenticated);
         };
         if body.pact_id != pact_id
@@ -488,7 +491,8 @@ impl Vault {
     }
 
     /// Lands a former peer's answer on this vault's record of the ask, after
-    /// verifying it against the key this vault pinned for that peer.
+    /// verifying it against the key this vault pinned for that peer, or the
+    /// root a kept succession hands it on to (FIX 3014).
     pub fn receive_cooperative_deletion_reply(
         &self,
         bytes: &[u8],
@@ -501,8 +505,10 @@ impl Vault {
         let Some(pact) = fold.federation_pacts.get(&pact_id) else {
             return Ok(CooperativeDeletionIngress::Unauthenticated);
         };
-        let Ok(reply) = decode_and_verify_cooperative_deletion_reply(bytes, &pact.peer_owner_key)
-        else {
+        let Some(signer) = self.courtesy_pact_signer(&pact_id, pact)? else {
+            return Ok(CooperativeDeletionIngress::Unauthenticated);
+        };
+        let Ok(reply) = decode_and_verify_cooperative_deletion_reply(bytes, &signer) else {
             return Ok(CooperativeDeletionIngress::Unauthenticated);
         };
         if reply.pact_id != pact_id
