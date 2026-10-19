@@ -773,6 +773,12 @@ impl OneironClient {
                 "vault.authority.history.import" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AuthorityHistoryImported,
                 >(client, verb, &input),
+                "vault.wire_health.thresholds.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WireThresholds,
+                >(client, verb, &input),
+                "vault.wire_health.thresholds.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WireThresholdsReceipt,
+                >(client, verb, &input),
                 "vault.slim.policy" => remote_agent_verb_output::<
                     oneiron::slim::public::SlimIdlePolicy,
                 >(client, verb, &input),
@@ -1333,6 +1339,18 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.consent.revoke" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
+                "vault.consent.bypass_grant_warning" => remote_agent_verb_output::<
+                    oneiron::consent::bypass_lifecycle::BypassGrantWarningView,
+                >(client, verb, &input),
+                "vault.consent.create_bypass_grant" => remote_agent_verb_output::<
+                    Vec<oneiron::consent::lifecycle::ConsentActReceipt>,
+                >(client, verb, &input),
+                "vault.consent.active_bypass_grants" => remote_agent_verb_output::<
+                    Vec<oneiron::consent::bypass_lifecycle::BypassActiveState>,
+                >(client, verb, &input),
+                "vault.consent.bypassed_effect_receipts" => remote_agent_verb_output::<
+                    Vec<oneiron::consent::bypass_lifecycle::BypassedEffectReceipt>,
                 >(client, verb, &input),
                 "vault.consent.graduation.policy" => remote_agent_verb_output::<
                     oneiron::consent_graduation::api::GraduationPolicies,
@@ -1896,6 +1914,24 @@ impl OneironClient {
                 "vault.critic.review" => remote_agent_verb_output::<
                     oneiron::critic::review::CriticReviewOutcome,
                 >(client, verb, &input),
+                "vault.artifacts.propose_outline" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckOutlineView,
+                >(client, verb, &input),
+                "vault.artifacts.outline" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckOutlineView,
+                >(client, verb, &input),
+                "vault.artifacts.keep_outline" => remote_agent_verb_output::<
+                    oneiron::edit_roundtrip::deck_create::KeptOutline,
+                >(client, verb, &input),
+                "vault.artifacts.decline_outline" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckOutlineDeclined,
+                >(client, verb, &input),
+                "vault.artifacts.design_deck" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckDesignView,
+                >(client, verb, &input),
+                "vault.artifacts.create_deck" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::deck_creation::DeckEmissionOutcome,
+                >(client, verb, &input),
                 "vault.artifacts.inspect_deck" => remote_agent_verb_output::<
                     oneiron::blob_artifact::DeckInspectionView,
                 >(client, verb, &input),
@@ -2405,6 +2441,18 @@ impl OneironClient {
                 "vault.delete" => {
                     remote_agent_verb_output::<oneiron::memory::DeleteReceipt>(client, verb, &input)
                 }
+                "vault.writes.critical_confirm.pending" => remote_agent_verb_output::<
+                    Option<oneiron::memory::CriticalWriteConfirmPending>,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.clear" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmSettlement,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.decline" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmSettlement,
+                >(client, verb, &input),
+                "vault.writes.critical_confirm.receipt" => remote_agent_verb_output::<
+                    oneiron::memory::CriticalWriteConfirmReceipt,
+                >(client, verb, &input),
                 "vault.writes.pending" => remote_agent_verb_output::<
                     Vec<oneiron::memory::PendingWrite>,
                 >(client, verb, &input),
@@ -5992,6 +6040,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.authority.history.import", value)
     }
+    pub fn vault_wire_health_thresholds_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::WireThresholds, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.wire_health.thresholds.get", value)
+    }
+    pub fn vault_wire_health_thresholds_set(
+        &self,
+        input: &oneiron::task_verb::sdk::WireThresholds,
+    ) -> Result<oneiron::task_verb::sdk::WireThresholdsReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.wire_health.thresholds.set", value)
+    }
     pub fn vault_slim_policy(
         &self,
         input: &oneiron::task_verb::sdk::EmptyRequest,
@@ -8189,6 +8261,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consent.revoke", value)
+    }
+    pub fn vault_consent_bypass_grant_warning(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest,
+    ) -> Result<oneiron::consent::bypass_lifecycle::BypassGrantWarningView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.bypass_grant_warning", value)
+    }
+    pub fn vault_consent_create_bypass_grant(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest,
+    ) -> Result<Vec<oneiron::consent::lifecycle::ConsentActReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.create_bypass_grant", value)
+    }
+    pub fn vault_consent_active_bypass_grants(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::ActiveBypassGrantsRequest,
+    ) -> Result<Vec<oneiron::consent::bypass_lifecycle::BypassActiveState>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.active_bypass_grants", value)
+    }
+    pub fn vault_consent_bypassed_effect_receipts(
+        &self,
+        input: &oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest,
+    ) -> Result<Vec<oneiron::consent::bypass_lifecycle::BypassedEffectReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.consent.bypassed_effect_receipts", value)
     }
     pub fn vault_consent_graduation_policy(
         &self,
@@ -10423,6 +10543,78 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.critic.review", value)
     }
+    pub fn vault_artifacts_propose_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineProposeRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckOutlineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.propose_outline", value)
+    }
+    pub fn vault_artifacts_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineRefRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckOutlineView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.outline", value)
+    }
+    pub fn vault_artifacts_keep_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+    ) -> Result<oneiron::edit_roundtrip::deck_create::KeptOutline, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.keep_outline", value)
+    }
+    pub fn vault_artifacts_decline_outline(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckOutlineDeclined, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.decline_outline", value)
+    }
+    pub fn vault_artifacts_design_deck(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckDesignRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckDesignView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.design_deck", value)
+    }
+    pub fn vault_artifacts_create_deck(
+        &self,
+        input: &oneiron::blob_artifact::deck_creation::DeckEmissionRequest,
+    ) -> Result<oneiron::blob_artifact::deck_creation::DeckEmissionOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.create_deck", value)
+    }
     pub fn vault_artifacts_inspect_deck(
         &self,
         input: &oneiron::blob_artifact::DeckInspectRequest,
@@ -12457,6 +12649,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.delete", value)
+    }
+    pub fn vault_writes_critical_confirm_pending(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmPendingRequest,
+    ) -> Result<Option<oneiron::memory::CriticalWriteConfirmPending>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.pending", value)
+    }
+    pub fn vault_writes_critical_confirm_clear(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.clear", value)
+    }
+    pub fn vault_writes_critical_confirm_decline(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.decline", value)
+    }
+    pub fn vault_writes_critical_confirm_receipt(
+        &self,
+        input: &oneiron::memory::CriticalWriteConfirmReceiptRequest,
+    ) -> Result<oneiron::memory::CriticalWriteConfirmReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.writes.critical_confirm.receipt", value)
     }
     pub fn vault_writes_pending(
         &self,

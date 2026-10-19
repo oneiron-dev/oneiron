@@ -244,6 +244,8 @@ both bindings and their export-census tests in one change.
 - `vault.authority.audit`
 - `vault.authority.history.export`
 - `vault.authority.history.import`
+- `vault.wire_health.thresholds.get`
+- `vault.wire_health.thresholds.set`
 - `vault.slim.policy`
 - `vault.slim.state`
 - `vault.slim.resume_step`
@@ -427,6 +429,10 @@ both bindings and their export-census tests in one change.
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
 - `vault.consent.revoke`
+- `vault.consent.bypass_grant_warning`
+- `vault.consent.create_bypass_grant`
+- `vault.consent.active_bypass_grants`
+- `vault.consent.bypassed_effect_receipts`
 - `vault.consent.graduation.policy`
 - `vault.consent.graduation.policy.set`
 - `vault.consent.graduation.policy.clear`
@@ -611,6 +617,12 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
 - `vault.critic.review`
+- `vault.artifacts.propose_outline`
+- `vault.artifacts.outline`
+- `vault.artifacts.keep_outline`
+- `vault.artifacts.decline_outline`
+- `vault.artifacts.design_deck`
+- `vault.artifacts.create_deck`
 - `vault.artifacts.inspect_deck`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`
@@ -776,6 +788,10 @@ both bindings and their export-census tests in one change.
 - `vault.claims.read_filtered`
 - `vault.claims.history`
 - `vault.delete`
+- `vault.writes.critical_confirm.pending`
+- `vault.writes.critical_confirm.clear`
+- `vault.writes.critical_confirm.decline`
+- `vault.writes.critical_confirm.receipt`
 - `vault.writes.pending`
 - `vault.hydrate`
 - `vault.get`

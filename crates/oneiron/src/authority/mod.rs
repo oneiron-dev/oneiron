@@ -48,6 +48,7 @@ mod checkpoint_image;
 mod checkpoint_policy;
 mod checkpoint_policy_choice;
 mod claim_write;
+mod critical_confirm_door;
 mod engine_machine;
 mod entry_transition;
 mod first_seen_clock;

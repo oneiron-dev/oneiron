@@ -25,7 +25,9 @@ pub use encoder_export::{
 };
 pub(crate) use teacher_probe::valid_holder_ref as valid_teacher_probe_holder_ref;
 pub use teacher_probe::{TEACHER_PROBE_ID, TeacherProbeApproval, TeacherProbePolicy};
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelRole {
     RetrievalEmbedder,
