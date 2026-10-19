@@ -44,7 +44,10 @@ pub(crate) fn open(
     // Crash output never carries world text: the engine's hook goes in before
     // any vault opens (owner ruling 2026-10-14, fix 6).
     oneiron::panic_report::install_panic_hook();
-    let options = OpenOptions { dimensions };
+    let options = OpenOptions {
+        dimensions,
+        device_class: None,
+    };
     py.detach(|| OneironClient::open_with_host_root(path.as_deref(), &options, host_root_secret))
         .map_err(raise)
 }
