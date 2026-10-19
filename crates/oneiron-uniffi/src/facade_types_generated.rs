@@ -33196,6 +33196,12 @@ pub struct TaskTypeTreePin {
     pub tree_version: u64,
     #[serde(rename = "nodes")]
     pub nodes: Vec<TaskTypeNodeSpec>,
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
 }
 
 /// `oneiron::team::doors::TypeStamp`.
@@ -33238,8 +33244,20 @@ pub struct TaskTypeTreePinReceipt {
     pub fork_ref: String,
     #[serde(rename = "stored")]
     pub stored: TaskTypeTreeView,
-    #[serde(rename = "in_force")]
-    pub in_force: bool,
+    #[serde(
+        rename = "requested_tree_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub requested_tree_version: Option<u64>,
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
+    #[serde(rename = "in_force", default, skip_serializing_if = "Option::is_none")]
+    pub in_force: Option<bool>,
 }
 
 /// `oneiron::team::doors::TaskTypeTreeRead`.
@@ -39119,6 +39137,10 @@ pub enum CallPurpose {
     Voice,
     #[serde(rename = "eval")]
     Eval,
+    #[serde(rename = "autonomy.for_human")]
+    AutonomyForHuman,
+    #[serde(rename = "autonomy.own_time")]
+    AutonomyOwnTime,
     #[serde(rename = "other")]
     Other {
         #[serde(rename = "name")]

@@ -76,27 +76,24 @@ pub fn load_team_type_tree_at(
     version: u64,
 ) -> Result<Option<TaskTypeTree>> {
     let txn = vault.store.env.read_txn()?;
-    let in_force = load_team_type_tree_in_txn(vault, &txn, project)?;
+    load_team_type_tree_at_in_txn(vault, &txn, project, version)
+}
+
+/// [`load_team_type_tree_at`] in the caller's snapshot, so a read pairs the
+/// kept tree with what else that snapshot holds.
+pub(crate) fn load_team_type_tree_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    version: u64,
+) -> Result<Option<TaskTypeTree>> {
+    let in_force = load_team_type_tree_in_txn(vault, txn, project)?;
     if in_force.version == version {
         return Ok(Some(in_force));
     }
-    let vault_skill = team_shape_skill()?;
-    let mut revisions = Vec::new();
-    if let Some(project) = project
-        && let Some(record) = vault.visible_project_in_txn(&txn, project)?
-    {
-        for fork in record.skill_forks.iter().rev() {
-            if let Ok(fork) = EntityId::from_hex(fork)
-                && in_lineage_in_txn(vault, &txn, fork, vault_skill)?
-            {
-                revisions.push(fork);
-            }
-        }
-    }
-    revisions.extend(supersession_chain_in_txn(vault, &txn, vault_skill)?);
-    for skill in revisions {
-        if vault.get_skill_record_in_txn(&txn, &skill)?.is_some()
-            && let Some(tree) = stored_tree_unchecked_in_txn(vault, &txn, &skill)?
+    for skill in kept_revisions_in_txn(vault, txn, project, team_shape_skill()?)? {
+        if vault.get_skill_record_in_txn(txn, &skill)?.is_some()
+            && let Some(tree) = stored_tree_unchecked_in_txn(vault, txn, &skill)?
             && tree.version == version
         {
             return Ok(Some(tree));
@@ -104,6 +101,31 @@ pub fn load_team_type_tree_at(
     }
     let seed = TaskTypeTree::seeded();
     Ok((seed.version == version).then_some(seed))
+}
+
+/// The kept revisions [`load_team_type_tree_at`] searches for `project`, in
+/// its order: the project's team-shape forks, then the vault skill's
+/// supersession chain, each newest first.
+fn kept_revisions_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+    vault_skill: EntityId,
+) -> Result<Vec<EntityId>> {
+    let mut revisions = Vec::new();
+    if let Some(project) = project
+        && let Some(record) = vault.visible_project_in_txn(txn, project)?
+    {
+        for fork in record.skill_forks.iter().rev() {
+            if let Ok(fork) = EntityId::from_hex(fork)
+                && in_lineage_in_txn(vault, txn, fork, vault_skill)?
+            {
+                revisions.push(fork);
+            }
+        }
+    }
+    revisions.extend(supersession_chain_in_txn(vault, txn, vault_skill)?);
+    Ok(revisions)
 }
 
 /// Every revision on the vault skill's supersession chain, newest first.
@@ -151,13 +173,22 @@ pub fn team_shape_skill_in_force(
     project: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
     let txn = vault.store.env.read_txn()?;
+    team_shape_skill_in_force_in_txn(vault, &txn, project)
+}
+
+/// [`team_shape_skill_in_force`] in the caller's snapshot.
+pub(crate) fn team_shape_skill_in_force_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+) -> Result<Option<EntityId>> {
     let vault_skill = team_shape_skill()?;
     if let Some(project) = project
-        && let Some(fork) = project_fork_in_txn(vault, &txn, project, vault_skill)?
+        && let Some(fork) = project_fork_in_txn(vault, txn, project, vault_skill)?
     {
         return Ok(Some(fork));
     }
-    vault_head_in_txn(vault, &txn, vault_skill)
+    vault_head_in_txn(vault, txn, vault_skill)
 }
 
 /// Places a spawn once against `tree`: a requested stamp the tree accepts
@@ -185,6 +216,14 @@ pub(crate) fn place_in_tree(
 /// version must not fall behind the tree its parent carries; stamps placed
 /// against older versions are never restamped.
 ///
+/// One version names one structure in the tree's lookup scope: the fork's
+/// own prior tree, its parent's, the seed and every kept revision
+/// [`load_team_type_tree_at`] searches for `project` (`None` is the vault).
+/// A requested version a tree of another structure already uses there is
+/// stored at the next free version instead; the same structure at the same
+/// version stays at it. The version is chosen in the write that stores the
+/// tree. Returns the version stored.
+///
 /// # Errors
 ///
 /// [`crate::error::ArtifactError::InvalidAgentDispatchInput`] for a fork
@@ -194,48 +233,96 @@ pub fn store_team_type_tree(
     vault: &Vault,
     fork: EntityId,
     tree: &TaskTypeTree,
+    project: Option<EntityId>,
     at: u64,
-) -> Result<()> {
+) -> Result<u64> {
     validate_tree(tree)?;
-    let txn = vault.store.env.read_txn()?;
-    let record = vault.read_skill_record_in_txn(&txn, &fork)?;
-    let parent = record
-        .forked_from
-        .ok_or_else(|| invalid("a stored type tree goes into a local fork"))?;
-    if record.lifecycle_status != SkillLifecycle::Candidate {
-        return Err(invalid("a stored type tree goes into an open fork"));
-    }
-    if !in_lineage_in_txn(vault, &txn, fork, team_shape_skill()?)? {
-        return Err(invalid("fork is not in the team-shape skill's lineage"));
-    }
-    let parent_version = match vault.get_skill_record_in_txn(&txn, &parent)? {
-        Some(_) => stored_tree_unchecked_in_txn(vault, &txn, &parent)?
-            .map_or(TaskTypeTree::seeded().version, |stored| stored.version),
-        None => TaskTypeTree::seeded().version,
-    };
-    if tree.version < parent_version {
-        return Err(invalid(
-            "a stored type tree never moves its version backwards",
-        ));
-    }
-    let package = vault
-        .runtime_skill_package_in_txn(&txn, &fork, &record)?
-        .ok_or_else(|| invalid("team-shape fork has no stored source"))?;
-    drop(txn);
-    let content =
-        serde_json::to_vec_pretty(tree).map_err(|_| invalid("type tree does not encode"))?;
-    let mut files: Vec<HubFile> = package
-        .files
-        .into_iter()
-        .filter(|file| file.path != TASK_TYPE_TREE_FILE)
-        .collect();
-    files.push(HubFile::new(TASK_TYPE_TREE_FILE, content));
-    vault.write_shared_skill_fork_package(
-        &fork,
-        &HubPackage::new(record, files, package.capabilities),
-        TimeRange { start: at, end: at },
-        at,
-    )
+    vault.with_write_txn_grouped(|txn| {
+        let record = vault.read_skill_record_in_txn(txn, &fork)?;
+        let parent = record
+            .forked_from
+            .ok_or_else(|| invalid("a stored type tree goes into a local fork"))?;
+        if record.lifecycle_status != SkillLifecycle::Candidate {
+            return Err(invalid("a stored type tree goes into an open fork"));
+        }
+        let vault_skill = team_shape_skill()?;
+        if !in_lineage_in_txn(vault, txn, fork, vault_skill)? {
+            return Err(invalid("fork is not in the team-shape skill's lineage"));
+        }
+        let parent_tree = match vault.get_skill_record_in_txn(txn, &parent)? {
+            Some(_) => stored_tree_unchecked_in_txn(vault, txn, &parent)?
+                .unwrap_or_else(TaskTypeTree::seeded),
+            None => TaskTypeTree::seeded(),
+        };
+        if tree.version < parent_tree.version {
+            return Err(invalid(
+                "a stored type tree never moves its version backwards",
+            ));
+        }
+        let package = vault
+            .runtime_skill_package_in_txn(txn, &fork, &record)?
+            .ok_or_else(|| invalid("team-shape fork has no stored source"))?;
+        // A kept tree that does not read stays out of the scope, which never
+        // fails the write it serves.
+        let mut scope = vec![parent_tree, TaskTypeTree::seeded()];
+        let revisions = kept_revisions_in_txn(vault, txn, project, vault_skill).unwrap_or_default();
+        for skill in std::iter::once(fork).chain(revisions) {
+            if let Ok(Some(kept)) = stored_tree_unchecked_in_txn(vault, txn, &skill) {
+                scope.push(kept);
+            }
+        }
+        let mut stored = tree.clone();
+        if scope
+            .iter()
+            .any(|kept| kept.version == tree.version && !same_structure(kept, tree))
+        {
+            let highest = scope.iter().map(|kept| kept.version).max();
+            stored.version = version_on_clash(tree.version, highest.unwrap_or(tree.version));
+        }
+        let content =
+            serde_json::to_vec_pretty(&stored).map_err(|_| invalid("type tree does not encode"))?;
+        let mut files: Vec<HubFile> = package
+            .files
+            .into_iter()
+            .filter(|file| file.path != TASK_TYPE_TREE_FILE)
+            .collect();
+        files.push(HubFile::new(TASK_TYPE_TREE_FILE, content));
+        vault.write_shared_skill_fork_package_in_txn(
+            txn,
+            &fork,
+            &HubPackage::new(record, files, package.capabilities),
+            TimeRange { start: at, end: at },
+            at,
+        )?;
+        Ok(stored.version)
+    })
+}
+
+/// The version a pin is stored at when its requested version names another
+/// structure in its lookup scope: the next free one, one past the highest
+/// version the scope uses. A next version a learning stamp's `u32` cannot
+/// hold keeps the requested one, as before. The one place a later ruling on
+/// clashing pins changes.
+fn version_on_clash(requested: u64, highest_used: u64) -> u64 {
+    highest_used
+        .checked_add(1)
+        .filter(|next| *next <= u64::from(u32::MAX))
+        .unwrap_or(requested)
+}
+
+/// Whether two trees are one structure: the same node ids, parents and
+/// names, and the same split and merge marks placement reads. Seeds, scope
+/// and the receipt, holdout and decision counters are not structure.
+fn same_structure(a: &TaskTypeTree, b: &TaskTypeTree) -> bool {
+    a.nodes.len() == b.nodes.len()
+        && a.nodes.iter().zip(&b.nodes).all(|((a_id, a), (b_id, b))| {
+            a_id == b_id
+                && a.parent == b.parent
+                && a.name == b.name
+                && a.split_axis == b.split_axis
+                && a.split_winner == b.split_winner
+                && a.merged_into == b.merged_into
+        })
 }
 
 /// The newest admitted team-shape fork among the project's skill forks.
