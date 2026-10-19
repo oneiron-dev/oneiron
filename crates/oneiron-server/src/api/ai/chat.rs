@@ -69,6 +69,7 @@ use crate::server::SyncServer;
 use crate::voice_host::{EntryWake, EntryWakes, entry_wake, next_entry_wake};
 
 mod compaction;
+mod sitting;
 
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
@@ -600,7 +601,12 @@ fn start_turn(
             .idle_timeout_ms,
     );
     let session_key = super::bound_session_key(server, actor, peer, locality)?;
-    server.ai.session_hint(session_key, SessionHint::AppOpen);
+    // A turn in an anonymous off-record session opens and bumps no durable
+    // sitting; its witness and stream still bind the key (FIX 5564).
+    let signals = sitting::signals_sitting(&vault, &hooked());
+    if signals {
+        server.ai.session_hint(session_key, SessionHint::AppOpen);
+    }
     let at = vault.now_recorded_at();
     let user_turn = witness_turn(
         &request.conversation_ref,
@@ -654,6 +660,7 @@ fn start_turn(
             vault,
             agent,
             session_key: Some(session_key),
+            activity: signals.then_some(session_key),
             open: AnswerOpen::Turn(witness_turn(
                 &request.conversation_ref,
                 Some(turn),
@@ -1033,6 +1040,9 @@ pub(crate) struct Answer {
     pub(crate) agent: EntityId,
     /// The authenticated actor/machine sitting of a live chat request.
     pub(crate) session_key: Option<SessionKey>,
+    /// The sitting the answer's end signals activity on: the request's own,
+    /// but for a turn that signals none (`sitting`, FIX 5564).
+    pub(crate) activity: Option<SessionKey>,
     pub(crate) open: AnswerOpen,
     pub(crate) mode: MessageWriteMode,
     pub(crate) admitted: RoleCall,
@@ -1107,6 +1117,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         vault,
         agent,
         session_key,
+        activity,
         open,
         mode,
         admitted,
@@ -1230,8 +1241,8 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     };
     tokio::spawn(async move {
         let result = produce(producer).await;
-        if let Some(session_key) = session_key {
-            ai.session_hint(session_key, SessionHint::Activity);
+        if let Some(sitting) = activity {
+            ai.session_hint(sitting, SessionHint::Activity);
         }
         // The answer is the agent's turn, so its own cadence dial counts it.
         ai.turn_landed(

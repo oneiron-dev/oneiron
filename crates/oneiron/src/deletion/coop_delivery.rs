@@ -44,7 +44,7 @@ pub const COOP_DELETION_GIVE_UP_SECS: u64 = 7 * 24 * 60 * 60;
 const MIN_BACKOFF_SECS: u64 = 60;
 const MAX_BACKOFF_SECS: u64 = 6 * 60 * 60;
 /// A reason code is a short token, never free text.
-const MAX_REASON_CODE_LEN: usize = 48;
+pub(crate) const MAX_REASON_CODE_LEN: usize = 48;
 
 /// The sender's ledger, one row per ask and recipient: canon's fields only.
 const NOTICES: SideTable<([u8; 16], [u8; 32]), CooperativeDeletionNotice, Named> =

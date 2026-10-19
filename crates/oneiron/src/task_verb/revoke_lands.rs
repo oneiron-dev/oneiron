@@ -382,10 +382,6 @@ fn names_a_section(args: &Value) -> bool {
         .any(|field| args.get(field).is_some_and(|value| !value.is_null()))
 }
 
-/// The longest reason code a courtesy answer carries, as the engine's
-/// answer check takes it (`deletion/coop_delivery.rs` MAX_REASON_CODE_LEN).
-const COURTESY_REASON_CODE_MAX: usize = 48;
-
 /// A courtesy answer's shape, as the engine checks it before its delete loop
 /// (`Vault::answer_cooperative_deletion_as`): a delete choice carries no
 /// reason code or review date; any other carries a short snake_case reason
@@ -398,7 +394,7 @@ fn courtesy_answer_shape(args: &Value) -> bool {
     let code = args.get("reason_code").and_then(Value::as_str);
     code.is_some_and(|code| {
         !code.is_empty()
-            && code.len() <= COURTESY_REASON_CODE_MAX
+            && code.len() <= crate::deletion::MAX_REASON_CODE_LEN
             && code
                 .bytes()
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')

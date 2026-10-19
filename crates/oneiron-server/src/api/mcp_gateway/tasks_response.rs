@@ -5482,7 +5482,7 @@ async fn execute_agent_verb_listing(
     } else {
         (memory, task_work_turn)
     };
-    let (output, source, carrier, epoch) = execute_agent_verb_row(
+    let ran = execute_agent_verb_row(
         server,
         tool,
         hooks.args.clone(),
@@ -5492,7 +5492,16 @@ async fn execute_agent_verb_listing(
         served,
         board_hooks,
     )
-    .await?;
+    .await;
+    // A row that fails after its pre chain ran keeps a session-only call's
+    // pre hook records and runs no post chain (FIX 5527).
+    let (output, source, carrier, epoch) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            crate::api::facade::row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
         .await
         .map_err(mcp_facade_error)?;

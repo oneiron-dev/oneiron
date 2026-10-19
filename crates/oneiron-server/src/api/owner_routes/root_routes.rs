@@ -20,7 +20,9 @@
 //!
 //! Each answer is the request's owner work receipt (`owner_work_routes`),
 //! polled at `GET /v1/owner/owner-work/{request}`. Where he spoke from is
-//! the request's own (`machine_routes::act_surface`): audit only.
+//! the request's own (`machine_routes::act_surface`): audit only. The cancel
+//! runs its `vault.roots.requests.cancel` row's verb hooks once around the
+//! one engine operation, as the facade and MCP doors do (OF-580, FIX 5599).
 
 use std::sync::Arc;
 
@@ -32,13 +34,14 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{RecoveryRootId, RootChange};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::owner_work_routes::{OwnerWorkView, request_entry};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, blocking, hooked_owner, owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult, entity_id};
+use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -116,8 +119,9 @@ impl From<RootChange> for RootChangeWire {
     }
 }
 
-/// The owner's cancel of one root request.
-#[derive(Debug, Deserialize)]
+/// The owner's cancel of one root request: `vault.roots.requests.cancel`'s
+/// input, as its verb hooks read it.
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct CancelRootRequest {
     /// The request, 64 hex: its receipt's `request`.
@@ -162,22 +166,31 @@ async fn request(
 /// or the answer its target gave before it had the cancel, which stands,
 /// with the cancel marked "already enacted" or "already refused". A request
 /// this install does not fold as a root request is refused, and nothing is
-/// written.
+/// written. The `vault.roots.requests.cancel` row's verb hooks run around
+/// it as on the facade and MCP (FIX 5599): its post chain reads this answer.
 async fn cancel(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CancelRootRequest>, JsonRejection>,
-) -> OwnerReply<OwnerWorkView> {
-    let owner = owner(&auth, &server)?;
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
     let body = json_payload(payload)?;
-    let receipt = blocking(move || -> OwnerResult<OwnerWorkView> {
-        let request = request_entry("request", &body.request)?;
-        Ok(server
-            .vault()
-            .cancel_root_request(&owner, surface, request)?
-            .into())
+    let receipt = blocking(move || {
+        hooked_row(
+            server.vault(),
+            actor,
+            "vault.roots.requests.cancel",
+            body,
+            |body: CancelRootRequest| -> OwnerResult<OwnerWorkView> {
+                let request = request_entry("request", &body.request)?;
+                Ok(server
+                    .vault()
+                    .cancel_root_request(&owner, surface, request)?
+                    .into())
+            },
+        )
     })
     .await?;
     Ok(Json(receipt))
