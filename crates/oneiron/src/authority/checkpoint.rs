@@ -119,12 +119,16 @@ pub(super) fn checkpoint_head_in_txn(
     CHECKPOINT_HEAD.get(store, txn, &())
 }
 
+/// A head image's id and, when this install built it, the digest of the
+/// root policy it was built under.
+pub(super) type HeadBuiltUnder = ([u8; 32], Option<[u8; 32]>);
+
 /// The id of this vault's newest kept image and, when this install built it,
 /// the digest of the root policy it was built under.
 pub(super) fn checkpoint_head_built_under_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-) -> Result<Option<([u8; 32], Option<[u8; 32]>)>> {
+) -> Result<Option<HeadBuiltUnder>> {
     let Some(head) = CHECKPOINT_HEAD.get(store, txn, &())? else {
         return Ok(None);
     };
