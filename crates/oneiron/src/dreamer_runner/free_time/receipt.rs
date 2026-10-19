@@ -15,7 +15,7 @@ use super::{CYCLE, FreeTimeKind, RECEIPT};
 use crate::{EntityId, Result, Vault};
 
 /// How one item ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FreeTimeItemOutcome {
     /// It did its work: a for-human item that landed its proposal, an
@@ -71,7 +71,7 @@ impl FreeTimeItemReceipt {
 }
 
 /// Whether a cycle's floor holds, as its receipts show.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FreeTimeFloor {
     /// A for-human item landed a proposal, and an own-time item reflected
@@ -168,15 +168,16 @@ pub struct FreeTimeCycleSheet {
     pub floor: FreeTimeFloor,
 }
 
-/// `cycle`'s sheet in one snapshot. A receipt row that does not read leaves
-/// the read incomplete, so its floor is Unknown.
-fn sheet_in_txn(
+/// Every receipt of `agent`'s `cycle` in one snapshot, and whether every
+/// row read: a receipt row that does not read leaves the read incomplete.
+pub(super) fn receipts_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    cycle: FreeTimeCycle,
-) -> Result<FreeTimeCycleSheet> {
-    let mut prefix = cycle.agent.as_bytes().to_vec();
-    prefix.extend_from_slice(cycle.cycle.as_bytes());
+    agent: EntityId,
+    cycle: EntityId,
+) -> Result<(Vec<FreeTimeItemReceipt>, bool)> {
+    let mut prefix = agent.as_bytes().to_vec();
+    prefix.extend_from_slice(cycle.as_bytes());
     let mut receipts = Vec::new();
     let mut complete = true;
     for row in RECEIPT.iter_from(&vault.store, txn, &prefix)? {
@@ -185,6 +186,17 @@ fn sheet_in_txn(
             Err(_) => complete = false,
         }
     }
+    Ok((receipts, complete))
+}
+
+/// `cycle`'s sheet in one snapshot. A receipt row that does not read leaves
+/// the read incomplete, so its floor is Unknown.
+fn sheet_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cycle: FreeTimeCycle,
+) -> Result<FreeTimeCycleSheet> {
+    let (receipts, complete) = receipts_in_txn(vault, txn, cycle.agent, cycle.cycle)?;
     let floor = free_time_floor(cycle.agent, cycle.cycle, &receipts, complete);
     Ok(FreeTimeCycleSheet {
         cycle,
