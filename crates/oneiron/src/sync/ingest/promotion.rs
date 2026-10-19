@@ -51,6 +51,25 @@ pub(in crate::sync) fn promoting(vault: &Vault) -> bool {
     PROMOTING.with(|slot| slot.borrow().as_deref() == Some(vault.store.env.path()))
 }
 
+/// Whether a row an entity door lands in `window` of `vault` comes back with
+/// a promotion (FIX 3873; CALLS: PROMOTION_DEBT_ELIGIBILITY =
+/// ImportSpanOrDurablePromotedWindow): under its import span on this thread,
+/// or in a window whose promotion committed its `rp:w:` marker in `txn`. A
+/// landing the promotion's span did not reach (a dependency-pending row a
+/// later pass admits, an `rm:` remat, a held row's retry) is owed the same.
+pub(in crate::sync) fn promoted_landing_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    window: &str,
+) -> Result<bool> {
+    Ok(promoting(vault)
+        || vault
+            .store
+            .sync_state
+            .get(txn, &format!("rp:w:{window}"))?
+            .is_some())
+}
+
 /// Puts back the first-promotion open an outer one marked, on every exit.
 struct RestoreOpen(Option<PathBuf>);
 

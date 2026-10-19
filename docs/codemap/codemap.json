@@ -51995,7 +51995,7 @@
      "path": "src/sync/ingest/promotion.rs",
      "purpose": "What a promotion owes the TURNs it lands (OF-534)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -52458,7 +52458,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 14,
       "re-export": 16,
       "struct": 2
@@ -52628,6 +52628,7 @@
      "path": "src/sync/residence/discover.rs",
      "purpose": "Discover locally held world/month partitions without loading their Docs",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -72186,6 +72187,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
+      "crate-vis": 1,
       "fn": 30,
       "struct": 1
      }

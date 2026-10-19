@@ -21,6 +21,12 @@ class ScoredEntity(val id: String, val score: Float)
 class SubtreeEntry(val id: String, val depth: Int)
 
 /**
+ * What kind of machine this install is, as its host declares it (FIX 3833): never read off the
+ * operating system. A phone holds no sealed copy of the vault. [COMPUTER] is the generic default.
+ */
+enum class DeviceClass { COMPUTER, PHONE }
+
+/**
  * One embedded core vault. Each instance owns its native environment, or a share of an engine's.
  * A plain vault writes as the host; one from [bound] writes as the caller it names (OF-063):
  * its [put], [delete], [putEdge] and [putVector] run that caller's doors. Reads are the same on
@@ -30,8 +36,14 @@ class EmbeddedVault private constructor() : AutoCloseable {
     private var nativeHandle: Long = 0
     private var closed = false
 
-    /** Opens the vault at [path] on its own, with no server. */
-    constructor(path: String) : this() { synchronized(this) { openNative(path) } }
+    /**
+     * Opens the vault at [path] on its own, with no server, as the [deviceClass] its host
+     * declares: a phone's host passes [DeviceClass.PHONE] before this install enrols.
+     */
+    @JvmOverloads
+    constructor(path: String, deviceClass: DeviceClass = DeviceClass.COMPUTER) : this() {
+        synchronized(this) { openNative(path, deviceClass == DeviceClass.PHONE) }
+    }
 
     /** The vault [engine] serves: the same open vault, never opened again. */
     internal constructor(engine: EmbeddedEngine) : this() { synchronized(this) { shareNative(engine) } }
@@ -166,7 +178,7 @@ class EmbeddedVault private constructor() : AutoCloseable {
         if (!closed) { closeNative(); closed = true }
     }
 
-    private external fun openNative(path: String)
+    private external fun openNative(path: String, phone: Boolean)
     private external fun shareNative(engine: EmbeddedEngine)
     private external fun bindNative(source: EmbeddedVault, actorKey: String?, session: String?)
     private external fun putNative(id: String, kind: Int, occurredSeconds: Long, body: ByteArray)

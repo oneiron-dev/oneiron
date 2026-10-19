@@ -639,6 +639,11 @@ enum OneironStatus oneiron_subtree_entry_array_free(struct OneironSubtreeEntryAr
  * an array of UTF-8 `OneironByteSlice` values. On success `out_vault` receives
  * an opaque handle that must be released exactly once with `oneiron_vault_free`.
  *
+ * `device_class` is what kind of machine this install is, as the host
+ * declares it (FIX 3833): 0 a computer, the generic default, 1 a phone; any
+ * other value is `InvalidArg`. It is set before the vault opens, so the
+ * install enrols as it, and it is never read off the operating system.
+ *
  * # Safety
  *
  * `path_ptr` covers `path_len` readable bytes. A non-null
@@ -650,6 +655,7 @@ enum OneironStatus oneiron_vault_open(const uint8_t *path_ptr,
                                       size_t dimensions,
                                       const struct OneironByteSlice *dict_search_paths,
                                       size_t dict_search_paths_len,
+                                      uint8_t device_class,
                                       struct OneironVault **out_vault);
 
 /**
@@ -810,7 +816,9 @@ enum OneironStatus oneiron_vault_entity_exists(struct OneironVault *vault,
 
 /**
  * `oneiron_vault_open`, then this install's own machine profile from the
- * vault's host root secret, so the owner's acts carry from it.
+ * vault's host root secret, so the owner's acts carry from it. The profile
+ * carries the `device_class` the host declared, set before the vault opens
+ * (FIX 3833).
  *
  * `host_root_secret_ptr` and `host_root_secret_len` are the exact bytes of
  * the server's configured `auth_secret`: null with length 0 names none, and
@@ -838,6 +846,7 @@ enum OneironStatus oneiron_vault_open_with_host_root(const uint8_t *path_ptr,
                                                      size_t dimensions,
                                                      const struct OneironByteSlice *dict_search_paths,
                                                      size_t dict_search_paths_len,
+                                                     uint8_t device_class,
                                                      const uint8_t *host_root_secret_ptr,
                                                      size_t host_root_secret_len,
                                                      uint8_t initialize_root,
