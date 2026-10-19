@@ -214,6 +214,9 @@ fn open_uncontended(canonical: &Path, options: &OpenOptions) -> Result<SharedVau
     if let Some(dimensions) = options.dimensions {
         config.dimensions = dimensions;
     }
+    if let Some(device_class) = options.device_class {
+        config.machine_device_class = device_class;
+    }
     let vault = Vault::open_owned(canonical, config).map_err(map_lease_error)?;
     // Signing doors (delete receipts) need this install's keys from the keystore.
     vault.install_default_keystore(canonical);
@@ -320,10 +323,12 @@ fn divergent_options_error(
     bad_request(
         format!(
             "{} is already open in this process with different options \
-             (open dimensions {:?}, requested {:?})",
+             (open dimensions {:?} and device class {:?}, requested {:?} and {:?})",
             canonical.display(),
             registered.dimensions,
+            registered.device_class,
             requested.dimensions,
+            requested.device_class,
         ),
         &[
             "Reopen with the same options the first open used.",

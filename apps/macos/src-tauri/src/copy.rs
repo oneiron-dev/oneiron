@@ -54,6 +54,11 @@ pub const MENU_ITEM_QUIT: &str = "Quit";
 /// Empty-state line under the segment list.
 pub const SEGMENTS_EMPTY: &str = "No segments committed in this session yet.";
 
+/// Shown, without blocking anything, when this launch's host root secret is
+/// not the vault's settled root (FIX 5346; CALLS "rootparity desktop
+/// wrong-root warning"). It names no secret, and nothing is re-keyed.
+pub const WRONG_ROOT_WARNING: &str = "The host root secret this Mac found is not your vault's root, so it was not used. Your vault opened as usual and recording works as before; this Mac keeps its existing standing in the vault.";
+
 /// Refusal shown when a start is attempted without an affirm. It is a product
 /// message about the gate, not an engine error.
 pub const START_REFUSED_WITHOUT_DISCLOSURE: &str =

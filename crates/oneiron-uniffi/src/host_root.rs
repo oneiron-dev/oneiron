@@ -54,7 +54,10 @@ impl Oneiron {
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open_with_host_root(
             path.as_deref(),
-            &oneiron_remote::OpenOptions { dimensions },
+            &oneiron_remote::OpenOptions {
+                dimensions,
+                device_class: None,
+            },
             host_root_secret.as_slice(),
         )?;
         Ok(Arc::new(Self {

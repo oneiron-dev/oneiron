@@ -431,6 +431,7 @@ pub(super) fn fold_authority_log_once(
                 super::conversation_training::FoldedConversationTraining::default(),
             conversation_training_vault:
                 super::conversation_training_vault::FoldedConversationTrainingVault::default(),
+            home_candidacy: BTreeMap::new(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),
             counted_ancestor_pairs,
