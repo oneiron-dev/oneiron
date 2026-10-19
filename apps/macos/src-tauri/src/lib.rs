@@ -74,6 +74,11 @@ enum RootSecretSource {
 /// The one piece of state the webview and the menu bar share.
 struct AppState {
     session: Mutex<RecorderSession>,
+    /// This launch's open was given a host root that is not the vault's
+    /// settled root, so it went unused: the vault opened under its settled
+    /// root as before. A fact the window shows as a nonblocking warning
+    /// ([`root_warning`], FIX 5346), never a refusal or a re-key.
+    wrong_root: bool,
 }
 
 /// Runs the recorder.
@@ -87,12 +92,13 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             let handle = app.handle().clone();
-            let vault = open_vault(&handle)?;
+            let (vault, wrong_root) = open_vault(&handle)?;
             let log = SegmentLog::new();
             let sink = Arc::new(LoggingSink::new(VaultSegmentSink::new(vault), log.clone()));
             let launcher = LiveCapture::new(sink, Arc::new(SystemRoute));
             app.manage(AppState {
                 session: Mutex::new(RecorderSession::new(Box::new(launcher), log)),
+                wrong_root,
             });
             install_menu_bar(&handle)?;
 
@@ -104,6 +110,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             recorder_copy,
+            root_warning,
             session_state,
             affirm_disclosure,
             start_recording,
@@ -140,6 +147,16 @@ fn recorder_copy() -> RecorderCopy {
         start: copy::MENU_ITEM_START,
         stop: copy::MENU_ITEM_STOP,
     }
+}
+
+/// The wrong-root warning the window shows beside everything else, or `None`
+/// when this launch's host root was the vault's own or none was given (FIX
+/// 5346). It is fixed for the launch, blocks nothing and re-keys nothing.
+#[tauri::command]
+fn root_warning(app: AppHandle) -> Option<&'static str> {
+    app.state::<AppState>()
+        .wrong_root
+        .then_some(copy::WRONG_ROOT_WARNING)
 }
 
 /// The window asks for the current state on load and after every action.
@@ -192,7 +209,10 @@ where
     }
 }
 
-fn open_vault<R: Runtime>(app: &AppHandle<R>) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
+/// The recorder's vault, and whether its open reported the wrong-root fact.
+fn open_vault<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<(Arc<Vault>, bool), Box<dyn std::error::Error>> {
     open_vault_at_with_host_root(
         &app.path().app_data_dir()?.join(VAULT_DIR),
         DESKTOP_ROOT_SECRET_SOURCE,
@@ -204,21 +224,23 @@ fn open_vault<R: Runtime>(app: &AppHandle<R>) -> Result<Arc<Vault>, Box<dyn std:
 /// root secret the first of `sources` holds (FIX 4730), so the owner's acts
 /// carry from this Mac. With `initialize_root`, a store this open created is
 /// a new local-origin vault, rooted through the engine's own door. Every
-/// failure is logged with its reason and the app opens as before.
+/// failure is logged with its reason and the app opens as before. The
+/// `bool` is the wrong-root fact ([`profile_from`]).
 fn open_vault_at_with_host_root(
     path: &std::path::Path,
     sources: &[RootSecretSource],
     initialize_root: bool,
-) -> Result<Arc<Vault>, Box<dyn std::error::Error>> {
+) -> Result<(Arc<Vault>, bool), Box<dyn std::error::Error>> {
     // Read before the open creates anything: only a store this open brings
     // into existence may root.
     let new_local_origin = initialize_root && Vault::is_unstarted_vault_dir(path);
     let vault = open_vault_at(path)?;
-    profile_install(&vault, path, sources, new_local_origin);
-    Ok(vault)
+    let wrong_root = profile_install(&vault, path, sources, new_local_origin);
+    Ok((vault, wrong_root))
 }
 
-/// Profiles `vault` from the first secret `sources` holds, or logs why not.
+/// Profiles `vault` from the first secret `sources` holds, or logs why not,
+/// and says whether that secret was the wrong root ([`profile_from`]).
 /// A source that fails stops the search: a secret the owner may have
 /// configured is never stood in for by one made here.
 fn profile_install(
@@ -226,13 +248,12 @@ fn profile_install(
     path: &std::path::Path,
     sources: &[RootSecretSource],
     new_local_origin: bool,
-) {
+) -> bool {
     for source in sources {
         match source {
             RootSecretSource::ServerConfig => match configured_auth_secret(path) {
                 Ok(Some(secret)) => {
-                    profile_from(vault, Some(secret.as_bytes()), new_local_origin);
-                    return;
+                    return profile_from(vault, Some(secret.as_bytes()), new_local_origin);
                 }
                 Ok(None) => {}
                 Err(reason) => {
@@ -241,14 +262,13 @@ fn profile_install(
                         "the server config did not resolve, so no host root secret is read; \
                          this install stays unprofiled and the app opens on"
                     );
-                    return;
+                    return false;
                 }
             },
             RootSecretSource::RetainedSlot => {
                 match vault.retained_host_root_secret(new_local_origin) {
                     Ok(Some(secret)) => {
-                        profile_from(vault, Some(&secret[..]), new_local_origin);
-                        return;
+                        return profile_from(vault, Some(&secret[..]), new_local_origin);
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -258,13 +278,13 @@ fn profile_install(
                             "this device's keystore gave no host root secret for the vault; \
                              this install stays unprofiled and the app opens on"
                         );
-                        return;
+                        return false;
                     }
                 }
             }
         }
     }
-    profile_from(vault, None, false);
+    profile_from(vault, None, false)
 }
 
 /// The configured `auth_secret` for the vault at `path`, as `oneiron serve`
@@ -277,9 +297,13 @@ fn configured_auth_secret(path: &std::path::Path) -> Result<Option<String>, Stri
 }
 
 /// The engine's profile door for this open; it logs its own outcome, and the
-/// app opens whatever it says.
-fn profile_from(vault: &Vault, secret: Option<&[u8]>, new_local_origin: bool) {
-    let _ = vault.profile_local_open_logged(secret, new_local_origin, DESKTOP_OPEN);
+/// app opens whatever it says. `true` is the wrong-root fact: the secret is
+/// not the vault's settled root and went unused, so the window warns (FIX
+/// 5346); a refusal or a skip is `false`, as the open goes on either way.
+fn profile_from(vault: &Vault, secret: Option<&[u8]>, new_local_origin: bool) -> bool {
+    vault
+        .profile_local_open_logged(secret, new_local_origin, DESKTOP_OPEN)
+        .is_ok_and(oneiron::authority::LocalOpenProfile::wrong_root)
 }
 
 /// Opens the recorder's vault at `path`. Crash output never carries world

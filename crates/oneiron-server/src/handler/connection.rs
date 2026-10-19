@@ -758,15 +758,24 @@ async fn handle_connection(
                 };
                 if let Err(e) = handle_result {
                     match &e {
-                        ProtocolError::RpcVersionMismatch | ProtocolError::RpcNoPrincipal => {
-                            let code = if matches!(e, ProtocolError::RpcVersionMismatch) {
-                                close_codes::CLOSE_RPC_VERSION_MISMATCH
-                            } else {
-                                close_codes::CLOSE_RPC_NO_PRINCIPAL
-                            };
+                        // FIX 5550: an app-tier frame on a protocol older
+                        // than its tier is a refused call: receipted, then
+                        // the 4007 close it always sent.
+                        ProtocolError::RpcVersionMismatch => {
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::CLOSE_RPC_VERSION_MISMATCH,
+                                "app-tier admission refused",
+                                None,
+                            )
+                            .await;
+                            break;
+                        }
+                        ProtocolError::RpcNoPrincipal => {
                             transport
                                 .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
-                                    code,
+                                    code: close_codes::CLOSE_RPC_NO_PRINCIPAL,
                                     reason: Utf8Bytes::from_static("app-tier admission refused"),
                                 })))
                                 .await;
@@ -834,6 +843,16 @@ async fn handle_connection(
                                 reason = "version_vector_decode_failed",
                                 "version vector decode failure — closing"
                             );
+                            // FIX 5550: receipted, then closed as a decode
+                            // error.
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::DECODE_ERROR,
+                                "version vector does not decode",
+                                None,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::FrameTooLarge { size, max } => {
@@ -854,6 +873,16 @@ async fn handle_connection(
                                 reason = "loro_import_failed",
                                 "loro import error — closing"
                             );
+                            // FIX 5550: receipted, then closed as a decode
+                            // error (CALLS "rootparity sync import close").
+                            super::protocol_close::refuse_frame(
+                                &mut transport,
+                                &server,
+                                close_codes::DECODE_ERROR,
+                                "update does not import",
+                                None,
+                            )
+                            .await;
                             break;
                         }
                         ProtocolError::Persistence(_) => {

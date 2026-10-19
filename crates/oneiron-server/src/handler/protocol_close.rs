@@ -189,6 +189,21 @@ pub(super) async fn close_read_error(
     }
 }
 
+/// A socket read error the protocol hello classifies (FIX 5549): the hello
+/// reads a generic stream, so its error type says whether the WebSocket
+/// codec refused the first frame.
+pub(super) trait CodecReadError {
+    /// The refusal a frame the codec refused is; `None` for the peer's link
+    /// ending, a disconnect.
+    fn codec_refusal(&self) -> Option<ProtocolRefusal>;
+}
+
+impl CodecReadError for axum::Error {
+    fn codec_refusal(&self) -> Option<ProtocolRefusal> {
+        codec_read_refusal(self)
+    }
+}
+
 /// What a read error is, by the type of the codec axum runs, never by its
 /// words: a frame the codec refused (one over the socket's frame cap, a
 /// masking, opcode, framing or UTF-8 violation) is a protocol refusal. Every

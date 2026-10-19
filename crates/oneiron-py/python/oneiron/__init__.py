@@ -156,6 +156,48 @@ class Oneiron:
         return cls(_translate(lambda: _NativeClient.open(resolved, dimensions)))
 
     @classmethod
+    def open_with_host_root(
+        cls,
+        path: str | os.PathLike[str] | None,
+        host_root_secret: bytes,
+        *,
+        dimensions: int | None = None,
+    ) -> dict[str, Any]:
+        """:meth:`open`, then this install's own machine profile from the vault's host root secret.
+
+        The owner's acts then carry from this install (FIX 5342).
+        ``host_root_secret`` is the secret's exact bytes (a server's configured
+        ``auth_secret`` as its UTF-8, or a retained root), never hex or base64
+        of them. The native side borrows it for this call only and keeps no
+        copy.
+
+        Returns ``{"memory", "host_root"}``: the embedded handle, and what the
+        open did with the root, ``{"enrolled", "wrong_root"}``. Rooted-only:
+        the vault must already be rooted, and nothing here roots it. An empty
+        secret raises ``BAD_REQUEST``; a vault open under the managed or relay
+        posture, or a root the provider holds, raises ``FORBIDDEN``; a secret
+        that cannot profile this install raises the engine's code and reason,
+        and :meth:`open` stays the rootless door. A secret that is not the
+        vault's settled root, over a profile that already stands, opens and
+        says so in ``host_root["wrong_root"]``: reported, never refused. The
+        handle binds the local owner actor, as :meth:`open` does, and carries
+        no owner proof.
+        """
+        resolved = os.fspath(path) if path is not None else None
+        native = _translate(
+            lambda: _NativeClient.open_with_host_root(resolved, host_root_secret, dimensions)
+        )
+        raw = native.host_root_profile()
+        profile = json.loads(raw) if raw is not None else {}
+        return {
+            "memory": cls(native),
+            "host_root": {
+                "enrolled": bool(profile.get("enrolled", False)),
+                "wrong_root": bool(profile.get("wrong_root", False)),
+            },
+        }
+
+    @classmethod
     def connect(cls, url: str, key: str) -> "Oneiron":
         """Binds a running ``oneiron-server`` through its facade projection.
 
