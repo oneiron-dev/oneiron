@@ -36,7 +36,7 @@ impl Vault {
 /// Marker (engine version string) that the built-in bootstrap skill set has
 /// been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_BOOTSTRAP_SEED);
-const FILES: [(&str, &str); 15] = [
+const FILES: [(&str, &str); 4] = [
     (
         "skill-optimize",
         include_str!("../../../../skills/skill-optimize/SKILL.md"),
@@ -46,52 +46,49 @@ const FILES: [(&str, &str); 15] = [
         "goal-intake",
         include_str!("../../../../skills/goal-intake/SKILL.md"),
     ),
-    (
-        "project-proposal",
-        include_str!("../../../../skills/project-proposal/SKILL.md"),
-    ),
     ("wake", include_str!("../../../../skills/wake/SKILL.md")),
-    (
-        "team-shape",
-        include_str!("../../../../skills/team-shape/SKILL.md"),
-    ),
-    (
-        "team-lead",
-        include_str!("../../../../skills/team-lead/SKILL.md"),
-    ),
-    (
-        "weave-report",
-        include_str!("../../../../skills/weave-report/SKILL.md"),
-    ),
-    (
-        "team-ceo-decides",
-        include_str!("../../../../skills/team-ceo-decides/SKILL.md"),
-    ),
-    (
-        "team-committee",
-        include_str!("../../../../skills/team-committee/SKILL.md"),
-    ),
-    (
-        "team-vote",
-        include_str!("../../../../skills/team-vote/SKILL.md"),
-    ),
-    (
-        "team-market",
-        include_str!("../../../../skills/team-market/SKILL.md"),
-    ),
-    (
-        "team-rotation",
-        include_str!("../../../../skills/team-rotation/SKILL.md"),
-    ),
-    (
-        "training-offer",
-        include_str!("../../../../skills/training-offer/SKILL.md"),
-    ),
-    (
-        "eval-authoring",
-        include_str!("../../../../skills/eval-authoring/SKILL.md"),
-    ),
 ];
+
+/// Expected bootstrap source beside the current resident, when one remains.
+pub(crate) struct BootstrapSkillSource {
+    pub skill_id: String,
+    pub content_hash: String,
+    pub source: HubRef,
+    pub entity: Option<EntityId>,
+}
+
+impl Vault {
+    /// Reads the required four without seeding, fetching or restoring anything.
+    pub(crate) fn bootstrap_skill_sources(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+    ) -> Result<Vec<BootstrapSkillSource>> {
+        let txn = self.store.env.read_txn()?;
+        self.check_restore_owner_in_txn(&txn, owner)?;
+        FILES
+            .into_iter()
+            .map(|(name, markdown)| {
+                let package = package(name, markdown)?;
+                let hash = package.content_hash()?;
+                let source = HubRef::new(
+                    stable_id("hub")?,
+                    name,
+                    HubPin::ContentHash(hash.to_hex()),
+                )?;
+                let seed = stable_id(name)?;
+                let entity = self
+                    .default_skill_present_in_txn(&txn, &source, hash, name)?
+                    .or(self.get_skill_record_in_txn(&txn, &seed)?.map(|_| seed));
+                Ok(BootstrapSkillSource {
+                    skill_id: name.to_owned(),
+                    content_hash: hash.to_hex(),
+                    source,
+                    entity,
+                })
+            })
+            .collect()
+    }
+}
 
 /// The shipped coordination pattern skills (OF-540), each bound to the
 /// pattern it teaches: its default setting, the `works well for` line from
@@ -394,7 +391,7 @@ impl Vault {
     /// default is left alone. Restored skills get new IDs and enter as
     /// Candidates through the ordinary scanner/import door; unlike first-open
     /// seeding, this verb never grants activation authority.
-    pub fn restore_default_skills(
+    pub(super) fn restore_bootstrap_skills(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         occurred: TimeRange,

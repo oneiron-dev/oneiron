@@ -430,15 +430,19 @@
     },
     {
       "name": "self.identity.answer",
-      "description": "A vault owner's tap on an identity choice card: who a person named in their conversations is.",
-      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest",
+      "description": "The owner answers an identity choice with supporting evidence refs; the original mention and verified owner resolution provenance are retained atomically.",
+      "input": "crate::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest",
       "output": "crate::dreamer_runner::maintenance::identity::IdentitySettled",
-      "call": "memory.identity_answer(&input)?",
+      "call": "memory.identity_answer_with_evidence_as_owner(&memory.embedded_owner(\"self.identity.answer\")?, &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "self.identity.settle",
@@ -450,7 +454,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.inbox.list",
@@ -585,6 +590,54 @@
       "output": "crate::context_board::PersonRow",
       "call": "memory.people_get(&input)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.people.create",
+      "description": "The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake.",
+      "input": "crate::memory::identity_doors::PersonCreateRequest",
+      "output": "crate::memory::identity_doors::PersonCreated",
+      "call": "memory.people_create_as_owner(&memory.embedded_owner(\"vault.people.create\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.entities.look_before_mint",
+      "description": "The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted.",
+      "input": "crate::memory::identity_doors::IdentityLookupRequest",
+      "output": "crate::memory::identity_doors::IdentityLookup",
+      "call": "memory.entities_look_before_mint_as_owner(&memory.embedded_owner(\"vault.entities.look_before_mint\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.identity.mention",
+      "description": "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance.",
+      "input": "crate::dreamer_runner::maintenance::identity::MentionProvenance",
+      "output": "crate::dreamer_runner::maintenance::identity::IdentityMentionView",
+      "call": "memory.identity_mention_as_owner(&memory.embedded_owner(\"vault.identity.mention\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true,
+      "openapi": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -2043,6 +2096,96 @@
       "openapi": true
     },
     {
+      "name": "vault.retrieval.policy.get",
+      "description": "The owner reads the served retrieval policy: active blend weights with their origins, owner pins, the learned posterior and model routing pins.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyView",
+      "call": "crate::task_verb::sdk::retrieval_policy_get_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.get\")?, _input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.pin",
+      "description": "The owner pins one retrieval blend weight at a declared share, or clears its pin; learned updates may move only the unpinned remainder.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyPinRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyView",
+      "call": "crate::task_verb::sdk::retrieval_policy_pin_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.pin\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.train",
+      "description": "The owner trains a retrieval-policy candidate from gate-attributed outcomes, judged on held-out runs, without serving it.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyTrainRequest",
+      "output": "crate::store::RetrievalPolicyCandidate",
+      "call": "crate::task_verb::sdk::retrieval_policy_train_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.train\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.evaluate",
+      "description": "The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyEvaluateRequest",
+      "output": "crate::store::RetrievalPolicyEvaluation",
+      "call": "crate::task_verb::sdk::retrieval_policy_evaluate_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.evaluate\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.admit",
+      "description": "The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyAdmitRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyAdmitReceipt",
+      "call": "crate::task_verb::sdk::retrieval_policy_admit_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.admit\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.policy.update",
+      "description": "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior.",
+      "input": "crate::task_verb::sdk::RetrievalPolicyTrainRequest",
+      "output": "crate::task_verb::sdk::RetrievalPolicyUpdateReceipt",
+      "call": "crate::task_verb::sdk::retrieval_policy_update_as_owner(memory, &memory.embedded_owner(\"vault.retrieval.policy.update\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.export",
       "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only.",
       "input": "crate::memory::ExportOptions",
@@ -2899,6 +3042,51 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.bootstrap",
+      "description": "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::BootstrapSkillView>",
+      "call": "crate::task_verb::sdk::skill_bootstrap_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.bootstrap\")?, &_input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skill_hubs.default.get",
+      "description": "Reads the first hub identity, configured mirror endpoint and pinned skill-root ref; owner hub and ref setters configure that source.",
+      "input": "EmptyRequest",
+      "output": "crate::skill_hub::DefaultSkillHub",
+      "call": "crate::task_verb::sdk::default_skill_hub_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.default.get\")?, &_input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.restoreDefaults",
+      "description": "The owner explicitly re-imports missing or retired bootstrap and pinned first-hub defaults as fresh candidates, leaving unchanged defaults and local forks alone.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::skill_hub::HubImportReceipt>",
+      "call": "crate::task_verb::sdk::skill_restore_defaults_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.restoreDefaults\")?, &_input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.skill_hubs.put",
       "description": "The owner registers or revises a hub source; hub trust never grants activation authority.",
       "input": "SkillHubPutRequest",
@@ -3662,6 +3850,118 @@
       "section": false
     },
     {
+      "name": "vault.packs.sections.propose",
+      "description": "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing.",
+      "input": "crate::memory::PluginSectionProposeRequest",
+      "output": "crate::memory::PluginSectionProposal",
+      "call": "memory.plugin_section_propose(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.list",
+      "description": "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project.",
+      "input": "crate::memory::PluginSectionListRequest",
+      "output": "crate::memory::PluginSectionsView",
+      "call": "memory.plugin_sections_list(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.grant",
+      "description": "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent.",
+      "input": "crate::memory::PluginSectionGrantRequest",
+      "output": "crate::memory::PluginSectionGrant",
+      "call": "memory.plugin_section_grant_as_owner(&memory.embedded_owner(\"vault.packs.sections.grant\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.revoke",
+      "description": "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild.",
+      "input": "crate::memory::PluginSectionRevokeRequest",
+      "output": "crate::memory::PluginSectionRevoked",
+      "call": "memory.plugin_section_revoke_as_owner(&memory.embedded_owner(\"vault.packs.sections.revoke\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggest",
+      "description": "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal.",
+      "input": "crate::memory::PluginSectionSuggestRequest",
+      "output": "crate::memory::PluginSectionSuggestion",
+      "call": "memory.plugin_section_suggest(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggestions.get",
+      "description": "The owner's plugin suggestion knob: whether workflow-pattern suggestion passes may run at all.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::PluginSuggestionsView",
+      "call": "memory.plugin_suggestions_as_owner(&memory.embedded_owner(\"vault.packs.sections.suggestions.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.sections.suggestions.set",
+      "description": "The owner turns plugin suggestions on or off; off silences every later pass before any catalog is consulted.",
+      "input": "crate::memory::PluginSuggestionsSetRequest",
+      "output": "crate::memory::PluginSuggestionsView",
+      "call": "memory.plugin_suggestions_set_as_owner(&memory.embedded_owner(\"vault.packs.sections.suggestions.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.chat.completions",
       "description": "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling.",
       "input": "ChatCompletionRequest",
@@ -3966,6 +4266,82 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.mesh.identity",
+      "description": "This install's public mesh keys and both binding proofs, for the owner; no private key or grant is returned.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::MeshBindingIdentity",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.identity\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.bind_machine",
+      "description": "Bind a paired MACHINE's address and transport key using both possession proofs; the binding starts with no ALPN grants.",
+      "input": "crate::task_verb::sdk::MeshMachineBinding",
+      "output": "crate::task_verb::sdk::MeshMachineBound",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.bind_machine\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.set_alpn_grant",
+      "description": "Allow or revoke one exact ALPN for a paired MACHINE and endpoint key, under the caller's own owner proof.",
+      "input": "crate::task_verb::sdk::MeshAlpnGrant",
+      "output": "crate::task_verb::sdk::MeshAlpnGrant",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.set_alpn_grant\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.revoke_machine",
+      "description": "Permanently revoke a MACHINE's mesh admission and all its ALPN grants; a new enrollment needs a new MACHINE and pairing.",
+      "input": "crate::task_verb::sdk::MeshMachineRevokeRequest",
+      "output": "crate::task_verb::sdk::MeshMachineRevoked",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.revoke_machine\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.mesh.dial",
+      "description": "Dial an explicit mesh address with this install's real key, including before pairing; report admission and close without an application stream.",
+      "input": "crate::task_verb::sdk::MeshDialRequest",
+      "output": "crate::sync::mesh_path::MeshPathReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.dial\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -7266,8 +7642,83 @@
       "section": false
     },
     {
+      "name": "vault.disclosure.ceiling.get",
+      "description": "Reads the owner registry dial for one model connection, optionally one data class.",
+      "input": "crate::disclosure::DisclosureCeilingRequest",
+      "output": "crate::disclosure::DisclosureCeilingView",
+      "call": "memory.vault().model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.ceiling.set",
+      "description": "The owner sets one connection or class disclosure ceiling; no read authority changes.",
+      "input": "crate::disclosure::DisclosureCeilingSet",
+      "output": "crate::disclosure::DisclosureCeilingView",
+      "call": "memory.vault().set_model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.set\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.ceiling.clear",
+      "description": "The owner clears one dial, restoring connection or actor-class inference.",
+      "input": "crate::disclosure::DisclosureCeilingRequest",
+      "output": "crate::disclosure::DisclosureCeilingView",
+      "call": "memory.vault().clear_model_disclosure_ceiling(&memory.embedded_owner(\"vault.disclosure.ceiling.clear\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.reveals",
+      "description": "The owner reads model-disclosure asks and receipts, including PERSON handles, without values.",
+      "input": "crate::task_verb::sdk::RevealAsksRequest",
+      "output": "Vec<crate::task_verb::sdk::RevealAskView>",
+      "call": "crate::task_verb::sdk::disclosure_reveals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.disclosure.reveals\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.disclosure.reveals.answer",
+      "description": "The owner approves once, approves standing, or denies the exact frozen reveal ask.",
+      "input": "crate::task_verb::sdk::RevealAnswerRequest",
+      "output": "crate::task_verb::sdk::RevealAnsweredView",
+      "call": "crate::task_verb::sdk::answer_disclosure_reveal_as_owner(memory.vault(), &memory.embedded_owner(\"vault.disclosure.reveals.answer\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "reveal",
-      "description": "Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.",
+      "description": "Asks for a custody or PERSON handle's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects.",
       "input": "crate::task_verb::sdk::RevealRequest",
       "output": "crate::task_verb::sdk::RevealPending",
       "call": "crate::task_verb::sdk::reveal_as_caller(memory, input)?",
@@ -7276,7 +7727,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "reveal.wait",
@@ -7288,11 +7740,12 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "reveal.describe",
-      "description": "What a secret handle names, where it was found and what a reveal of it would do now; never the value.",
+      "description": "What a custody or PERSON handle names, where it was found and what a reveal of it would do now; never the value.",
       "input": "crate::task_verb::sdk::RevealDescribeRequest",
       "output": "crate::task_verb::sdk::RevealHandleCard",
       "call": "crate::task_verb::sdk::describe_secret_as_caller(memory, input)?",
@@ -7300,7 +7753,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.use",
@@ -9447,6 +9901,19 @@
       "section": false
     },
     {
+      "name": "vault.artifacts.admit",
+      "description": "Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard.",
+      "input": "crate::blob_artifact::ArtifactAdmitSubmit",
+      "output": "crate::blob_artifact::ArtifactAskOutcome",
+      "call": "memory.artifacts_admit(&input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.critic.review",
       "description": "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target.",
       "input": "crate::critic::review::CriticReviewSubmit",
@@ -10629,6 +11096,104 @@
       "section": false
     },
     {
+      "name": "vault.skills.attribution.settle",
+      "description": "The owner settles one amended proposal: exact replacements are recorded, the delta is measured from those ops, hunks are judged and each share routes to its consumer.",
+      "input": "ProposalDeltaSettleRequest",
+      "output": "crate::task_verb::sdk::ProposalDeltaSettlement",
+      "call": "crate::task_verb::sdk::skill_attribution_settle_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.settle\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.read",
+      "description": "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.",
+      "input": "ProposalDeltaReadRequest",
+      "output": "crate::task_verb::sdk::ProposalDeltaRead",
+      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.evidence.record",
+      "description": "The owner records one attempt outcome as attribution evidence, grounded against its stamped pack receipt; recording never classifies it.",
+      "input": "AttributionEvidenceRequest",
+      "output": "crate::task_verb::sdk::AttributionEvidenceReceipt",
+      "call": "crate::task_verb::sdk::skill_attribution_evidence_record_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.evidence.record\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.project",
+      "description": "The owner runs one attribution pass over recorded evidence, plus the positive lane, returning the judgments and positive proposals it minted.",
+      "input": "AttributionProjectRequest",
+      "output": "crate::task_verb::sdk::AttributionProjection",
+      "call": "crate::task_verb::sdk::skill_attribution_project_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.project\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.judgments",
+      "description": "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger.",
+      "input": "AttributionListRequest",
+      "output": "crate::task_verb::sdk::AttributionJudgmentsView",
+      "call": "crate::task_verb::sdk::skill_attribution_judgments_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.judgments\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.proposals",
+      "description": "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted.",
+      "input": "AttributionListRequest",
+      "output": "crate::task_verb::sdk::AttributionProposalsView",
+      "call": "crate::task_verb::sdk::skill_attribution_proposals_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.proposals\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.attribution.positive.retire",
+      "description": "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it.",
+      "input": "PositiveRetireRequest",
+      "output": "crate::task_verb::sdk::PositiveRetireReceipt",
+      "call": "crate::task_verb::sdk::skill_attribution_positive_retire_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.positive.retire\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.steps.submit",
       "description": "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.",
       "input": "crate::llm::model_step::ModelStepSubmit",
@@ -11292,6 +11857,22 @@
         "validate": "input.validate()?;"
       },
       "section": false
+    },
+    {
+      "name": "vault.graph.admit",
+      "description": "Admits the caller's own provider measurement for one graph unit in place of the host ladder's, validating the whole decision and its provider-bound paired readings before landing it as a proposed claim private to the caller.",
+      "input": "crate::receipt::GraphAdmitRequest",
+      "output": "crate::receipt::GraphAskOutcome",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.admit\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "proposes": true,
+      "admission": {
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.questions.create",
@@ -14351,6 +14932,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consolidation.home.pick",
+      "description": "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget.",
+      "input": "crate::dreamer_runner::ConsolidationHomePickRequest",
+      "output": "crate::dreamer_runner::ConsolidationHomePickReceipt",
+      "call": "crate::dreamer_runner::consolidation_home_pick_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.pick\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.consolidation.lineage",
       "description": "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model.",
       "input": "crate::dreamer_runner::ConsolidationLineageRequest",
@@ -14372,6 +14968,54 @@
       "output": "crate::memory::consolidation::ConsolidationPromotion",
       "scope": "Write",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.consolidation.promote\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.pin",
+      "description": "Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationPinRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Write",
+      "call": "memory.consolidation_pin_as_owner(&memory.embedded_owner(\"vault.consolidation.pin\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.frontier",
+      "description": "Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationFrontierRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Write",
+      "call": "memory.consolidation_frontier_as_owner(&memory.embedded_owner(\"vault.consolidation.frontier\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.accounting",
+      "description": "Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority.",
+      "input": "crate::memory::consolidation_frontier::ConsolidationAccountingRequest",
+      "output": "crate::memory::consolidation_frontier::ConsolidationRootAccounting",
+      "scope": "Read",
+      "call": "memory.consolidation_accounting_as_owner(&memory.embedded_owner(\"vault.consolidation.accounting\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,

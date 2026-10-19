@@ -342,6 +342,9 @@ impl Vault {
         }
         txn.commit()?;
         watch.finish()?;
+        // A home pick the import landed re-elected this node's MACRO home in
+        // the write (DOOR-101): its watchers re-read it now.
+        self.store.notify_proactivity_changes();
         // A row written after its window loaded reaches it only through the
         // live mirror.
         #[cfg(feature = "sync")]
@@ -670,6 +673,7 @@ impl Vault {
         }
         txn.commit()?;
         watch.finish()?;
+        self.store.notify_proactivity_changes();
         // A row written after its window loaded reaches it only through the
         // live mirror.
         #[cfg(feature = "sync")]

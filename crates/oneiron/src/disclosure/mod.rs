@@ -15,6 +15,7 @@ mod attendee_ask;
 mod clearance_use;
 mod disclosable_set;
 mod import_audience;
+mod model_channel;
 mod room_party;
 mod scope_codec;
 mod tier_classification;
@@ -28,6 +29,14 @@ pub use self::attendee_ask::{
 pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 pub use self::import_audience::import_audience_rule_ref;
+pub use self::model_channel::{
+    DisclosureBand, DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView,
+    DisclosureDataClass,
+};
+pub(crate) use self::model_channel::{
+    claim_data_class, claim_handle_in, model_names_admitted_in, person_name_claim_in,
+    project_model_pack_in,
+};
 pub use self::room_party::RoomParty;
 pub(crate) use self::room_party::{is_vault_owner, room_party_in};
 
