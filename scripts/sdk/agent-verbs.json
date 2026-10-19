@@ -6493,6 +6493,81 @@
       "openapi": true
     },
     {
+      "name": "vault.code.origin.register",
+      "description": "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused.",
+      "input": "crate::memory::origin_doors::OriginRegisterRequest",
+      "output": "crate::memory::origin_doors::OriginRegistered",
+      "call": "memory.origin_register_as(&memory.embedded_owner(\"vault.code.origin.register\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.get",
+      "description": "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginMirrorView",
+      "call": "memory.origin_mirror_get_as(&memory.embedded_owner(\"vault.code.origin.mirror.get\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.set",
+      "description": "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write.",
+      "input": "crate::memory::origin_doors::OriginMirrorSetRequest",
+      "output": "crate::origin::mirror::OriginMirrorTarget",
+      "call": "memory.origin_mirror_set_as(&memory.embedded_owner(\"vault.code.origin.mirror.set\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.clear",
+      "description": "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::memory::origin_doors::OriginMirrorCleared",
+      "call": "memory.origin_mirror_clear_as(&memory.embedded_owner(\"vault.code.origin.mirror.clear\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.origin.mirror.push",
+      "description": "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client.",
+      "input": "crate::memory::origin_doors::OriginRepoRequest",
+      "output": "crate::origin::mirror::OriginMirrorRun",
+      "call": "memory.origin_mirror_push_as(&memory.embedded_owner(\"vault.code.origin.mirror.push\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.code.origin.authority.get",
       "description": "Read one served origin authority and this host identity under the owner credential.",
       "input": "crate::memory::origin_doors::OriginRepoRequest",

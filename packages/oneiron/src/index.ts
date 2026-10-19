@@ -1372,6 +1372,18 @@ export class Oneiron {
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
       export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
       origin: {
+        /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
+        register: (input: Facade.OriginRegisterRequest): Facade.OriginRegistered => this.#call(() => this.#client.vaultCodeOriginRegister(input) as Facade.OriginRegistered),
+        mirror: {
+          /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginMirrorView => this.#call(() => this.#client.vaultCodeOriginMirrorGet(input) as Facade.OriginMirrorView),
+          /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+          set: (input: Facade.OriginMirrorSetRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorSet(input) as Facade.OriginMirrorTarget),
+          /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
+          clear: (input: Facade.OriginRepoRequest): Facade.OriginMirrorCleared => this.#call(() => this.#client.vaultCodeOriginMirrorClear(input) as Facade.OriginMirrorCleared),
+          /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+          push: (input: Facade.OriginRepoRequest): Facade.OriginMirrorRun => this.#call(() => this.#client.vaultCodeOriginMirrorPush(input) as Facade.OriginMirrorRun),
+        },
         authority: {
           /** Read one served origin authority and this host identity under the owner credential. */
           get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),

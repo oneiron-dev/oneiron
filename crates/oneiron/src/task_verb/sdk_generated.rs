@@ -2284,6 +2284,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.origin.register",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRegisterRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginMirrorSetRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.clear",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.mirror.push",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
                 "vault.code.origin.authority.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRepoRequest,
@@ -4582,6 +4612,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.results.read",
     "vault.results.slice",
     "vault.code.export",
+    "vault.code.origin.register",
+    "vault.code.origin.mirror.get",
+    "vault.code.origin.mirror.set",
+    "vault.code.origin.mirror.clear",
+    "vault.code.origin.mirror.push",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
@@ -5499,6 +5534,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.export" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CodeExportResult,
         >(),
+        "vault.code.origin.register" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginRegistered,
+        >(),
+        "vault.code.origin.mirror.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginMirrorView,
+        >(),
+        "vault.code.origin.mirror.set" => crate::code_run::vault_read::request_schema::<
+            crate::origin::mirror::OriginMirrorTarget,
+        >(),
+        "vault.code.origin.mirror.clear" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginMirrorCleared,
+        >(),
+        "vault.code.origin.mirror.push" => {
+            crate::code_run::vault_read::request_schema::<crate::origin::mirror::OriginMirrorRun>()
+        }
         "vault.code.origin.authority.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginAuthorityView,
         >(),
@@ -9003,6 +9053,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.register" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.mirror.push" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12903,6 +12988,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.export" => {
             let _input: crate::memory::origin_doors::CodeExportRequest = decode(value.clone())?;
         }
+        "vault.code.origin.register" => {
+            let _input: crate::memory::origin_doors::OriginRegisterRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.get" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.set" => {
+            let _input: crate::memory::origin_doors::OriginMirrorSetRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.clear" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.mirror.push" => {
+            let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
         "vault.code.origin.authority.get" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
         }
@@ -15036,6 +15137,19 @@ pub fn invoke(
         "vault.results.slice" => encode(vault_results_slice(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
+        "vault.code.origin.register" => encode(vault_code_origin_register(memory, decode(value)?)?),
+        "vault.code.origin.mirror.get" => {
+            encode(vault_code_origin_mirror_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.set" => {
+            encode(vault_code_origin_mirror_set(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.clear" => {
+            encode(vault_code_origin_mirror_clear(memory, decode(value)?)?)
+        }
+        "vault.code.origin.mirror.push" => {
+            encode(vault_code_origin_mirror_push(memory, decode(value)?)?)
+        }
         "vault.code.origin.authority.get" => {
             encode(vault_code_origin_authority_get(memory, decode(value)?)?)
         }
@@ -19309,6 +19423,48 @@ pub fn vault_code_export(
     input: crate::memory::origin_doors::CodeExportRequest,
 ) -> MemoryResult<crate::memory::origin_doors::CodeExportResult> {
     memory.code_export_as(&memory.embedded_owner("vault.code.export")?, input)
+}
+pub fn vault_code_origin_register(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRegisterRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginRegistered> {
+    memory.origin_register_as(&memory.embedded_owner("vault.code.origin.register")?, input)
+}
+pub fn vault_code_origin_mirror_get(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginMirrorView> {
+    memory.origin_mirror_get_as(
+        &memory.embedded_owner("vault.code.origin.mirror.get")?,
+        input,
+    )
+}
+pub fn vault_code_origin_mirror_set(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginMirrorSetRequest,
+) -> MemoryResult<crate::origin::mirror::OriginMirrorTarget> {
+    memory.origin_mirror_set_as(
+        &memory.embedded_owner("vault.code.origin.mirror.set")?,
+        input,
+    )
+}
+pub fn vault_code_origin_mirror_clear(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::memory::origin_doors::OriginMirrorCleared> {
+    memory.origin_mirror_clear_as(
+        &memory.embedded_owner("vault.code.origin.mirror.clear")?,
+        input,
+    )
+}
+pub fn vault_code_origin_mirror_push(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginRepoRequest,
+) -> MemoryResult<crate::origin::mirror::OriginMirrorRun> {
+    memory.origin_mirror_push_as(
+        &memory.embedded_owner("vault.code.origin.mirror.push")?,
+        input,
+    )
 }
 pub fn vault_code_origin_authority_get(
     memory: &Memory<'_>,

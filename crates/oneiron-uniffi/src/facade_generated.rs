@@ -2091,6 +2091,31 @@ export_facade! {
     let output = client.vault_code_export(&input)?;
     crate::codec::lift_record("vault.code.export", &output)
 };
+"vault.code.origin.register" => fn vault_code_origin_register(&self, input: OriginRegisterRequest) -> OriginRegistered = |client| {
+    let input: oneiron::memory::origin_doors::OriginRegisterRequest = crate::codec::lower_record("vault.code.origin.register", input)?;
+    let output = client.vault_code_origin_register(&input)?;
+    crate::codec::lift_record("vault.code.origin.register", &output)
+};
+"vault.code.origin.mirror.get" => fn vault_code_origin_mirror_get(&self, input: OriginRepoRequest) -> OriginMirrorView = |client| {
+    let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.get", input)?;
+    let output = client.vault_code_origin_mirror_get(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.get", &output)
+};
+"vault.code.origin.mirror.set" => fn vault_code_origin_mirror_set(&self, input: OriginMirrorSetRequest) -> OriginMirrorTarget = |client| {
+    let input: oneiron::memory::origin_doors::OriginMirrorSetRequest = crate::codec::lower_record("vault.code.origin.mirror.set", input)?;
+    let output = client.vault_code_origin_mirror_set(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.set", &output)
+};
+"vault.code.origin.mirror.clear" => fn vault_code_origin_mirror_clear(&self, input: OriginRepoRequest) -> OriginMirrorCleared = |client| {
+    let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.clear", input)?;
+    let output = client.vault_code_origin_mirror_clear(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.clear", &output)
+};
+"vault.code.origin.mirror.push" => fn vault_code_origin_mirror_push(&self, input: OriginRepoRequest) -> OriginMirrorRun = |client| {
+    let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.push", input)?;
+    let output = client.vault_code_origin_mirror_push(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.push", &output)
+};
 "vault.code.origin.authority.get" => fn vault_code_origin_authority_get(&self, input: OriginRepoRequest) -> OriginAuthorityView = |client| {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.authority.get", input)?;
     let output = client.vault_code_origin_authority_get(&input)?;

@@ -3945,6 +3945,47 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_origin_register(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.register")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.origin.register", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.origin.mirror.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.origin.mirror.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_clear(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.clear")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.mirror.clear", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_mirror_push(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.push")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.mirror.push", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_origin_authority_get(
         &self,
         py: Python<'_>,

@@ -3664,6 +3664,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_origin_register(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.register", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_clear(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.clear", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_push(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.push", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_origin_authority_get(
         &self,
         input: serde_json::Value,
