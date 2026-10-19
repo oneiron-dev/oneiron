@@ -603,7 +603,11 @@ impl<'a> BranchResources<'a> {
                     .map(|text| text.readable_text(&self.scope))
                     .transpose()?;
                 super::conflict::verify_swarm_evidence_bytes(
-                    *entry, kind, &body, text.flatten(), trust_class,
+                    *entry,
+                    kind,
+                    &body,
+                    text.flatten(),
+                    trust_class,
                 )
             })
             .collect()

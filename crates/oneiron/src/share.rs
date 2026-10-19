@@ -40,9 +40,12 @@ const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
 
 mod actor_erase;
 mod admission_refs;
+mod history;
 pub(crate) use actor_erase::erase_admission_actor_in_txn;
 pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
+pub use history::{ACTOR_ERASE_SHARE_RECIPIENT, ShareRecipientErase};
+pub(crate) use history::{ShareView, read_share_history_in_txn};
 
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,16 +145,7 @@ impl Share {
     /// SHA-256 of a domain-separated, length-framed, canonically ordered typed scope.
     #[must_use]
     pub fn redaction_scope_hash(&self) -> String {
-        let mut hash = Sha256::new();
-        hash.update(b"oneiron.share.redaction_scope.v1\0");
-        for refs in [&self.world_refs, &self.facet_refs] {
-            hash.update((refs.len() as u64).to_be_bytes());
-            for id in refs {
-                hash.update(id.as_bytes());
-            }
-        }
-        hash.update([u8::from(self.include_unscoped)]);
-        crate::entity_id::bytes_to_hex_lower(&hash.finalize())
+        history::redaction_scope_hash(&self.world_refs, &self.facet_refs, self.include_unscoped)
     }
 }
 
@@ -457,20 +451,6 @@ pub(crate) fn read_share_in_txn(
         return Ok(None);
     }
     Ok(Some((share, admission)))
-}
-
-/// [`read_share_in_txn`] for the share receipts: an admission whose issuer
-/// was erased grants nothing (FIX 3520), but its share, its Gate decision,
-/// its digest and its times still read as history.
-pub(crate) fn read_share_history_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Option<(Share, ShareAdmission)>> {
-    if let Some(admitted) = read_share_in_txn(store, txn, id)? {
-        return Ok(Some(admitted));
-    }
-    Ok(stored_share_in_txn(store, txn, id)?.filter(|(_, admission)| admission.issuer.is_none()))
 }
 
 /// Explicit, currently effective brief grants for this entity. A facet stamp

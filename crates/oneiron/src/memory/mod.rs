@@ -83,8 +83,8 @@ pub mod extraction;
 pub mod foreign_code;
 pub mod graph_fs_doors;
 pub mod hook_regen_doors;
-mod inspection;
 pub mod identity_doors;
+mod inspection;
 mod key_value;
 mod lifted_view;
 mod locality;
@@ -199,6 +199,10 @@ pub use oneiron_contracts::memory::{
     MemoryError, MemoryGateDenial, MemoryPolicyDenial, MemoryPolicyExceptionProposal, MemoryResult,
     MemoryWrongRoot,
 };
+pub use people_verbs::{
+    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
+    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
+};
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
     PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
@@ -206,10 +210,6 @@ pub use plugin_sections::{
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
     PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
-};
-pub use people_verbs::{
-    GrantAskReceipt, GrantAskRequest, GrantAskScope, MessagePersonReceipt, MessagePersonRequest,
-    PEOPLE_PAGE_SIZE, PeopleListRequest, PeoplePage, PersonRequest,
 };
 pub use signal_extraction::{
     ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
@@ -237,6 +237,8 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+#[cfg(feature = "sync")]
+pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,

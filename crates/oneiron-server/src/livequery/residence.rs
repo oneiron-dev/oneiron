@@ -105,6 +105,11 @@ struct SearchRequest {
     /// The device's install-key proof over the request and `forwarded`.
     #[serde(default)]
     machine_proof: Option<oneiron::authority::ForwardingMachineProof>,
+    /// A recall's resolved scope (FIX 2905): the search is narrowed by it
+    /// before the candidate cut. It narrows relevance only; every grant,
+    /// selector and caller check below stands.
+    #[serde(default)]
+    scope: Option<oneiron::sync::residence::ResolvedRecallSelection>,
 }
 
 impl SearchRequest {
@@ -136,6 +141,7 @@ impl SearchRequest {
             &self.query,
             self.limit,
             &selector_wire,
+            self.scope.as_ref(),
             |request| {
                 server
                     .vault
@@ -809,8 +815,14 @@ fn search(
         Some(caller) => caller.caller(),
         None => auth.verified_slip().ok_or_else(AppError::unauthorized)?,
     };
-    let candidates = home_search_candidates(&server.vault, proof, &input.query, input.limit)
-        .map_err(|_| AppError::internal_server_error("scoped search unavailable"))?;
+    let candidates = home_search_candidates(
+        &server.vault,
+        proof,
+        &input.query,
+        input.limit,
+        input.scope.as_ref(),
+    )
+    .map_err(|_| AppError::internal_server_error("scoped search unavailable"))?;
     let current_windows: std::collections::HashSet<_> =
         read_window_list(&server.root_doc).into_iter().collect();
     let mut selected_by_window = std::collections::HashMap::new();

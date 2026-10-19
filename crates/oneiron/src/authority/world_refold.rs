@@ -35,7 +35,8 @@ pub(super) fn refold_world_edits(
     // A world edit and a grant travel choice are main-log rows, but
     // restrictive: they must not fall with an unrelated row either (FIX
     // 2998; settings edits left the side branch for the mesh, contract §6),
-    // and neither may the owner's checkpoint policy choice (mesh PR2c).
+    // and neither may the owner's checkpoint policy choice (mesh PR2c) or
+    // home pick (DOOR-101).
     // An invalid edit or choice one descends from is crossed like any
     // main-log row.
     let lost = causal(
@@ -48,6 +49,7 @@ pub(super) fn refold_world_edits(
                         AuthorityOp::WorldPrivacy(_)
                             | AuthorityOp::GrantTravelSet(_)
                             | AuthorityOp::CheckpointPolicySet(_)
+                            | AuthorityOp::HomeNodePick(_)
                     ))
                     && !states.contains_key(*hash)
                     && ancestors
