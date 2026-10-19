@@ -205,7 +205,7 @@ impl Vault {
             }
             let done = effect(txn)?;
             if answer == Answer::Enacted {
-                let outcome = OwnerWorkOutcome::Enacted;
+                let outcome = OwnerWorkOutcome::enacted();
                 self.append_owner_work_result_in_txn(txn, asked.hash, asked.me, outcome)?;
             }
             Ok(Ok(done))
