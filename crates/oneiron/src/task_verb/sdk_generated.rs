@@ -22052,241 +22052,283 @@ pub fn invoke_browser(
         "self.browser.open" => {
             let input: crate::task_verb::sdk::BrowserOpenInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.open(input))?;
+            let output =
+                oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.open(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.browser.observe" => {
             let input: crate::task_verb::sdk::BrowserObserveInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.observe_page(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.observe_page(input)?);
             serde_json::to_value(output)
         }
         "self.browser.find" => {
             let input: crate::task_verb::sdk::BrowserFindInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.find(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.find(input)?);
             serde_json::to_value(output)
         }
         "self.browser.click" => {
             let input: crate::task_verb::sdk::BrowserClickInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.click(input))?;
+            let output =
+                oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.click(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.browser.click_at" => {
             let input: crate::task_verb::sdk::BrowserPointInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.click_at(input))?;
+            let output =
+                oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.click_at(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.browser.type" => {
             let input: crate::task_verb::sdk::BrowserTypeInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.type_text(input))?;
+            let output =
+                oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.type_text(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.browser.select" => {
             let input: crate::task_verb::sdk::BrowserSelectInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.select(input))?;
+            let output =
+                oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.select(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.browser.wait_for" => {
             let input: crate::task_verb::sdk::BrowserWaitForInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.wait_for(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.wait_for(input)?);
             serde_json::to_value(output)
         }
         "self.browser.expect" => {
             let input: crate::task_verb::sdk::BrowserExpectInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.expect(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.expect(input)?);
             serde_json::to_value(output)
         }
         "self.browser.screenshot" => {
             let input: crate::task_verb::sdk::BrowserScreenshotInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.screenshot(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.screenshot(input)?);
             serde_json::to_value(output)
         }
         "self.browser.view" => {
             let input: crate::task_verb::sdk::BrowserViewInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.view(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.view(input)?);
             serde_json::to_value(output)
         }
         "self.browser.crop" => {
             let input: crate::task_verb::sdk::BrowserCropInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.crop(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.crop(input)?);
             serde_json::to_value(output)
         }
         "self.browser.zoom" => {
             let input: crate::task_verb::sdk::BrowserZoomInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.zoom(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.zoom(input)?);
             serde_json::to_value(output)
         }
         "self.browser.batch" => {
             let input: crate::task_verb::sdk::BrowserBatchInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.batch(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.batch(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.find" => {
             let input: crate::task_verb::sdk::BrowserLibraryFindInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.library_find(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_find(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.propose" => {
             let input: crate::task_verb::sdk::BrowserLibraryProposeInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.library_propose(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_propose(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.retire" => {
             let input: crate::task_verb::sdk::BrowserLibraryRetireInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.library_retire(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_retire(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.retired" => {
             let input: crate::task_verb::sdk::BrowserLibraryRetiredInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.library_retired(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_retired(input)?);
             serde_json::to_value(output)
         }
         "self.browser.library.run" => {
             let input: crate::task_verb::sdk::BrowserLibraryRunInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.library_run(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.library_run(input)?);
             serde_json::to_value(output)
         }
         "self.browser.handover" => {
             let input: crate::task_verb::sdk::BrowserHandoverInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.handover(input)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.handover(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.open" => {
             let input: oneiron_browser::OpenInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.open(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.open(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.observe" => {
             let input: oneiron_browser::ObserveInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.observe_page(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.observe_page(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.find" => {
             let input: oneiron_browser::FindInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.find(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.find(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.click" => {
             let input: oneiron_browser::ClickInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.click(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.click(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.click_at" => {
             let input: oneiron_browser::PointInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.click_at(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.click_at(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.type" => {
             let input: oneiron_browser::TypeInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.type_text(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.type_text(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.select" => {
             let input: oneiron_browser::SelectInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.select(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.select(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.key" => {
             let input: oneiron_browser::KeyInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.press_key(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.press_key(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.hotkey" => {
             let input: oneiron_browser::HotkeyInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.hotkey(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.hotkey(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.scroll" => {
             let input: oneiron_browser::ScrollInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.scroll(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.scroll(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.wait_for" => {
             let input: oneiron_browser::WaitForInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.wait_for(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.wait_for(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.expect" => {
             let input: oneiron_browser::ExpectInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.expect(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.expect(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.screenshot" => {
             let input: oneiron_browser::ScreenshotInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.screenshot(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.screenshot(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.view" => {
             let input: oneiron_browser::ViewInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.view(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.view(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.crop" => {
             let input: oneiron_browser::CropInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.crop(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.crop(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.zoom" => {
             let input: oneiron_browser::ZoomInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.zoom(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.zoom(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.batch" => {
             let input: oneiron_browser::BatchInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.batch(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.batch(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.windows" => {
             let input: oneiron_browser::WindowsInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.windows(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.windows(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.window" => {
             let input: oneiron_browser::WindowInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = oneiron_browser::paged(driver, |driver| driver.window(input))?;
+            let output =
+                oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(driver, |driver| {
+                    driver.window(input)
+                })?);
             serde_json::to_value(output)
         }
         "self.desktop.handover" => {
             let input: oneiron_browser::HandoverInput =
                 serde_json::from_value(value).map_err(invalid)?;
-            let output = driver.handover(input)?;
+            let output = oneiron_browser::DesktopAnswer::of(driver.handover(input)?);
             serde_json::to_value(output)
         }
         _ => {
@@ -29000,122 +29042,213 @@ pub fn connector_call_status(
 pub fn self_desktop_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.open(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.open(input),
+    )?))
 }
 pub fn self_desktop_observe(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ObserveInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    driver.observe_page(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(
+        driver.observe_page(input)?,
+    ))
 }
 pub fn self_desktop_find(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::FindInput,
-) -> Result<oneiron_browser::FindOutput, oneiron_browser::BrowserError> {
-    driver.find(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::FindOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.find(input)?))
 }
 pub fn self_desktop_click(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ClickInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.click(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.click(input),
+    )?))
 }
 pub fn self_desktop_click_at(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::PointInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.click_at(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.click_at(input),
+    )?))
 }
 pub fn self_desktop_type(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::TypeInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.type_text(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.type_text(input),
+    )?))
 }
 pub fn self_desktop_select(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::SelectInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.select(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.select(input),
+    )?))
 }
 pub fn self_desktop_key(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::KeyInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.press_key(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.press_key(input),
+    )?))
 }
 pub fn self_desktop_hotkey(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::HotkeyInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.hotkey(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.hotkey(input),
+    )?))
 }
 pub fn self_desktop_scroll(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ScrollInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.scroll(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.scroll(input),
+    )?))
 }
 pub fn self_desktop_wait_for(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::WaitForInput,
-) -> Result<oneiron_browser::WaitForOutput, oneiron_browser::BrowserError> {
-    driver.wait_for(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::WaitForOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.wait_for(input)?))
 }
 pub fn self_desktop_expect(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ExpectInput,
-) -> Result<oneiron_browser::ExpectOutput, oneiron_browser::BrowserError> {
-    driver.expect(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ExpectOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.expect(input)?))
 }
 pub fn self_desktop_screenshot(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ScreenshotInput,
-) -> Result<oneiron_browser::ScreenshotOutput, oneiron_browser::BrowserError> {
-    driver.screenshot(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ScreenshotOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(
+        driver.screenshot(input)?,
+    ))
 }
 pub fn self_desktop_view(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ViewInput,
-) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
-    driver.view(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ImageOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.view(input)?))
 }
 pub fn self_desktop_crop(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::CropInput,
-) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
-    driver.crop(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ImageOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.crop(input)?))
 }
 pub fn self_desktop_zoom(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ZoomInput,
-) -> Result<oneiron_browser::ImageOutput, oneiron_browser::BrowserError> {
-    driver.zoom(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ImageOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.zoom(input)?))
 }
 pub fn self_desktop_batch(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::BatchInput,
-) -> Result<oneiron_browser::BatchOutput, oneiron_browser::BrowserError> {
-    driver.batch(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::BatchOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.batch(input)?))
 }
 pub fn self_desktop_windows(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::WindowsInput,
-) -> Result<oneiron_browser::WindowsOutput, oneiron_browser::BrowserError> {
-    driver.windows(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::WindowsOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.windows(input)?))
 }
 pub fn self_desktop_window(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::WindowInput,
-) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
-    oneiron_browser::paged(driver, |driver| driver.window(input))
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::ObservationPage>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(oneiron_browser::paged(
+        driver,
+        |driver| driver.window(input),
+    )?))
 }
 pub fn self_desktop_handover(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::HandoverInput,
-) -> Result<oneiron_browser::HandoverOutput, oneiron_browser::BrowserError> {
-    driver.handover(input)
+) -> Result<
+    oneiron_browser::DesktopAnswer<oneiron_browser::HandoverOutput>,
+    oneiron_browser::BrowserError,
+> {
+    Ok(oneiron_browser::DesktopAnswer::of(driver.handover(input)?))
 }
 pub fn vault_commit(
     memory: &Memory<'_>,

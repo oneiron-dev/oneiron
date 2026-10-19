@@ -498,6 +498,7 @@ impl CdpDriver {
     pub(crate) fn image(&self, image: &str) -> Option<&[u8]> {
         self.media
             .iter()
+            .rev()
             .find(|held| held.image == image)
             .map(|held| held.png.as_slice())
     }
@@ -526,9 +527,12 @@ impl CdpDriver {
         Ok((image, width, height, bytes))
     }
 
+    /// The newest held copy of `image`: a repeat screenshot holds the same
+    /// ref again, and its own frame is the one the page stands at now.
     fn held(&self, image: &str) -> Result<(Vec<u8>, Frame), BrowserError> {
         self.media
             .iter()
+            .rev()
             .find(|held| held.image == image)
             .map(|held| (held.png.clone(), held.frame.clone()))
             .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
@@ -1200,6 +1204,7 @@ impl BrowserDriver for CdpDriver {
             rows,
             next,
             partial: None,
+            walk_next: None,
         })
     }
 
@@ -1232,6 +1237,7 @@ impl BrowserDriver for CdpDriver {
                 waited_ms: 0,
                 next,
                 partial: None,
+                walk_next: None,
                 rebindings: Vec::new(),
             });
         }
@@ -1267,6 +1273,7 @@ impl BrowserDriver for CdpDriver {
                     waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
                     next,
                     partial: None,
+                    walk_next: None,
                     rebindings,
                 });
             }

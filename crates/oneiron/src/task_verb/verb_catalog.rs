@@ -11897,7 +11897,7 @@ impl AgentVerb {
                 "Observes the desktop guest's window as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with next; a cut tree walk answers partial, and walk_next walks it longer."
             }
             Self::SelfDesktopFind => {
-                "Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
+                "Finds the window rows whose role and name match, in pages read on with find and next; a cut tree with no match walks on, and an answer still cut is partial, with a walk_next that find searches on with."
             }
             Self::SelfDesktopClick => {
                 "Clicks one window target and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
@@ -11921,10 +11921,10 @@ impl AgentVerb {
                 "Scrolls a window target, or the window, by steps, and observes the result as an ordered edit of the caller's base; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopWaitFor => {
-                "Waits until a window row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
+                "Waits until a window row its refs name, or else some row matching a role and name, is there, walking a cut tree on within its time; pages read on with find and next, and a wait ended cut is partial, with a walk_next."
             }
             Self::SelfDesktopExpect => {
-                "Checks that a window row is present or absent, and holds a given value."
+                "Checks that a window row is present or absent, and holds a given value; a cut tree walks on, and only a whole tree shows a row absent, so a row unseen past a cut leaves the check unmet and partial."
             }
             Self::SelfDesktopScreenshot => {
                 "Takes a screenshot of the window the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope."

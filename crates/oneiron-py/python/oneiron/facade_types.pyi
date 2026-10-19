@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1061 facade rows, 3595 declarations.
+Census: 1061 facade rows, 3612 declarations.
 Inputs: 996 of 1061 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 951 of 1061 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -17777,6 +17777,16 @@ class IdentityPairProposals(TypedDict):
     distinct_claims: list[EntityId]
 class OpenInput(TypedDict):
     url: str
+class TakeoverRecord(TypedDict):
+    by: str
+    asked: NotRequired[str | None]
+    taken_at_ms: int
+    returned_at_ms: int
+    inputs: int
+TabSwitchCause = Literal["opened", "closed"]
+TabSwitch = TypedDict("TabSwitch", {"tab": str, "url": str, "title": str, "from": str, "why": TabSwitchCause})
+BrowserAnswerItem = dict[str, Any]
+BrowserAnswer = BrowserAnswerItem[T]
 class RowSplice(TypedDict):
     start: int
     delete_count: int
@@ -17849,6 +17859,7 @@ class Observation2(TypedDict):
     rebound: NotRequired[Rebound | None]
 class ObservationPage(Observation2):
     next: NotRequired[str | None]
+BrowserObservationPage = BrowserAnswer[ObservationPage]
 class ObservationBase(TypedDict):
     scope: str
     seq: int
@@ -17864,6 +17875,8 @@ class FindOutput(TypedDict):
     rows: list[Row]
     next: NotRequired[str | None]
     partial: NotRequired[PartialTree | None]
+    walk_next: NotRequired[str | None]
+BrowserFindOutput = BrowserAnswer[FindOutput]
 class ClickInput(TypedDict):
     ref: str
     base: NotRequired[ObservationBase | None]
@@ -17893,7 +17906,9 @@ class WaitForOutput(TypedDict):
     waited_ms: int
     next: NotRequired[str | None]
     partial: NotRequired[PartialTree | None]
+    walk_next: NotRequired[str | None]
     rebindings: NotRequired[list[Rebound]]
+BrowserWaitForOutput = BrowserAnswer[WaitForOutput]
 class ExpectInput(TypedDict):
     ref: NotRequired[str | None]
     role: NotRequired[str | None]
@@ -17905,6 +17920,7 @@ class ExpectOutput(TypedDict):
     row: NotRequired[Row | None]
     partial: NotRequired[PartialTree | None]
     rebindings: NotRequired[list[Rebound]]
+BrowserExpectOutput = BrowserAnswer[ExpectOutput]
 ScreenshotTrigger = Literal["outline_thin", "no_postcondition", "decider_reobserve", "no_accessibility_tree", "effect_receipt"]
 class ScreenshotInput(TypedDict):
     trigger: ScreenshotTrigger
@@ -17920,6 +17936,7 @@ class ScreenshotOutput(TypedDict):
     title: str
     capture_id: str
     unchanged_from: NotRequired[str | None]
+BrowserScreenshotOutput = BrowserAnswer[ScreenshotOutput]
 class ViewInput(TypedDict):
     image: str
 class ImageOutput(TypedDict):
@@ -17929,6 +17946,7 @@ class ImageOutput(TypedDict):
     height: int
     bytes: int
     source: str
+BrowserImageOutput = BrowserAnswer[ImageOutput]
 class CropInput(TypedDict):
     image: str
     x: int
@@ -18020,12 +18038,14 @@ class BatchOutput(TypedDict):
     until_ms: NotRequired[int | None]
     next: NotRequired[str | None]
     rebindings: NotRequired[list[StepRebound]]
+BrowserBatchOutput = BrowserAnswer[BatchOutput]
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
+BrowserLibraryFindOutput = BrowserAnswer[LibraryFindOutput]
 class ProposeInput(TypedDict):
     subgoal: str
     params: NotRequired[list[str]]
@@ -18039,11 +18059,13 @@ class ProposeOutput(TypedDict):
     refused_by: NotRequired[WorkflowCheck | None]
     unmet: NotRequired[list[int]]
     replay: NotRequired[BatchOutput | None]
+BrowserLibraryProposeOutput = BrowserAnswer[ProposeOutput]
 class LibraryRetireInput(TypedDict):
     workflow: str
     reason: NotRequired[str | None]
 class LibraryRetireOutput(TypedDict):
     retired: LibraryCard
+BrowserLibraryRetireOutput = BrowserAnswer[LibraryRetireOutput]
 class LibraryRetiredInput(TypedDict):
     site: NotRequired[str | None]
 class RetiredCard(TypedDict):
@@ -18053,6 +18075,7 @@ class RetiredCard(TypedDict):
 class LibraryRetiredOutput(TypedDict):
     site: str
     retired: list[RetiredCard]
+BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
@@ -18062,11 +18085,13 @@ class LibraryRunOutput(TypedDict):
     status: SubgoalStatus
     unmet: NotRequired[list[int]]
     batch: BatchOutput
+BrowserLibraryRunOutput = BrowserAnswer[LibraryRunOutput]
 class HandoverInput(TypedDict):
     reason: str
 class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
+BrowserHandoverOutput = BrowserAnswer[HandoverOutput]
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

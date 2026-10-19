@@ -1667,7 +1667,11 @@ owner holds the desktop, every desktop verb refuses `desktop_taken_over` (a
 batch stops `NEEDS_YOU`) and no receipt screenshot is taken. Handing it back
 writes the takeover's record (who, the ask, when it was taken and returned,
 how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
-agent's next desktop answer carries it as `takeover`.
+agent's next desktop answer carries it as `takeover`. When the window the
+agent's verbs read is gone (a dialog closed, an app quit), the session
+reads the window in front, and the next answer names the move as
+`switched` (`{window, app, title, from}`). Both are typed on every browser
+and desktop answer in the code-mode declarations.
 
 A handover is each owner's inbox Ask (producer `guest.takeover`): its source
 names the run, its result is the take route, and its `detail` is the
@@ -1772,8 +1776,17 @@ marked `partial` (`{reason, visited, pending, walk_ms}`), as a whole
 observation that no later one edits; its last page carries `walk_next`,
 and `observe({cursor: walk_next})` walks the window again at four times
 the time, up to cua-driver's 120 s ceiling, as a new whole observation
-with its own `seq`. `find`, `wait_for` and `expect` carry the same
-`partial` when the tree they read was cut. A routine `decide` step with
+with its own `seq`. A cut is never proof a row is gone: an act on a row
+(`click`, `type`, `select`, `key`, `scroll`), and a `find`, `wait_for` or
+`expect` that reached no row it seeks, walks the window on itself, longer
+each time, until the row is there, the walk reaches the tree's end, or a
+walk at the 120 s ceiling is still cut (a wait's own time ends it sooner).
+Only a walk that reached the end refuses `browser_stale_ref`; an act whose
+row is still past the cut refuses `desktop_tree_cut`. A search still cut
+answers what it found, with `partial` on every page and, on the last, a
+`walk_next` that `find({cursor: walk_next})` takes to search the window
+again, longer; an `expect` that saw no row past a cut is unmet, and a
+batch stops on it with `desktop_tree_cut`. A routine `decide` step with
 more than 61 candidates asks its decider in pages of 61, moving to the next
 page on NONE; a step is never refused for its count, and a batch or a
 library program holds one or more steps, never refused for their count.
