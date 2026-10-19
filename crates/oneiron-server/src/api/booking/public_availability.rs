@@ -9,7 +9,15 @@ use serde::{Deserialize, Serialize};
 struct CachedAvailability {
     query: serde_json::Value,
     response: BookingOperationResponse,
+    /// The rows the cached solve was derived from, by hex id (FIX 4781):
+    /// its calendar binding's claims and every row its oracle listed. An
+    /// entry that kept none lists unknown.
+    #[serde(default)]
+    sources: Option<Vec<String>>,
 }
+
+/// A cached answer and the rows its solve listed, `None` when unknown.
+pub(super) type CachedListing = (BookingOperationResponse, Option<Vec<EntityId>>);
 
 fn query(
     input: &BookingAvailabilityInput,
@@ -70,7 +78,7 @@ pub(super) fn cached_response(
     page: EntityId,
     request: &BookingOperationRequest,
     authority: Option<&PublicBookingAuthority>,
-) -> Result<Option<BookingOperationResponse>, ApiError> {
+) -> Result<Option<CachedListing>, ApiError> {
     let (BookingOperationRequest::Availability(input), Some(authority)) = (request, authority)
     else {
         return Ok(None);
@@ -90,7 +98,12 @@ pub(super) fn cached_response(
     ) {
         return Ok(None);
     }
-    Ok(Some(cached.response))
+    let sources = cached.sources.and_then(|ids| {
+        ids.iter()
+            .map(|id| EntityId::from_hex(id).ok())
+            .collect::<Option<Vec<_>>>()
+    });
+    Ok(Some((cached.response, sources)))
 }
 
 pub(super) fn remember_response(
@@ -99,6 +112,7 @@ pub(super) fn remember_response(
     input: &BookingAvailabilityInput,
     authority: Option<&PublicBookingAuthority>,
     response: &BookingOperationResponse,
+    sources: &[EntityId],
 ) -> Result<(), ApiError> {
     let Some(authority) = authority else {
         return Ok(());
@@ -106,19 +120,23 @@ pub(super) fn remember_response(
     let bytes = serde_json::to_vec(&CachedAvailability {
         query: query(input, authority),
         response: response.clone(),
+        sources: Some(sources.iter().map(EntityId::to_hex).collect()),
     })
     .map_err(|_| ApiError::internal_server_error("booking slot cache encoding failed"))?;
     remember_slot_list_body(server, &page, Some(&input.event_type), &bytes)?;
     Ok(())
 }
 
+/// Solves one availability request, beside the rows the solve was derived
+/// from (FIX 4781): the calendar binding's claims and every row the listing
+/// oracle read. They go into the cache beside the answer.
 pub(super) fn solve(
     server: &Arc<SyncServer>,
     page_ref: EntityId,
     input: BookingAvailabilityInput,
     now: u64,
     public_authority: Option<&PublicBookingAuthority>,
-) -> Result<BookingOperationResponse, ApiError> {
+) -> Result<(BookingOperationResponse, Vec<EntityId>), ApiError> {
     let constraint = normalize_constraint(input.constraint.clone(), now)?;
     let solve_request = SolveRequest {
         event_type: input.event_type.clone(),
@@ -126,7 +144,11 @@ pub(super) fn solve(
         constraint,
         visitor_tz: input.visitor_tz.clone(),
     };
-    let mut solved = booking_oracle(server, page_ref, None, now)?.solve(&solve_request)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let (oracle, mut sources) =
+        lifecycle::booking_oracle_listing(server, page_ref, None, now, &producers)?;
+    let mut solved = oracle.solve(&solve_request)?;
+    sources.extend(producers.take());
     if public_authority.is_some() {
         let oneiron::booking::RungProjection::Slots(mask) = oneiron::booking::bounded_public_slots(
             oneiron::booking::slot_mask(&solve_request, solved),
@@ -146,8 +168,15 @@ pub(super) fn solve(
         slots, flex_used, ..
     } = solved;
     let response = BookingOperationResponse::Availability { slots, flex_used };
-    remember_response(server, page_ref, &input, public_authority, &response)?;
-    Ok(response)
+    remember_response(
+        server,
+        page_ref,
+        &input,
+        public_authority,
+        &response,
+        &sources,
+    )?;
+    Ok((response, sources))
 }
 
 /// Replaces caller-supplied constraint input with a canonical object.

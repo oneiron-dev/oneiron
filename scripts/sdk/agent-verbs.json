@@ -6223,6 +6223,7 @@
       "output": "Vec<crate::skill_optimize::offer_doors::OfferView>",
       "call": "crate::skill_optimize::offer_doors::list(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -6237,6 +6238,7 @@
       "output": "Option<crate::skill_optimize::offer_doors::OfferView>",
       "call": "crate::skill_optimize::offer_doors::get(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.get\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -6266,6 +6268,7 @@
       "output": "Option<crate::skill_optimize::offer_doors::OfferPassResult>",
       "call": "crate::skill_optimize::offer_doors::result(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.result\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -6340,6 +6343,7 @@
       "output": "crate::skill_optimize::offer_pilot::OfferPilotPrepared",
       "call": "crate::skill_optimize::offer_pilot::prepare_pilot(memory.vault(), &memory.embedded_owner(\"vault.coach.training_offers.pilots.prepare\")?, input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -13327,6 +13331,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.availability\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -13341,6 +13346,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.book\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -13355,6 +13361,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.reschedule\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -13369,6 +13376,7 @@
       "output": "crate::booking::agent_api::BookingOperationResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.cancel\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
