@@ -36521,6 +36521,8 @@ pub struct ProjectCardRecord {
     pub state: ProjectCardState,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(rename = "history", default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<bool>,
 }
 
 /// `oneiron::task_verb::sdk::ProjectCardRequest`.

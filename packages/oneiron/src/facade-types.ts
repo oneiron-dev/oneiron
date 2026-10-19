@@ -4765,7 +4765,7 @@ export type RosterActor = string
 /** `oneiron::workspace_roster::project::proposal::ProjectCardState` */
 export type ProjectCardState = "proposed" | { minted: { project: EntityId } } | "dismissed"
 /** `oneiron::workspace_roster::project::proposal::ProjectCardRecord` */
-export type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: RosterActor; state: ProjectCardState; at: number }
+export type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: RosterActor; state: ProjectCardState; at: number; history?: boolean }
 /** `oneiron::task_verb::sdk::ProjectCardRequest` */
 export type ProjectCardRequest = { card_id: string }
 /** `oneiron::task_verb::sdk::ProjectCardDismissal` */

@@ -2399,7 +2399,7 @@ declare namespace Sdk {
   type ProjectConversationRequest = { conversation_ref: string };
   type RosterActor = string;
   type ProjectCardState = "proposed" | { minted: { project: EntityId } } | "dismissed";
-  type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: RosterActor; state: ProjectCardState; at: number };
+  type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: RosterActor; state: ProjectCardState; at: number; history?: boolean };
   type ProjectCardRequest = { card_id: string };
   type ProjectCardDismissal = { card_id: string; dismissed: boolean };
   type ProjectCardConfirmRequest = { card_id: string; action_id: string; occurred_at: number };
