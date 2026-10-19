@@ -211,6 +211,16 @@ pub struct ServeArgs {
     #[arg(long = "esign-delivery-outbox-dir")]
     pub esign_delivery_outbox_dir: Option<PathBuf>,
 
+    /// The directory the vault hands conversation text toward training the
+    /// models Oneiron ships through (OF-420, "Learn from my conversations"),
+    /// an absolute path: released offers in `offers/`, id-only withdrawals
+    /// in `controls/`, the intake's receipts in `receipts/`, beside the
+    /// intake's key files (`oneiron_vault_contract::conversation_training`).
+    /// Self-hosted or managed (the supervisor's there); without it no outbox
+    /// runs and nothing is shared.
+    #[arg(long = "publisher-training-outbox-dir")]
+    pub publisher_training_outbox_dir: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -478,6 +488,10 @@ impl fmt::Debug for ServeArgs {
             .field("seal_signing_url", &self.seal_signing_url)
             .field("seal_organ", &self.seal_organ)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field(
+                "publisher_training_outbox_dir",
+                &self.publisher_training_outbox_dir,
+            )
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

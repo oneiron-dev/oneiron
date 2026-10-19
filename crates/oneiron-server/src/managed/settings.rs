@@ -74,6 +74,13 @@ pub(super) fn settle(
         .with_context(|| format!("read settings file {}", path.display()))?;
     let mut table: toml::Table =
         toml::from_str(&raw).with_context(|| format!("parse settings file {}", path.display()))?;
+    // The training outbox is the supervisor's binding, on argv only: the
+    // schema has no key for it, so it is refused as the supervisor's before
+    // it could read as unknown (OF-420).
+    let outbox = oneiron_vault_contract::conversation_training::OUTBOX_DIR_SETTING;
+    if table.contains_key(outbox) {
+        return Err(refused(&[outbox], SettingsRefusal::SupervisorOwned).into());
+    }
     refuse_unknown(&table)?;
     visit(&table, &mut Vec::new(), &mut |field, _| {
         if matches_any(field, SUPERVISOR_OWNED) {

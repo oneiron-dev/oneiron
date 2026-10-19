@@ -51,6 +51,31 @@ Legacy serve flags still work at the top level:
 oneiron-server --vault-path ~/.local/share/oneiron/default --port 9090
 ```
 
+"Learn from my conversations" (OF-420) shares nothing unless the server is
+given an outbox, on the command line only (no config key, no environment
+variable):
+
+```sh
+oneiron-server serve --vault-path ~/.local/share/oneiron/default \
+  --publisher-training-outbox-dir /srv/oneiron/training-outbox
+```
+
+The path must be absolute. The vault makes three owner-only subdirectories in
+it: `offers/` (one JSON manifest per released submission and its sealed chunks
+of filtered text, renamed in only after a release recheck), `controls/` (id-only
+withdrawals and scope changes, written whatever the learning state) and
+`receipts/` (the intake's signed receipts, which the vault applies and then
+removes). An uploader ships `offers/` and `controls/` and writes `receipts/`;
+the file formats are `oneiron_vault_contract::conversation_training`. Offers
+are sealed to the intake's public key in `intake-recipient.v1` in the outbox
+directory, and receipts are checked against the Ed25519 key in
+`intake-receipt-key.v1`. With no recipient key the vault writes no offer and
+logs offers as unavailable, naming the missing file, while withdrawals still
+flow; with no receipt key it applies no receipt. A self-hosted vault also needs
+its account binding to the intake (the device-code registration), which this
+build does not have, so a self-hosted outbox writes withdrawals only for now.
+Without the flag no outbox runs and nothing is shared.
+
 ## Config
 
 `oneiron-server serve` reads `~/.config/oneiron/oneiron.toml` when it exists.
