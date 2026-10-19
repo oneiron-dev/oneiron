@@ -131,6 +131,8 @@ impl Vault {
         if let Err(error) = ask::prune(self, cutoff, VERB_ASK_PRUNE_MAX) {
             tracing::warn!(%error, "old verb hook asks wait for the next pass");
         }
+        // Session-only pauses on the same horizon (FIX 5528).
+        ask::session::prune(self, cutoff);
         Ok(ran)
     }
 

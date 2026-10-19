@@ -23,12 +23,14 @@
 //!   unsaved rows a hook may have read: then, as the room's retrieval
 //!   telemetry does, nothing lands in base, and the landing's checks still
 //!   run;
-//! - anonymous, nowhere: the room retains no record.
+//! - anonymous, into the in-memory keep (`SessionHookKeep`) under the room's
+//!   own session-instance key, never the room's overlay or base: the room
+//!   retains no record, and the room's close drops the keep's (FIX 5431).
 //!
 //! A room that keeps no record of a chain (its budget refused the segment, a
-//! record held a secret only a vault's custody door could mint, it is
-//! anonymous, or it withheld the records from base) answers which, and the
-//! hook's outcome applies all the same (CALLS-4
+//! record held a secret only a vault's custody door could mint, an anonymous
+//! room's stretch is closing or gone, or it withheld the records from base)
+//! answers which, and the hook's outcome applies all the same (CALLS-4
 //! `session_receipt_budget_policy`, `HookRecordsKept::of`). A refusal of the
 //! room's own authority (a route that flipped, a participant who left, a
 //! saver who no longer holds, a room that is closing) fails the call, as on
@@ -49,6 +51,7 @@ use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::side_table::RoutedDbs;
 use crate::{EntityId, Vault};
 
+use super::registry::session_entry_state;
 use super::session::OffRecordSession;
 
 /// The pre or post chain's end in a room, and what each hook did.
@@ -73,8 +76,19 @@ impl OffRecordSession<'_> {
     ) -> Result<HookRecordsKept> {
         match route.target() {
             RouteTarget::Discard => {
+                // An anonymous room's chain keeps its records in RAM only,
+                // under this stretch's own key, which its close drops
+                // (FIX 5431); one closing or gone keeps none.
                 route.revalidate()?;
-                return Ok(HookRecordsKept::NotKept(SessionHookNotKept::NoRetention));
+                let key = SessionHookKey::Session {
+                    key: self.session_ref.clone(),
+                    entered_at: session_entry_state(&self.entry)?.record.entered_at,
+                };
+                return self
+                    .vault
+                    .verb_hook_state
+                    .session
+                    .stage(self.vault, &key, rows);
             }
             RouteTarget::Base if self.read_view()?.read().holds_room_rows() => {
                 let landing = self.landing(route)?;

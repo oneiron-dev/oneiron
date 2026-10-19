@@ -201,8 +201,9 @@ impl SessionHookKey {
 /// standalone overlay that stages a call's records as a room's overlay
 /// does, under a room's byte budget, and the calls its hooks' asks paused,
 /// in RAM only. Nothing in it reaches base; it goes with its session's
-/// [`Self::drop_session`], or with the vault's process. A key whose session
-/// is closing or gone is never kept again.
+/// [`Self::drop_session`], or with the vault's process, and a used or
+/// declined pause goes sooner, on the saved calls' horizon ([`Self::prune`]).
+/// A key whose session is closing or gone is never kept again.
 #[derive(Default)]
 pub(crate) struct SessionHookKeep {
     kept: Mutex<HashMap<SessionHookKey, Kept>>,
@@ -215,7 +216,16 @@ pub(crate) struct SessionHookKeep {
 struct Kept {
     overlay: Arc<SessionOverlay>,
     /// The calls its hooks' asks paused, by invocation.
-    asks: HashMap<[u8; 16], SessionVerbAsk>,
+    asks: HashMap<[u8; 16], KeptAsk>,
+}
+
+/// A paused call as the keep holds it, with when its ask paused it and when
+/// a retry used its answer up, vault-clock seconds: what
+/// [`SessionHookKeep::prune`] reads (FIX 5528).
+struct KeptAsk {
+    ask: SessionVerbAsk,
+    paused_at: u64,
+    used_at: Option<u64>,
 }
 
 /// A call a session-only call's hook ask paused (L13 PR-D, FIX 4283): what
@@ -317,8 +327,16 @@ impl SessionHookKeep {
         invocation: [u8; 16],
         ask: SessionVerbAsk,
     ) -> bool {
+        let paused_at = vault.store.clock.now_recorded_at();
         self.with_live(vault, key, |kept| {
-            kept.asks.insert(invocation, ask);
+            kept.asks.insert(
+                invocation,
+                KeptAsk {
+                    ask,
+                    paused_at,
+                    used_at: None,
+                },
+            );
         })
         .is_some()
     }
@@ -330,7 +348,8 @@ impl SessionHookKeep {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(key)
-            .and_then(|kept| kept.asks.get(&invocation).cloned())
+            .and_then(|kept| kept.asks.get(&invocation))
+            .map(|row| row.ask.clone())
     }
 
     /// Uses ask `ask`'s proceed answer up for `invocation` under `key`,
@@ -338,21 +357,73 @@ impl SessionHookKeep {
     /// already, a newer ask's call, or its session gone).
     pub(super) fn use_ask(
         &self,
+        vault: &Vault,
         key: &SessionHookKey,
         invocation: [u8; 16],
         ask: EntityId,
     ) -> bool {
+        let now = vault.store.clock.now_recorded_at();
         let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
         match kept
             .get_mut(key)
             .and_then(|kept| kept.asks.get_mut(&invocation))
         {
-            Some(row) if row.ask == ask && !row.used => {
-                row.used = true;
+            Some(row) if row.ask.ask == ask && !row.ask.used => {
+                row.ask.used = true;
+                row.used_at = Some(now);
                 true
             }
             _ => false,
         }
+    }
+
+    /// Forgets the paused calls `cutoff` (vault-clock seconds) left behind,
+    /// as the drain's pass forgets saved ones (`ask::prune`, FIX 5528): a
+    /// used one used before it, and an unused one paused before it whose ask
+    /// `declined` reads as settled without a proceed. A pending pause and an
+    /// approved one not yet used stay, whatever their age; nothing is
+    /// forgotten on a count or a size. `declined` runs outside the keep's
+    /// lock, as its read may settle a lapsed ask in a vault write. A retry
+    /// that names a forgotten pause reads it gone, as after its session
+    /// ended. Returns how many it forgot.
+    pub(super) fn prune(&self, cutoff: u64, declined: impl Fn(&SessionVerbAsk) -> bool) -> usize {
+        let mut forgot = 0;
+        let mut unsettled = Vec::new();
+        {
+            let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+            for (key, held) in kept.iter_mut() {
+                held.asks.retain(|invocation, row| {
+                    if row.used_at.is_some_and(|used_at| used_at < cutoff) {
+                        forgot += 1;
+                        return false;
+                    }
+                    if !row.ask.used && row.paused_at < cutoff {
+                        unsettled.push((key.clone(), *invocation, row.ask.clone()));
+                    }
+                    true
+                });
+            }
+        }
+        let declined: Vec<_> = unsettled
+            .into_iter()
+            .filter(|(_, _, row)| declined(row))
+            .collect();
+        if declined.is_empty() {
+            return forgot;
+        }
+        let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        for (key, invocation, row) in declined {
+            let Some(asks) = kept.get_mut(&key).map(|held| &mut held.asks) else {
+                continue;
+            };
+            if asks.get(&invocation).is_some_and(|now| {
+                now.ask.ask == row.ask && !now.ask.used && now.paused_at < cutoff
+            }) {
+                asks.remove(&invocation);
+                forgot += 1;
+            }
+        }
+        forgot
     }
 
     /// The id that stands for `invocation` under `key` wherever the vault

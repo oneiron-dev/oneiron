@@ -243,6 +243,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
             vault: Arc::clone(vault),
             agent: context.agent,
             session_key: None,
+            activity: None,
             open,
             mode: MessageWriteMode::Atomic,
             admitted,
