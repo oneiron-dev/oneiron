@@ -34,7 +34,11 @@ impl AudienceCache {
         self.readable_at_depth(vault, txn, id, audience, 0)
     }
     /// [`Self::readable`] over the exact revision being served, which for a
-    /// pinned or indexed read may be older than the current row.
+    /// pinned or indexed read may be older than the current row. With
+    /// `current`, `audience` stands in each private thread the row sits in
+    /// under the CURRENT rule, whether it is in the thread now, rather than
+    /// per turn (FIX 5545): a member's own read of a room or thread checks
+    /// its other members so ([`private_threads_readable_with_read_in`]).
     pub(crate) fn readable_raw(
         &mut self,
         vault: &Vault,
@@ -42,13 +46,14 @@ impl AudienceCache {
         id: EntityId,
         raw: &[u8],
         audience: &[EntityId],
+        current: bool,
     ) -> Result<bool> {
         if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
             || vault.archive_tombstone_in_txn(txn, &id)?.is_some()
         {
             return Ok(false);
         }
-        self.readable_raw_at_depth(vault, txn, id, raw, audience, 0)
+        self.readable_raw_at_depth(vault, txn, id, raw, audience, current, 0)
     }
     fn covers_readable(
         &mut self,
@@ -97,8 +102,11 @@ impl AudienceCache {
         else {
             return Ok(false);
         };
-        self.readable_raw_at_depth(vault, txn, id, &raw, audience, depth)
+        // `readable` meets each private thread turn by turn; a cover, at a
+        // later depth, walks none.
+        self.readable_raw_at_depth(vault, txn, id, &raw, audience, false, depth)
     }
+    #[expect(clippy::too_many_arguments)]
     fn readable_raw_at_depth(
         &mut self,
         vault: &Vault,
@@ -106,6 +114,7 @@ impl AudienceCache {
         id: EntityId,
         raw: &[u8],
         audience: &[EntityId],
+        current: bool,
         depth: usize,
     ) -> Result<bool> {
         let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("audience header"))?;
@@ -121,7 +130,7 @@ impl AudienceCache {
         // Each audience member must also stand in each private thread the
         // row sits in (FIX 2951); a summary's or claim's covers are walked
         // there, so it runs once per row.
-        if depth == 0 && !private_threads_readable_raw_in(vault, txn, id, raw, audience)? {
+        if depth == 0 && !private_threads_readable_raw_in(vault, txn, id, raw, audience, current)? {
             return Ok(false);
         }
         let mut rooms = BTreeSet::new();
@@ -342,15 +351,26 @@ pub(crate) fn conversation_summary_covers(
 /// its thread and consult refs name (FIX 3124). A declared root that is gone
 /// or does not resolve denies, and with no viewers so does any private
 /// thread. No read is exempt: an owner's, a host's and an unbound one meet
-/// it too.
+/// it too. With `current`, a turn read for its words is checked under the
+/// CURRENT rule as well, whether each viewer is in its thread now: how a
+/// member's personal read checks the room's other members (FIX 5545).
 pub(crate) fn private_threads_readable_raw_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
     viewers: &[EntityId],
+    current: bool,
 ) -> Result<bool> {
-    private_threads_readable_with_read_in(vault, &vault.store.read(), txn, id, raw, viewers)
+    private_threads_readable_with_read_in(
+        vault,
+        &vault.store.read(),
+        txn,
+        id,
+        raw,
+        viewers,
+        current,
+    )
 }
 
 /// [`private_threads_readable_raw_in`] walking the ancestry `dbs` reads: a
@@ -366,6 +386,7 @@ pub(crate) fn private_threads_readable_with_read_in(
     id: EntityId,
     raw: &[u8],
     viewers: &[EntityId],
+    current: bool,
 ) -> Result<bool> {
     // Each pending record is walked as a source of the words read (`true`)
     // or as a place alone (`false`).
@@ -487,9 +508,16 @@ pub(crate) fn private_threads_readable_with_read_in(
         }
     }
     for (root, turn) in placed {
-        if !crate::workspace_roster::thread_turn_readable_with_read_in(
-            vault, dbs, txn, root, turn, viewers,
-        )? {
+        let readable = if current {
+            crate::workspace_roster::thread_root_readable_with_read_in(
+                vault, dbs, txn, root, viewers,
+            )?
+        } else {
+            crate::workspace_roster::thread_turn_readable_with_read_in(
+                vault, dbs, txn, root, turn, viewers,
+            )?
+        };
+        if !readable {
             return Ok(false);
         }
     }

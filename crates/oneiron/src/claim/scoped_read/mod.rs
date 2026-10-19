@@ -108,6 +108,11 @@ pub struct ScopedRead<'a> {
     session_view: Option<&'a crate::store::SessionStoreView<'a>>,
     claim_status: ClaimReadStatus,
     recall_authority: Mutex<Option<crate::authority::AuthorityFold>>,
+    /// Set only on a member's read a personal room ceiling conjoins (see
+    /// `ScopedRead::peers_read_raw_in`): that member stands in each private
+    /// thread under the CURRENT rule, whether it is in the thread now, never
+    /// per turn (FIX 5545).
+    room_peer: bool,
 }
 
 mod admission;

@@ -151,13 +151,27 @@ impl<'v> RoomTurnHandle<'v> {
     pub(crate) fn memory(&self) -> &Memory<'v> {
         &self.memory
     }
+
+    /// This handle with its ceiling held, never personal: for a read whose
+    /// words reach the room's roster, which meets each private thread turn by
+    /// turn (FIX 5636).
+    #[must_use]
+    pub(crate) fn held(mut self) -> Self {
+        if let Some(turn) = self.memory.room_turn.as_mut() {
+            turn.personal = false;
+        }
+        self
+    }
 }
 
 impl<'v> Memory<'v> {
     /// The room's own reads for this actor: its turn when this handle is
     /// bound to one, else the member's own read of the room. That keeps a
     /// turn's world, audience and peer gates and holds no row to P7, which
-    /// binds a turn: outside one the read stays the member's own.
+    /// binds a turn: outside one the read stays the member's own, a personal
+    /// ceiling whose other members stand in each private thread as they are
+    /// now (FIX 5545). A read whose words reach the room takes
+    /// [`RoomTurnHandle::held`].
     pub(crate) fn for_room_projection(&self, room: EntityId) -> MemoryResult<RoomTurnHandle<'v>> {
         let mut handle = self.for_room_turn(room)?;
         if self.room_turn.is_none()
@@ -168,6 +182,7 @@ impl<'v> Memory<'v> {
                 p7: false,
                 ..turn.terms.get()
             });
+            turn.personal = true;
         }
         Ok(handle)
     }
@@ -179,6 +194,8 @@ impl<'v> Memory<'v> {
     /// own Ready receipt reads it this way without a seat, and reads nothing
     /// else of the room. Unlike [`Self::for_room_projection`], P7 binds it
     /// outside a turn too: a thread's reader is no member reading its own.
+    /// Outside a turn its ceiling is still personal, the caller's own read
+    /// (FIX 5545); inside one it is held or personal as the turn is.
     pub(crate) fn for_thread_projection(
         &self,
         room: EntityId,
@@ -186,7 +203,10 @@ impl<'v> Memory<'v> {
     ) -> MemoryResult<RoomTurnHandle<'v>> {
         self.verified_actor_class()?;
         self.require_room_in_facets(room)?;
-        let ceiling = self.thread_ceiling(room, thread)?;
+        let mut ceiling = self.thread_ceiling(room, thread)?;
+        if self.room_turn.is_none() {
+            ceiling.personal = true;
+        }
         Ok(RoomTurnHandle {
             memory: Memory {
                 vault: self.vault,

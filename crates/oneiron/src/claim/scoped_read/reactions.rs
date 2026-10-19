@@ -191,6 +191,7 @@ impl<'a> ScopedRead<'a> {
             session_view: self.session_view,
             claim_status: ClaimReadStatus::Recorded,
             recall_authority: Mutex::new(None),
+            room_peer: self.room_peer,
         })
     }
 }

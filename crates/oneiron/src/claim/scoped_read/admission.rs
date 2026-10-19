@@ -14,6 +14,7 @@ impl crate::vault::Vault {
             session_view: None,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
+            room_peer: false,
         }
     }
 
@@ -52,6 +53,7 @@ impl crate::vault::Vault {
             session_view,
             claim_status: ClaimReadStatus::Surfaceable,
             recall_authority: Mutex::new(None),
+            room_peer: false,
         }
     }
 }
@@ -195,20 +197,23 @@ impl<'a> ScopedRead<'a> {
                 return Ok(false);
             };
             // A member's contact clearance holds the row to P7 too: it is
-            // positively public or sits under the room's Scope (ILDF2).
+            // positively public or sits under the room's Scope (ILDF2). A
+            // personal ceiling's roster stands in each private thread as it
+            // is now, a held one's in each turn (FIX 5545, 5636).
             if !room.admits_world(&record)
                 || !room.discloses(self.vault, txn, *id, raw)?
                 || !self
                     .audience_cache
                     .lock()
                     .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-                    .readable_raw(self.vault, txn, *id, raw, &room.roster)?
+                    .readable_raw(self.vault, txn, *id, raw, &room.roster, room.personal)?
             {
                 return Ok(false);
             }
             // The room reads only what every member may read: a row private
-            // to the caller is not the room's.
-            if !self.peers_read_raw_in(txn, &room.peers, id, raw)? {
+            // to the caller is not the room's. Its peers stand in private
+            // threads as its roster does.
+            if !self.peers_read_raw_in(txn, &room.peers, id, raw, room.personal)? {
                 return Ok(false);
             }
         }
@@ -218,7 +223,9 @@ impl<'a> ScopedRead<'a> {
     /// Whether the caller this read authenticates stands in each private
     /// thread (FIX 2951) the revision `raw` of `id` sits in. No read is
     /// exempt, the owner's and an unbound one included; one that
-    /// authenticates no one reads no private thread.
+    /// authenticates no one reads no private thread. Each turn is read under
+    /// the CONTENT rule, save by a personal ceiling's peer read
+    /// (`room_peer`), which stands in the thread under CURRENT (FIX 5545).
     fn private_threads_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -233,6 +240,7 @@ impl<'a> ScopedRead<'a> {
             *id,
             raw,
             &viewers,
+            self.room_peer,
         )
     }
 
@@ -281,19 +289,22 @@ impl<'a> ScopedRead<'a> {
     }
 
     /// Whether each of `peers` reads the revision `raw` too, under this
-    /// read's claim-status contract.
+    /// read's claim-status contract; each as a personal ceiling's peer
+    /// (`room_peer`) when `room_peer`.
     fn peers_read_raw_in(
         &self,
         txn: &heed::RoTxn<'_>,
         peers: &[ScopedReadActorKey],
         id: &EntityId,
         raw: &[u8],
+        room_peer: bool,
     ) -> Result<bool> {
         for peer in peers {
-            let peer = self
+            let mut peer = self
                 .vault
                 .scoped_read(peer.clone())
                 .with_claim_status(self.claim_status);
+            peer.room_peer = room_peer;
             // A member read as the owner must still be the owner in this
             // snapshot; one whose standing lapsed keeps the row out.
             match peer.owner_live_in(txn) {
@@ -326,7 +337,8 @@ impl<'a> ScopedRead<'a> {
     /// narrows the turn, for this read and every later one, and never widens
     /// it. A thread's ceiling (`turn.branch`) re-proves standing on that
     /// thread instead, which its Ready receipt gives an agent off the room
-    /// (OF-529), and takes no live entry.
+    /// (OF-529), and takes no live entry. A refresh keeps the ceiling
+    /// personal or held as `turn` is ([`RoomTurnCeiling::narrowed_by`]).
     fn room_ceiling_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -406,23 +418,27 @@ impl<'a> ScopedRead<'a> {
         Ok(Some(Arc::clone(current)))
     }
 
-    /// The explicit audience this read was opened for, if any.
+    /// The explicit audience this read was opened for, if any. Through a
+    /// personal ceiling it stands in each private thread under CURRENT, as
+    /// that ceiling's roster does (FIX 5655): a member's own TASK read is
+    /// narrowed to a thread's audience now, never to the turns each reads.
     fn audience_conjunct_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         raw: &[u8],
     ) -> Result<bool> {
+        let personal = self.actor_key.room_turn().is_some_and(|turn| turn.personal);
         if let Some(audience) = &self.audience
             && !self
                 .audience_cache
                 .lock()
                 .map_err(|_| Error::InvariantViolation("audience cache lock"))?
-                .readable_raw(self.vault, txn, *id, raw, audience)?
+                .readable_raw(self.vault, txn, *id, raw, audience, personal)?
         {
             return Ok(false);
         }
-        self.peers_read_raw_in(txn, &self.peer_reads, id, raw)
+        self.peers_read_raw_in(txn, &self.peer_reads, id, raw, false)
     }
 
     /// Whether membership may stand in for this read's own grant on `id`,
