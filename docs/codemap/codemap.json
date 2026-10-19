@@ -18665,7 +18665,7 @@
      "path": "src/critic/review.rs",
      "purpose": "Artifact-independent review fan-out and the persisted calibration feedback loop",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 1,
       "re-export": 4,
@@ -18705,7 +18705,7 @@
      "path": "src/critic/review/persistence.rs",
      "purpose": "Transactional review bundles",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -32483,6 +32483,7 @@
      "path": "src/llm/seat/run.rs",
      "purpose": "A run's immutable seat pin: born once per run, loaded again on resume",
      "surface": {
+      "crate-vis": 1,
       "fn": 4,
       "struct": 1
      }
@@ -55845,7 +55846,7 @@
      "path": "src/team/receipt.rs",
      "purpose": "The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 9,
       "struct": 5
