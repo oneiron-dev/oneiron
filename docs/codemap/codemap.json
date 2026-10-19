@@ -55245,7 +55245,8 @@
      "path": "src/task_verb/sdk_browser.rs",
      "purpose": "Browser wire shapes, shared by code mode and the credential-bound host doors",
      "surface": {
-      "re-export": 1
+      "re-export": 1,
+      "type": 13
      }
     },
     {
@@ -66043,6 +66044,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "BrowserAnswer",
+      "DesktopAnswer",
+      "TakeoverRecord",
+      "WindowSwitch"
+     ],
+     "path": "src/answer.rs",
+     "purpose": "What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and…",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/capture.rs",
      "purpose": "Repeat screenshots (AB-004)",
@@ -66068,15 +66085,14 @@
       "DesktopGuest",
       "DesktopSession",
       "PersonInput",
-      "Takeover",
-      "TakeoverRecord"
+      "Takeover"
      ],
      "path": "src/desktop.rs",
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…",
      "surface": {
       "enum": 2,
-      "fn": 15,
-      "struct": 4
+      "fn": 16,
+      "struct": 3
      }
     },
     {
@@ -66106,7 +66122,7 @@
      "path": "src/driver/pages.rs",
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 25
      }
     },
     {
@@ -66172,7 +66188,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 41,
       "trait": 2
      }
@@ -66278,6 +66294,13 @@
     }
    ],
    "modules": {
+    "answer": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and…"
+    },
     "capture": {
      "files": 1,
      "impl_vault": false,
@@ -66351,7 +66374,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 13,
+   "source_files": 14,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -86969,6 +86992,19 @@
       "BriefIntent",
       "BriefKindStamp",
       "BriefStamp",
+      "BrowserAnswerBatchOutput",
+      "BrowserAnswerExpectOutput",
+      "BrowserAnswerFindOutput",
+      "BrowserAnswerHandoverOutput",
+      "BrowserAnswerImageOutput",
+      "BrowserAnswerLibraryFindOutput",
+      "BrowserAnswerLibraryRetireOutput",
+      "BrowserAnswerLibraryRetiredOutput",
+      "BrowserAnswerLibraryRunOutput",
+      "BrowserAnswerObservationPage",
+      "BrowserAnswerProposeOutput",
+      "BrowserAnswerScreenshotOutput",
+      "BrowserAnswerWaitForOutput",
       "BudgetDenied",
       "BudgetExhaustionPolicy",
       "BudgetHoldNotice",
@@ -89897,6 +89933,8 @@
       "SupportGrantStatus",
       "SupportGrantView",
       "SupportHolderClass",
+      "TabSwitch",
+      "TabSwitchCause",
       "TaggedMentionView",
       "TaggingFailureView",
       "TaggingHistoryView",
@@ -89912,6 +89950,7 @@
       "TaggingTraceView",
       "TaggingTurnRequest",
       "TaggingVadView",
+      "TakeoverRecord",
       "TaskAccept",
       "TaskAnswerRequest",
       "TaskAskAnswer",
@@ -90252,8 +90291,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 857,
-      "struct": 2711
+      "enum": 858,
+      "struct": 2726
      }
     },
     {
