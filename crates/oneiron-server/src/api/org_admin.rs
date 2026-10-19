@@ -7,7 +7,7 @@ use crate::{
 use axum::{
     Json,
     extract::{Path, State},
-    http::HeaderMap,
+    http::request::Parts,
 };
 use oneiron::{
     EntityId,
@@ -35,10 +35,10 @@ fn policy_error(error: OrgAdminError) -> ApiError {
 pub(super) async fn configure(
     State(server): State<Arc<SyncServer>>,
     Path(org): Path<String>,
-    headers: HeaderMap,
+    parts: Parts,
     Json(policy): Json<OrgAdminPolicy>,
 ) -> Result<Json<serde_json::Value>, EnvelopedApiError> {
-    super::check_api_owner_act(&headers, &server)?;
+    super::scoped_auth::check_request_owner_act(&parts, &server)?;
     if policy.org_ref() != id(&org)? {
         return Err(ApiError::bad_request("setup organization mismatch", Some("org_ref")).into());
     }

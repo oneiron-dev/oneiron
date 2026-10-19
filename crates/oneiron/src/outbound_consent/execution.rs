@@ -187,6 +187,7 @@ pub(super) fn scoped_mcp_gate_input(
         has_opted_in: false,
         has_permission: false,
         policy_risk: crate::gate::ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     }
 }
 

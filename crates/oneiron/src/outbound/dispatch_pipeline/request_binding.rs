@@ -1,6 +1,7 @@
 //! One normalized outbound request and the single ledger replay validator.
 use super::{
-    enrich_dispatch_channel_identity, frozen_payload::FrozenOutboundPayload,
+    enrich_dispatch_channel_identity,
+    frozen_payload::{FrozenOutboundPayload, FrozenSendAutonomy},
     policy_risk::outbound_dispatch_policy_risk,
 };
 use crate::attempt_queue::AttemptId;
@@ -213,6 +214,7 @@ impl PreparedOutboundDispatch {
             originating_session_ref: request.originating_session_ref.as_deref(),
             reply_thread_ref: request.reply_thread_ref.as_deref(),
             facet_ref: request.facet_ref.map(|id| id.to_hex()),
+            send_autonomy: request.send_autonomy.as_ref().map(FrozenSendAutonomy::of),
         })
         .map_err(|_| Error::InvariantViolation("outbound intent freeze failed"))?;
         if let Some(record) = self.replay.as_ref() {

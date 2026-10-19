@@ -9,6 +9,7 @@ mod human_speech;
 mod leader;
 mod memory_verbs;
 mod reader_spawn;
+mod session_verbs;
 mod summarize;
 mod team_submit;
 mod team_submit_output;
