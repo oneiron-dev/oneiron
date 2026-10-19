@@ -12,7 +12,7 @@ use crate::authority::{
     ActBy, AuthorityEntryHash, AuthorityFold, ExternalAct, ExternalActStanding, OwnerAct,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, RecordError, Result};
 use crate::store::Store;
 
 use super::act_admission::SealAuthority;
@@ -79,7 +79,9 @@ pub(super) fn decision_seal_acts_in_txn(
 /// chains and each one's acknowledged tokens, so a losing concurrent removal
 /// that never saw a seal moves its tag while every chain's picked head stays
 /// put. Pending is never flattened to Refused, and a fold or storage fault
-/// refuses the digest.
+/// refuses the digest as [`RecordError::SealStandingUnverifiable`], naming
+/// the adopted image or the seal that failed (CALLS "FIX 5248 digest fault
+/// error").
 pub(super) fn decision_seal_standings_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -97,19 +99,44 @@ pub(super) fn decision_seal_standings_in_txn(
         return Ok(BTreeSet::new());
     }
     let asked: BTreeSet<ExternalAct> = acts.iter().map(|(_, act)| act.clone()).collect();
-    let points = crate::authority::causal_points_in_txn(store, txn, &asked)?;
+    let image = || {
+        crate::authority::adopted_checkpoint_id_in_txn(store, txn)
+            .ok()
+            .flatten()
+    };
+    let points = crate::authority::causal_points_in_txn(store, txn, &asked)
+        .map_err(|source| seal_standing_fault(None, image(), source))?;
     let mut standings = BTreeSet::new();
     for (fact, act) in &acts {
         let held = fact
             .authority_heads
             .iter()
             .all(|head| fold.valid_entries.contains(head));
-        let standing = points
-            .standing(act, fold)
-            .ok_or(Error::InvariantViolation("identity topology seal standing digest"))?;
+        let standing = points.standing(act, fold).ok_or_else(|| {
+            seal_standing_fault(
+                Some(act.token),
+                image(),
+                Error::InvariantViolation("identity topology seal standing digest"),
+            )
+        })?;
         standings.insert((act.token, held, standing_tag(standing)));
     }
     Ok(standings)
+}
+
+/// The typed fault a standing digest propagates (FIX 5248): `seal` the
+/// decision seal whose judgment failed, `image` the adopted image the
+/// causal fold reads, and the fault itself.
+fn seal_standing_fault(
+    seal: Option<AuthorityEntryHash>,
+    image: Option<[u8; 32]>,
+    source: Error,
+) -> Error {
+    Error::Record(RecordError::SealStandingUnverifiable {
+        seal,
+        image,
+        source: Box::new(source),
+    })
 }
 
 /// The digest's tag of how a decision seal stands: Stands, Pending and
