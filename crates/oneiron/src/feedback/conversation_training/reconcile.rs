@@ -1,17 +1,14 @@
 //! Withdrawal by reconciliation (OF-420 A4, D2), receipts (C2, C3, C5) and
 //! the outbox's upkeep.
 //!
-//! The outbox keeps, per person, the scope it last delivered. Each pass
-//! compares it with what counts now: the person's choice as this vault
-//! folds it ([`Vault::conversation_training_worlds`], which also covers a
-//! choice made on another device, a register conflict that reads off and a
-//! world turned private) and whether the person is live (a dead person
-//! reads as off). Off, or a narrower set, records a person-choice control.
-//! Each held or published source is checked for deletion (the room or any
-//! selected message) and gets an id-only forget control; a world that no
-//! longer reads everywhere, or no longer exists, gets a world control.
-//! Whatever they withdraw is purged from local custody and from `offers/`.
-//! Controls name ids only and are written whatever the learning state.
+//! Each pass checks every held or published source for deletion (the room
+//! or any selected message), which gets an id-only forget control, and
+//! every world in play: one that no longer reads everywhere, or no longer
+//! exists, gets a world control. Whatever they withdraw is purged from local
+//! custody and from `offers/`. Controls name ids only and are written
+//! whatever the learning state. The vault's setting turned off, or a person
+//! opting out, withdraws nothing (FIX 5502 owner rulings): it stops new
+//! sharing, and what was shared follows the intake's retention.
 //!
 //! It runs at every export tick and once after every commit that stored an
 //! authority row ([`Vault::reconcile_training_after_authority_ingest`]),
@@ -24,13 +21,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use oneiron_vault_contract::conversation_training::{
     TRAINING_CONTROL_TYPE, TRAINING_SCHEMA_VERSION, TRAINING_WITHDRAWAL_NOTE,
     TrainingControlBodyV1, TrainingControlChangeV1, TrainingControlV1, TrainingForgetSourceV1,
-    TrainingPersonChoiceChangeV1, TrainingReceiptBodyV1, TrainingReceiptStatusV1,
-    TrainingReceiptSubjectV1, TrainingWorldEligibilityV1, control_file_name,
+    TrainingReceiptBodyV1, TrainingReceiptStatusV1, TrainingReceiptSubjectV1,
+    TrainingWorldEligibilityV1, control_file_name,
 };
 
 use crate::Vault;
 use crate::authority::{AuthorityFold, EffectiveRead};
-use crate::consent::person_is_live_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::TombstoneStoreRead;
@@ -38,8 +34,8 @@ use crate::registry::ENTITY_TYPE_WORLD;
 
 use super::crypto::{IntakeReceiptKey, receipt_verifies, sign_training_payload};
 use super::custody::{
-    self, ControlChange, ControlCustody, DeliveredScope, ReceiptMark, SCOPES, SubmissionCustody,
-    SubmissionState, UsedRun, put_control_in, put_submission_in, record_control_in,
+    self, ControlChange, ControlCustody, ReceiptMark, SubmissionCustody, SubmissionState, UsedRun,
+    put_control_in, put_submission_in, record_control_in,
 };
 use super::lifecycle::{
     PublisherTrainingLifecycle, SignedTrainingControl, TrainingControlId, TrainingSubmissionId,
@@ -77,21 +73,9 @@ pub struct TrainingUpkeep {
     pub offers_purged: usize,
 }
 
-/// One person whose delivered scope no longer holds.
-struct ScopeChange {
-    person: EntityId,
-    read: DeliveredScope,
-    now: Option<BTreeSet<EntityId>>,
-    act: Option<[u8; 32]>,
-    revision: [u8; 32],
-}
-
 /// What a reconciliation found, before it writes.
 #[derive(Default)]
 struct Plan {
-    scopes: Vec<ScopeChange>,
-    /// Persons with active submissions and no yes now, and no scope row.
-    off: BTreeSet<EntityId>,
     /// Active submissions whose room or a selected message is gone.
     gone: BTreeSet<TrainingSubmissionId>,
     /// Worlds in play that no longer count.
@@ -100,10 +84,7 @@ struct Plan {
 
 impl Plan {
     fn is_empty(&self) -> bool {
-        self.scopes.is_empty()
-            && self.off.is_empty()
-            && self.gone.is_empty()
-            && self.worlds.is_empty()
+        self.gone.is_empty() && self.worlds.is_empty()
     }
 }
 
@@ -133,14 +114,13 @@ impl Vault {
         Ok(upkeep)
     }
 
-    /// Reconciles every delivered scope and every held or published source
-    /// with what counts now (A4, D2), recording each control it needs and
-    /// withdrawing what no longer counts. Returns how many controls it
-    /// recorded. Idempotent: a second run over an unchanged vault records
-    /// nothing.
+    /// Reconciles every held or published source with what counts now (A4,
+    /// D2), recording each control it needs and withdrawing what no longer
+    /// counts. Returns how many controls it recorded. Idempotent: a second
+    /// run over an unchanged vault records nothing.
     ///
     /// # Errors
-    /// Storage faults, and a choice read that fails: nothing is recorded.
+    /// Storage faults: nothing is recorded.
     pub fn reconcile_conversation_training(&self) -> Result<usize> {
         let plan = self.reconcile_plan()?;
         if plan.is_empty() {
@@ -213,86 +193,28 @@ impl Vault {
     /// Everything a reconciliation needs, read before it writes.
     fn reconcile_plan(&self) -> Result<Plan> {
         let mut plan = Plan::default();
-        let (scopes, active, live) = {
-            let txn = self.store.env.read_txn()?;
-            let scopes = custody::scopes(self, &txn)?;
-            let active: Vec<(TrainingSubmissionId, SubmissionCustody)> =
-                custody::submissions(self, &txn)?
-                    .into_iter()
-                    .filter(|(_, row)| {
-                        matches!(
-                            row.state,
-                            SubmissionState::Held | SubmissionState::Published
-                        )
-                    })
-                    .collect();
-            // Nothing delivered and nothing held: nothing to withdraw, and
-            // no fold to read.
-            if scopes.is_empty() && active.is_empty() {
-                return Ok(plan);
-            }
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            let mut in_play: BTreeSet<EntityId> = BTreeSet::new();
-            let mut persons: BTreeSet<EntityId> = BTreeSet::new();
-            for (person, scope) in &scopes {
-                persons.insert(*person);
-                in_play.extend(scope.worlds.iter().copied());
-            }
-            for (id, row) in &active {
-                persons.extend(row.person);
-                in_play.extend(row.worlds.iter().copied());
-                if source_gone(self, &txn, row)? {
-                    plan.gone.insert(*id);
-                }
-            }
-            for world in in_play {
-                if !world_counts(self, &txn, &fold, world)? {
-                    plan.worlds.insert(world);
-                }
-            }
-            let mut live = BTreeMap::new();
-            for person in persons {
-                live.insert(person, person_is_live_in_txn(self, &txn, &person)?);
-            }
-            (scopes, active, live)
-        };
-        let mut now: BTreeMap<EntityId, Option<BTreeSet<EntityId>>> = BTreeMap::new();
-        for (person, is_live) in &live {
-            let worlds = if *is_live {
-                self.conversation_training_worlds(*person)?
-            } else {
-                None
-            };
-            now.insert(*person, worlds);
+        let txn = self.store.env.read_txn()?;
+        let active: Vec<(TrainingSubmissionId, SubmissionCustody)> =
+            custody::submissions(self, &txn)?
+                .into_iter()
+                .filter(|(_, row)| is_active(row))
+                .collect();
+        // Nothing held or published: nothing to withdraw, and no fold to
+        // read.
+        if active.is_empty() {
+            return Ok(plan);
         }
-        let heads = {
-            let txn = self.store.env.read_txn()?;
-            let fold = self.authority_view_readonly_in_txn(&txn)?;
-            choice_heads(&fold, now.keys().copied())
-        };
-        for (person, read) in scopes {
-            let current = now.get(&person).cloned().flatten();
-            if current
-                .as_ref()
-                .is_some_and(|current| read.worlds.is_subset(current))
-            {
-                continue;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let mut in_play: BTreeSet<EntityId> = BTreeSet::new();
+        for (id, row) in &active {
+            in_play.extend(row.worlds.iter().copied());
+            if source_gone(self, &txn, row)? {
+                plan.gone.insert(*id);
             }
-            let (act, revision) = heads.get(&person).copied().unwrap_or_default();
-            plan.scopes.push(ScopeChange {
-                person,
-                read,
-                now: current,
-                act,
-                revision,
-            });
         }
-        for (_, row) in &active {
-            if let Some(person) = row.person
-                && !plan.scopes.iter().any(|change| change.person == person)
-                && now.get(&person).is_none_or(Option::is_none)
-            {
-                plan.off.insert(person);
+        for world in in_play {
+            if !world_counts(self, &txn, &fold, world)? {
+                plan.worlds.insert(world);
             }
         }
         Ok(plan)
@@ -417,53 +339,8 @@ fn apply_plan(vault: &Vault, txn: &mut heed::RwTxn<'_>, plan: &Plan, now: u64) -
     let mut withdraw: BTreeMap<TrainingSubmissionId, Withdrawal> = BTreeMap::new();
     let active: Vec<(TrainingSubmissionId, SubmissionCustody)> = custody::submissions(vault, txn)?
         .into_iter()
-        .filter(|(_, row)| {
-            matches!(
-                row.state,
-                SubmissionState::Held | SubmissionState::Published
-            )
-        })
+        .filter(|(_, row)| is_active(row))
         .collect();
-    for change in &plan.scopes {
-        if SCOPES.get(&vault.store, txn, &change.person)?.as_ref() != Some(&change.read) {
-            continue;
-        }
-        let control = ControlChange::PersonChoice {
-            person: change.person,
-            act: change.act,
-            revision: change.revision,
-            allowed_worlds: change.now.clone(),
-        };
-        let (_, event_seq) = record_control_in(vault, txn, control, now)?;
-        recorded += 1;
-        match &change.now {
-            None => {
-                SCOPES.delete(&vault.store, txn, &change.person)?;
-            }
-            Some(worlds) => {
-                let scope = DeliveredScope {
-                    worlds: worlds.clone(),
-                    revision: change.revision,
-                    event_seq,
-                };
-                SCOPES.put(&vault.store, txn, &change.person, &scope)?;
-            }
-        }
-        for (id, row) in &active {
-            let outside = change
-                .now
-                .as_ref()
-                .is_none_or(|worlds| !row.worlds.is_subset(worlds));
-            if row.person == Some(change.person) && outside {
-                withdraw.insert(*id, Withdrawal::Covered);
-            }
-        }
-    }
-    for (id, row) in &active {
-        if row.person.is_some_and(|person| plan.off.contains(&person)) {
-            withdraw.entry(*id).or_insert(Withdrawal::Covered);
-        }
-    }
     for world in &plan.worlds {
         let control = ControlChange::WorldEligibility {
             world: *world,
@@ -505,29 +382,18 @@ fn apply_plan(vault: &Vault, txn: &mut heed::RwTxn<'_>, plan: &Plan, now: u64) -
 /// How a withdrawn submission reaches the intake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Withdrawal {
-    /// A person or world control recorded in the same pass covers it.
+    /// A world control recorded in the same pass covers it.
     Covered,
     /// Its source is gone: it needs a forget control of its own.
     Forget,
 }
 
-/// Each person's in-force act and choice revision on `fold`.
-fn choice_heads(
-    fold: &AuthorityFold,
-    persons: impl Iterator<Item = EntityId>,
-) -> BTreeMap<EntityId, (Option<[u8; 32]>, [u8; 32])> {
-    let training = &fold.conversation_training;
-    persons
-        .map(|person| {
-            let act = training
-                .persons
-                .get(&person)
-                .filter(|folded| folded.conflict.is_empty())
-                .and_then(|folded| folded.in_force.as_ref())
-                .map(|head| head.act);
-            (person, (act, training.revision(person).0))
-        })
-        .collect()
+/// Whether a submission is still held or published here.
+fn is_active(row: &SubmissionCustody) -> bool {
+    matches!(
+        row.state,
+        SubmissionState::Held | SubmissionState::Published
+    )
 }
 
 /// Whether a submission's room, or any message it selected, is deleted,
@@ -543,8 +409,7 @@ fn source_gone(vault: &Vault, txn: &heed::RoTxn<'_>, row: &SubmissionCustody) ->
 }
 
 /// Whether `world` still counts: base reality, or a stored, live WORLD row,
-/// that reads everywhere on `fold`. The choice's own judge
-/// (`conversation_training_world_admits`) asks the same.
+/// that reads everywhere on `fold`.
 fn world_counts(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -636,20 +501,7 @@ fn apply_receipt_in(
 
 /// A control's change as the wire spells it.
 fn wire_change(change: &ControlChange) -> TrainingControlChangeV1 {
-    let hex_set =
-        |ids: &BTreeSet<EntityId>| -> Vec<String> { ids.iter().map(EntityId::to_hex).collect() };
     match change {
-        ControlChange::PersonChoice {
-            person,
-            act,
-            revision,
-            allowed_worlds,
-        } => TrainingControlChangeV1::PersonChoice(TrainingPersonChoiceChangeV1 {
-            person: person.to_hex(),
-            act: act.map(|act| oneiron_vault_contract::hex(&act)),
-            revision: oneiron_vault_contract::hex(revision),
-            allowed_worlds: allowed_worlds.as_ref().map(hex_set),
-        }),
         ControlChange::ForgetSource {
             source,
             submissions,

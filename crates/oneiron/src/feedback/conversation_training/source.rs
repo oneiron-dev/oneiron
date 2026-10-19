@@ -1,29 +1,42 @@
-//! The source selector (OF-420 A3): one person's words in one conversation,
-//! read from the canonical rows, never from provenance a caller supplies.
+//! The source selector (OF-420 A3; FIX 5502 owner rulings): what counts of
+//! one of this vault's conversations, read from the canonical rows, never
+//! from provenance a caller supplies.
 //!
-//! The person's conversations are the ones holding a MESSAGE their own
-//! writer edge (`AuthoredBy`) names. In each, the TURNs come in the order
-//! they occurred, and each TURN's MESSAGEs in their order. Whose words a
-//! message is, which worlds it sits in and whether the room is the person's
-//! own are judged from the rows: the MESSAGE `author`, its writer edge, the
-//! TURN's PERSON stamp and import stamp, the room's kind and members, and
-//! the engine's world rule (`record_world_in`; a conversation row sits in
+//! Every live conversation of the vault is a source, once, rooms where only
+//! agents spoke included. In each, the TURNs come in the order they
+//! occurred, and each TURN's MESSAGEs in their order. Who wrote a message and
+//! which world it sits in are judged from the rows: the MESSAGE `author`, its
+//! writer edge, the TURN's PERSON stamp and import stamp, who stands behind
+//! the writer (the room stack's own rule, `join_subject_for_actor_in_txn`),
+//! and the engine's world rule (`record_world_in`; a conversation row sits in
 //! base reality). Which of those parts count is one hook,
-//! [`training_source_counts_turn`] (C4, CALLS-4).
+//! [`training_source_counts_turn`] (C4, CALLS-4): while the vault's setting
+//! is on, everything counts, people, agents and guests alike, when its one
+//! writer is a live actor of this vault. A part whose writer the rows do not
+//! prove (none, several, another PERSON's stamp, no live actor) never counts,
+//! nor does an import, a system or tool row, an attachment or result, any
+//! metadata, or a hidden row.
+//!
+//! When the vault lets people opt out, a person who did (`super::opted_out`,
+//! read once per person here) keeps their own messages out of every
+//! conversation; a conversation whose only human is them (their one-on-one
+//! with agents) drops whole, agents' replies included. In a room with two or
+//! more humans only their own messages drop. Agents' own work always counts.
 //!
 //! A selection is whole: a long conversation is offered whole, in as many
 //! transport chunks as it takes (Rule 5); nothing here caps or cuts it. Its
 //! revision ([`TrainingSelection::revision`]) is a digest of the exact
-//! snapshot read (each selected text and id, and the deletion marker of
-//! every row read), so a release recomputes it and holds back an offer
+//! snapshot read (each selected text, id and writer, and the deletion marker
+//! of every row read), so a release recomputes it and holds back an offer
 //! whose source changed (D4).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;
 
 use crate::Vault;
-use crate::conversation::{ConversationBody, ConversationKind};
+use crate::authority::AuthorityFold;
+use crate::conversation::ConversationBody;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -31,22 +44,30 @@ use crate::gate::{WitnessMessageBodyAuthor, validate_canonical_witness_message_b
 use crate::ports::{
     DeletionState, EdgeDirection, EdgeStoreRead, EntityRecord, EntityStoreRead, TombstoneStoreRead,
 };
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_TURN,
+};
+use crate::workspace_roster::JoinSubject;
+
+use super::opted_out;
 
 /// The key context of a selection's revision digest.
-const SOURCE_REVISION_CONTEXT: &str = "oneiron publisher training source revision v1";
+const SOURCE_REVISION_CONTEXT: &str = "oneiron publisher training source revision v2";
 
-/// Who spoke one message, as the selector proves it.
+/// Who wrote one message, as the selector proves it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TrainingSpeaker {
-    /// The person: a `user` message whose one writer edge names them, in a
-    /// TURN whose PERSON stamp, if any, is theirs.
-    Person,
-    /// The companion: a `companion` message.
+    /// A person, member or guest: a `user` message whose one writer is that
+    /// live PERSON or their own agent, in a TURN whose PERSON stamp, if any,
+    /// is theirs.
+    Person(EntityId),
+    /// An agent: a `companion` message, or a `user` one an agent of no
+    /// person wrote, whose one writer is a live actor of this vault.
     Agent,
-    /// A `user` message the rows do not prove is the person's: another
-    /// human's, or one with no or another writer.
-    OtherHuman,
+    /// A writer the rows do not prove: none, several, another PERSON's
+    /// stamp, or no live actor of this vault.
+    Unproven,
     /// A system or tooling row.
     System,
 }
@@ -63,35 +84,36 @@ pub(super) struct TrainingPart {
     /// It carries metadata: an attachment, a result, an imported message's
     /// provenance, or any other passenger.
     pub(super) carries_metadata: bool,
-    /// The room is provably the person's own thread: a direct or agent room
-    /// that names no member but them, holds no import, and every `user`
-    /// message in it is theirs.
-    pub(super) own_thread: bool,
+    /// Its person left their own messages out, while the vault lets people
+    /// opt out.
+    pub(super) opted_out: bool,
 }
 
-/// C4 (CALLS-4), whose text counts: a person's own turns, and the agent's
-/// replies in a thread that is provably that person's own. Never another
-/// human's turn, never a part whose ownership is unknown or unprovable
-/// (an import, a system or tool row, an attachment or result, a hidden
-/// row). A private world never counts: that is the egress check's, which
-/// every offer passes before and at release. A ruling changes this hook.
+/// C4 (CALLS-4; FIX 5502 owner rulings), whose text counts while the
+/// vault's setting is on: every person's and agent's, members and guests
+/// alike, whose one writer is a live actor of this vault, unless its person
+/// opted out. Never a part whose writer is unproven or whose shape is not
+/// plain conversation (an import, a system or tool row, an attachment or
+/// result, a hidden row). A private world never counts: that is the egress
+/// check's, which every offer passes before and at release. A ruling
+/// changes this hook.
 pub(super) const fn training_source_counts_turn(part: &TrainingPart) -> bool {
-    if part.imported || !part.visible || part.carries_metadata {
+    if part.imported || !part.visible || part.carries_metadata || part.opted_out {
         return false;
     }
     match part.speaker {
-        TrainingSpeaker::Person => true,
-        TrainingSpeaker::Agent => part.own_thread,
-        TrainingSpeaker::OtherHuman | TrainingSpeaker::System => false,
+        TrainingSpeaker::Person(_) | TrainingSpeaker::Agent => true,
+        TrainingSpeaker::Unproven | TrainingSpeaker::System => false,
     }
 }
 
-/// One person's selected words in one conversation.
+/// What counts of one conversation.
 pub(super) struct TrainingSelection {
     /// The CONVERSATION.
     pub(super) source: EntityId,
-    /// Whose words.
-    pub(super) person: EntityId,
+    /// Every person whose words the selection carries, members and guests
+    /// alike; empty when only agents' words count.
+    pub(super) persons: BTreeSet<EntityId>,
     /// The worlds the room and every selected message sit in.
     pub(super) worlds: BTreeSet<EntityId>,
     /// The selected messages, in transcript order.
@@ -102,8 +124,8 @@ pub(super) struct TrainingSelection {
     pub(super) newest: u64,
 }
 
-/// One selected message. Its text is the stored text, unfiltered: it
-/// leaves only through the in-vault filter.
+/// One selected message. Its text is the stored text, unfiltered: it leaves
+/// only through the in-vault filter.
 pub(super) struct SelectedMessage {
     pub(super) id: EntityId,
     pub(super) speaker: TrainingSpeaker,
@@ -118,8 +140,8 @@ impl TrainingSelection {
         let mut out = String::new();
         for message in &self.messages {
             out.push_str(match message.speaker {
-                TrainingSpeaker::Person => "### person\n",
-                TrainingSpeaker::Agent | TrainingSpeaker::OtherHuman | TrainingSpeaker::System => {
+                TrainingSpeaker::Person(_) => "### person\n",
+                TrainingSpeaker::Agent | TrainingSpeaker::Unproven | TrainingSpeaker::System => {
                     "### agent\n"
                 }
             });
@@ -135,50 +157,25 @@ impl TrainingSelection {
     }
 }
 
-/// The conversations `person` wrote a message in: every MESSAGE their
-/// writer edge names, and the room it belongs to. The whole adjacency is
-/// walked.
-pub(super) fn person_conversations(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    person: EntityId,
-) -> Result<BTreeSet<EntityId>> {
-    let mut rooms = BTreeSet::new();
-    let written = vault.store.port_edges(
-        txn,
-        &person,
-        EdgeDirection::In,
-        Some(EdgeKind::AuthoredBy),
-        None,
-    )?;
-    for edge in written {
-        let message = edge?.target;
-        if vault.get_entity_type_in_txn(txn, &message)? != Some(ENTITY_TYPE_MESSAGE) {
-            continue;
-        }
-        let belongs = vault.store.port_edges(
-            txn,
-            &message,
-            EdgeDirection::Out,
-            Some(EdgeKind::BelongsTo),
-            None,
-        )?;
-        for edge in belongs {
-            let room = edge?.target;
-            if vault.get_entity_type_in_txn(txn, &room)? == Some(ENTITY_TYPE_CONVERSATION) {
-                rooms.insert(room);
-            }
-        }
+/// Every conversation of this vault, in id order; [`select`] judges each.
+/// The whole type index is walked.
+pub(super) fn vault_conversations(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    let mut rooms = Vec::new();
+    for id in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_CONVERSATION, None)?
+    {
+        rooms.push(id?);
     }
     Ok(rooms)
 }
 
-/// `person`'s selected words in `conversation` now, read in `txn`; `None`
-/// when no word of theirs counts.
+/// What counts of `conversation` now, read in `txn` against `fold` (the
+/// opt-outs); `None` when nothing of it counts.
 pub(super) fn select(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    person: EntityId,
+    fold: &AuthorityFold,
     conversation: EntityId,
 ) -> Result<Option<TrainingSelection>> {
     let Some(record) = vault.store.port_entity_record(txn, &conversation)? else {
@@ -194,25 +191,48 @@ pub(super) fn select(
     let Some(room_world) = row_world(vault, txn, conversation, &record)? else {
         return Ok(None);
     };
-    let room_imported = body.extra.contains_key(crate::memory::IMPORTED_SOURCE_KEY);
     let mut read = Read {
-        person,
-        room_imported,
+        room_imported: body.extra.contains_key(crate::memory::IMPORTED_SOURCE_KEY),
         markers: vec![(b'c', conversation, marker_byte(room_marker))],
         parts: Vec::new(),
         newest: record.learned_at,
+        writers: Writers {
+            vault,
+            at: vault.store.clock.now_recorded_at(),
+            subjects: BTreeMap::new(),
+        },
     };
     read.turns(vault, txn, conversation)?;
-    let own_thread = !room_imported
-        && own_room(&body, person)
-        && read
-            .parts
-            .iter()
-            .all(|part| part.part.speaker != TrainingSpeaker::OtherHuman && !part.part.imported);
+    // The room's humans: its PERSON members and every person who wrote in
+    // it. Each one's opt-out is read once.
+    let mut humans = BTreeSet::new();
+    for member in &body.member_ids {
+        if vault.get_entity_type_in_txn(txn, member)? == Some(ENTITY_TYPE_PERSON) {
+            humans.insert(*member);
+        }
+    }
+    for part in &read.parts {
+        if let TrainingSpeaker::Person(person) = part.part.speaker {
+            humans.insert(person);
+        }
+    }
+    let left_out: BTreeSet<EntityId> = humans
+        .iter()
+        .copied()
+        .filter(|person| opted_out(fold, *person))
+        .collect();
+    // Their one-on-one with agents drops whole, agents' replies included.
+    if humans.len() == 1 && left_out == humans {
+        return Ok(None);
+    }
     let mut worlds = BTreeSet::from([room_world]);
+    let mut persons = BTreeSet::new();
     let mut messages = Vec::new();
     for mut part in read.parts {
-        part.part.own_thread = own_thread;
+        part.part.opted_out = matches!(
+            part.part.speaker,
+            TrainingSpeaker::Person(person) if left_out.contains(&person)
+        );
         if !training_source_counts_turn(&part.part) {
             continue;
         }
@@ -220,22 +240,22 @@ pub(super) fn select(
             continue;
         };
         worlds.insert(world);
+        if let TrainingSpeaker::Person(person) = part.part.speaker {
+            persons.insert(person);
+        }
         messages.push(SelectedMessage {
             id: part.id,
             speaker: part.part.speaker,
             text: part.text,
         });
     }
-    if !messages
-        .iter()
-        .any(|message| message.speaker == TrainingSpeaker::Person)
-    {
+    if messages.is_empty() {
         return Ok(None);
     }
-    let revision = source_revision(person, conversation, &read.markers, &messages);
+    let revision = source_revision(conversation, &read.markers, &messages);
     Ok(Some(TrainingSelection {
         source: conversation,
-        person,
+        persons,
         worlds,
         messages,
         revision,
@@ -243,7 +263,7 @@ pub(super) fn select(
     }))
 }
 
-/// One MESSAGE read, classified, before the room's own-thread judgment.
+/// One MESSAGE read and classified.
 struct ReadPart {
     id: EntityId,
     part: TrainingPart,
@@ -251,16 +271,83 @@ struct ReadPart {
     world: Option<EntityId>,
 }
 
+/// Who stands behind each writer, for one room's read, each read once.
+struct Writers<'a> {
+    vault: &'a Vault,
+    at: u64,
+    subjects: BTreeMap<EntityId, Option<JoinSubject>>,
+}
+
+impl Writers<'_> {
+    /// Who stands behind `writer` when it is a live actor of this vault (the
+    /// room stack's rule): a live PERSON is itself; a live AGENT_DEF is its
+    /// person's own agent, or an agent. `None` for any other row.
+    fn subject(&mut self, txn: &heed::RoTxn<'_>, writer: EntityId) -> Result<Option<JoinSubject>> {
+        if let Some(subject) = self.subjects.get(&writer) {
+            return Ok(*subject);
+        }
+        let live = match self.vault.get_entity_type_in_txn(txn, &writer)? {
+            Some(ENTITY_TYPE_PERSON) => {
+                crate::consent::person_is_live_in_txn(self.vault, txn, &writer)?
+            }
+            Some(ENTITY_TYPE_AGENT_DEF) => {
+                crate::vault::live_entity_row_in_txn(&self.vault.store, txn, &writer)?.is_live()
+            }
+            _ => false,
+        };
+        let subject = if live {
+            Some(crate::workspace_roster::join_subject_for_actor_in_txn(
+                self.vault, txn, writer, self.at,
+            )?)
+        } else {
+            None
+        };
+        self.subjects.insert(writer, subject);
+        Ok(subject)
+    }
+
+    /// Who wrote a message: a person only when its one writer stands for
+    /// them and its TURN stamps no other PERSON; an agent when its one
+    /// writer is a live agent, or it is a `companion` message of a live
+    /// actor.
+    fn speaker(
+        &mut self,
+        txn: &heed::RoTxn<'_>,
+        author: WitnessMessageBodyAuthor,
+        writers: &BTreeSet<EntityId>,
+        stamp: Option<TurnStamp>,
+    ) -> Result<TrainingSpeaker> {
+        if author == WitnessMessageBodyAuthor::System {
+            return Ok(TrainingSpeaker::System);
+        }
+        let mut one = writers.iter();
+        let (Some(writer), None) = (one.next(), one.next()) else {
+            return Ok(TrainingSpeaker::Unproven);
+        };
+        Ok(match (author, self.subject(txn, *writer)?) {
+            (WitnessMessageBodyAuthor::User, Some(JoinSubject::Person(person))) => {
+                if stamp.is_some_and(|stamp| stamp.actor.is_none_or(|actor| actor == person)) {
+                    TrainingSpeaker::Person(person)
+                } else {
+                    TrainingSpeaker::Unproven
+                }
+            }
+            (_, Some(_)) => TrainingSpeaker::Agent,
+            (_, None) => TrainingSpeaker::Unproven,
+        })
+    }
+}
+
 /// One room's read: every row's deletion marker, every visible part.
-struct Read {
-    person: EntityId,
+struct Read<'a> {
     room_imported: bool,
     markers: Vec<(u8, EntityId, u8)>,
     parts: Vec<ReadPart>,
     newest: u64,
+    writers: Writers<'a>,
 }
 
-impl Read {
+impl Read<'_> {
     /// The room's TURNs in the order they occurred, then by id.
     fn turns(&mut self, vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Result<()> {
         let mut turns = Vec::new();
@@ -323,17 +410,16 @@ impl Read {
                 continue;
             };
             let writers = message_writers(vault, txn, id)?;
-            let speaker = speaker_of(fields.author, &writers, stamp, self.person);
+            let speaker = self.writers.speaker(txn, fields.author, &writers, stamp)?;
             let imported = stamp.is_none_or(|stamp| stamp.imported)
                 || self.room_imported
                 || (fields.author != WitnessMessageBodyAuthor::System && writers.is_empty());
-            let world = row_world(vault, txn, id, &record)?;
             let part = TrainingPart {
                 speaker,
                 imported,
                 visible: fields.visible,
                 carries_metadata: fields.metadata,
-                own_thread: false,
+                opted_out: false,
             };
             read.push((
                 fields.order,
@@ -341,7 +427,7 @@ impl Read {
                     id,
                     part,
                     text: fields.content,
-                    world,
+                    world: row_world(vault, txn, id, &record)?,
                 },
             ));
         }
@@ -428,39 +514,6 @@ fn message_writers(
     Ok(writers)
 }
 
-/// Who spoke a message: the person only when its one writer is them and its
-/// TURN stamps no other PERSON.
-fn speaker_of(
-    author: WitnessMessageBodyAuthor,
-    writers: &BTreeSet<EntityId>,
-    stamp: Option<TurnStamp>,
-    person: EntityId,
-) -> TrainingSpeaker {
-    match author {
-        WitnessMessageBodyAuthor::User => {
-            let theirs = writers.len() == 1
-                && writers.contains(&person)
-                && stamp.is_some_and(|stamp| stamp.actor.is_none_or(|actor| actor == person));
-            if theirs {
-                TrainingSpeaker::Person
-            } else {
-                TrainingSpeaker::OtherHuman
-            }
-        }
-        WitnessMessageBodyAuthor::Companion => TrainingSpeaker::Agent,
-        WitnessMessageBodyAuthor::System => TrainingSpeaker::System,
-    }
-}
-
-/// Whether the room can be the person's own thread: a direct or agent room
-/// that names no member but them.
-fn own_room(body: &ConversationBody, person: EntityId) -> bool {
-    matches!(
-        body.kind,
-        ConversationKind::Direct | ConversationKind::Agent
-    ) && body.member_ids.iter().all(|member| *member == person)
-}
-
 /// The world a stored row sits in, base reality for a row the engine's rule
 /// places there; `None` when the row cannot prove its world.
 fn row_world(
@@ -489,17 +542,14 @@ fn marker_byte(marker: DeletionState) -> u8 {
     u8::from(marker.deleted) | (u8::from(marker.archived) << 1) | (u8::from(marker.stale) << 2)
 }
 
-/// The digest of the exact snapshot: the person and room, every row's
-/// deletion marker in read order, then each selected message's id, speaker
-/// and text.
+/// The digest of the exact snapshot: the room, every row's deletion marker
+/// in read order, then each selected message's id, writer and text.
 fn source_revision(
-    person: EntityId,
     room: EntityId,
     markers: &[(u8, EntityId, u8)],
     messages: &[SelectedMessage],
 ) -> [u8; 32] {
     let mut digest = blake3::Hasher::new_derive_key(SOURCE_REVISION_CONTEXT);
-    digest.update(person.as_bytes());
     digest.update(room.as_bytes());
     for (kind, id, marker) in markers {
         digest.update(&[*kind]);
@@ -508,7 +558,15 @@ fn source_revision(
     }
     for message in messages {
         digest.update(message.id.as_bytes());
-        digest.update(&[u8::from(message.speaker == TrainingSpeaker::Person)]);
+        match message.speaker {
+            TrainingSpeaker::Person(person) => {
+                digest.update(&[1]);
+                digest.update(person.as_bytes());
+            }
+            TrainingSpeaker::Agent | TrainingSpeaker::Unproven | TrainingSpeaker::System => {
+                digest.update(&[2]);
+            }
+        }
         digest.update(&(message.text.len() as u64).to_le_bytes());
         digest.update(message.text.as_bytes());
     }
