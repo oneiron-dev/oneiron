@@ -23,6 +23,7 @@ mod hello_refusal;
 mod media_bridge;
 mod public;
 mod public_events;
+mod public_hold;
 mod public_loop;
 mod serve_bindings;
 mod speech;

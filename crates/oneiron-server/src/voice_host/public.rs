@@ -1,30 +1,24 @@
 //! Credential-bound public sessions. HTTP and held-socket RPC use the same
 //! typed facade rows. No UDS listener, hello or wire DTO is a public API.
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::*;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::Instant;
 
 use super::boot::{PreparedCall, prepare_call};
 use super::public_events::Journal;
+use super::public_hold::{SessionHold, while_held, writes_frozen};
 use crate::auth::CoreAuth;
 use crate::managed::ManagedShutdown;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
-/// How long a session may go with no door naming it before it ends as a
-/// close ends it, its admission released: a client that went away keeps no
-/// vault from its reap.
-const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-
 #[derive(Default)]
 pub(crate) struct LiveVoiceSessions {
     entries: Mutex<HashMap<String, Arc<PublicSession>>>,
-    /// The host's write gate each session holds one admission from for its
-    /// whole life; unset on a host with no freeze, which admits every
+    /// The host's write gate each session holds an admission from
+    /// (`public_hold`); unset on a host with no freeze, which admits every
     /// session.
     admit: OnceLock<HousekeepingAdmission>,
 }
@@ -35,8 +29,8 @@ pub(crate) struct PublicSession {
     pub(super) commands: mpsc::Sender<Command>,
     pub(super) journal: Arc<Mutex<Journal>>,
     pub(super) shutdown: ManagedShutdown,
-    /// When a door last named the session.
-    seen: Arc<Mutex<Instant>>,
+    /// Its admission, released while it idles on a host that freezes.
+    hold: Arc<SessionHold>,
 }
 
 pub(super) enum Command {
@@ -64,33 +58,18 @@ pub(super) fn invalid(message: &str) -> MemoryError {
     MemoryError::bad_request(message)
 }
 
-/// The typed pause a vault frozen for reap answers a new session with, as
-/// its served writes are answered.
-fn writes_frozen() -> MemoryError {
-    MemoryError::new(
-        crate::managed::WRITES_FROZEN_TAG,
-        crate::managed::ManagedError::WritesFrozen.to_string(),
-        &[],
-    )
-}
-
-/// Resolves once no door has named the session for [`IDLE_TIMEOUT`].
-async fn idle(seen: &Mutex<Instant>) {
-    loop {
-        let due = *seen.lock().unwrap_or_else(PoisonError::into_inner) + IDLE_TIMEOUT;
-        if due <= Instant::now() {
-            return;
-        }
-        tokio::time::sleep_until(due).await;
-    }
-}
-
 impl LiveVoiceSessions {
     /// Binds the write gate each later session holds an admission from:
     /// managed serve's, which a vault frozen for reap refuses. The first
     /// binding stands.
     pub(crate) fn admit_with(&self, admit: HousekeepingAdmission) {
         let _ = self.admit.set(admit);
+    }
+
+    /// Whether this host's gate can refuse, so an idle session releases its
+    /// admission.
+    fn releases(&self) -> bool {
+        self.admit.get().is_some()
     }
 
     /// One session's admission, or `None` from a vault frozen for reap.
@@ -104,28 +83,24 @@ impl LiveVoiceSessions {
     }
 
     /// The session `session_ref` names, for the credential that opened it.
-    /// Naming it keeps it from idling out.
+    /// Naming it starts its idle clock again, and a session that released
+    /// its admission takes one again first; a vault frozen for reap refuses
+    /// with the typed pause.
     pub(crate) fn get(
         &self,
         auth: &CoreAuth,
         session_ref: &str,
     ) -> MemoryResult<Arc<PublicSession>> {
-        let entries = self.entries.lock().map_err(|_| unavailable())?;
-        let entry = entries
+        let entry = self
+            .entries
+            .lock()
+            .map_err(|_| unavailable())?
             .get(session_ref)
             .filter(|entry| entry.auth.same_authority(auth))
             .cloned()
             .ok_or_else(unavailable)?;
-        *entry.seen.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
+        entry.hold.named(|| self.admission())?;
         Ok(entry)
-    }
-
-    /// Drops the session `session_ref` names, whoever opened it: one that
-    /// idled out.
-    fn forget(&self, session_ref: &str) {
-        if let Ok(mut entries) = self.entries.lock() {
-            entries.remove(session_ref);
-        }
     }
 
     pub(crate) fn remove(&self, auth: &CoreAuth, session_ref: &str) -> MemoryResult<()> {
@@ -221,9 +196,9 @@ pub(crate) async fn start_public(
         .voice_settings()
         .cloned()
         .ok_or_else(|| invalid("live voice needs configured models.voice and media routes"))?;
-    // Held by the session's task for its whole life, first taken and last
-    // dropped, as a private call holds its own: a session in flight keeps a
-    // managed vault from reading quiescent, and a frozen one opens none.
+    // Held by the session until its task ends, first taken and last dropped,
+    // as a private call holds its own: a session in flight keeps a managed
+    // vault from reading quiescent, and a frozen one opens none.
     let admission = server.live_voice.admission().ok_or_else(writes_frozen)?;
     let shutdown = ManagedShutdown::new();
     let PreparedCall {
@@ -237,14 +212,14 @@ pub(crate) async fn start_public(
     let (tts, bridge, worker, wire, control) = media.build().map_err(MemoryError::from)?;
     let journal = Arc::new(Mutex::new(Journal::new(session_ref.clone())));
     let (commands, receiver) = mpsc::channel(settings.queue_capacity);
-    let seen = Arc::new(Mutex::new(Instant::now()));
+    let hold = Arc::new(SessionHold::new(admission, server.live_voice.releases()));
     let entry = Arc::new(PublicSession {
         auth: auth.clone(),
         owner_only: input.room_ref.is_none() && input.roster_ref.is_none(),
         commands,
         journal: Arc::clone(&journal),
         shutdown: shutdown.clone(),
-        seen: Arc::clone(&seen),
+        hold: Arc::clone(&hold),
     });
     server
         .live_voice
@@ -264,23 +239,27 @@ pub(crate) async fn start_public(
         journal,
         session_ref: session_ref.clone(),
         live,
+        hold: Arc::clone(&hold),
     };
     let server = Arc::clone(server);
     let auth = auth.clone();
-    let idle_ref = session_ref.clone();
     tokio::spawn(async move {
-        let _admission = admission;
-        let serving = running.run(&server, receiver, &shutdown);
-        tokio::pin!(serving);
-        let worker = worker.run();
-        tokio::pin!(worker);
-        tokio::select! {
-            result = &mut serving => { if let Err(error) = result { tracing::warn!(%error.code, "public voice stopped"); } }
-            () = &mut worker => { shutdown.trigger(); let _ = serving.await; }
-            () = super::boot::revoked(&auth, &server) => { shutdown.trigger(); let _ = serving.await; }
-            // A session no door named for a while ends as a close ends it.
-            () = idle(&seen) => { shutdown.trigger(); let _ = serving.await; server.live_voice.forget(&idle_ref); }
+        {
+            let serving = running.run(&server, receiver, &shutdown);
+            tokio::pin!(serving);
+            // Released, the media worker and the credential's recheck wait
+            // with the loop.
+            let worker = while_held(worker.run(), hold.watch());
+            tokio::pin!(worker);
+            let revoked = while_held(super::boot::revoked(&auth, &server), hold.watch());
+            tokio::select! {
+                result = &mut serving => { if let Err(error) = result { tracing::warn!(%error.code, "public voice stopped"); } }
+                () = &mut worker => { shutdown.trigger(); let _ = serving.await; }
+                () = revoked => { shutdown.trigger(); let _ = serving.await; }
+            }
         }
+        // Last, once the session's work is dropped: its admission, for good.
+        hold.end();
     });
     Ok(LiveVoiceSession {
         session_ref,

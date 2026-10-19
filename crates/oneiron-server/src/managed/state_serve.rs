@@ -1041,9 +1041,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
     let _ = reap_gate.set(Arc::clone(&state));
     // A public live voice session (`ai.voice.start`) holds an admission like
-    // a served write for its whole life, as a voice loop call does: a session
-    // in flight keeps a reap from finding the vault quiescent, and a frozen
-    // vault opens none. Bound before anything serves.
+    // a served write, as a voice loop call does: a session in flight keeps a
+    // reap from finding the vault quiescent, and a frozen vault opens none.
+    // One no call named for a minute releases it until the next call names
+    // it. Bound before anything serves.
     sync_server
         .live_voice
         .admit_with(state.background_admission());
