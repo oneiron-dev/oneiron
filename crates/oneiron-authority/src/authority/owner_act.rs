@@ -115,6 +115,12 @@ pub enum OwnerActKind {
     /// The owner's revoke of an agent's Grant (FIX 5628). Its `target` is the
     /// Grant and its `seen` zero: an owner's revoke always lands.
     GrantRevoke,
+    /// The owner's enrollment of one of his devices' own owner signing keys
+    /// (`OwnerKeyEnroll`; FIX 4920, Engine 10-20 00:5x). Its `target` is the
+    /// key ([`owner_key_enrollment_target`]) and its `seen` zero
+    /// ([`OWNER_KEY_ENROLLMENT_SEEN`]): fresh keys only. No Grant line names
+    /// it: an agent never enrols an owner key.
+    OwnerKeyEnrollment,
 }
 
 impl OwnerActKind {
@@ -138,6 +144,7 @@ impl OwnerActKind {
             Self::ConversationTraining => "conversation_training",
             Self::GrantMint => "grant_mint",
             Self::GrantRevoke => "grant_revoke",
+            Self::OwnerKeyEnrollment => "owner_key_enrollment",
         }
     }
 
@@ -161,6 +168,7 @@ impl OwnerActKind {
             "conversation_training" => Self::ConversationTraining,
             "grant_mint" => Self::GrantMint,
             "grant_revoke" => Self::GrantRevoke,
+            "owner_key_enrollment" => Self::OwnerKeyEnrollment,
             _ => return None,
         })
     }

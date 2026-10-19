@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1071 facade rows, 3639 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1023.
+// UniFFI census: 1072 facade rows, 3644 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1024.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -50470,6 +50470,114 @@ pub struct SettledProgramStepView {
         skip_serializing_if = "Option::is_none"
     )]
     pub body_base64: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProgramCheckpointRequest {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointWaitView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramCheckpointWaitView {
+    #[serde(rename = "row")]
+    pub row: u64,
+    #[serde(rename = "wait_id")]
+    pub wait_id: String,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "delivered")]
+    pub delivered: bool,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointHeadView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramCheckpointHeadView {
+    #[serde(rename = "committed_by")]
+    pub committed_by: String,
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "contract_digest")]
+    pub contract_digest: String,
+    #[serde(rename = "entries")]
+    pub entries: u64,
+    #[serde(rename = "entry_start")]
+    pub entry_start: u64,
+    #[serde(rename = "bridge_calls")]
+    pub bridge_calls: u64,
+    #[serde(rename = "state_hash")]
+    pub state_hash: String,
+    #[serde(rename = "applied")]
+    pub applied: u64,
+    #[serde(rename = "injected")]
+    pub injected: u64,
+    #[serde(rename = "wait", default, skip_serializing_if = "Option::is_none")]
+    pub wait: Option<ProgramCheckpointWaitView>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointCallView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramCheckpointCallView {
+    #[serde(rename = "index")]
+    pub index: u64,
+    #[serde(rename = "result_ref")]
+    pub result_ref: String,
+    #[serde(rename = "row")]
+    pub row: u64,
+    #[serde(rename = "request_digest")]
+    pub request_digest: String,
+    #[serde(
+        rename = "answered_by_wait",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub answered_by_wait: Option<String>,
+    #[serde(rename = "injected")]
+    pub injected: bool,
+}
+
+/// `oneiron::dreamer_runner::program::read::views::ProgramCheckpointView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProgramCheckpointView {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "code_run")]
+    pub code_run: String,
+    #[serde(
+        rename = "definition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub definition: Option<ProgramRecipePin>,
+    #[serde(
+        rename = "checkpoint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checkpoint: Option<ProgramCheckpointHeadView>,
+    #[serde(rename = "frontier", default, skip_serializing_if = "Option::is_none")]
+    pub frontier: Option<ProgramFrontierView>,
+    #[serde(rename = "calls")]
+    pub calls: Vec<ProgramCheckpointCallView>,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "withheld")]
+    pub withheld: Vec<String>,
 }
 
 /// `oneiron::dreamer_runner::owner_doors::ConsolidationHomeNode`.

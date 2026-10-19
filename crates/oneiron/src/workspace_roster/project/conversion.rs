@@ -62,6 +62,34 @@ fn room_thread_in(
     Ok(row)
 }
 
+/// The turns of `turns`, a thread selected whole, that `actor` reads, each
+/// under its private thread's CONTENT rule, the opener included (FIX 5654):
+/// all a conversion or a task census carries for it. A withheld turn drops
+/// none after it. The flag: whether any was withheld.
+fn readable_turns_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turns: Vec<rooms::RoomTurn>,
+    actor: EntityId,
+) -> Result<(Vec<rooms::RoomTurn>, bool)> {
+    let all = turns.len();
+    let mut kept = Vec::with_capacity(all);
+    for turn in turns {
+        let id = EntityId::from_hex(&turn.turn_id)?;
+        if rooms::record_thread_admits_in(vault, txn, id, actor)? {
+            kept.push(turn);
+        }
+    }
+    let withheld = kept.len() != all;
+    Ok((kept, withheld))
+}
+
+/// The refusal of a source message outside the turns its converter reads in
+/// a private thread (FIX 5654). It names the bound alone, no turn.
+fn unread_source() -> Error {
+    Error::InvalidConfig("a private thread converts only from a turn its converter reads".into())
+}
+
 fn thread_project_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -114,7 +142,9 @@ impl Vault {
                     .unwrap_or_default();
             let mut row = room_thread_in(self, txn, room, thread)?;
             rooms::require_thread_audience_in(self, txn, room, thread, actor)?;
-            let turns = rooms::thread_turns_in(self, txn, room, thread)?;
+            // Its census counts the turns `actor` reads alone (FIX 5654).
+            let all = rooms::thread_turns_in(self, txn, room, thread)?;
+            let (turns, _) = readable_turns_in(self, txn, all, actor)?;
             let source = rooms::room_in(self, txn, room)?;
             let members = source.member_ids.into_iter().collect();
             crate::task_verb::room_thread_task_roster_in(self, txn, task, &members)?;
@@ -319,29 +349,41 @@ impl Vault {
                     .project_conversion_policy()
                     .ok_or_else(invalid)?;
             let mut row = room_thread_in(self, txn, room, thread)?;
+            let acting = acting.ok_or_else(invalid)?;
             // FIX 3125: a private thread (FIX 2951) converts only by an actor
             // in its audience; to anyone else it is an unknown thread.
-            rooms::require_thread_audience_in(
-                self,
-                txn,
-                room,
-                thread,
-                acting.ok_or_else(invalid)?,
-            )?;
-            let turns = rooms::thread_turns_in(self, txn, room, thread)?;
+            rooms::require_thread_audience_in(self, txn, room, thread, acting)?;
+            // FIX 5654: it carries only the turns its converter reads, each
+            // under the CONTENT rule, the opener included: their messages,
+            // tasks and time, never a turn from before a later add.
+            let all = rooms::thread_turns_in(self, txn, room, thread)?;
+            let (turns, withheld) = readable_turns_in(self, txn, all, acting)?;
             if row.converted_project.is_some()
                 || self.get_entity_type_in_txn(txn, &project_id)?.is_some()
                 || thread_project_in(self, txn, room, thread, kind)?.is_some()
             {
                 return Err(invalid());
             }
-            if !turns
+            // A source message outside those turns refuses, by the private
+            // thread's bound when any was withheld; an unread opener alone
+            // refuses nothing.
+            let Some(source_turn) = turns
                 .iter()
-                .any(|turn| turn.message_ids.contains(&source_message.to_hex()))
-                || self.get_entity_type_in_txn(txn, &source_message)? != Some(ENTITY_TYPE_MESSAGE)
-            {
+                .find(|turn| turn.message_ids.contains(&source_message.to_hex()))
+            else {
+                return Err(if withheld { unread_source() } else { invalid() });
+            };
+            if self.get_entity_type_in_txn(txn, &source_message)? != Some(ENTITY_TYPE_MESSAGE) {
                 return Err(invalid());
             }
+            // The origin's position is the opener's when its converter reads
+            // it, else the source turn's: never an unread turn's time.
+            let origin_at = if turns.iter().any(|turn| turn.turn_id == thread.to_hex()) {
+                row.at
+            } else {
+                source_turn.at
+            };
+            let source_turn = EntityId::from_hex(&source_turn.turn_id)?;
             let source = rooms::room_in(self, txn, room)?;
             let source_project_id = EntityId::from_hex(&source.project_id)?;
             // The source's effective leader and claims scope, as its signed
@@ -365,13 +407,34 @@ impl Vault {
             for &task in bindings.keys() {
                 crate::task_verb::room_thread_task_roster_in(self, txn, task, &source_members)?;
             }
-            let task_ids = crate::task_verb::room_thread_task_ids_in(
+            // A TASK carries only when its converter reads it under each
+            // private thread it sits in, the turns binding it and its refs
+            // too (FIX 5654); every one it reads carries.
+            let mut task_ids = std::collections::BTreeMap::new();
+            for (task, place) in crate::task_verb::room_thread_task_ids_in(
                 self,
                 txn,
                 &roots,
                 &bindings,
                 &source_members,
-            )?;
+            )? {
+                let Some(raw) =
+                    crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &task)?
+                else {
+                    continue;
+                };
+                if crate::conversation::private_threads_readable_with_read_in(
+                    self,
+                    &self.store.read(),
+                    txn,
+                    task,
+                    &raw,
+                    &[acting],
+                    false,
+                )? {
+                    task_ids.insert(task, place);
+                }
+            }
             // The thread's whole task set moves, however many (rule 5). Past
             // the policy's task threshold its census raises the owner's
             // question for the thread and the conversion goes on.
@@ -420,20 +483,11 @@ impl Vault {
                         None => {
                             let session = match tap_session {
                                 Some(session) => Some(session),
-                                None => {
-                                    let source_turn = turns
-                                        .iter()
-                                        .find(|turn| {
-                                            turn.message_ids.contains(&source_message.to_hex())
-                                        })
-                                        .ok_or_else(invalid)?;
-                                    let source_turn = EntityId::from_hex(&source_turn.turn_id)?;
-                                    crate::compaction::turn_session_membership_in_txn(
-                                        &self.store,
-                                        txn,
-                                        &source_turn,
-                                    )?
-                                }
+                                None => crate::compaction::turn_session_membership_in_txn(
+                                    &self.store,
+                                    txn,
+                                    &source_turn,
+                                )?,
                             };
                             let present = match session {
                                 Some(session) => self
@@ -490,7 +544,7 @@ impl Vault {
             project.born_from = Some(source_message.to_hex());
             project.origin_room = Some(room.to_hex());
             project.origin_thread = Some(thread.to_hex());
-            project.origin_at = Some(row.at);
+            project.origin_at = Some(origin_at);
             if let Some(birth) = &card {
                 self.apply_card_terms_in_txn(txn, birth.intent, project_id, now, &mut project)?;
                 if policy.roster_selection == RosterSelection::LeaderOnly

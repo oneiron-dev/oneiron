@@ -51,7 +51,7 @@ const RUN: SideTable<EntityId, TurnProgramRun, Named> =
 /// One step of a program's run, keyed by the code run, then the step. A
 /// send's inline body is a KS-2 body-instance client (FIX 5710): until KS-2
 /// holds it, the actor's erase clears it here.
-const STEP: SideTable<(EntityId, EntityId), TurnProgramStep, Named> =
+pub(super) const STEP: SideTable<(EntityId, EntityId), TurnProgramStep, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_STEP);
 
 fn invalid(why: &'static str) -> Error {
@@ -155,7 +155,8 @@ pub(crate) enum TurnProgramEntered {
     /// The run already settled: its result stands, nothing runs again.
     Settled,
     /// An earlier entry was cut before it settled, or the code run exists
-    /// with no entry: resuming it lands with DOOR-141 PR3.
+    /// with no entry: the next entry resumes it from its pinned entry
+    /// (DOOR-141 PR3b), as the same try.
     Cut,
 }
 
@@ -278,7 +279,8 @@ impl Vault {
     /// Enters `attempt`'s code run once, under its live lease: a first entry
     /// marks the run entered; a settled run answers settled; a run an
     /// earlier entry left unsettled, or a code run that exists with no
-    /// entry, answers cut. PR2 never restarts a cut run from scratch.
+    /// entry, answers cut, which resumes from its pinned entry, never from
+    /// scratch.
     pub(crate) fn enter_turn_program_run(
         &self,
         attempt: &AttemptRecord,
@@ -400,10 +402,15 @@ impl Vault {
             at: now,
         };
         self.with_write_txn_grouped(|wtxn| {
-            if let Some(held) = STEP.get(self, &*wtxn, &key)?
-                && held.issued != step.issued
-            {
-                return Err(invalid("a program model step changed its request"));
+            if let Some(held) = STEP.get(self, &*wtxn, &key)? {
+                if held.issued != step.issued {
+                    return Err(invalid("a program model step changed its request"));
+                }
+                // A replayed occurrence binds again before its call: a step
+                // that settled stays settled (DOOR-141 PR3b).
+                if settled.is_none() && matches!(held.state, StepState::Settled { .. }) {
+                    return Ok(());
+                }
             }
             STEP.put(self, wtxn, &key, &step)
         })
@@ -590,8 +597,8 @@ pub(crate) fn settle_program_outbound_in_txn(
             },
             at: now,
         };
-        let erased = actor_erased(vault, &*wtxn, &stamp.actor);
-        let Some(body) = body.filter(|_| !erased) else {
+        let gone = actor_gone_in_txn(vault, &*wtxn, &stamp.actor);
+        let Some(body) = body.filter(|_| !gone) else {
             return put_step_savepoint(vault, wtxn, &key, &skeleton);
         };
         if let Err(error) = put_admitted_step_savepoint(vault, wtxn, &key, &skeleton, body) {
@@ -611,20 +618,30 @@ pub(crate) fn settle_program_outbound_in_txn(
     }
 }
 
-/// Whether `actor` is erased here: a step that settles after its actor's
-/// erase keeps no body, so a late answer cannot bring back one the erase
-/// scrubbed. A marker that cannot be read keeps no body either.
-fn actor_erased(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
-    vault
-        .store
-        .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)
-        .unwrap_or_else(|error| {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a program step's actor erase marker was not read; its body is not kept"
-            );
-            true
-        })
+/// Whether `actor` is gone here (FIX 5710, FIX 5738): soft-deleted (its
+/// identity's soft-delete marker, or a deletion of its row other than an
+/// archive), or hard-deleted and erased (its hard-delete marker). A step
+/// body is then never kept, served or injected, so a late answer cannot
+/// bring back one the erase scrubbed; the step keeps its skeleton and its
+/// original digest. An archive is reversible and withholds nothing. A marker
+/// that cannot be read counts as gone.
+pub(super) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
+    let gone = (|| -> Result<bool> {
+        Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
+            || vault
+                .store
+                .port_deletion_marked(txn, DeletionMarker::HardDelete, actor)?
+            || vault
+                .store
+                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, actor)?)
+    })();
+    gone.unwrap_or_else(|error| {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "a program step's actor deletion markers were not read; its body is withheld"
+        );
+        true
+    })
 }
 
 /// One STEP row in a savepoint of `wtxn`, so a row that fails leaves the
