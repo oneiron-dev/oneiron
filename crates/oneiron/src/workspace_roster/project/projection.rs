@@ -76,12 +76,7 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
     refs.extend(body.born_from.iter());
     refs.extend(body.wrapper_task.iter());
     refs.extend(body.budget.iter());
-    for list in [
-        &body.board,
-        &body.roster,
-        &body.sessions,
-        &body.branches,
-    ] {
+    for list in [&body.board, &body.roster, &body.sessions, &body.branches] {
         if list.len() > 4096 || list.iter().collect::<BTreeSet<_>>().len() != list.len() {
             return Err(invalid());
         }

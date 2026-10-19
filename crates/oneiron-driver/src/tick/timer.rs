@@ -275,6 +275,29 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     next = Some(due);
                 }
             }
+            // Each agent's next owner-set free-time boundary (FIX 4453) arms
+            // a Macro pass on the home alone, whose Timer begin opens the
+            // cycle; it is as independent of the rest.
+            let free_time = match self.vault.next_free_time_due_at() {
+                Ok(free_time) => free_time,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        ?error,
+                        "free-time deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(at) = free_time {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Macro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
+            }
             // Each standing question's refresh (OF-506) and each held
             // artifact answer's wake (ARCH-0075 §4) arm the same home-only
             // cadence; the Deadline pass runs the host's pump for both.
@@ -454,6 +477,7 @@ fn scope_for_attempt_kind(kind: &str) -> Option<DreamerConsolidationScope> {
         || kind == oneiron::dreamer_runner::DREAMER_VAULT_CLEANUP_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         || kind == oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+        || kind == oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
     {
         // Cleanup admits only on a Timer pass at Macro scope, so its
         // deadline arms one, on the elected home alone.
