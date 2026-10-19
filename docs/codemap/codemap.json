@@ -38537,6 +38537,7 @@
      "purpose": "A continuous-context Beta kernel posterior",
      "surface": {
       "crate-vis": 4,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -48558,7 +48559,7 @@
      "purpose": "Reward-weighted retrieval-blend tuning: weight-table methods, codecs, validators, and gradient math",
      "surface": {
       "crate-vis": 4,
-      "fn": 2
+      "fn": 8
      }
     },
     {
@@ -48659,6 +48660,12 @@
       "RetrievalEndOutcome",
       "RetrievalOutcome",
       "RetrievalOutcomeRecord",
+      "RetrievalPolicyCandidate",
+      "RetrievalPolicyEvaluation",
+      "RetrievalPolicyHeldOut",
+      "RetrievalPolicyPin",
+      "RetrievalPolicyPins",
+      "RetrievalPolicyVerdict",
       "RetrievalRewardEvidence",
       "RetrievalRunId",
       "RetrievalRunRecord",
@@ -48666,16 +48673,18 @@
       "RetrievalTrace",
       "RetrievalTraceChannelRecord",
       "RetrievalTraceStage",
-      "RetrievalTraceStageRecord"
+      "RetrievalTraceStageRecord",
+      "RetrievalWeightOrigin",
+      "RetrievalWeightRow"
      ],
      "path": "src/store/retrieval_telemetry/types.rs",
      "purpose": "Retrieval-telemetry record, trace, signal, and blend-weight types",
      "surface": {
       "crate-vis": 11,
-      "enum": 2,
-      "fn": 5,
+      "enum": 4,
+      "fn": 11,
       "re-export": 1,
-      "struct": 13,
+      "struct": 19,
       "type": 1
      }
     },
@@ -53113,7 +53122,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1004
+      "fn": 1010
      }
     },
     {
@@ -53649,14 +53658,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RecallTelemetry",
       "RetrievalDiagnosticExport",
       "RetrievalDiagnosticReplay",
       "RetrievalDiagnosticRequest",
+      "RetrievalPolicyAdmitReceipt",
+      "RetrievalPolicyAdmitRequest",
+      "RetrievalPolicyDisposition",
+      "RetrievalPolicyEvaluateRequest",
+      "RetrievalPolicyPinRequest",
+      "RetrievalPolicyTrainRequest",
+      "RetrievalPolicyUpdateReceipt",
+      "RetrievalPolicyView",
       "RetrievalReplayRun",
+      "RetrievalRoutingPin",
       "RetrievalRunEvidence",
       "RetrievalRunRequest",
       "RetrievalRunsRequest",
@@ -53667,8 +53685,9 @@
      "purpose": "Owner-only, tenant-local retrieval diagnostics over the existing finalized ledger",
      "surface": {
       "const": 1,
-      "fn": 9,
-      "struct": 10
+      "enum": 1,
+      "fn": 15,
+      "struct": 18
      }
     },
     {
@@ -55565,7 +55584,7 @@
      "purpose": "Vault text and vector search, batch and query builders, and retrieval telemetry",
      "surface": {
       "crate-vis": 5,
-      "fn": 23
+      "fn": 29
      }
     },
     {
@@ -69464,7 +69483,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 975
+      "fn": 981
      }
     },
     {
@@ -70558,7 +70577,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 976
+      "fn": 982
      }
     },
     {
@@ -74376,13 +74395,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/retrieval_doors.rs",
      "purpose": "Typed owner-only retrieval diagnostics",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 15
      }
     },
     {
@@ -85213,6 +85232,9 @@
       "RetentionDefault",
       "RetiredCard",
       "RetrievalAction",
+      "RetrievalBlendSignal",
+      "RetrievalBlendWeightDataWindow",
+      "RetrievalBlendWeightTableEntry",
       "RetrievalBlendWeights",
       "RetrievalDiagnosticExport",
       "RetrievalDiagnosticReplay",
@@ -85221,14 +85243,28 @@
       "RetrievalOutcome",
       "RetrievalOutcomeRecord",
       "RetrievalPolicyAction",
+      "RetrievalPolicyAdmitReceipt",
+      "RetrievalPolicyAdmitRequest",
+      "RetrievalPolicyCandidate",
       "RetrievalPolicyDecision",
+      "RetrievalPolicyDisposition",
       "RetrievalPolicyEnvelope",
+      "RetrievalPolicyEvaluateRequest",
+      "RetrievalPolicyEvaluation",
+      "RetrievalPolicyHeldOut",
       "RetrievalPolicyIdentity",
+      "RetrievalPolicyPin",
+      "RetrievalPolicyPinRequest",
       "RetrievalPolicyTier",
       "RetrievalPolicyTrace",
+      "RetrievalPolicyTrainRequest",
+      "RetrievalPolicyUpdateReceipt",
+      "RetrievalPolicyVerdict",
+      "RetrievalPolicyView",
       "RetrievalReplayInputs",
       "RetrievalReplayRun",
       "RetrievalRewardEvidence",
+      "RetrievalRoutingPin",
       "RetrievalRunEvidence",
       "RetrievalRunId",
       "RetrievalRunRecord",
@@ -85245,6 +85281,8 @@
       "RetrievalTraceStageRecord",
       "RetrievalTurn",
       "RetrievalTurnRequest",
+      "RetrievalWeightOrigin",
+      "RetrievalWeightRow",
       "RetrievalWeights",
       "RetrievalWeightsConfigureRequest",
       "RetrievalWeightsReceipt",
@@ -86121,8 +86159,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 804,
-      "struct": 2500
+      "enum": 808,
+      "struct": 2515
      }
     },
     {
