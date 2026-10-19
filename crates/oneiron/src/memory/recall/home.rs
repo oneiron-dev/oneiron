@@ -4,7 +4,9 @@
 //! so ([`RecallResidence`], local-only and incomplete), and the async server
 //! door asks the home for the references the device does not hold
 //! ([`complete_with_home`]). The home's hits are discovery references, never
-//! memory items: they carry no body, and a hit's window opens it.
+//! memory items: they carry no body, and a hit's window opens it. The home
+//! narrows its search by the scope the device's recall resolved, before its
+//! candidate cut, and returns the unit recall returns.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +47,12 @@ pub struct RecallResidence {
     /// answer unmarks only what the stamp marked. Never on the wire.
     #[serde(skip)]
     marked_partial: bool,
+    /// What the recall that stamped this narrowed by, as it resolved it:
+    /// the scope its home narrows by. Never on the wire.
+    #[cfg(feature = "sync")]
+    #[serde(skip)]
+    #[schemars(skip)]
+    selection: Option<crate::sync::residence::ResolvedRecallSelection>,
 }
 
 /// One reference the home holds that the local pack does not.
@@ -71,6 +79,8 @@ impl RecallResidence {
             capped: false,
             hits: Vec::new(),
             marked_partial: false,
+            #[cfg(feature = "sync")]
+            selection: None,
         }
     }
 }
@@ -136,13 +146,36 @@ impl MemoryPack {
             self.residence = Some(residence);
         }
     }
+
+    /// Marks the pack partial for its own retrieval (a cut at the deadline),
+    /// not for its residence.
+    pub(crate) fn mark_cut(&mut self) {
+        self.retrieval_meta.partial = true;
+        if let Some(residence) = self.residence.as_mut() {
+            residence.marked_partial = false;
+        }
+    }
+
+    /// Whether the pack is partial for its own retrieval: the deadline cut a
+    /// stage. The residence stamp's mark is not that.
+    pub(crate) fn cut_short(&self) -> bool {
+        self.retrieval_meta.partial
+            && !self
+                .residence
+                .as_ref()
+                .is_some_and(|residence| residence.marked_partial)
+    }
 }
 
 /// The residence a recall answered on this device alone carries (FIX 2905):
 /// local-only and incomplete on a device known to run Opened, with a live
 /// sync connection or after it dropped; `None` on one that holds every
-/// window it may read, or runs no sync.
-pub(crate) fn local_residence(vault: &Vault) -> Option<RecallResidence> {
+/// window it may read, or runs no sync. It keeps `selection`, what the
+/// recall narrowed by, for the home step; a pack with none asks no home.
+pub(crate) fn local_residence(
+    vault: &Vault,
+    selection: Option<&super::selection::RecallSelection>,
+) -> Option<RecallResidence> {
     #[cfg(feature = "sync")]
     let opened = matches!(
         vault.device_residence(),
@@ -150,10 +183,14 @@ pub(crate) fn local_residence(vault: &Vault) -> Option<RecallResidence> {
     );
     #[cfg(not(feature = "sync"))]
     let opened = {
-        let _ = vault;
+        let _ = (vault, selection);
         false
     };
-    opened.then(RecallResidence::local_only)
+    opened.then(|| RecallResidence {
+        #[cfg(feature = "sync")]
+        selection: selection.map(super::selection::RecallSelection::resolved),
+        ..RecallResidence::local_only()
+    })
 }
 
 /// Who a recall asks the home for (FIX 2907): the device's owner, or a
@@ -211,7 +248,7 @@ pub struct HomeRecallAsk {
     query: String,
     /// The limit the request asked for, or recall's default.
     limit: usize,
-    /// Whether the home can answer the request (`home_answers`).
+    /// Whether the home can take the request (`home_answers`).
     answerable: bool,
 }
 
@@ -230,34 +267,28 @@ impl HomeRecallAsk {
     }
 }
 
-/// Whether the home can answer `request` (FIX 2905, the first slice): its
-/// search carries the query and a limit alone, so it answers a recall of
-/// every world (`scope.worlds` All) that names no `world_ref`, project,
-/// facet or kinds, no `as_of` and no media, outside a room's turn. Every
-/// other recall keeps its local answer, marked incomplete, until the home
-/// takes the recall's scope.
+/// Whether the home can take `request` (FIX 2905): its search carries the
+/// query, a limit and the recall's resolved scope (worlds, the actor's
+/// default included, projects, facet and kinds), but no `as_of`, no media
+/// and no room's turn. A recall naming any of those keeps its local answer,
+/// marked incomplete.
 #[cfg(feature = "sync")]
 fn home_answers(request: &crate::task_verb::sdk::RecallRequest, room_turn: bool) -> bool {
-    let every_world = request.scope.as_ref().is_some_and(|scope| {
-        matches!(scope.worlds, Some(crate::memory::RecallWorlds::All))
-            && scope.world_ref.is_none()
-            && scope.project_refs.is_empty()
-            && scope.facet.is_none()
-            && scope.kinds.is_none()
-    });
-    every_world && request.as_of.is_none() && request.media.is_none() && !room_turn
+    request.as_of.is_none() && request.media.is_none() && !room_turn
 }
 
 /// Completes a recall answer on a device known to run Opened with its
 /// home's references (FIX 2905). The home is asked for `min(limit,
-/// search_limit)` under `caller`, within the residence `rpc_timeout_ms` and
+/// search_limit)` under `caller`, narrowed by the scope the recall resolved
+/// (the one its stamp keeps), within the residence `rpc_timeout_ms` and
 /// `due`, the recall's own deadline, whichever comes first; a `Home` answer
 /// fills the pack's `residence` with the references the local pack does not
 /// hold, in [`HOME_RECALL_MERGE_ORDER`]. No live connection, a request the
-/// home cannot answer, a caller with nothing to ask under, a refusal, a
-/// timeout, or the device's own fallback answer keeps the pack local-only
-/// and incomplete. The local items are never touched. A device not known
-/// to run Opened leaves the pack alone.
+/// home cannot take, a pack whose recall kept no scope, a caller with
+/// nothing to ask under, a refusal (a scope axis the home cannot evaluate
+/// included) or a timeout keeps the pack local-only and incomplete. The
+/// local items are never touched. A device not known to run Opened leaves
+/// the pack alone.
 #[cfg(feature = "sync")]
 pub async fn complete_with_home(
     vault: &Vault,
@@ -269,21 +300,27 @@ pub async fn complete_with_home(
     let crate::sync::DeviceResidence::Opened { search } = vault.device_residence() else {
         return;
     };
-    let answer = match search {
-        Some(search) if ask.answerable => {
-            ask_home(vault, &search, &pack.items, ask, caller, due).await
+    let selection = pack
+        .residence
+        .as_ref()
+        .and_then(|residence| residence.selection.clone());
+    let answer = match (search, selection) {
+        (Some(search), Some(selection)) if ask.answerable => {
+            ask_home(vault, &search, &selection, &pack.items, ask, caller, due).await
         }
         _ => None,
     };
     pack.stamp_residence(Some(answer.unwrap_or_else(RecallResidence::local_only)));
 }
 
-/// The home's answer to `ask`, or `None` when it gave none this recall can
-/// carry: then the pack stays local-only.
+/// The home's answer to `ask`, narrowed by `selection`, the scope the
+/// recall resolved, or `None` when it gave none this recall can carry: then
+/// the pack stays local-only.
 #[cfg(feature = "sync")]
 async fn ask_home(
     vault: &Vault,
     search: &crate::sync::HomeSearch,
+    selection: &crate::sync::residence::ResolvedRecallSelection,
     local: &[MemoryItem],
     ask: &HomeRecallAsk,
     caller: &HomeRecallCaller,
@@ -300,17 +337,12 @@ async fn ask_home(
     let bound =
         std::time::Instant::now() + std::time::Duration::from_millis(budgets.rpc_timeout_ms);
     let bound = due.map_or(bound, |due| due.min(bound));
-    let asked = async {
-        match forwarded {
-            Some(proof) => search.search_for(&ask.query, limit, proof).await,
-            None => search.search(&ask.query, limit).await,
-        }
-    };
+    let asked = search.search_recall(&ask.query, limit, selection, forwarded);
     let found = tokio::time::timeout_at(bound.into(), asked)
         .await
         .ok()?
         .ok()?;
-    // The device's own fallback ranks rows the local recall already read.
+    // A scoped search takes no local fallback; only the home's answer counts.
     if found.source != crate::sync::SearchSource::Home {
         return None;
     }
@@ -325,5 +357,6 @@ async fn ask_home(
         capped: ask.limit > budgets.search_limit,
         hits: HOME_RECALL_MERGE_ORDER.home_references(local, hits),
         marked_partial: false,
+        selection: None,
     })
 }

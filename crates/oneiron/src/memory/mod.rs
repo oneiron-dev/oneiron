@@ -237,6 +237,8 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
+#[cfg(feature = "sync")]
+pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,

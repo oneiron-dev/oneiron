@@ -77,7 +77,7 @@ impl HomeSearch {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None).await
+        self.ask(query, limit, None, None).await
     }
 
     /// [`Self::search`] for a caller narrower than this device's owner
@@ -91,13 +91,30 @@ impl HomeSearch {
         limit: usize,
         caller: &crate::authority::ForwardedCallerProof,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, Some(caller)).await
+        self.ask(query, limit, None, Some(caller)).await
+    }
+
+    /// A recall's search (FIX 2905): the home narrows it by `scope`, the
+    /// scope the device's recall resolved, before its candidate cut, and
+    /// returns the unit recall returns. `caller` is a narrower caller's own
+    /// holder proof, as for [`Self::search_for`]; `None` asks as this
+    /// device's owner. No home, or a refusal, is no home hits: a scoped
+    /// search never falls back to this device's own scan.
+    pub async fn search_recall(
+        &self,
+        query: &str,
+        limit: usize,
+        scope: &crate::sync::residence::ResolvedRecallSelection,
+        caller: Option<&crate::authority::ForwardedCallerProof>,
+    ) -> Result<ResidenceSearch, TransportError> {
+        self.ask(query, limit, Some(scope), caller).await
     }
 
     async fn ask(
         &self,
         query: &str,
         limit: usize,
+        scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
         caller: Option<&crate::authority::ForwardedCallerProof>,
     ) -> Result<ResidenceSearch, TransportError> {
         let limit = match self.vault.residence_operation_budgets() {
@@ -106,7 +123,8 @@ impl HomeSearch {
         };
         let mut config = self.config.clone();
         config.residence_mode = *self.mode.borrow();
-        crate::sync::client::search_resident(&self.vault, &config, query, limit, caller).await
+        crate::sync::client::search_resident(&self.vault, &config, query, limit, scope, caller)
+            .await
     }
 }
 

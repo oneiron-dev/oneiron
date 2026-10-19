@@ -17,6 +17,7 @@ mod kit_fetch;
 mod machine_history;
 mod policy;
 mod prune;
+mod recall_scope;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
@@ -63,6 +64,7 @@ pub(crate) use prune::demote_resident_window;
 pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
+pub use recall_scope::{ResolvedRecallSelection, ResolvedRecallWorlds, recall_scope_transcript};
 
 #[cfg(test)]
 use loro::ExportMode;
@@ -89,11 +91,17 @@ use super::window::Withhold;
 /// residence grant: the bounded candidate window, so a narrowed residence
 /// grant does not exhaust a smaller top-k before intersection. The page is
 /// short when the window holds fewer resident rows.
+///
+/// A recall's `scope` (FIX 2905) narrows the search before that window is
+/// cut, by the same worlds, projects, facet and kinds the device's own
+/// recall read, and returns the unit recall returns. A scope the home cannot
+/// evaluate is refused, never answered unscoped.
 pub fn home_search_candidates(
     vault: &Vault,
     proof: &crate::authority::VerifiedSlip,
     query: &str,
     limit: usize,
+    scope: Option<&ResolvedRecallSelection>,
 ) -> Result<Vec<(EntityId, f32, WindowKey)>> {
     let actor = vault
         .credential_read_key(proof)?
@@ -101,12 +109,13 @@ pub fn home_search_candidates(
             SyncProtocolValidation::DocumentAdmissionDenied,
         ))?;
     let candidates = crate::memory::caps::narrowed_candidate_window(limit);
+    let read = vault.scoped_read(actor);
+    let found = match scope {
+        Some(scope) => read.search_text_selected(query, candidates, scope)?,
+        None => read.search_text(query, candidates, None)?,
+    };
     let mut results = Vec::new();
-    for hit in vault
-        .scoped_read(actor)
-        .search_text(query, candidates, None)?
-        .value
-    {
+    for hit in found.value {
         let Some(raw) = vault.get_raw(&hit.id)? else {
             continue;
         };
@@ -116,17 +125,21 @@ pub fn home_search_candidates(
 }
 
 /// The forwarded `residence.search` a device signs and its home verifies
-/// (FIX 2907): the query, the limit as a big-endian `u64` and the device
-/// selector's wire bytes, in that order. Both ends build it here, from the
-/// values the request carries, so the two never sign different bytes.
+/// (FIX 2907): the query, the limit as a big-endian `u64`, the device
+/// selector's wire bytes and the recall scope's transcript
+/// ([`recall_scope_transcript`], FIX 2905), in that order. Both ends build
+/// it here, from the values the request carries, so the two never sign
+/// different bytes.
 pub fn with_forwarded_search<R>(
     query: &str,
     limit: usize,
     selector_wire: &[u8],
+    scope: Option<&ResolvedRecallSelection>,
     with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
 ) -> R {
     let limit = (limit as u64).to_be_bytes();
-    let fields: [&[u8]; 3] = [query.as_bytes(), &limit, selector_wire];
+    let scope = recall_scope_transcript(scope);
+    let fields: [&[u8]; 4] = [query.as_bytes(), &limit, selector_wire, &scope];
     with(&crate::authority::ForwardedRequest {
         method: "residence.search",
         fields: &fields,

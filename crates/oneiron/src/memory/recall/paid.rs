@@ -339,9 +339,10 @@ impl Memory<'_> {
             fallback.filter(|_| deadline.is_some_and(RetrievalDeadline::answer_due))
         };
         // A pack a door answers with when it stops waiting is partial: the
-        // deadline came before the rerank stage.
+        // deadline came before the rerank stage. An opened device's
+        // residence mark is no such cut (FIX 2905).
         let unreranked = |pack: &MemoryPack| RerankReport::Skipped {
-            reason: if pack.retrieval_meta.partial {
+            reason: if pack.cut_short() {
                 RerankSkip::Deadline
             } else {
                 RerankSkip::NoCandidates
@@ -444,7 +445,7 @@ impl Memory<'_> {
                     // Only a caller on this device is told why: one off it
                     // reads no hint of a device-local row (DEC-0005).
                     let told = self.locality() == crate::claim::CallerLocality::OnDevice;
-                    pack.retrieval_meta.rerank = Some(if pack.retrieval_meta.partial || !told {
+                    pack.retrieval_meta.rerank = Some(if pack.cut_short() || !told {
                         unreranked(&pack)
                     } else {
                         RerankReport::Skipped {
