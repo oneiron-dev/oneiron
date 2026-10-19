@@ -3024,29 +3024,29 @@ export type EvalLabelAsk = { id: EntityId; seat: EvalSeat; case: EntityId; decis
 export type EvalLabelPickRequest = { decision: string; case: EntityId; choose_b: boolean }
 /** `oneiron::skill_optimize::offer_doors::OfferListRequest` */
 export type OfferListRequest = { seat?: EvalSeat | null; pending_only?: boolean }
-/** `oneiron::skill_optimize::offer::OfferModelPin` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferModelPin` */
 export type OfferModelPin = { model: string; revision: string; content_hash?: string | null }
-/** `oneiron::skill_optimize::offer::OfferCandidate` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferCandidate` */
 export type OfferCandidate = { stock: { model: OfferModelPin; licence: string; source: string } } | { train_recipe: { base: OfferModelPin; recipe_ref: string; licence: string } }
-/** `oneiron::skill_optimize::offer::OfferCost` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferCost` */
 export type OfferCost = { currency: string; monthly_before?: number | null; monthly_after?: number | null; one_off?: number | null; payback_months?: number | null }
-/** `oneiron::skill_optimize::offer::OfferOption` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferOption` */
 export type OfferOption = { label: string; model: OfferModelPin; cost: OfferCost; score?: number | null; evidence_refs: string[] }
-/** `oneiron::skill_optimize::offer::SeatWorkload` */
+/** `oneiron::skill_optimize::offer::snapshot::SeatWorkload` */
 export type SeatWorkload = { from: number; until: number; calls?: number | null; input_tokens?: number | null; output_tokens?: number | null; complete: boolean; receipt_refs: string[] }
-/** `oneiron::skill_optimize::offer::OfferEvidence` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferEvidence` */
 export type OfferEvidence = { cohort?: EntityId | null; exposures: EntityId[]; rubric_revision?: string | null; card?: SufficiencyCard | null; losses: string[]; risk?: string | null }
-/** `oneiron::skill_optimize::offer::ComputeDestination` */
+/** `oneiron::skill_optimize::offer::snapshot::ComputeDestination` */
 export type ComputeDestination = "on_device" | { self_hosted: { host: string } } | { hosted: { provider: string; rows_leaving: number } }
-/** `oneiron::skill_optimize::offer::TrainingOffer` */
+/** `oneiron::skill_optimize::offer::snapshot::TrainingOffer` */
 export type TrainingOffer = { id: EntityId; seat: EvalSeat; offer_skill?: [EntityId, string] | null; drafted_on?: string | null; attempt: AttemptId; incumbent: OfferModelPin; candidate: OfferCandidate; baseline: OfferOption; alternatives: OfferOption[]; workload: SeatWorkload; cost: OfferCost; evidence: OfferEvidence; destination: ComputeDestination; previous?: EntityId | null; what_changed?: string | null; check_at: number; offered_at: number; digest: string }
-/** `oneiron::skill_optimize::offer::OfferAnswer` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferAnswer` */
 export type OfferAnswer = "keep_baseline" | "approve_switch" | "approve_train" | "decline" | "postpone"
-/** `oneiron::skill_optimize::offer::OfferIntent` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferIntent` */
 export type OfferIntent = { switch: { seat: EvalSeat; from: OfferModelPin; to: OfferModelPin } } | { train: { seat: EvalSeat; base: OfferModelPin; recipe_ref: string; destination: ComputeDestination } }
-/** `oneiron::skill_optimize::offer::OfferAnswerRecord` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferAnswerRecord` */
 export type OfferAnswerRecord = { offer: EntityId; answer: OfferAnswer; owner: EntityId; authentication: string; offer_digest: string; intent?: OfferIntent | null; at: number }
-/** `oneiron::skill_optimize::offer::OfferCheck` */
+/** `oneiron::skill_optimize::offer::snapshot::OfferCheck` */
 export type OfferCheck = { id: EntityId; offer: EntityId; receipt_refs: string[]; observed_monthly_cost?: number | null; observed_score?: number | null; held?: boolean | null; note?: string | null; at: number }
 /** `oneiron::skill_optimize::offer_doors::OfferView` */
 export type OfferView = { offer: TrainingOffer; answer?: OfferAnswerRecord | null; checks: OfferCheck[] }
