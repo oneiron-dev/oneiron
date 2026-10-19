@@ -89618,7 +89618,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 10,
+      "mod": 11,
       "re-export": 7
      }
     },
@@ -89691,6 +89691,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "VaultUidRow",
+      "VaultUidsError"
+     ],
+     "path": "src/lib/vault_uids.rs",
+     "purpose": "The host's vault UID allocation table: one row per managed vault, binding its dedicated non-root UID to its…",
+     "surface": {
+      "const": 5,
+      "enum": 1,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/version.rs",
      "purpose": "Wire version constants and SLIM gating",
@@ -89734,7 +89750,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89743,7 +89759,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 22,
+   "source_files": 23,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
