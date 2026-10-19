@@ -163,6 +163,11 @@ pub enum AuthorityOp {
     /// key of a live machine of the vault, in any role (FIX 5628). A
     /// main-log entry, so every machine the owner admits folds it.
     AgentGrantAct(AgentGrantActRecord),
+    /// The owner's enrollment of one of his devices' own owner signing keys
+    /// on the roster (FIX 4920), signed by an existing live owner root and
+    /// cosigned by the install key of the carrier of his act. A main-log
+    /// entry, so every machine the owner admits folds it.
+    OwnerKeyEnroll(OwnerKeyEnroll),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -225,6 +230,7 @@ impl AuthorityLogEntry {
             AuthorityOp::HomeNodePick(pick) => pick.validate_entry(self)?,
             AuthorityOp::ConversationTrainingSet(set) => set.validate_entry(self)?,
             AuthorityOp::ConversationTrainingVaultSet(set) => set.validate_entry(self)?,
+            AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -450,6 +456,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::ConversationTrainingVaultSet(set) => set.validate(),
         AuthorityOp::HomeCandidacy(declaration) => declaration.validate(),
         AuthorityOp::AgentGrantAct(record) => record.validate(),
+        AuthorityOp::OwnerKeyEnroll(enroll) => enroll.validate(),
     }
 }
 

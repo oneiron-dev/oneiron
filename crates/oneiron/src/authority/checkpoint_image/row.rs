@@ -49,8 +49,9 @@ pub struct AuthorityCheckpointRow {
 /// a confirm, a device revocation, a handoff, a machine profile, a world-key
 /// record, an owner work request, result or cancel),
 /// and each row a store door past it reads whole to judge a new row: the
-/// genesis and each device enrollment the consent structure rests on, the
-/// root records that name owner anchors, the actor revocations a signer's
+/// genesis and each device enrollment the consent structure rests on (an
+/// owner's own device key enrollment among them, FIX 4920), the root records
+/// that name owner anchors, the actor revocations a signer's
 /// revocations count, and the world edits and grant travel choices that may
 /// be a stranger's.
 fn carries_body(op: &AuthorityOp) -> bool {
@@ -59,6 +60,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
             op,
             AuthorityOp::Genesis { .. }
                 | AuthorityOp::EnrollDevice { .. }
+                | AuthorityOp::OwnerKeyEnroll(_)
                 | AuthorityOp::OwnerRoot(_)
                 | AuthorityOp::RevokeActor { .. }
                 | AuthorityOp::WorldPrivacy(_)

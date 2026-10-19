@@ -8,13 +8,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::*;
 use crate::store::Store;
 
+/// The key an admission names: an enrollment, a rotation, a re-root, or the
+/// owner's enrollment of a device's own owner signing key (FIX 4920), which
+/// its primary signer, an owner root, vouches for.
 pub(super) fn admits_device(op: &AuthorityOp) -> Option<&DeviceAuthority> {
     match op {
         AuthorityOp::EnrollDevice { device }
         | AuthorityOp::RotateKey {
             new_device: device, ..
         }
-        | AuthorityOp::ReRoot { new_device: device } => Some(device),
+        | AuthorityOp::ReRoot { new_device: device }
+        | AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. }) => Some(device),
         _ => None,
     }
 }
