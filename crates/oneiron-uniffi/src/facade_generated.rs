@@ -125,8 +125,8 @@ export_facade! {
     let output = client.self_standing_edit(&input)?;
     crate::codec::lift_record("self.standing.edit", &output)
 };
-"self.identity.answer" => fn self_identity_answer(&self, input: IdentityAnswerRequest) -> IdentitySettled = |client| {
-    let input: oneiron::dreamer_runner::maintenance::identity::IdentityAnswerRequest = crate::codec::lower_record("self.identity.answer", input)?;
+"self.identity.answer" => fn self_identity_answer(&self, input: IdentityAnswerEvidenceRequest) -> IdentitySettled = |client| {
+    let input: oneiron::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest = crate::codec::lower_record("self.identity.answer", input)?;
     let output = client.self_identity_answer(&input)?;
     crate::codec::lift_record("self.identity.answer", &output)
 };
@@ -184,6 +184,21 @@ export_facade! {
     let input: oneiron::memory::PersonRequest = crate::codec::lower_record("vault.people.get", input)?;
     let output = client.vault_people_get(&input)?;
     crate::codec::lift_record("vault.people.get", &output)
+};
+"vault.people.create" => fn vault_people_create(&self, input: PersonCreateRequest) -> PersonCreated = |client| {
+    let input: oneiron::memory::identity_doors::PersonCreateRequest = crate::codec::lower_record("vault.people.create", input)?;
+    let output = client.vault_people_create(&input)?;
+    crate::codec::lift_record("vault.people.create", &output)
+};
+"vault.entities.look_before_mint" => fn vault_entities_look_before_mint(&self, input: IdentityLookupRequest) -> IdentityLookup = |client| {
+    let input: oneiron::memory::identity_doors::IdentityLookupRequest = crate::codec::lower_record("vault.entities.look_before_mint", input)?;
+    let output = client.vault_entities_look_before_mint(&input)?;
+    crate::codec::lift_record("vault.entities.look_before_mint", &output)
+};
+"vault.identity.mention" => fn vault_identity_mention(&self, input: WireMentionProvenance) -> IdentityMentionView = |client| {
+    let input: oneiron::dreamer_runner::maintenance::identity::MentionProvenance = crate::codec::lower_record("vault.identity.mention", input)?;
+    let output = client.vault_identity_mention(&input)?;
+    crate::codec::lift_record("vault.identity.mention", &output)
 };
 "vault.shape.read" => fn vault_shape_read(&self) -> ShapeRead = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shape.read")?;

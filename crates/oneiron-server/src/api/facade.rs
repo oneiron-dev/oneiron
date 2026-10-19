@@ -91,6 +91,7 @@ pub(super) mod host_doors;
 mod host_trigger_doors;
 mod hub_doors;
 mod hyde_doors;
+mod identity_doors;
 mod identity_topology_doors;
 mod learning_doors;
 mod legal_hold_doors;

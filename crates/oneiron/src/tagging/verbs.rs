@@ -467,7 +467,7 @@ fn marker_view(record: &AttemptRecord) -> TaggingMarkerView {
     }
 }
 
-fn mention_view(index: usize, mention: &TaggedMention) -> TaggedMentionView {
+pub(crate) fn mention_view(index: usize, mention: &TaggedMention) -> TaggedMentionView {
     TaggedMentionView {
         index,
         message_ref: mention.message.to_hex(),
@@ -501,7 +501,7 @@ fn mention_view(index: usize, mention: &TaggedMention) -> TaggedMentionView {
     }
 }
 
-fn envelope_view(envelope: &DerivationEnvelope) -> DerivationEnvelopeView {
+pub(crate) fn envelope_view(envelope: &DerivationEnvelope) -> DerivationEnvelopeView {
     DerivationEnvelopeView {
         content_hash: envelope.content_hash.clone(),
         model_id: envelope.model_id.clone(),
