@@ -1831,6 +1831,9 @@ fn mcp_agent_verb_input(
         "vault.consolidation.home.get" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.lineage" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.promote" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.pin" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.frontier" => a.spec.clone().ok_or_else(invalid),
+        "vault.consolidation.accounting" => a.spec.clone().ok_or_else(invalid),
         "vault.consolidation.evidence" => a.spec.clone().ok_or_else(invalid),
         "vault.sieve.evidence" => a.spec.clone().ok_or_else(invalid),
         "vault.sieve.evidence.replay" => a.spec.clone().ok_or_else(invalid),
@@ -4660,6 +4663,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.promote" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consolidation.pin" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consolidation.frontier" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.consolidation.accounting" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.consolidation.evidence" => {
@@ -19068,6 +19080,78 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::consolidation::ConsolidationPromoteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) = crate::api::facade::host_doors::vault_consolidation_promote(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.pin" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consolidation.pin", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::consolidation_frontier::ConsolidationPinRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_pin(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.frontier" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consolidation.frontier", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::consolidation_frontier::ConsolidationFrontierRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_frontier(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.consolidation.accounting" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.consolidation.accounting", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::consolidation_frontier::ConsolidationAccountingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_accounting(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),

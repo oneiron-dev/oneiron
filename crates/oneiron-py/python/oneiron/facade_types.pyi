@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 995 facade rows, 3403 declarations.
-Inputs: 938 of 995 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 897 of 995 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 103; unread shapes: 0.
+Census: 998 facade rows, 3416 declarations.
+Inputs: 940 of 998 fully typed, 58 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 900 of 998 fully typed, 98 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 104; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -15550,6 +15550,67 @@ class ConsolidationPromotion(TypedDict):
     rejected: list[ConsolidationRejection]
     input_evidence: list[ConsolidationEvidenceSource]
     output_evidence: list[ConsolidationEvidenceSource]
+class ConsolidationRootBucket(TypedDict):
+    subject: str
+    predicate_root: str
+    world: NotRequired[str | None]
+    facet: NotRequired[str | None]
+    relationship: NotRequired[str | None]
+    project: str
+class ConsolidationReference(TypedDict):
+    source_id: str
+    claim_id: NotRequired[str | None]
+    byte_range: NotRequired[tuple[int, int] | None]
+class ConsolidationRootInput(TypedDict):
+    bucket: ConsolidationRootBucket
+    evidence: list[ConsolidationReference]
+class ConsolidationPinRequest(TypedDict):
+    buckets: list[ConsolidationRootInput]
+ClaimSource = Literal["user_stated", "observed", "inferred", "imported", "tool_output", "generated"]
+class ConsolidationAncestor(TypedDict):
+    source_ref: str
+    source_revision: list[int]
+    trust_class: ClaimSource
+class ConsolidationRootEvidence(TypedDict):
+    reference: ConsolidationReference
+    source_revision: list[int]
+    content_hash: list[int]
+    trust_class: ClaimSource
+    corroborates: bool
+    refusal: NotRequired[PromotionEvidenceReason | None]
+    ancestors: list[ConsolidationAncestor]
+    messages: list[ConsolidationMessageEvidence]
+class ConsolidationChildReceipt(TypedDict):
+    child_ref: str
+    judgement_hash: list[int]
+    evidence: list[ConsolidationReference]
+class ConsolidationBucketAccounting(TypedDict):
+    bucket: ConsolidationRootBucket
+    bucket_hash: list[int]
+    pinned: list[ConsolidationRootEvidence]
+    children: list[ConsolidationChildReceipt]
+    independent: list[ConsolidationRootEvidence]
+    duplicates_collapsed: int
+    excluded_references: int
+    source_meet: ClaimSource
+class ConsolidationRootAccounting(TypedDict):
+    root_ref: str
+    revision: int
+    buckets: list[ConsolidationBucketAccounting]
+class ConsolidationJudgement(TypedDict):
+    predicate: str
+    value: Any
+    confidence: float
+class ConsolidationChildFrontier(TypedDict):
+    child_ref: str
+    bucket_hash: list[int]
+    judgement: ConsolidationJudgement
+    evidence: list[ConsolidationReference]
+class ConsolidationFrontierRequest(TypedDict):
+    root_ref: str
+    children: list[ConsolidationChildFrontier]
+class ConsolidationAccountingRequest(TypedDict):
+    root_ref: str
 class ConsolidationEvidenceRequest(TypedDict):
     source_refs: list[str]
 class SieveEvidenceRequest(TypedDict):
@@ -16597,7 +16658,6 @@ class IdentityMergeRequest(TypedDict):
     survivor: EntityId
     evidence: IdentityEvidence
     survivorship_plan: IdentitySurvivorshipPlan
-ClaimSource = Literal["user_stated", "observed", "inferred", "imported", "tool_output", "generated"]
 class IdentityReassignmentItemClaim(TypedDict):
     kind: Literal["claim"]
     claim: EntityId

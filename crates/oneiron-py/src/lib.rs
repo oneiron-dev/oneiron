@@ -7753,6 +7753,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_consolidation_pin(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.pin")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.pin", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_frontier(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.frontier")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consolidation.frontier", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consolidation_accounting(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consolidation.accounting")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.consolidation.accounting", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_consolidation_evidence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.consolidation.evidence")?;
         let output = py

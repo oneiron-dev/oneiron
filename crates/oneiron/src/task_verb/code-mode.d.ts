@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1029 code-mode rows (1005 host rows, 24 run rows), 3444 declarations.
-// Replies: 924 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1032 code-mode rows (1008 host rows, 24 run rows), 3457 declarations.
+// Replies: 927 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 105; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -3131,6 +3131,20 @@ declare namespace Sdk {
   type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
   type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
   type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
+  type ConsolidationRootBucket = { subject: string; predicate_root: string; world?: string | null; facet?: string | null; relationship?: string | null; project: string };
+  type ConsolidationReference = { source_id: string; claim_id?: string | null; byte_range?: [number, number] | null };
+  type ConsolidationRootInput = { bucket: ConsolidationRootBucket; evidence: ConsolidationReference[] };
+  type ConsolidationPinRequest = { buckets: ConsolidationRootInput[] };
+  type ClaimSource = "user_stated" | "observed" | "inferred" | "imported" | "tool_output" | "generated";
+  type ConsolidationAncestor = { source_ref: string; source_revision: number[]; trust_class: ClaimSource };
+  type ConsolidationRootEvidence = { reference: ConsolidationReference; source_revision: number[]; content_hash: number[]; trust_class: ClaimSource; corroborates: boolean; refusal?: PromotionEvidenceReason | null; ancestors: ConsolidationAncestor[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationChildReceipt = { child_ref: string; judgement_hash: number[]; evidence: ConsolidationReference[] };
+  type ConsolidationBucketAccounting = { bucket: ConsolidationRootBucket; bucket_hash: number[]; pinned: ConsolidationRootEvidence[]; children: ConsolidationChildReceipt[]; independent: ConsolidationRootEvidence[]; duplicates_collapsed: number; excluded_references: number; source_meet: ClaimSource };
+  type ConsolidationRootAccounting = { root_ref: string; revision: number; buckets: ConsolidationBucketAccounting[] };
+  type ConsolidationJudgement = { predicate: string; value: unknown; confidence: number };
+  type ConsolidationChildFrontier = { child_ref: string; bucket_hash: number[]; judgement: ConsolidationJudgement; evidence: ConsolidationReference[] };
+  type ConsolidationFrontierRequest = { root_ref: string; children: ConsolidationChildFrontier[] };
+  type ConsolidationAccountingRequest = { root_ref: string };
   type ConsolidationEvidenceRequest = { source_refs: string[] };
   type SieveEvidenceRequest = { turn: EntityId };
   type SieveEvidenceCursor = { learned_at: number; turn: EntityId };
@@ -3350,7 +3364,6 @@ declare namespace Sdk {
   type IdentityEvidence = { refs: EntityId[]; rationale: string };
   type IdentitySurvivorshipPlan = "read_through";
   type IdentityMergeRequest = { sources: EntityId[]; survivor: EntityId; evidence: IdentityEvidence; survivorship_plan: IdentitySurvivorshipPlan };
-  type ClaimSource = "user_stated" | "observed" | "inferred" | "imported" | "tool_output" | "generated";
   type IdentityReassignmentItem = { kind: "claim"; claim: EntityId } | { kind: "edge"; source: EntityId; edge_kind: string; target: EntityId };
   type IdentityReassignmentTarget = { kind: "head"; head: EntityId } | { kind: "facet"; index: number } | { kind: "residue" };
   type IdentityReassignment = { item: IdentityReassignmentItem; target: IdentityReassignmentTarget };
@@ -4556,16 +4569,22 @@ declare const vault: Sdk.VaultHost & {
     revoke(input: Sdk.RevokeGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
   };
   consolidation: {
+    /** Reads the original root revision, source hashes, ancestor and edge provenance taint, zero-signal exclusions and per-bucket corroboration accounting under current owner read authority. */
+    accounting(input: Sdk.ConsolidationAccountingRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
     /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
     evidence(input: Sdk.ConsolidationEvidenceRequest): Promise<Sdk.ScopedReadResult<Sdk.ConsolidationEvidenceSource[]> | StoredResult>;
+    /** Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims. */
+    frontier(input: Sdk.ConsolidationFrontierRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     home: {
       /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
     };
     /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
     lineage(input: Sdk.ConsolidationLineageRequest): Promise<Sdk.ConsolidationLineageView | null | StoredResult>;
+    /** Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children. */
+    pin(input: Sdk.ConsolidationPinRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
     promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */

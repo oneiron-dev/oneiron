@@ -129,6 +129,17 @@ impl Vault {
         self.edge_provenance_claims_in_txn(txn, subject, exclude, &[ClaimLifecycleStatus::Active])
     }
 
+    /// The live provenance wrappers a root evidence read must fold, using
+    /// the same cohort selection as the edge lifecycle and winner queries.
+    pub(crate) fn live_edge_provenance_ids_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EdgeRef,
+    ) -> Result<Vec<EntityId>> {
+        Ok(self.live_edge_provenance_claims_in_txn(txn, subject, None)?
+            .into_iter().map(|claim| claim.id).collect())
+    }
+
     /// Enumerates the RETRACTED `edge.provenance` Claims for `subject`, a
     /// dependency-stale active Claim included (see [`cohort_lifecycle`]) — the
     /// surviving WITHDRAWN truth the edge's retracted dampening flag caches.

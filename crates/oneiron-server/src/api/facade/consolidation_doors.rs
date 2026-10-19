@@ -88,3 +88,57 @@ pub(crate) async fn vault_claims_vetting(
     })
     .await
 }
+
+pub(crate) async fn vault_consolidation_pin(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: oneiron::memory::consolidation_frontier::ConsolidationPinRequest,
+) -> Listed<oneiron::memory::consolidation_frontier::ConsolidationRootAccounting> {
+    const VERB: &str = "vault.consolidation.pin";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.consolidation_pin_as_owner(&owner, &input)
+    })
+    .await
+}
+
+pub(crate) async fn vault_consolidation_frontier(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: oneiron::memory::consolidation_frontier::ConsolidationFrontierRequest,
+) -> Listed<oneiron::memory::consolidation_frontier::ConsolidationRootAccounting> {
+    const VERB: &str = "vault.consolidation.frontier";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.consolidation_frontier_as_owner(&owner, &input)
+    })
+    .await
+}
+
+pub(crate) async fn vault_consolidation_accounting(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: oneiron::memory::consolidation_frontier::ConsolidationAccountingRequest,
+) -> Listed<oneiron::memory::consolidation_frontier::ConsolidationRootAccounting> {
+    const VERB: &str = "vault.consolidation.accounting";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.consolidation_accounting_as_owner(&owner, &input)
+    })
+    .await
+}

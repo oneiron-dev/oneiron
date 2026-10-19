@@ -53,6 +53,7 @@ mod provenance;
 pub(crate) mod redirty;
 mod resident_dream;
 pub(crate) mod resources;
+pub(crate) mod root_evidence;
 mod revert;
 pub(crate) mod reviewed;
 mod roles;

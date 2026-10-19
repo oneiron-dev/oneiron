@@ -678,7 +678,7 @@ pub(crate) fn evidence_source_from_row(entity_type: u8, data: &[u8]) -> Result<C
     ))
 }
 
-fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {
+pub(super) fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> ClaimSource {
     let source = body.source.unwrap_or(ClaimSource::Imported);
     claim_evidence_taint(body).map_or(source, |taint| source_meet(source, taint))
 }

@@ -233,6 +233,13 @@ pub(in crate::dreamer_consolidation) fn collapse_sibling_evidence(
             .flat_map(|child| child.evidence.iter().copied())
             .collect::<Vec<_>>(),
     )?;
+    Ok(collapse_verified_evidence(verified))
+}
+
+/// Shared root/branch accounting, after the caller has verified every source.
+pub(super) fn collapse_verified_evidence(
+    verified: Vec<VerifiedSwarmEvidence>,
+) -> CollapsedEvidence {
     let mut independent: BTreeMap<(EntityId, [u8; 32]), VerifiedSwarmEvidence> = BTreeMap::new();
     let mut duplicates_collapsed = 0_u32;
     for entry in verified {
@@ -247,9 +254,33 @@ pub(in crate::dreamer_consolidation) fn collapse_sibling_evidence(
             }
         }
     }
-    Ok(CollapsedEvidence {
+    CollapsedEvidence {
         independent: independent.into_values().collect(),
         duplicates_collapsed,
+    }
+}
+
+/// Hash only bytes the parent read. The branch owns its admission guards;
+/// the owner-root door admits the wider typed source set in its own snapshot.
+pub(super) fn verify_swarm_evidence_bytes(
+    entry: SwarmEvidenceRef,
+    kind: u8,
+    body: &[u8],
+    text: Option<&str>,
+    trust_class: ClaimSource,
+) -> Result<VerifiedSwarmEvidence> {
+    match entry.claim_id {
+        Some(claim) if claim == entry.source_id
+            && entry.byte_range.is_none()
+            && kind == crate::registry::ENTITY_TYPE_CLAIM => {}
+        None if kind == crate::registry::ENTITY_TYPE_TURN => {}
+        _ => return Err(invalid_consolidation("evidence locator does not match its source")),
+    }
+    let bytes = super::turn_text::cited_evidence_bytes(entry, body, text)?;
+    Ok(VerifiedSwarmEvidence {
+        source_id: entry.source_id,
+        content_hash: swarm_evidence_content_hash(&bytes),
+        trust_class,
     })
 }
 
