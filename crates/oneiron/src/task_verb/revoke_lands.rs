@@ -28,7 +28,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
-use crate::runtime_hooks::{VerbCall, VerbHookPre};
+use crate::runtime_hooks::{InvocationId, VerbHookPre};
 use crate::{EntityId, Vault};
 
 /// Whether a hook's valid change to a restrictive call's pinned field is
@@ -533,8 +533,11 @@ pub fn decodes<T: DeserializeOwned>(value: &Value) -> bool {
 /// Tells the vault's owners, in their inbox, what hooks changed or what was
 /// ignored on a restrictive call that ran (FIX 5076): one Finding per owner
 /// per logical call, keyed by its invocation, naming the verb, the
-/// invocation and the caller's target. A notice that does not record is
-/// logged; the committed revoke stands.
+/// invocation and the caller's target. A call that keeps no record names no
+/// invocation in the vault (FIX 5382): its notice is keyed by the hidden id
+/// that stands for it in this process, and its text leaves the invocation
+/// out. A notice that does not record is logged; the committed revoke
+/// stands.
 pub fn notify(vault: &Vault, pre: &VerbHookPre) {
     let Some(landing) = pre
         .landing
@@ -543,7 +546,7 @@ pub fn notify(vault: &Vault, pre: &VerbHookPre) {
     else {
         return;
     };
-    if let Err(error) = record_notice(vault, pre.call(), landing) {
+    if let Err(error) = record_notice(vault, pre, landing) {
         tracing::warn!(
             verb = %pre.call().verb,
             %error,
@@ -552,16 +555,30 @@ pub fn notify(vault: &Vault, pre: &VerbHookPre) {
     }
 }
 
-fn record_notice(vault: &Vault, call: &VerbCall, landing: &Landing) -> crate::Result<()> {
-    let invocation = call.invocation.to_hex();
-    let detail = clip(
-        &format!(
-            "{} (invocation {invocation}): {}",
-            call.verb,
-            landing.notes.join("; ")
+fn record_notice(vault: &Vault, pre: &VerbHookPre, landing: &Landing) -> crate::Result<()> {
+    let call = pre.call();
+    let (invocation, detail) = match pre.session() {
+        Some(key) => (
+            InvocationId(
+                vault
+                    .verb_hook_state
+                    .session
+                    .hidden_invocation(key, call.invocation.0),
+            )
+            .to_hex(),
+            format!("{}: {}", call.verb, landing.notes.join("; ")),
         ),
-        NOTICE_DETAIL_MAX,
-    );
+        None => {
+            let invocation = call.invocation.to_hex();
+            let detail = format!(
+                "{} (invocation {invocation}): {}",
+                call.verb,
+                landing.notes.join("; ")
+            );
+            (invocation, detail)
+        }
+    };
+    let detail = clip(&detail, NOTICE_DETAIL_MAX);
     let target = landing.target();
     vault.with_write_txn(|txn| {
         let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;

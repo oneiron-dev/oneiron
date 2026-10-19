@@ -1,5 +1,6 @@
 //! JSON-RPC envelope types and request dispatch.
 
+use super::call_meta::MCP_INVOCATION_META;
 use super::owner_call::resolve_mcp_caller;
 use super::tool_receipt::mcp_call_receipt;
 use super::{
@@ -54,34 +55,6 @@ pub(crate) struct McpToolCallParams {
     /// its verb hooks fire once for (ARCH-0080 §3).
     #[serde(default, rename = "_meta")]
     pub(super) meta: Option<serde_json::Map<String, Value>>,
-}
-
-/// The `_meta` key a `tools/call` names its invocation under: 32 hex digits.
-pub(crate) const MCP_INVOCATION_META: &str = "oneiron/invocation";
-
-impl McpToolCallParams {
-    /// The invocation the call names in `_meta`, if any.
-    fn invocation(&self) -> Result<Option<oneiron::runtime_hooks::InvocationId>, McpGatewayError> {
-        let Some(named) = self
-            .meta
-            .as_ref()
-            .and_then(|meta| meta.get(MCP_INVOCATION_META))
-        else {
-            return Ok(None);
-        };
-        named
-            .as_str()
-            .and_then(oneiron::runtime_hooks::InvocationId::parse_hex)
-            .map(Some)
-            .ok_or_else(|| {
-                McpGatewayError::new(
-                    -32602,
-                    "tool_args_invalid",
-                    "_meta.oneiron/invocation is 32 lowercase hex digits",
-                )
-                .with_field("_meta")
-            })
-    }
 }
 
 #[derive(Debug)]
@@ -192,6 +165,11 @@ pub(crate) struct McpCallContext {
     /// The logical verb this request runs, when it named one: its verb hooks
     /// fire once for it, however many wrappers it crosses (ARCH-0080 §3).
     pub(crate) invocation: Option<oneiron::runtime_hooks::InvocationId>,
+    /// The hook pause the request resumes beside its invocation, by its ask
+    /// handle (`_meta.hook_ask`, L13 PR-D): bound to its rows' memory, so a
+    /// session-only call's pause that is gone refuses. Never inherited by a
+    /// call of its own.
+    pub(crate) hook_ask: Option<oneiron::EntityId>,
     /// The off-record session the request names, bound to its rows' memory
     /// surface: inside an anonymous one a reference refusal writes no
     /// receipt, as the call writes none (OF-063, OF-538).
@@ -711,6 +689,7 @@ pub(crate) async fn handle_mcp_request(
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
                 let actor = McpCallContext {
                     invocation: params.invocation()?,
+                    hook_ask: params.hook_ask()?,
                     ..actor.clone()
                 };
                 let args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
