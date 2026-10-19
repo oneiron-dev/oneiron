@@ -283,9 +283,13 @@ pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
 pub(crate) async fn build_server(
     vault: Arc<oneiron::Vault>,
     config: &ServeConfig,
-    server_config: crate::config::SyncServerConfig,
+    mut server_config: crate::config::SyncServerConfig,
     owner_host: crate::owner::schedule::OwnerHost,
 ) -> anyhow::Result<(SyncServer, Option<tokio::task::JoinHandle<()>>)> {
+    // The Linear host's settings: `[linear]`, or with none the
+    // `ONEIRON_LINEAR_*` environment read into the same settings, never both.
+    server_config.linear =
+        crate::config::LinearConfig::or_environment(server_config.linear.take()).await?;
     // The one credential-broker context the `[models]` providers, the System
     // One seat, the embedder and the GPU pods send their vault-secret keys
     // through.
@@ -432,7 +436,12 @@ pub(crate) async fn start_desktop_workers(
     let oversight = sync_server
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
-    let linear_handle = crate::linear_host::spawn(sync_server.clone()).await?;
+    // The `[linear]` mirror, every pass admitted.
+    let linear_handle = crate::linear_host::spawn_configured(
+        sync_server.clone(),
+        crate::server::admit_every_pass(),
+    )
+    .await?;
     let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admission());
     // An answered code consent wait's effect runs on this server, whatever
     // hooks or models it serves, before the connector settler starts
