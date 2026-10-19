@@ -3,18 +3,20 @@ const fragmentToken = location.hash.match(/^#([0-9a-f]{64})$/);
 const token = fragmentToken ? fragmentToken[1] : "";
 // The public link carries its capability in the fragment, which no request
 // target holds, so no server or proxy log sees it (F37). It must not remain
-// in browser history or in referrers either. Subsequent calls use POST bodies.
+// in browser history or in referrers either. Every later call carries it in
+// the x-oneiron-esign-capability header, never in a body (FIX 3808).
 history.replaceState(null, "", "/sign");
 // Another invitation opened in this tab changes only the fragment, which
 // reruns nothing here: reload, so it starts its own ceremony, never this one.
 window.addEventListener("hashchange", () => location.reload());
 const status = document.getElementById("status");
 const fields = document.getElementById("fields");
-async function post(path, value) {
-  const response = await fetch(path, {method: "POST", credentials: "omit", cache: "no-store", headers: {"Content-Type": "application/json"}, body: JSON.stringify({token, ...value})});
+async function send(path, contentType, body) {
+  const response = await fetch(path, {method: "POST", credentials: "omit", cache: "no-store", headers: {"Content-Type": contentType, "x-oneiron-esign-capability": token}, body});
   if (!response.ok) throw new Error("The signing request is unavailable. Reopen the invitation or contact its sender.");
   return response;
 }
+function post(path, value) { return send(path, "application/json", JSON.stringify(value)); }
 async function action(value) {
   const result = await (await post("/sign/action", {action: value})).json();
   if (result.data?.item_count) {
@@ -53,9 +55,7 @@ async function start() {
         let next;
         if (presentation.control.kind === "signature") {
           const file=input.files[0]; if (!file) return;
-          if (file.size>2*1024*1024) throw new Error("Use a PNG or JPEG image under 2 MiB.");
-          const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});
-          const image=await (await post("/sign/image",{png_or_jpeg_base64:data.split(",")[1]})).json();
+          const image=await (await send("/sign/image",file.type||"application/octet-stream",file)).json();
           next={kind:"signature",value:{image_ref:image.image_ref}};
         } else next=presentation.control.kind==="checkbox"?{kind:"checked",value:input.checked}:{kind:"text",value:input.value};
         const saved=await action({action:"save_field",field:presentation.id,value:next});
@@ -72,6 +72,6 @@ async function start() {
 document.getElementById("item").onchange=()=>refreshPreview().catch(report);
 window.addEventListener("pagehide",()=>{for(const url of imageURLs.values())URL.revokeObjectURL(url);imageURLs.clear();});
 document.getElementById("complete").onclick = () => action({action: "complete", consent: document.getElementById("consent").checked, next: null}).catch(report);
-document.getElementById("reject").onclick = () => { const reason = prompt("Reason for rejection"); if (reason !== null) { const text = reason.trim(); if (!text || new TextEncoder().encode(text).length > 4096) { status.textContent = "Give a non-empty reason of at most 4096 bytes."; return; } action({action: "reject", reason: text}).catch(report); } };
+document.getElementById("reject").onclick = () => { const reason = prompt("Reason for rejection"); if (reason !== null) { const text = reason.trim(); if (!text) { status.textContent = "Give a reason for the rejection."; return; } action({action: "reject", reason: text}).catch(report); } };
 document.getElementById("download").onclick = async () => { try { const response = await post("/sign/pdf", {item: Number(document.getElementById("item").value || 0)}); const url = URL.createObjectURL(await response.blob()); const link = document.createElement("a"); link.href = url; link.download = `document-${Number(document.getElementById("item").value || 0) + 1}.pdf`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (error) { report(error); } };
 start().catch(report);

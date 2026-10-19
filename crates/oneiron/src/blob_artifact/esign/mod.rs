@@ -21,6 +21,8 @@ pub use model::{
 
 mod capability;
 mod ceremony;
+mod ingress;
+pub use ingress::EsignIngress;
 mod door;
 pub use door::{
     EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDocumentView, EsignDraftView,
