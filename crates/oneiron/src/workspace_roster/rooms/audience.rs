@@ -369,22 +369,12 @@ pub(crate) fn thread_members_in(
 /// wherever it is, under the CURRENT rule: a public thread is read by
 /// anyone, a private one by its audience now while each is still a member
 /// of its room, and by no one when there are no viewers. A root that is
-/// gone or does not resolve is read by none.
-pub(crate) fn thread_root_readable_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    root: EntityId,
-    viewers: &[EntityId],
-) -> Result<bool> {
-    thread_root_readable_with_read_in(vault, &vault.store.read(), txn, root, viewers)
-}
-
-/// [`thread_root_readable_in`] with the root and its carrier read in `dbs`,
-/// a session's composed view or base (FIX 3122): a live TURN whose own
-/// binding names it, held by one live conversation, the room itself or a
-/// stretch's shell. The audience, its edits folded in, is checked against
-/// the room the binding names, on base, since authority reads base
-/// (ARCH-0052).
+/// gone or does not resolve is read by none. The root and its carrier are
+/// read in `dbs`, a session's composed view or base (FIX 3122): a live TURN
+/// whose own binding names it, held by one live conversation, the room
+/// itself or a stretch's shell. The audience, its edits folded in, is
+/// checked against the room the binding names, on base, since authority
+/// reads base (ARCH-0052).
 pub(crate) fn thread_root_readable_with_read_in(
     vault: &Vault,
     dbs: &crate::store::StoreRead<'_>,
@@ -523,10 +513,26 @@ pub(crate) fn record_thread_admits_in(
     id: EntityId,
     actor: EntityId,
 ) -> Result<bool> {
-    let turns = match vault.get_entity_type_in_txn(txn, &id)? {
+    record_thread_admits_with_read_in(vault, &vault.store.read(), txn, id, actor)
+}
+
+/// [`record_thread_admits_in`] with the record, the TURNs it is part of and
+/// their roots read in `dbs`, a session's composed view or base (FIX 3122):
+/// a turn a stretch staged meets its thread's CONTENT rule as one base holds
+/// does (FIX 5653). The audience reads base.
+pub(crate) fn record_thread_admits_with_read_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    let kind = crate::ports::EntityStoreRead::port_entity_record(dbs, txn, &id)?
+        .map(|row| row.entity_type);
+    let turns = match kind {
         Some(ENTITY_TYPE_TURN) => vec![id],
         Some(ENTITY_TYPE_MESSAGE) => crate::conversation_dag::edge_ids(
-            &vault.store,
+            dbs,
             txn,
             &id,
             crate::edge::EdgeKind::PartOf,
@@ -539,19 +545,12 @@ pub(crate) fn record_thread_admits_in(
         let LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
             body,
-        } = live_entity_row_in_txn(&vault.store, txn, &turn)?
+        } = live_entity_row_in_txn(dbs, txn, &turn)?
         else {
             continue;
         };
         if let Some(binding) = thread_binding(&body)?
-            && !thread_turn_readable_with_read_in(
-                vault,
-                &vault.store.read(),
-                txn,
-                binding.root,
-                turn,
-                &[actor],
-            )?
+            && !thread_turn_readable_with_read_in(vault, dbs, txn, binding.root, turn, &[actor])?
         {
             return Ok(false);
         }

@@ -264,6 +264,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             super::home_candidacy::home_candidacy_value(declaration)
         }
         AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
+        AuthorityOp::OwnerKeyEnroll(enroll) => {
+            super::owner_key_enrollment::owner_key_enroll_value(enroll)
+        }
     }
 }
 
@@ -296,7 +299,7 @@ fn gesture_value(gesture: &FederationPactGesture) -> Value {
     ])
 }
 
-fn device_value(device: &DeviceAuthority) -> Value {
+pub(super) fn device_value(device: &DeviceAuthority) -> Value {
     Value::Map(vec![
         (Value::from("key"), key_value(&device.key)),
         (

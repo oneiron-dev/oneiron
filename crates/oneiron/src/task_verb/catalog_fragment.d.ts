@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1106 code-mode rows (1081 host rows, 25 run rows), 3717 declarations.
-// Replies: 988 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1107 code-mode rows (1082 host rows, 25 run rows), 3722 declarations.
+// Replies: 989 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3322,6 +3322,11 @@ declare namespace Sdk {
   type SettledProgramStepRequest = { root: string; step_ref: string };
   type ProgramResultAvailability = "readable" | "withheld" | "absent";
   type SettledProgramStepView = { root: string; attempt: string; actor: EntityId; code_run: string; step_ref: string; issue: ProgramStepIssueView; settled_at: number; result_digest: string; result_ref?: string | null; availability: ProgramResultAvailability; model_step?: SettledStepView | null; body_base64?: string | null };
+  type ProgramCheckpointRequest = { root: string; cursor?: string | null; limit?: number | null };
+  type ProgramCheckpointWaitView = { row: number; wait_id: string; generation: number; delivered: boolean };
+  type ProgramCheckpointHeadView = { committed_by: string; content_hash: string; contract_digest: string; entries: number; entry_start: number; bridge_calls: number; state_hash: string; applied: number; injected: number; wait?: ProgramCheckpointWaitView | null; at: number };
+  type ProgramCheckpointCallView = { index: number; result_ref: string; row: number; request_digest: string; answered_by_wait?: string | null; injected: boolean };
+  type ProgramCheckpointView = { root: string; actor: EntityId; code_run: string; definition?: ProgramRecipePin | null; checkpoint?: ProgramCheckpointHeadView | null; frontier?: ProgramFrontierView | null; calls: ProgramCheckpointCallView[]; next_cursor?: string | null; withheld: string[] };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
   type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
   type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
@@ -5977,6 +5982,8 @@ declare const vault: Sdk.VaultHost & {
     checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
     /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */
     program(input: Sdk.ProgramRunRequest): Promise<Sdk.ProgramRunView | null | StoredResult>;
+    /** Reads the resume checkpoint of one of the caller's turn programs, or any when the owner asks: its head, frontier, a page of the settled calls its restarter answers and the wait it parked on, without running or resuming it. */
+    program_checkpoint(input: Sdk.ProgramCheckpointRequest): Promise<Sdk.ProgramCheckpointView | null | StoredResult>;
     /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
     program_step(input: Sdk.SettledProgramStepRequest): Promise<Sdk.SettledProgramStepView | null | StoredResult>;
     /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
