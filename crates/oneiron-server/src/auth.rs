@@ -23,12 +23,18 @@ mod client_address;
 mod left_notices;
 mod locality;
 mod machine_proof;
+mod managed_request;
 mod slips;
 pub(crate) use binding_admission::admit_http_binding;
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality, proved_peer};
-pub(crate) use machine_proof::required_machine_proof;
+pub(crate) use machine_proof::{
+    MachineClaim, owned_machine, owned_machine_stands, required_machine_proof,
+};
+pub(crate) use managed_request::{
+    caller_slip_too_narrow, carries_caller_slip, forward_caller_credentials,
+};
 pub(crate) use slips::{BindingProof, INVITEE_DOORS, parse_signature, parse_slip_id};
 
 const IMPLICIT_ALL_IDEMPOTENCY_SCOPES: &str = "__implicit_all_scopes__";
@@ -392,15 +398,12 @@ impl CoreAuth {
         Self::for_server(headers, server)
     }
 
+    /// The caller `headers` name. On a managed vault that is the caller's
+    /// own forwarded slip, or with none the host's root as the supervisor
+    /// it serves ([`Self::managed_caller`]); a slip is never replaced.
     pub(crate) fn for_server(headers: &HeaderMap, server: &SyncServer) -> Result<Self, ApiError> {
         if let Some(issuer) = server.managed_issuer.as_ref() {
-            let proof = server
-                .vault()
-                .verified_host_root_slip(issuer)
-                .map_err(|_| ApiError::unauthorized())?;
-            let mut auth = Self::from_verified(proof, true)?;
-            auth.principal = "managed-supervisor".to_owned();
-            return Ok(auth);
+            return Self::managed_caller(headers, server, issuer);
         }
         Self::from_headers(headers, &server.config, server.vault().as_ref())
     }
@@ -498,7 +501,8 @@ impl CoreAuth {
     /// scopes stay the host root's. It keeps no slip, since the host root's
     /// binds no person's reads, so its reads run on the person's own lane;
     /// the owner door still judges `holder` as the vault's live owner
-    /// (`api::facade::owner_authorship`).
+    /// (`api::facade::owner_authorship`). Only a request that carries no
+    /// caller slip is projected so ([`Self::for_request`]).
     pub(crate) fn as_managed_owner(mut self, holder: oneiron::EntityId) -> Self {
         self.principal = holder.to_hex();
         self.principal_ref = Some(holder.to_hex());
@@ -703,32 +707,7 @@ impl FromRequestParts<Arc<SyncServer>> for CoreAuth {
         parts: &mut Parts,
         server: &Arc<SyncServer>,
     ) -> Result<Self, Self::Rejection> {
-        let path = parts
-            .extensions
-            .get::<axum::extract::OriginalUri>()
-            .map_or_else(|| parts.uri.path(), |uri| uri.0.path());
-        // Only managed ingress installs this, and only on a verified
-        // supervisor assertion.
-        let managed_owner = parts
-            .extensions
-            .get::<crate::managed::ManagedOwnerHolder>()
-            .filter(|_| server.managed_issuer.is_some())
-            .map(|holder| holder.0);
-        Self::for_server_async(&parts.headers, server)
-            .await
-            .map(|auth| match managed_owner {
-                Some(holder) => auth.as_managed_owner(holder),
-                None => auth,
-            })
-            .map(|auth| {
-                auth.at(caller_locality(&parts.headers, &parts.extensions))
-                    .toward(proved_peer(&parts.headers, &parts.extensions))
-                    .at_invitee_door(path)
-                    .in_off_record_session(crate::api::call_receipt::request_session_ref(
-                        &parts.headers,
-                    ))
-            })
-            .map_err(Into::into)
+        Self::for_request(parts, server).await.map_err(Into::into)
     }
 }
 

@@ -2,9 +2,12 @@
 //! and stop serving a shared vault its Owners deleted (OF-163). A request off
 //! a mesh stream may not prove, over HTTP, a machine other than the one its
 //! handshake proved.
+use super::managed_request::{caller_binding_refused, caller_binding_replayed};
 use super::{BindingProof, CoreAuth, bearer_token};
+use crate::error::ApiError;
 use crate::server::SyncServer;
 use axum::extract::{Request, State};
+use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use oneiron::authority::PeerMachine;
@@ -60,6 +63,28 @@ fn deleted_vault_refusal(server: &SyncServer, path: &str) -> Option<Response> {
     })
 }
 
+/// The refusal a managed vault gives a forwarded caller's slip this door
+/// refused (WILL-PLAN L14 row 01), named, since nothing is served in its
+/// place: a holder proof already spent, apart from a slip or proof that does
+/// not verify. A proof the vault's clock refuses keeps its own name.
+fn managed_refusal(
+    error: ApiError,
+    token: &str,
+    headers: &HeaderMap,
+    vault: &oneiron::Vault,
+) -> ApiError {
+    if error == ApiError::proof_clock_ahead() {
+        return error;
+    }
+    let verifies = BindingProof::from_headers(headers)
+        .is_ok_and(|proof| CoreAuth::from_slip_token(token, &proof, vault).is_ok());
+    if verifies {
+        caller_binding_replayed()
+    } else {
+        caller_binding_refused()
+    }
+}
+
 pub(crate) async fn admit_http_binding(
     State(server): State<Arc<SyncServer>>,
     request: Request,
@@ -101,6 +126,11 @@ pub(crate) async fn admit_http_binding(
                 );
             }
             Err(error) => {
+                let error = if server.managed_issuer.is_some() {
+                    managed_refusal(error, token, request.headers(), server.vault())
+                } else {
+                    error
+                };
                 // Keep the /v1 envelope when the transport door refuses first.
                 if request.uri().path().starts_with("/v1/") {
                     return crate::error::EnvelopedApiError::from(error).into_response();

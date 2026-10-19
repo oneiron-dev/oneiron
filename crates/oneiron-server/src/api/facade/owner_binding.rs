@@ -85,13 +85,19 @@ pub(super) fn managed_owner_binding(
 /// (`owner_routes::machine_routes::act_surface`) for a call that carries no
 /// request headers (a held socket's, a drain's resumed call, an MCP row, a
 /// lens card's event): the hosted console for a managed vault's attested
-/// owner, else this install. An HTTP request's surface is its own, read from
-/// the machine proof its headers carry (`FacadeCall::http`, and each route
-/// that hands `action_bound` its headers' surface; FIX 4625).
+/// owner; the linked machine the caller's connection proved at its binding
+/// door, as a managed vault's forwarded device proves one (WILL-PLAN L14
+/// row 01); else this install. An HTTP request's surface is its own, read
+/// from the machine proof its headers carry (`FacadeCall::http`, and each
+/// route that hands `action_bound` its headers' surface; FIX 4625).
 pub(crate) fn act_surface(auth: &CoreAuth) -> ActSurface {
     if auth.managed_owner().is_some() {
-        ActSurface::HostedConsole
-    } else {
-        ActSurface::ThisInstall
+        return ActSurface::HostedConsole;
+    }
+    match auth.peer() {
+        oneiron::authority::PeerMachine::Proven { machine, .. } => {
+            ActSurface::LinkedDevice { machine }
+        }
+        oneiron::authority::PeerMachine::Unknown => ActSurface::ThisInstall,
     }
 }
