@@ -588,9 +588,17 @@ pub(crate) async fn get_thread(
     let conversation = parse_entity_id_param(&conversation_id, "conversation_id")?;
     let record = parse_entity_id_param(&record, "record")?;
     // The raw ledger is read under the caller's own read: a private thread
-    // (FIX 2951) it is off is no thread, and a branch it is off no record.
-    require_readable_record(&server, &auth, record)?;
+    // (FIX 2951) it is off is no thread, and a branch it is off no record. A
+    // record held back from it for its add still selects its thread (FIX
+    // 5545), whose replies it reads on their own gates.
     let read = crate::api::scoped_read_for_core_auth(&server.vault, &auth)?;
+    if !server
+        .vault
+        .thread_record_reached(&read, record)
+        .map_err(|e| core_engine_error("record access failed", e))?
+    {
+        return Err(ApiError::not_found("conversation record", Some(&record.to_hex())).into());
+    }
     let (thread, roots) = server
         .vault
         .thread_under(&read, record)
