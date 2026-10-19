@@ -19,6 +19,7 @@
 //! that material stays on the device that holds it.
 
 mod payload;
+mod rebind;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron_crypto::HybridPublicKey;
@@ -266,6 +267,35 @@ pub(crate) fn remember_custody_transition_in_txn(
     }
     TRANSITIONS.put(&vault.store, wtxn, &key, &transition.encode())?;
     Ok(true)
+}
+
+/// Whether this vault keeps a carrier of record `id` that still seals its
+/// value: any that is not revoked, or does not decode.
+pub(crate) fn holds_sealed_carrier_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(TRANSITIONS
+        .get(&vault.store, txn, &HexId(*id))?
+        .is_some_and(|held| {
+            !CustodyTransition::decode(&held)
+                .is_ok_and(|held| held.status == SecretCustodyStatus::Revoked)
+        }))
+}
+
+/// Drops the carrier this vault keeps of record `id` while it still seals
+/// the value: a revoke leaves at most the revoked carrier, byte-free (CALLS
+/// CUSTODY_REVOKE_ERASE). Returns whether it dropped one.
+pub(crate) fn drop_sealed_carrier_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if !holds_sealed_carrier_in_txn(vault, wtxn, id)? {
+        return Ok(false);
+    }
+    TRANSITIONS.delete(&vault.store, wtxn, &HexId(*id))
 }
 
 /// Whether this vault holds `transition`, byte for byte, as its record's
@@ -588,8 +618,10 @@ pub(crate) enum CustodyApplied {
 /// one this machine opened from it. The transition is checked again against
 /// this transaction's own fold first. A generation never goes back, a
 /// revoked record never comes back, and a record this vault keeps local
-/// never takes a peer's transition. A revocation also revokes the record's
-/// leases here.
+/// never takes a peer's transition. A rewrap at the generation and status
+/// held changes the bindings alone, by its request (CALLS
+/// CUSTODY_BIND_TRAVEL). A revocation also revokes the record's leases here
+/// and erases its value (CALLS CUSTODY_REVOKE_ERASE).
 ///
 /// An admitted revoke of the id in this transaction's fold is terminal (CALLS
 /// CUSTODY_CONCURRENT_ACTIVE): a live transition of it is refused, and a held
@@ -623,10 +655,14 @@ pub(crate) fn apply_custody_transition_in_txn(
         if !portable || status == SecretCustodyStatus::Revoked {
             return Ok(CustodyApplied::Kept);
         }
-        if (transition.generation, status_rank(transition.status))
-            <= (generation, status_rank(status))
+        match (transition.generation, status_rank(transition.status))
+            .cmp(&(generation, status_rank(status)))
         {
-            return Ok(CustodyApplied::Stale);
+            std::cmp::Ordering::Less => return Ok(CustodyApplied::Stale),
+            std::cmp::Ordering::Equal => {
+                return rebind::rebind_held_in_txn(vault, wtxn, &fold, transition, &record, at);
+            }
+            std::cmp::Ordering::Greater => {}
         }
     }
     if transition.status == SecretCustodyStatus::Revoked {
@@ -636,7 +672,13 @@ pub(crate) fn apply_custody_transition_in_txn(
         if held.is_none() {
             return Ok(CustodyApplied::Stale);
         }
-        crate::secret_rotation::revoke_custody_in_txn(vault, wtxn, &transition.id, at)?;
+        crate::secret_rotation::revoke_custody_in_txn(
+            vault,
+            wtxn,
+            &transition.id,
+            crate::secret_rotation::RevokeCause::Revoked,
+            at,
+        )?;
         return Ok(CustodyApplied::Written);
     }
     let Some(value) = value else {

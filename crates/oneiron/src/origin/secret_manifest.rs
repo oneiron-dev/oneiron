@@ -35,6 +35,9 @@ pub struct OriginSecretManifest {
     pub manifest_ref: String,
     /// The parsed declaration.
     pub manifest: SecretManifest,
+    /// The file's text at that commit: the snapshot a register hands a
+    /// holder that is not this install (CALLS CUSTODY_MANIFEST_RECHECK).
+    pub text: String,
 }
 
 impl Vault {
@@ -106,7 +109,42 @@ impl Vault {
         Ok(OriginSecretManifest {
             manifest_ref: format!("{source_ref}@{}:{SECRET_MANIFEST_PATH}", commit.as_str()),
             manifest: parse_secret_manifest(&text)?,
+            text,
         })
+    }
+}
+
+impl Vault {
+    /// Reads the manifest a record's `manifest_ref`,
+    /// `<repo>:<ref>@<commit>:<path>`, names, as this vault publishes it now:
+    /// the snapshot a recorder attaches to a register the owner's surface
+    /// sealed (CALLS CUSTODY_MANIFEST_RECHECK).
+    ///
+    /// # Errors
+    /// [`SecretError::SecretManifestNotFound`] naming `manifest_ref` when it
+    /// is malformed, its ref is not published here, the ref now names another
+    /// commit, or that commit holds no manifest; the origin's and the
+    /// parser's own errors otherwise.
+    pub(crate) fn origin_secret_manifest_at(
+        &self,
+        manifest_ref: &str,
+    ) -> Result<OriginSecretManifest> {
+        let unknown = || {
+            Error::Secret(SecretError::SecretManifestNotFound {
+                source_ref: manifest_ref.to_owned(),
+            })
+        };
+        let (source, _) = manifest_ref.rsplit_once('@').ok_or_else(unknown)?;
+        let (repo, git_ref) = source.split_once(':').ok_or_else(unknown)?;
+        let manifest = match self.origin_secret_manifest(repo, git_ref) {
+            Ok(manifest) => manifest,
+            Err(Error::Secret(SecretError::SecretManifestNotFound { .. })) => return Err(unknown()),
+            Err(error) => return Err(error),
+        };
+        if manifest.manifest_ref != manifest_ref {
+            return Err(unknown());
+        }
+        Ok(manifest)
     }
 }
 

@@ -98,7 +98,8 @@ pub(crate) use self::control::input::{
     RelayedInput, held_input_in_txn, held_inputs, keep_input_in_txn,
 };
 pub(crate) use self::control::{
-    ActiveChange, Material, custody_work_executor, refuse_revoked_use_in_txn,
+    ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
+    refuse_revoked_use_in_txn,
 };
 pub use self::control::{
     CustodyCandidate, CustodyDelivery, CustodyKeptHere, CustodyPlan, SealedCustodyChange,

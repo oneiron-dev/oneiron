@@ -4,25 +4,35 @@
 //! A binding names the effector that may use the secret, the most exposed
 //! rung it may use it at, and what it grants. The owner proof is rechecked in
 //! the transaction that stores the binding, and the binding may sit no higher
-//! than the class's live floor. A binding changes this install's record
-//! alone: a portable record's new bindings reach the machines the owner
-//! permits with its next rotation or rewrap, whose transition carries the
-//! record as it then stands (WILL L04 row 04). A record an admitted revoke
-//! ended takes no binding. The Gate record keeps the handle, the effector,
-//! the rung and the scopes, never the value.
+//! than the class's live floor. A portable record's binding travels (WILL L04
+//! row 04, CALLS CUSTODY_BIND_TRAVEL): the door records a custody rewrap
+//! whose protected input carries the record's new bindings, sealed to its
+//! holder, this install, which changes them and signs the transition that
+//! carries them to the machines the owner permits, in the same commit. A
+//! record that stays on its device, or an install that carries no owner act
+//! or holds no importable key, binds here alone, and the custody receipt
+//! says why. A record an admitted revoke ended takes no binding. The Gate
+//! record keeps the handle, the effector, the rung and the scopes, never the
+//! value.
 
 use zeroize::Zeroize;
 
-use super::super::control::refuse_revoked_use_in_txn;
+use super::super::codec::EFFECTOR_MAX_BYTES;
+use super::super::control::{
+    ActiveChange, CustodyKeptHere, CustodyPlan, Material, SecretCustodyWork,
+    refuse_revoked_use_in_txn,
+};
 use super::super::doors::{
     put_secret_custody_in_txn, read_secret_custody_in_txn, refuse_bindings_wider_than_live_floor,
     resolve_secret_ref_in_txn,
 };
 use super::super::reveal::RevealTarget;
+use super::super::transition::custody_portable;
 use super::super::types::{
     CustodyTier, SECRET_SCOPE_READ, SecretBinding, SecretCustodyRecord, SecretCustodyStatus,
 };
 use super::{handle_record_in_txn, not_active, unknown};
+use crate::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
@@ -35,8 +45,26 @@ pub const SECRET_BIND_REASON: &str = "gate.secret.owner_bind";
 /// The Gate content kind of an owner's binding.
 const SECRET_BIND_CONTENT_KIND: &str = "secret_bind";
 
-/// The longest effector a binding names.
-const EFFECTOR_MAX_BYTES: usize = 256;
+/// How the owner's binding reaches the machines that hold its record (CALLS
+/// CUSTODY_BIND_TRAVEL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CustodyBindTravel {
+    /// A portable record's bind is a custody rewrap whose protected input
+    /// carries every binding the record is to hold, sealed to its holder
+    /// (this install) and bound to its generation, the custody revision it
+    /// saw, the holder and the permits of the secret's live change, as a
+    /// register's input is. The holder changes the bindings alone, rechecks
+    /// the live floor and commits the record, the transition and the enacted
+    /// result together. A machine that already holds the record at that
+    /// generation takes the bindings by the request they enact, never by the
+    /// carrier's arrival or time, so a replay never applies again; its
+    /// value, generation and a terminal revoke stay. A rewrap with no input
+    /// only seals again, as before. A record that stays on its device binds
+    /// here alone.
+    InputBearingRewrap,
+}
+
+const CUSTODY_BIND_TRAVEL: CustodyBindTravel = CustodyBindTravel::InputBearingRewrap;
 
 /// One binding the owner adds to a secret, or puts in place of the one it
 /// holds for the same effector.
@@ -61,7 +89,7 @@ impl SecretBindRequest {
     }
 }
 
-/// What the binding left: the record's bindings and the receipt. No value.
+/// What the binding left: the record's bindings and the receipts. No value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretBound {
     pub secret_id: EntityId,
@@ -72,11 +100,19 @@ pub struct SecretBound {
     pub bindings: Vec<SecretBinding>,
     /// The Gate record that keeps the binding.
     pub receipt: GateDecisionId,
+    /// The custody rewrap recorded for the owner's other machines, as a
+    /// register's or a rotation's is, or why the binding stays here (CALLS
+    /// CUSTODY_BIND_TRAVEL).
+    pub custody: SecretCustodyWork,
 }
 
 impl Vault {
     /// Binds a secret to an effector on the vault owner's behalf, rechecking
-    /// the owner proof in the committing transaction.
+    /// the owner proof in the committing transaction. A portable record's
+    /// binding is a custody rewrap this install records and, as its holder,
+    /// enacts in the same commit (CALLS CUSTODY_BIND_TRAVEL); a record that
+    /// stays on its device, or an install that carries no owner act, binds
+    /// here alone, and the custody receipt says which.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no longer
@@ -84,7 +120,8 @@ impl Vault {
     /// empty or overlong effector. [`SecretError::SecretRefNotFound`] for no
     /// such secret; [`SecretError::SecretCustodyNotActive`] for one that is
     /// not active. [`SecretError::ManifestWidensFloor`] for a rung above the
-    /// class's live floor.
+    /// class's live floor. For a portable record, a refusal of this install
+    /// as holder, and an install key that fails to load.
     pub fn bind_secret_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -97,6 +134,9 @@ impl Vault {
                 "a binding names its effector, at most 256 bytes",
             )));
         }
+        // The install key signs a portable record's request and transition
+        // in the writer below; a key that fails to load refuses here.
+        self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;
         if !crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &actor)? {
@@ -123,7 +163,36 @@ impl Vault {
             None => rec.bindings.push(binding),
         }
         refuse_bindings_wider_than_live_floor(&self.store, &wtxn, rec)?;
-        put_secret_custody_in_txn(self, &mut wtxn, &id, rec, at)?;
+        let custody = if custody_portable(rec) {
+            let material = match CUSTODY_BIND_TRAVEL {
+                CustodyBindTravel::InputBearingRewrap => Material::Bindings(&rec.bindings),
+            };
+            let recorded = self.record_custody_change_in_txn(
+                &mut wtxn,
+                actor,
+                ActSurface::ThisInstall,
+                ActiveChange {
+                    change: CustodyChange::Rewrap,
+                    id,
+                    generation: rec.rotation_generation,
+                    plan: &CustodyPlan::default(),
+                    material,
+                    sealed: None,
+                    seen: None,
+                    permits: None,
+                },
+                at,
+            )?;
+            // An install that carries no owner act, or holds no key, binds
+            // here alone, and the receipt says so.
+            if recorded.custody.kept_here.is_some() {
+                put_secret_custody_in_txn(self, &mut wtxn, &id, rec, at)?;
+            }
+            recorded.custody
+        } else {
+            put_secret_custody_in_txn(self, &mut wtxn, &id, rec, at)?;
+            SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal)
+        };
         let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
@@ -158,8 +227,10 @@ impl Vault {
             name: rec.name.clone(),
             bindings: rec.bindings.clone(),
             receipt: decision_id,
+            custody,
         };
         wtxn.commit()?;
+        self.mirror_custody_change(&bound.custody);
         Ok(bound)
     }
 }

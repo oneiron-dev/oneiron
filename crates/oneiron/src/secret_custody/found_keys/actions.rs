@@ -138,11 +138,12 @@ impl Vault {
     /// The owner overrules the scan: a found key is no secret. In one write
     /// transaction the ruling is kept on the key (so the write door no longer
     /// reads the value as a hit in that record), the custody record is
-    /// revoked, the record's body gets the value back where the mask left
-    /// its handle, or the file's mark drops the key, and a Gate record keeps
-    /// the ruling. A portable record's revocation reaches the owner's other
-    /// machines as a custody revoke request this install carries and
-    /// enacts, with its revoked transition (WILL L04 row 04).
+    /// revoked with its value kept, which that screen reads (CALLS
+    /// CUSTODY_REVOKE_ERASE), the record's body gets the value back where
+    /// the mask left its handle, or the file's mark drops the key, and a Gate
+    /// record keeps the ruling. A portable record's revocation reaches the
+    /// owner's other machines as a custody revoke request this install
+    /// carries and enacts, with its revoked transition (WILL L04 row 04).
     ///
     /// Only a key found in a record's body or in a file is ruled here; one in
     /// a claim, a text field alone or a row outside the entity tables keeps
@@ -152,8 +153,9 @@ impl Vault {
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
     /// live owner's. [`Error::EntityNotFound`] for a handle no notice names.
     /// [`GateError::InvalidConsentBound`] for a key already ruled, a place
-    /// that cannot take its value back, or a value that is not text going
-    /// back into text. What the record's write door returns.
+    /// that cannot take its value back, a key whose value a revoke erased,
+    /// or a value that is not text going back into text. What the record's
+    /// write door returns.
     pub fn rule_found_key_not_a_secret(
         &self,
         owner: &AuthenticatedOwner,
@@ -174,7 +176,22 @@ impl Vault {
             let mut rec = read_secret_custody_in_txn(&self.store, txn, &found.custody)?
                 .ok_or_else(|| unknown(&found.handle))?;
             let value = Zeroizing::new(std::mem::take(&mut rec.value_bytes));
-            let revoked = self.revoke_secret_in_txn(txn, &rec.name, at)?;
+            // A revoke erased the value (CALLS CUSTODY_REVOKE_ERASE): there
+            // is none to put back or to screen. The ruling stays open on the
+            // next finding of the same value.
+            if rec.status == SecretCustodyStatus::Revoked && value.is_empty() {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "this key's value was erased by an earlier revoke, so it can't be marked \
+                     not-a-secret; if the value appears again, the scanner's new finding can be \
+                     marked not-a-secret",
+                )));
+            }
+            let revoked = self.revoke_secret_in_txn(
+                txn,
+                &rec.name,
+                crate::secret_rotation::RevokeCause::RuledNoSecret,
+                at,
+            )?;
             let decision =
                 append_ruling_in_txn(self, txn, actor, &found, &place, revoked.receipt_id)?;
             let settled = FoundKeySettled {
@@ -201,11 +218,7 @@ impl Vault {
             )?;
             Ok((settled, carried))
         })?;
-        if let Some(carried) = carried {
-            self.mirror_custody_change(&crate::secret_custody::SecretCustodyWork::recorded(
-                carried,
-            ));
-        }
+        self.mirror_custody_change(&carried);
         Ok(settled)
     }
 }

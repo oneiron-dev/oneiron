@@ -33,14 +33,18 @@ pub struct OwnerWorkDrain {
 
 /// Whether a request's pickup reads this install's hybrid secret: a world's
 /// key work and a root change open keys with it, a bundle publication waits
-/// for it as it always has, and a custody register or rotate's holder opens
-/// its protected input with it. A revoke needs no byte, and a rewrap seals
-/// the value its holder holds.
+/// for it as it always has, and a custody register, rotate or bind's holder
+/// opens its protected input with it. A revoke needs no byte, and a rewrap
+/// with no input seals the value its holder holds.
 fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
     !matches!(
         work,
         OwnerWorkBody::Custody {
-            change: CustodyChange::Revoke | CustodyChange::Rewrap,
+            change: CustodyChange::Revoke,
+            ..
+        } | OwnerWorkBody::Custody {
+            change: CustodyChange::Rewrap,
+            input: None,
             ..
         }
     )
@@ -65,7 +69,8 @@ impl Vault {
     /// request is answered is forgotten. The machine secret is read outside
     /// every transaction, and only when a request's kind reads it: with no
     /// keystore, slot or secret here each such request stays pending, and
-    /// nothing is taken over. A custody revoke or rewrap reads none.
+    /// nothing is taken over. A custody revoke, or a rewrap with no input,
+    /// reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's

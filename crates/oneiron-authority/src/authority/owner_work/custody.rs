@@ -57,7 +57,8 @@ pub enum CustodyChange {
     /// on.
     Rotate,
     /// Seal the current value again, same generation and status, to the
-    /// recipients permitted.
+    /// recipients permitted; with an encrypted input, the owner's bind, whose
+    /// holder first takes the bindings it carries.
     Rewrap,
     /// End the secret here and on every replica: terminal for its id. No
     /// byte is needed.
@@ -103,10 +104,10 @@ pub struct CustodyRecipientPermit {
 }
 
 /// A custody request's shape. A register or rotate states its input and its
-/// holder, a rewrap its holder and no input, each permitting 1 to
-/// [`CUSTODY_RECIPIENTS_MAX`] recipients, ascending by machine, one each,
-/// and the holder executes it. A revoke states none of them, and its carrier
-/// executes it: a revoke needs no byte. No digest is zero.
+/// holder, a rewrap its holder and an input only for a bind, each permitting
+/// 1 to [`CUSTODY_RECIPIENTS_MAX`] recipients, ascending by machine, one
+/// each, and the holder executes it. A revoke states none of them, and its
+/// carrier executes it: a revoke needs no byte. No digest is zero.
 pub(super) fn validate_custody(
     request: &OwnerWorkRequest,
     change: CustodyChange,
@@ -122,7 +123,7 @@ pub(super) fn validate_custody(
                 && request.executor == request.carrier
         }
         CustodyChange::Register | CustodyChange::Rotate | CustodyChange::Rewrap => {
-            input.is_some() == (change != CustodyChange::Rewrap)
+            (input.is_some() || change == CustodyChange::Rewrap)
                 && holder == Some(request.executor)
                 && (1..=CUSTODY_RECIPIENTS_MAX).contains(&recipients.len())
                 && recipients

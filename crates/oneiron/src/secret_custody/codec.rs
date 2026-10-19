@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use rmpv::Value;
+use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
 
@@ -374,4 +375,94 @@ pub fn decode_secret_custody_body(bytes: &[u8]) -> Result<SecretCustodyRecord> {
         declared_paths,
         policy_floor_snapshot,
     })
+}
+
+/// The label a register's framed protected input opens with: the record's
+/// body, then the text of the manifest its recorder resolved it from (CALLS
+/// CUSTODY_MANIFEST_RECHECK). A bare record body names no manifest text.
+const REGISTER_INPUT_FRAME: &[u8] = b"oneiron/custody-register-input/v1\0";
+
+/// The longest effector a binding names, at the bind door and in a bind's
+/// protected input.
+pub(super) const EFFECTOR_MAX_BYTES: usize = 256;
+
+/// The most bindings a bind's protected input carries.
+const BIND_INPUT_MAX: usize = 256;
+
+/// A register's protected input: `record`'s body, value in it, framed with
+/// the text of the manifest its door resolved it from when there is one;
+/// the bare body when there is none.
+pub(super) fn encode_register_input(
+    record: &SecretCustodyRecord,
+    manifest: Option<&str>,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let body = Zeroizing::new(encode_secret_custody_body(record)?);
+    let Some(manifest) = manifest else {
+        return Ok(body);
+    };
+    let len = u32::try_from(body.len())
+        .map_err(|_| invalid_body("secret custody body is too large to frame"))?;
+    let mut out = Zeroizing::new(Vec::with_capacity(
+        REGISTER_INPUT_FRAME.len() + 4 + body.len() + manifest.len(),
+    ));
+    out.extend_from_slice(REGISTER_INPUT_FRAME);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(&body);
+    out.extend_from_slice(manifest.as_bytes());
+    Ok(out)
+}
+
+/// The record a register's protected input holds, value in it, and the
+/// manifest text it is framed with, if any; `None` for anything else.
+pub(super) fn decode_register_input(input: &[u8]) -> Option<(SecretCustodyRecord, Option<String>)> {
+    let Some(framed) = input.strip_prefix(REGISTER_INPUT_FRAME) else {
+        return decode_secret_custody_body(input)
+            .ok()
+            .map(|record| (record, None));
+    };
+    let (len, rest) = framed.split_first_chunk::<4>()?;
+    let (body, manifest) =
+        rest.split_at_checked(usize::try_from(u32::from_be_bytes(*len)).ok()?)?;
+    let manifest = std::str::from_utf8(manifest).ok()?.to_owned();
+    let record = decode_secret_custody_body(body).ok()?;
+    Some((record, Some(manifest)))
+}
+
+/// A bind's protected input: every binding the record takes, in the body's
+/// binding shape (CALLS CUSTODY_BIND_TRAVEL).
+pub(super) fn encode_bind_input(bindings: &[SecretBinding]) -> Result<Vec<u8>> {
+    let mut out = Vec::new();
+    rmpv::encode::write_value(
+        &mut out,
+        &Value::Array(bindings.iter().map(binding_to_value).collect()),
+    )
+    .map_err(|_| invalid_body("encode secret bindings"))?;
+    Ok(out)
+}
+
+/// The bindings a bind's protected input holds: one array of at most 256,
+/// each naming its own effector of 1 to 256 bytes, with nothing after it;
+/// `None` for anything else.
+pub(super) fn decode_bind_input(input: &[u8]) -> Option<Vec<SecretBinding>> {
+    let mut cursor = std::io::Cursor::new(input);
+    let Value::Array(items) = rmpv::decode::read_value(&mut cursor).ok()? else {
+        return None;
+    };
+    if cursor.position() != input.len() as u64 || items.len() > BIND_INPUT_MAX {
+        return None;
+    }
+    let mut bindings: Vec<SecretBinding> = Vec::with_capacity(items.len());
+    for item in &items {
+        let binding = binding_from_value(item).ok()?;
+        if binding.effector.is_empty()
+            || binding.effector.len() > EFFECTOR_MAX_BYTES
+            || bindings
+                .iter()
+                .any(|held| held.effector == binding.effector)
+        {
+            return None;
+        }
+        bindings.push(binding);
+    }
+    Some(bindings)
 }

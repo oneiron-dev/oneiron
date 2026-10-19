@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use super::{OwnerReply, blocking, owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
+use crate::owner::secrets::CustodyReply;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
@@ -58,6 +59,10 @@ struct BoundView {
     bindings: Vec<BindingView>,
     /// The Gate record that keeps the binding, `gate:<hex>`.
     receipt_ref: String,
+    /// The custody rewrap that carries the binding to the owner's other
+    /// machines, as a register's or a rotation's reply does, or why it
+    /// stayed here.
+    custody: CustodyReply,
 }
 
 impl From<SecretBound> for BoundView {
@@ -76,6 +81,7 @@ impl From<SecretBound> for BoundView {
                 })
                 .collect(),
             receipt_ref: format!("gate:{}", bound.receipt.to_hex()),
+            custody: bound.custody.into(),
         }
     }
 }

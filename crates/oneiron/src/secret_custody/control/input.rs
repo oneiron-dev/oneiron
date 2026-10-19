@@ -1,11 +1,15 @@
 //! The protected input of an active custody change (WILL L04 row 04): what a
-//! register or rotate hands its holder, sealed to the holder's encryption
-//! key alone.
+//! register, rotate or bind hands its holder, sealed to the holder's
+//! encryption key alone.
 //!
-//! A register's input is the whole record, metadata and value; a rotate's is
-//! the new value. The envelope's key id binds the vault, the secret's id, the
-//! change, the generation it approves, the custody revision the owner saw,
-//! the holder and every permit, so an input never opens as another change's.
+//! A register's input is the whole record, metadata and value, framed with
+//! the text of the manifest its recorder resolved it from, when there is one
+//! (CALLS CUSTODY_MANIFEST_RECHECK); a rotate's is the new value; a bind's
+//! rewrap carries the record's new bindings (CALLS CUSTODY_BIND_TRAVEL). A
+//! rewrap that only seals again carries none. The envelope's key id binds
+//! the vault, the secret's id, the change, the generation it approves, the
+//! custody revision the owner saw, the holder and every permit, so an input
+//! never opens as another change's.
 //! The request names only the digest of its ciphertext, never a hash of the
 //! value. A door that is the holder executes from what it holds in the
 //! request's own commit and keeps no input; any other door keeps the input
@@ -41,6 +45,12 @@ const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 pub(crate) const MAX_INPUT_BYTES: usize = 4 << 20;
 /// A relayed input's frame: the second it was sealed at, then the request.
 const FRAME_BYTES: usize = 8 + 32;
+/// The label of a sealed register's input as its recorder records it: the
+/// envelope the owner's surface sealed, then the manifest the recorder
+/// resolved for the `manifest_ref` that surface stated (CALLS
+/// CUSTODY_MANIFEST_RECHECK). The request names the digest of the whole, so
+/// the manifest is the recorder's as the envelope is the surface's.
+const ATTACHED_LABEL: &[u8] = b"oneiron/custody-input-attached/v1\0";
 
 /// Each input this vault keeps to relay, or keeps as its holder until it
 /// answers, by its ciphertext digest.
@@ -152,6 +162,55 @@ impl InputBinding<'_> {
     }
 }
 
+/// The manifest a recorder resolved for a sealed register and attached to
+/// its input: the `manifest_ref` it resolved and the file's text.
+pub(crate) struct AttachedManifest {
+    pub(crate) manifest_ref: String,
+    pub(crate) text: String,
+}
+
+/// A sealed register's `envelope` with the manifest its recorder resolved
+/// for it attached: what the request then names the digest of.
+pub(crate) fn attach_manifest(envelope: &[u8], manifest_ref: &str, text: &str) -> Result<Vec<u8>> {
+    let too_large = || {
+        refused("the sealed input and its manifest are larger than one custody transition carries")
+    };
+    let envelope_len = u32::try_from(envelope.len()).map_err(|_| too_large())?;
+    let ref_len = u32::try_from(manifest_ref.len()).map_err(|_| too_large())?;
+    let mut out = Vec::with_capacity(
+        ATTACHED_LABEL.len() + 8 + envelope.len() + manifest_ref.len() + text.len(),
+    );
+    out.extend_from_slice(ATTACHED_LABEL);
+    out.extend_from_slice(&envelope_len.to_be_bytes());
+    out.extend_from_slice(envelope);
+    out.extend_from_slice(&ref_len.to_be_bytes());
+    out.extend_from_slice(manifest_ref.as_bytes());
+    out.extend_from_slice(text.as_bytes());
+    if out.len() > MAX_INPUT_BYTES {
+        return Err(too_large());
+    }
+    Ok(out)
+}
+
+/// The envelope a kept input holds, and the manifest its recorder attached,
+/// if any; `None` for a malformed attachment.
+pub(crate) fn split_attached(kept: &[u8]) -> Option<(&[u8], Option<AttachedManifest>)> {
+    let Some(rest) = kept.strip_prefix(ATTACHED_LABEL) else {
+        return Some((kept, None));
+    };
+    let (len, rest) = rest.split_first_chunk::<4>()?;
+    let (envelope, rest) =
+        rest.split_at_checked(usize::try_from(u32::from_be_bytes(*len)).ok()?)?;
+    let (len, rest) = rest.split_first_chunk::<4>()?;
+    let (manifest_ref, text) =
+        rest.split_at_checked(usize::try_from(u32::from_be_bytes(*len)).ok()?)?;
+    let attached = AttachedManifest {
+        manifest_ref: std::str::from_utf8(manifest_ref).ok()?.to_owned(),
+        text: std::str::from_utf8(text).ok()?.to_owned(),
+    };
+    Some((envelope, Some(attached)))
+}
+
 /// The digest a request names of its input: over the ciphertext alone, so
 /// it says nothing of the value.
 pub(crate) fn input_digest(envelope: &[u8]) -> [u8; 32] {
@@ -244,6 +303,32 @@ pub(crate) fn drop_input_in_txn(
     INPUTS.delete(&vault.store, wtxn, digest).map(drop)
 }
 
+/// Forgets every input kept for a request on record `id`: a revoke leaves no
+/// pending input of it (CALLS CUSTODY_REVOKE_ERASE). Returns how many it
+/// forgot.
+pub(crate) fn drop_inputs_for_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<usize> {
+    let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+    let doomed: Vec<[u8; 32]> = INPUTS
+        .scan(&vault.store, wtxn)?
+        .into_iter()
+        .filter(|(_, bytes)| {
+            RelayedInput::decode(bytes).is_some_and(|input| {
+                fold.owner_work_request(&input.request)
+                    .is_some_and(|request| request.act.target == *id)
+            })
+        })
+        .map(|(digest, _)| digest)
+        .collect();
+    for digest in &doomed {
+        drop_input_in_txn(vault, wtxn, digest)?;
+    }
+    Ok(doomed.len())
+}
+
 /// Every input this vault keeps, by digest, as stored.
 #[cfg(feature = "sync")]
 pub(crate) fn held_inputs(vault: &Vault) -> Result<Vec<([u8; 32], Vec<u8>)>> {
@@ -252,10 +337,11 @@ pub(crate) fn held_inputs(vault: &Vault) -> Result<Vec<([u8; 32], Vec<u8>)>> {
 }
 
 impl Vault {
-    /// Forgets every kept input whose request is answered, or that this
-    /// install folds as no admitted request at all: what remains is the
-    /// relay of work still awaiting its holder. The owner work drain runs it
-    /// beside the revoke settle. Returns how many it forgot.
+    /// Forgets every kept input whose request is answered, is on a secret an
+    /// admitted revoke ended, or that this install folds as no admitted
+    /// request at all: what remains is the relay of work still awaiting its
+    /// holder. The owner work drain runs it beside the revoke settle.
+    /// Returns how many it forgot.
     pub(crate) fn settle_custody_inputs(&self) -> Result<usize> {
         let done: Vec<[u8; 32]> = {
             let txn = self.store.env.read_txn()?;
@@ -266,7 +352,9 @@ impl Vault {
                 .filter(|(_, bytes)| {
                     RelayedInput::decode(bytes).is_none_or(|input| {
                         fold.owner_work_result(&input.request).is_some()
-                            || fold.owner_work_request(&input.request).is_none()
+                            || fold
+                                .owner_work_request(&input.request)
+                                .is_none_or(|request| fold.custody_revoked(&request.act.target))
                     })
                 })
                 .map(|(digest, _)| digest)

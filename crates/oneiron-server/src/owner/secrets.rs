@@ -21,7 +21,7 @@ use oneiron::secret_custody::{
     OwnerSecretRegistration, RequestedBinding, SECRET_NAME_MAX_BYTES, SecretCustodyWork,
     SecretRegistered,
 };
-use oneiron::world_keys::{OwnerWorkReceipt, OwnerWorkUnassigned};
+use oneiron::world_keys::OwnerWorkReceipt;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 use zeroize::{Zeroize, Zeroizing};
@@ -536,7 +536,9 @@ pub(crate) async fn read_revoke(body: Body) -> OwnerResult<String> {
 /// `from_generation` equal to `to_generation` (nothing replaced the value)
 /// and `kind: "revoked"`, beside the custody revoke request carried for the
 /// owner's other machines from `surface` (audit only). With none recorded
-/// the reply says the revoke was not carried to them from here.
+/// the reply says exactly why the revoke stayed here: the record never
+/// leaves its device, or this install has no live machine profile to carry
+/// the act (FIX 4994).
 pub(crate) fn revoke(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
@@ -544,30 +546,9 @@ pub(crate) fn revoke(
     name: &str,
 ) -> OwnerResult<CustodyRotated> {
     let revoked = vault.revoke_secret_as_owner(owner, surface, name, vault.now_recorded_at())?;
-    let custody = match revoked.work {
-        Some(work) => CustodyReply {
-            said: work
-                .unassigned
-                .map_or_else(|| work.status.text(), OwnerWorkUnassigned::text),
-            kept_here: None,
-            delivery: if work.request.is_some() {
-                "unknown"
-            } else {
-                "not_sent"
-            },
-            work: Some(work),
-        },
-        None => CustodyReply {
-            work: None,
-            kept_here: Some("not_carried"),
-            delivery: "not_sent",
-            said: "revoked here only: it stays on its device, or this install carries no act \
-                   to your other machines; revoke it again from a linked install",
-        },
-    };
     Ok(CustodyRotated {
         receipt: Some(revoked.rotation.into()),
-        custody,
+        custody: revoked.custody.into(),
     })
 }
 
