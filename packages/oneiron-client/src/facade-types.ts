@@ -4439,7 +4439,7 @@ export type WorkflowRunRequest = { root_attempt_ref: EntityId }
 /** `oneiron::team::doors::TaskTypeNodeSpec` */
 export type TaskTypeNodeSpec = { node_id: string; parent?: string | null; name: string }
 /** `oneiron::team::doors::TaskTypeTreePin` */
-export type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[] }
+export type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[]; project_ref?: EntityId | null }
 /** `oneiron::team::doors::TypeStamp` */
 export type TypeStamp = { node_id: string; tree_version: number }
 /** `oneiron::team::doors::TaskTypeNodeView` */
@@ -4447,7 +4447,7 @@ export type TaskTypeNodeView = { node_id: string; parent?: string | null; name: 
 /** `oneiron::team::doors::TaskTypeTreeView` */
 export type TaskTypeTreeView = { tree_version: number; root: TypeStamp; nodes: TaskTypeNodeView[] }
 /** `oneiron::team::doors::TaskTypeTreePinReceipt` */
-export type TaskTypeTreePinReceipt = { fork_ref: EntityId; stored: TaskTypeTreeView; in_force: boolean }
+export type TaskTypeTreePinReceipt = { fork_ref: EntityId; stored: TaskTypeTreeView; requested_tree_version?: number | null; project_ref?: EntityId | null; in_force?: boolean | null }
 /** `oneiron::team::doors::TaskTypeTreeRead` */
 export type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: number | null }
 /** `oneiron::team::doors::TaskTypeTreeReadReply` */
