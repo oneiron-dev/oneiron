@@ -76818,7 +76818,7 @@
      "path": "src/api/git_http/gate.rs",
      "purpose": "Authentication gate and service canonicalization for Git smart-HTTP",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -76904,7 +76904,7 @@
      "path": "src/api/git_lfs/gate.rs",
      "purpose": "LFS authentication gate and principal checks",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -78830,13 +78830,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/auth/managed_request.rs",
      "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -81088,7 +81088,7 @@
      "path": "src/handler/transport.rs",
      "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -81549,13 +81549,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/attested_routes.rs",
      "purpose": "The routes managed ingress verifies a supervisor's owner attestation on, past the facade, owner and console…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -81614,7 +81614,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 1
      }
@@ -81671,6 +81671,16 @@
       "enum": 1,
       "fn": 11,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/owner_stage.rs",
+     "purpose": "Managed ingress's byte-exact staging of an owner-attested request whose body streams (FIX 5255, part 2 of…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81757,7 +81767,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -84823,7 +84833,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -84979,7 +84989,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 822,
+   "source_files": 823,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -89050,19 +89060,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ManagedOwnerAction",
+      "ManagedOwnerHead",
       "ManagedOwnerRequest",
+      "ManagedOwnerTranscript",
       "ManagedWidenAction"
      ],
      "path": "src/lib/managed_holder.rs",
      "purpose": "Host-attested account actions: one managed widen request, and one request the vault owner makes in person…",
      "surface": {
       "const": 6,
-      "fn": 8,
-      "struct": 3,
+      "fn": 12,
+      "struct": 5,
       "type": 1
      }
     },

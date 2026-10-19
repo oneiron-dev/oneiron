@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_adapters/vsock.rs` | src | m | 4 struct · 11 fn | FirecrackerGuest, GuestLink, VsockListener, VsockStream | The microVM adapter's guest half: AF_VSOCK sockets and the Firecracker backend an engine uses when it runs… |
 | `src/lib/ledger.rs` | src | s | 2 struct · 1 fn | LedgerAck, LedgerUpdate | Vault-to-supervisor ledger push and ack wire types |
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
-| `src/lib/managed_holder.rs` | src | s | 3 struct · 8 fn · 1 type · 6 const | ManagedOwnerAction, ManagedOwnerRequest, ManagedWidenAction | Host-attested account actions: one managed widen request, and one request the vault owner makes in person… |
+| `src/lib/managed_holder.rs` | src | m | 5 struct · 12 fn · 1 type · 6 const | ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedWidenAction | Host-attested account actions: one managed widen request, and one request the vault owner makes in person… |
 | `src/lib/mod.rs` | src | s | 10 mod · 7 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/preview.rs` | src | s | 3 struct · 1 enum · 2 fn | PreviewEndpoint, PreviewPortDeclaration, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
 | `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
