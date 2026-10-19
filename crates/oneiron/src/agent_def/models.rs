@@ -19,7 +19,6 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::ModelId;
-use crate::llm::registry::ModelRegistryRow;
 use crate::side_table::{self, Named, SideTable};
 use crate::{Vault, WriteActor};
 
@@ -29,6 +28,27 @@ const WAKE_MODEL: SideTable<EntityId, ModelId, Named> =
 
 /// Producer of the owner's note that a model on an agent's list is retired.
 const NOTIFICATION_PRODUCER_RETIRED_MODEL: &str = "agent_def.model_retired";
+
+/// Producer of the owner's note that no registry row names a model on an
+/// agent's list.
+const NOTIFICATION_PRODUCER_UNAVAILABLE_MODEL: &str = "agent_def.model_unavailable";
+
+/// Producer of the owner's note that an agent's list bound none of its runs.
+const NOTIFICATION_PRODUCER_LIST_UNBOUND: &str = "agent_def.model_list_unbound";
+
+/// What [`no_listed_model`]'s refusal says first.
+const NO_LISTED_MODEL_TEXT: &str = "no listed model is eligible";
+
+/// The one policy hook for a run of an agent with a model list that its list
+/// does not bind (FIX 4544, FIX 4539), and the place a later "strict model
+/// lists" ruling changes. `true` keeps today's path, and neither case
+/// refuses: an agent run no seat binds (no model manifest and no seat
+/// receipt) runs on its configured route and the owner is told
+/// ([`note_unbound_listed_run`]); a reader or summary job its inherited list
+/// admits no eligible model for runs on any eligible one
+/// ([`birth_under_inherited_list`]). Set `false`, such a job's seat birth
+/// refuses and the seatless run is not noted; its hold is not built.
+pub const UNBOUND_LIST_KEEPS_ROUTE: bool = true;
 
 const MODEL_REF_TEXT: &str =
     "model entry model_ref must be a provider/name@revision model id at most 256 bytes";
@@ -191,21 +211,54 @@ pub(crate) fn list_admits(listed: &[AgentModel], model: &ModelId) -> bool {
 /// A seat birth that found no listed model it could seat refuses, naming the
 /// models it skipped: the wake holds rather than run on an unlisted one.
 pub(crate) fn no_listed_model(listed: &[AgentModel]) -> Error {
-    let skipped: Vec<&str> = listed
+    Error::InvalidConfig(format!("{NO_LISTED_MODEL_TEXT}: {}", list_text(listed)))
+}
+
+/// `listed`'s model ids, comma-separated.
+fn list_text(listed: &[AgentModel]) -> String {
+    let models: Vec<&str> = listed
         .iter()
         .map(|entry| entry.model_ref.as_str())
         .collect();
-    Error::InvalidConfig(format!(
-        "no listed model is eligible: {}",
-        skipped.join(", ")
-    ))
+    models.join(", ")
+}
+
+/// Births a reader or summary job's seat through `birth`, which holds it to
+/// the list it is passed (FIX 4539): `inherited`, the list the job's
+/// originating run froze. Under [`UNBOUND_LIST_KEEPS_ROUTE`] a job that list
+/// admits no eligible model for is born on an empty one, any eligible model,
+/// as before lists, and logged; so is one whose stored seat was born that
+/// way, its model (`prior`) unlisted. `run` is the job's run, for the log.
+///
+/// # Errors
+///
+/// `birth`'s.
+pub fn birth_under_inherited_list<T, E: std::fmt::Display>(
+    run: EntityId,
+    inherited: &[AgentModel],
+    prior: Option<&ModelId>,
+    birth: impl Fn(Vec<AgentModel>) -> std::result::Result<T, E>,
+) -> std::result::Result<T, E> {
+    if inherited.is_empty() || !UNBOUND_LIST_KEEPS_ROUTE {
+        return birth(inherited.to_vec());
+    }
+    if prior.is_some_and(|model| !list_admits(inherited, model)) {
+        return birth(Vec::new());
+    }
+    match birth(inherited.to_vec()) {
+        Err(error) if error.to_string().contains(NO_LISTED_MODEL_TEXT) => {
+            tracing::info!(%error, run = %run.to_hex(), "a job's inherited model list admits no eligible model; it runs on any eligible one");
+            birth(Vec::new())
+        }
+        born => born,
+    }
 }
 
 /// Tells the vault's owners, once per agent and model, that a model on
-/// `def`'s list is retired: its registry row is stale (its provider retired
-/// it) or gone. The agent keeps running on the rest of its list; the note asks
-/// for a replacement. `agent_def_id` is the definition's row, the note's
-/// subject.
+/// `def`'s list is retired, its registry row stale (its provider retired it),
+/// or unavailable, no row naming it (never registered, or removed). The agent
+/// keeps running on the rest of its list; the note asks for a replacement.
+/// `agent_def_id` is the definition's row, the note's subject.
 ///
 /// # Errors
 ///
@@ -215,37 +268,86 @@ pub fn note_stale_listed_models(
     agent_def_id: EntityId,
     def: &AgentDefinition,
 ) -> Result<()> {
-    let mut retired = Vec::new();
+    let name = def.display_name.as_deref().unwrap_or(&def.agent_id);
+    let mut notes = Vec::new();
     for listed in &def.models {
-        if vault
-            .model_registry_row(&listed.model_ref)?
-            .as_ref()
-            .is_none_or(ModelRegistryRow::is_stale)
-        {
-            retired.push(&listed.model_ref);
+        let model = &listed.model_ref;
+        // Only a stale row is its provider's retirement: a missing one says
+        // no more than that this vault knows no such model.
+        match vault.model_registry_row(model)? {
+            Some(row) if row.is_stale() => notes.push((
+                NOTIFICATION_PRODUCER_RETIRED_MODEL,
+                model,
+                format!(
+                    "model {model} on agent {name}'s list is retired; the agent runs on the rest \
+                     of its list; add a replacement"
+                ),
+            )),
+            None => notes.push((
+                NOTIFICATION_PRODUCER_UNAVAILABLE_MODEL,
+                model,
+                format!(
+                    "model {model} on agent {name}'s list is unavailable: no registry row names \
+                     it (it may never have been registered, or was removed); register it, or \
+                     list an available model on the agent"
+                ),
+            )),
+            Some(_) => {}
         }
     }
-    if retired.is_empty() {
+    if notes.is_empty() {
         return Ok(());
     }
-    let agent = agent_def_id.to_hex();
+    note_owners(vault, agent_def_id, &notes)
+}
+
+/// Tells the vault's owners, once per agent and model used, that a run of
+/// `def`, which lists models, ran on `used`, the model its host configured,
+/// as the vault has no model manifest to bear it a seat (FIX 4544): under
+/// [`UNBOUND_LIST_KEEPS_ROUTE`] such a run keeps that route. `agent_def_id`
+/// is the definition's row, the note's subject.
+///
+/// # Errors
+///
+/// The notification write. A wake logs it and runs.
+pub fn note_unbound_listed_run(
+    vault: &Vault,
+    agent_def_id: EntityId,
+    def: &AgentDefinition,
+    used: &ModelId,
+) -> Result<()> {
     let name = def.display_name.as_deref().unwrap_or(&def.agent_id);
+    let detail = format!(
+        "agent {name} lists {} but this vault has no model manifest, so its run used {used}; \
+         configure the vault's model manifest to bind the list",
+        list_text(&def.models)
+    );
+    let notes = [(NOTIFICATION_PRODUCER_LIST_UNBOUND, used, detail)];
+    note_owners(vault, agent_def_id, &notes)
+}
+
+/// Writes each of `notes`, its producer, the model it is about and its text,
+/// to every owner of the vault, about `agent_def_id`'s row, in one write.
+fn note_owners(
+    vault: &Vault,
+    agent_def_id: EntityId,
+    notes: &[(&str, &ModelId, String)],
+) -> Result<()> {
+    let agent = agent_def_id.to_hex();
     vault.with_write_txn(|txn| {
         let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         for owner in crate::policy_model::owners_in_txn(vault, txn)? {
-            for model in &retired {
-                // A replay finds the row it wrote first: one note per agent
-                // and model, whichever wake sees it.
+            for (producer, model, detail) in notes {
+                // A replay finds the row it wrote first: one note per
+                // producer, agent and model, whichever wake sees it.
                 vault.record_notification_in_txn(
                     txn,
                     &NotificationEvent {
                         kind: NotificationKind::Finding,
                         source: NotificationSource {
-                            producer: NOTIFICATION_PRODUCER_RETIRED_MODEL.to_owned(),
+                            producer: (*producer).to_owned(),
                             event: format!("{agent}:{model}:{}", owner.to_hex()),
-                            detail: Some(format!(
-                                "model {model} on agent {name}'s list is retired; the agent runs on the rest of its list; add a replacement"
-                            )),
+                            detail: Some(detail.clone()),
                             ..NotificationSource::default()
                         },
                         subject_refs: vec![agent_def_id],

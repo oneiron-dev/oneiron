@@ -25,6 +25,7 @@ mod team_launch;
 
 use std::collections::BTreeMap;
 
+use crate::agent_def::list_admits;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -344,10 +345,28 @@ impl AgentDispatcher<'_> {
         let mut budget = PlanBudget::UNMETERED;
         {
             let txn = self.vault.store.env.read_txn()?;
-            for seat in seats {
-                if models.iter().any(|model| model.model == seat.model) {
+            // FIX 4542: a seat whose model its child's list does not admit
+            // is dropped before it is costed or ranked. When that drops
+            // every seat, or the one the need pins, the plan keeps them all,
+            // as it planned before lists; seat birth still holds the child.
+            let mut listed = Vec::with_capacity(seats.len());
+            for (index, seat) in seats.iter().enumerate() {
+                if seats[..index].iter().any(|prior| prior.model == seat.model) {
                     return Err(invalid("a planner names one seat per model"));
                 }
+                let target = AgentDispatchTarget::Custom(seat.agent_def);
+                let child = self.dispatchable_definition_in_txn(&txn, &target)?;
+                if list_admits(&child.models, &seat.model) {
+                    listed.push(seat);
+                }
+            }
+            let pinned = need.pinned_model();
+            if listed.is_empty()
+                || pinned.is_some_and(|model| listed.iter().all(|seat| &seat.model != model))
+            {
+                listed = seats.iter().collect();
+            }
+            for seat in listed {
                 let launch = self.admit_launch_in_txn(
                     &txn,
                     parent,

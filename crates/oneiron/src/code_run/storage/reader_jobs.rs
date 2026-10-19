@@ -735,6 +735,9 @@ impl ExecutorStorage<'_> {
                     spend: parent.spend.clone(),
                     deadline: parent.deadline,
                     child_cutoff_unix_ms: child_cutoff,
+                    // A read and a summary alike take the list the
+                    // spawning run froze (FIX 4539).
+                    listed: seat.listed.clone(),
                 },
                 kind: new.kind,
                 ask: new.ask,
