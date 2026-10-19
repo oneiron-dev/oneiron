@@ -103,6 +103,7 @@ pub(crate) use super::goal_optimize_doors::*;
 pub(crate) use super::guest_document_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
+pub(crate) use super::skill_default_doors::*;
 pub(crate) use super::identity_topology_doors::*;
 pub(crate) use super::skill_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
@@ -1236,6 +1237,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"
+        | "vault.skill_hubs.default.get"
         | "vault.skill_hubs.publishers.admit"
         | "vault.skill_hubs.publishers.revoke"
         | "vault.skill_hubs.refs.get"
@@ -1243,6 +1245,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.install"
         | "vault.packs.sync"
         | "vault.packs.get"
+        | "vault.skills.bootstrap"
+        | "vault.skills.restoreDefaults"
         | "vault.skills.import"
         | "vault.skills.sync"
         | "vault.skills.receipts"

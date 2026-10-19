@@ -606,6 +606,15 @@ impl OneironClient {
                 "self.inbox.lens" => remote_agent_verb_output::<
                     oneiron::agent_inbox_lens::InboxLensPage,
                 >(client, verb, &input),
+                "vault.skills.bootstrap" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::BootstrapSkillView>,
+                >(client, verb, &input),
+                "vault.skill_hubs.default.get" => remote_agent_verb_output::<
+                    oneiron::skill_hub::DefaultSkillHub,
+                >(client, verb, &input),
+                "vault.skills.restoreDefaults" => remote_agent_verb_output::<
+                    Vec<oneiron::skill_hub::HubImportReceipt>,
+                >(client, verb, &input),
                 "vault.skill_hubs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SkillHubConfigured,
                 >(client, verb, &input),
@@ -5485,6 +5494,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.inbox.lens", value)
+    }
+    pub fn vault_skills_bootstrap(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::BootstrapSkillView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.bootstrap", value)
+    }
+    pub fn vault_skill_hubs_default_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::skill_hub::DefaultSkillHub, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skill_hubs.default.get", value)
+    }
+    pub fn vault_skills_restoreDefaults(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::skill_hub::HubImportReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.restoreDefaults", value)
     }
     pub fn vault_skill_hubs_put(
         &self,

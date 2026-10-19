@@ -4379,6 +4379,75 @@ async fn self_inbox_lens(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_skills_bootstrap(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.bootstrap")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.bootstrap", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.bootstrap", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_skills_bootstrap(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_skill_hubs_default_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skill_hubs.default.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skill_hubs.default.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skill_hubs.default.get", value).await?;
+    let (output, listed) = super::host_doors::vault_skill_hubs_default_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_skills_restoreDefaults(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.restoreDefaults")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.restoreDefaults", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.restoreDefaults", value).await?;
+    let (output, listed) = super::host_doors::vault_skills_restoreDefaults(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_skill_hubs_put(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -24019,6 +24088,9 @@ pub(crate) async fn call_verb(
         "vault.weave.digest.render" => vault_weave_digest_render(server, call, input).await,
         "vault.weave.link.corrections" => vault_weave_link_corrections(server, call, input).await,
         "self.inbox.lens" => self_inbox_lens(server, call, input).await,
+        "vault.skills.bootstrap" => vault_skills_bootstrap(server, call, input).await,
+        "vault.skill_hubs.default.get" => vault_skill_hubs_default_get(server, call, input).await,
+        "vault.skills.restoreDefaults" => vault_skills_restoreDefaults(server, call, input).await,
         "vault.skill_hubs.put" => vault_skill_hubs_put(server, call, input).await,
         "vault.skill_hubs.get" => vault_skill_hubs_get(server, call, input).await,
         "vault.skill_hubs.publishers.admit" => {
