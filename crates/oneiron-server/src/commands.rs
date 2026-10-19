@@ -228,14 +228,17 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
 }
 
 /// What `token read` and `token agent` print: the credential in the SDK's
-/// one-string form and in the CLI's slip-plus-seed form, and the slip id
-/// `token revoke` takes.
+/// one-string form and in the CLI's slip-plus-seed form, the slip id
+/// `token revoke` takes, and whom the slip may message.
 #[derive(serde::Serialize)]
 struct PairedCredential {
     principal_ref: String,
     actor_class: String,
     expires_at: u64,
     slip_id: String,
+    /// The slip's signed comm reach (FIX 3899): `--comm`, or `vault` when
+    /// the owner named none.
+    comm: oneiron::agent_dispatch::CommReach,
     credential: String,
     token: String,
     binding_key: String,
@@ -348,6 +351,7 @@ pub fn token_agent(args: TokenAgentArgs) -> anyhow::Result<()> {
                     "ceiling": minted.ceiling.as_str(),
                     "expires_at": minted.credential.expires_at,
                     "slip_id": minted.credential.slip_id,
+                    "comm": minted.credential.comm,
                     "credential_file": path,
                     "revoked_slip_ids": minted.replaced,
                 }))?
@@ -592,6 +596,7 @@ fn mint_paired_credential(
         actor_class: actor_class.to_owned(),
         expires_at: slip.claims.expires_at,
         slip_id: hex(&slip.claims.slip_id),
+        comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
         credential,
         token,
         binding_key: seed,
@@ -647,8 +652,9 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         )
     );
     eprintln!(
-        "the pairing link expires at unix second {}",
-        link.expires_at
+        "the pairing link expires at unix second {}; its slip may message: {}",
+        link.expires_at,
+        link.comm.as_str()
     );
     Ok(())
 }

@@ -68,6 +68,16 @@ pub enum Shape {
     /// key (the same scheme, host and port it was sent to). The reply is
     /// streamed.
     GeminiFile,
+    /// A System One seat's typed decision: `POST …/v1/systemone`, JSON,
+    /// top-level body `model`, Bearer.
+    SystemOne,
+    /// An OpenAI-compatible model listing: `GET …/v1/models`, no body,
+    /// Bearer. An embedder reads its endpoint's listing here, and a GPU pod's
+    /// readiness answers here.
+    OpenAiModels,
+    /// A server's liveness: `GET …/health`, no body, Bearer. A GPU pod
+    /// answers its health here.
+    Health,
 }
 
 struct Row {
@@ -110,9 +120,9 @@ enum Selector {
     Body,
     /// The path's `{model}` segment. The body names none.
     Path,
-    /// Nowhere on the wire: the request reads or removes a job or a file and
-    /// carries nothing that could pick a model, so the call's bound wire
-    /// model stands.
+    /// Nowhere on the wire: the request reads or removes a job or a file, or
+    /// reads a listing or a health answer, and carries nothing that could
+    /// pick a model, so the call's bound wire model stands.
     Binding,
 }
 
@@ -282,6 +292,24 @@ const GEMINI_FILE: Row = Row {
     )
 };
 
+const SYSTEM_ONE: Row = openai(
+    "POST",
+    &["v1", "systemone"],
+    Body::Json,
+    Selector::Body,
+    false,
+);
+
+const OPENAI_MODELS: Row = openai(
+    "GET",
+    &["v1", "models"],
+    Body::Empty,
+    Selector::Binding,
+    false,
+);
+
+const HEALTH: Row = openai("GET", &["health"], Body::Empty, Selector::Binding, false);
+
 /// Top-level body keys, or form fields, that pick the model or the route by
 /// another way than the one selector: a fallback list, a route or a provider
 /// preference.
@@ -308,6 +336,9 @@ impl Shape {
             Self::GeminiPredict => &GEMINI_PREDICT,
             Self::GeminiOperation => &GEMINI_OPERATION,
             Self::GeminiFile => &GEMINI_FILE,
+            Self::SystemOne => &SYSTEM_ONE,
+            Self::OpenAiModels => &OPENAI_MODELS,
+            Self::Health => &HEALTH,
         }
     }
 

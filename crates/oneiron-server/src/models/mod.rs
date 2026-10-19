@@ -30,6 +30,7 @@ use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind
 
 mod anthropic;
 mod broker;
+mod broker_context;
 mod broker_media;
 mod catalog;
 mod cooldown;
@@ -73,6 +74,7 @@ mod voxcpm2_speech;
 mod walk;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
+pub(crate) use broker_context::BrokerContext;
 use cooldown::FallbackRung;
 pub use cooldown::{OfferCooldowns, QuotaChoice, QuotaFallback, QuotaQuestion};
 pub use decision_read::DecisionReadDoor;

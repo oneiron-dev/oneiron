@@ -177,6 +177,9 @@ pub struct DecisionHost {
     big_model: Option<Arc<crate::big_rung::BigModel>>,
     /// Each caller's `ai.verdict` spend this window, for its check (FIX 1123).
     verdict_spend: Arc<crate::decision_verdict::VerdictSpend>,
+    /// The vault's credential-broker context, which a `key_secret` System
+    /// One seat sends through; `None` until serve sets one.
+    broker: Option<crate::models::BrokerContext>,
 }
 
 impl DecisionHost {
@@ -212,6 +215,7 @@ impl DecisionHost {
             remote_opt_in: false,
             big_model: None,
             verdict_spend: Arc::default(),
+            broker: None,
         }
     }
 
@@ -354,7 +358,13 @@ impl DecisionHost {
         let Some(settings) = settings else {
             return self;
         };
-        match SystemOneRung::bind(settings, default_units, posture, runtime) {
+        match SystemOneRung::bind(
+            settings,
+            default_units,
+            posture,
+            runtime,
+            self.broker.as_ref(),
+        ) {
             Ok(rung) => self.ladder.system_one = Some(Arc::new(rung)),
             Err(error) => tracing::warn!(%error, "the System One seat cannot fill its rung"),
         }
@@ -948,6 +958,15 @@ impl DecisionHost {
 }
 
 impl SyncServer {
+    /// Sets the vault's credential-broker context, which serve builds once
+    /// after the vault opens: the System One seat `[models.decisions]` binds
+    /// at the model attach sends through it when its key is a `key_secret`.
+    #[must_use]
+    pub(crate) fn with_broker(mut self, broker: Option<crate::models::BrokerContext>) -> Self {
+        self.decisions.broker = broker;
+        self
+    }
+
     /// The host's decision ladder, built once at serve start. Every typed
     /// decision a route or runtime job asks goes through it
     /// (`decision_ladder().ladder()` for one call).
@@ -1246,11 +1265,14 @@ impl DecisionProvider for HouseRead {
 
 /// The remote System One seat as a ladder rung: each question is one
 /// measurement admitted and settled on the seat's own meter, sent on the
-/// server's runtime (so a call blocks its thread). It takes noul and choice
-/// questions; a score question's level labels are the caller's, and a ladder
-/// call does not carry them.
+/// server's runtime (so a call blocks its thread, inside the pass or run of
+/// the ladder call that asks it). It takes noul and choice questions; a
+/// score question's level labels are the caller's, and a ladder call does
+/// not carry them. A `key_env` seat holds its bearer from bind; a
+/// `key_secret` seat reads its key at the vault's custody door for each
+/// call, through the credential broker.
 struct SystemOneRung {
-    seat: Arc<dyn RemoteDecisionSeat>,
+    seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
     guard: BudgetGuard,
     posture: HostingPrivacyPosture,
     remote_opt_in: bool,
@@ -1263,15 +1285,30 @@ impl SystemOneRung {
         default_units: u64,
         posture: HostingPrivacyPosture,
         runtime: tokio::runtime::Handle,
+        broker: Option<&crate::models::BrokerContext>,
     ) -> anyhow::Result<Self> {
-        let bearer = std::env::var(&settings.key_env)
-            .map_err(|_| anyhow::anyhow!("{} is not set", settings.key_env))?;
-        let seat = oneiron_llm_systemone::SystemOneSeat::new(
-            settings.endpoint.clone(),
-            bearer,
-            settings.model.clone(),
-            settings.version.clone(),
-        )
+        let endpoint = settings.endpoint.clone();
+        let (model, version) = (settings.model.clone(), settings.version.clone());
+        let seat = match (&settings.key_env, &settings.key_secret) {
+            (Some(env), _) => {
+                let bearer = std::env::var(env).map_err(|_| anyhow::anyhow!("{env} is not set"))?;
+                oneiron_llm_systemone::SystemOneSeat::new(endpoint, bearer, model, version)
+            }
+            (None, Some(secret)) => {
+                let broker = broker.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "its key_secret needs the vault's credential broker, and none was opened"
+                    )
+                })?;
+                oneiron_llm_systemone::SystemOneSeat::with_transport(
+                    endpoint,
+                    model,
+                    version,
+                    broker.system_one(secret),
+                )
+            }
+            (None, None) => anyhow::bail!("it names no key_env or key_secret"),
+        }
         .map_err(|error| anyhow::anyhow!("invalid System One seat: {error}"))?;
         Ok(Self {
             seat: Arc::new(seat),
@@ -1330,6 +1367,11 @@ impl DecisionProvider for SystemOneRung {
         request
             .validate_remote()
             .map_err(|_| failed("the posture or the request keeps this call local"))?;
+        // A broker or key that is not there refuses the call before its
+        // measurement starts.
+        self.seat
+            .preflight()
+            .map_err(|_| failed("its credential broker or vault-secret key is not there"))?;
         // Inside a verdict, the caller's own line (FIX 1123).
         let guard = crate::decision_verdict::rung_meter(&self.guard);
         let lease = guard

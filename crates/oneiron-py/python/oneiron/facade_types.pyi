@@ -3040,6 +3040,7 @@ class FederationDirectionScope(TypedDict):
 class CredentialPactCeiling(TypedDict):
     grant_ref: ScopeId
     ceiling: FederationDirectionScope
+CommReach = Literal["parent", "subtree", "project", "vault"]
 class CredentialCaveat(TypedDict):
     scope: NotRequired[CredentialCeiling | None]
     expires_at: NotRequired[int | None]
@@ -3048,6 +3049,7 @@ class CredentialCaveat(TypedDict):
     records: NotRequired[list[str] | None]
     channels: NotRequired[list[str] | None]
     pact: NotRequired[CredentialPactCeiling | None]
+    comm: NotRequired[CommReach | None]
 class CredentialAttenuationRequest(TypedDict):
     holder_seed: list[int]
     caveat: CredentialCaveat
@@ -6359,7 +6361,6 @@ class GuestRevokeResponse(TypedDict):
     pact_standing: GuestPactStanding
     disclosure: GuestRevokeDisclosure
     courtesy_targets: NotRequired[list[GuestRevokeCourtesyTargetView]]
-CommReach = Literal["parent", "subtree", "project", "vault"]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
     holder_key: str
@@ -6379,6 +6380,7 @@ class SupportGrantMintRequest(TypedDict):
     ttl_secs: NotRequired[int | None]
     purpose: str
     ticket_ref: NotRequired[str | None]
+    comm: NotRequired[CommReach | None]
 SupportGrantStatus = Literal["active", "expired", "revoked", "ended"]
 class SupportGrantView(TypedDict):
     grant_ref: str
@@ -6392,6 +6394,7 @@ class SupportGrantView(TypedDict):
     approved_at: int
     wall_expires_at: int
     status: SupportGrantStatus
+    comm: CommReach
     revoke_command: str
 class SupportGrantMintAnswer(TypedDict):
     slip: str
@@ -10875,7 +10878,7 @@ class SpawnIntentReply(TypedDict):
 class CancelForceRequest(TypedDict):
     task_ref: EntityId
     reason: NotRequired[str | None]
-AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned"]
+AgentRunStatus = Literal["spawned", "working", "needs_input", "delivered", "archived", "failed", "abandoned", "cancelled"]
 class RunAskQuestion(TypedDict):
     who: str
     prompt: str
