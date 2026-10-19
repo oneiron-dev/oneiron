@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/artifact_origin.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 const | ArtifactHost, ArtifactHostRead | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
 | `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
 | `src/lib/conversation_training.rs` | src | m | 15 struct · 4 enum · 11 fn · 15 const | TrainingChunkV1, TrainingControlBodyV1, TrainingControlChangeV1, TrainingControlV1, TrainingFileName, TrainingFilterV1, TrainingForgetSourceV1, TrainingNoHumanReadV1 +11 | The publisher training outbox (OF-420, "Learn from my conversations"): the files a vault hands toward… |
-| `src/lib/ctl.rs` | src | m | 3 struct · 9 enum · 6 fn · 1 const | CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse +4 | Supervisor ctl request/response wire types and shed/slim validation |
+| `src/lib/ctl.rs` | src | m | 4 struct · 12 enum · 9 fn · 1 const | CtlBound, CtlBoundKind, CtlBoundPhase, CtlBoundResource, CtlRefusal, CtlRefusalKind, CtlRequest, CtlResponse +8 | Supervisor ctl request/response wire types and shed/slim validation |
 | `src/lib/escrow.rs` | src | s | 1 struct · 2 fn · 2 const | EscrowCapsuleReport | The vault's data-key escrow on its way to the registry (CROSS-ARCH-0022 #ov-custody, invariant 03: escrow is… |
 | `src/lib/host.rs` | src | s | 1 struct · 2 trait · 2 fn · 4 type | Host, HostLimits, PreviewPortHost | One vault-hosting contract |
 | `src/lib/host_adapters.rs` | src | s | 2 struct · 2 trait · 2 fn · 4 re-export | EdgeBackend, MicroVmHost, SandboxBackend, WasmHost | Host adapters |

@@ -81567,14 +81567,15 @@
      "kind": "src",
      "notable": [
       "KeystoreBackend",
-      "KeystoreConfig"
+      "KeystoreConfig",
+      "KeystoreInstall"
      ],
      "path": "src/config/keystore.rs",
      "purpose": "The `[keystore]` section: where this install keeps its this-device-only key slots (world privacy P6b, P6c)",
      "surface": {
       "crate-vis": 4,
-      "enum": 1,
-      "fn": 3,
+      "enum": 2,
+      "fn": 4,
       "re-export": 1,
       "struct": 1
      }
@@ -82747,7 +82748,7 @@
      "path": "src/handler/mesh.rs",
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -83426,13 +83427,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/owner_stage.rs",
      "purpose": "Managed ingress's byte-exact staging of an owner-attested request whose body streams (FIX 5255, part 2 of…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -83442,7 +83443,7 @@
      "path": "src/managed/owner_storage.rs",
      "purpose": "The owner host a managed vault serves with: its backups and restore rehearsals on the tenant's own disk, in…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -83504,7 +83505,7 @@
      "path": "src/managed/settings.rs",
      "purpose": "The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -83530,7 +83531,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 17,
-      "fn": 20,
+      "fn": 21,
       "struct": 3,
       "type": 1
      }
@@ -83543,7 +83544,7 @@
      "purpose": "Managed vault open gates: credentials, the canary marker, and the DEK MAC",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -85326,7 +85327,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 19,
       "re-export": 5
      }
     },
@@ -85347,7 +85348,7 @@
      "path": "src/server/organs.rs",
      "purpose": "The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -90812,6 +90813,10 @@
       "CtlRequest",
       "CtlResponse",
       "CtlResumeOn",
+      "FacilityNotice",
+      "FacilityReason",
+      "ManagedFacility",
+      "ManagedReadiness",
       "ShedBlockerWire",
       "ShedCause",
       "ShedStatus"
@@ -90820,9 +90825,9 @@
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 1,
-      "enum": 9,
-      "fn": 6,
-      "struct": 3
+      "enum": 12,
+      "fn": 9,
+      "struct": 4
      }
     },
     {
