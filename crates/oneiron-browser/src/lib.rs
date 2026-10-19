@@ -39,7 +39,7 @@ mod receipt_evidence;
 #[cfg(feature = "driver")]
 mod session;
 
-pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch};
+pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause};
 #[cfg(feature = "driver")]
 pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover};
 pub use library::{

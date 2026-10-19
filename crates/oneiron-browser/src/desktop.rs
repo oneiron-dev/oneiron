@@ -11,7 +11,8 @@
 //! the session and the window, never a page's document. The driver's
 //! element tokens, which each newer read retires, never leave the session.
 //! A window an action opens in front (a dialog, a document) is where the
-//! next step reads.
+//! next step reads, and the next answer names the move once, as `switched`
+//! (`why: opened`).
 //!
 //! Effects follow the browser's rules. A control whose name marks an effect
 //! class takes that class's press from the vault's grant, and a Return, or
@@ -21,7 +22,10 @@
 //! screenshot is taken without a named trigger. A click at a point of an
 //! image first reads the window once more and checks the pixels around the
 //! point still look as they did in that image; that read is compared and
-//! dropped, never held or receipted. A window with no tree says so
+//! dropped, never held or receipted. The row under the point judges the
+//! click's press: a read cut before a row is there walks on first, as an
+//! act on a row does, and one still cut at its longest with no row there
+//! takes the gate's floor press, a person's. A window with no tree says so
 //! (`no_tree`), and the program reads it by its pixels.
 //!
 //! A window's tree is read whole (Rule 5): cua-driver's walk takes a node
@@ -42,7 +46,7 @@
 //!
 //! A window gone since the last read (a dialog closed, an app quit) gives
 //! way to the window in front, and the next answer names the move once, as
-//! `switched`.
+//! `switched` (`why: closed`).
 //!
 //! A person can take the desktop over (CUA-001), asked by the agent's
 //! `handover` or not. While the agent waits on its ask, and while a person
@@ -67,7 +71,7 @@ use crate::{
     ObserveInput, OpenInput, PartialTree, PointInput, PressMode, ReceiptEvidenceSink,
     RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput,
     SelectInput, SendPolicy, TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput,
-    WindowInput, WindowSwitch, WindowsInput, WindowsOutput, ZoomInput,
+    WindowInput, WindowSwitch, WindowSwitchCause, WindowsInput, WindowsOutput, ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde::{Deserialize, Serialize};
@@ -374,6 +378,13 @@ struct Line {
     frame: Option<Rect>,
 }
 
+impl Line {
+    /// Whether the row's element covers screen point (`x`, `y`).
+    fn covers(&self, x: f64, y: f64) -> bool {
+        self.frame.is_some_and(|frame| frame.contains(x, y))
+    }
+}
+
 /// Where a secret field is: on screen, and in the read's screenshot.
 struct Secret {
     screen: Option<Rect>,
@@ -410,7 +421,7 @@ impl Snapshot {
         let area = |line: &&Line| line.frame.map_or(f64::INFINITY, |frame| frame.w * frame.h);
         self.lines
             .iter()
-            .filter(|line| line.frame.is_some_and(|frame| frame.contains(x, y)))
+            .filter(|line| line.covers(x, y))
             .min_by(|a, b| area(a).total_cmp(&area(b)))
     }
 }
@@ -687,9 +698,10 @@ impl DesktopSession {
         self.returned.take()
     }
 
-    /// The agent's move to another window since its last answer, once: the
-    /// window it read was gone, and the session gave way to the one in
-    /// front. The host's door names it on that answer as `switched`.
+    /// The agent's move to another window since its last answer, once: an
+    /// act opened a window in front, or the window it read was gone and the
+    /// session gave way to the one in front. The host's door names it on
+    /// that answer as `switched`.
     pub fn take_switched(&mut self) -> Option<WindowSwitch> {
         self.switched.take()
     }
@@ -814,16 +826,23 @@ impl DesktopSession {
                     return Err(error);
                 }
                 let front = front(&listed, |_| true).ok_or_else(no_window)?;
-                self.switch(key, front, &listed);
+                self.switch(key, front, &listed, WindowSwitchCause::Closed);
                 self.walk(front, shot, None, until)
             }
         }
     }
 
-    /// The session gives way from window `from`, gone, to window `to`
-    /// (CUA-001): the move is kept for the agent's next answer, joined with
-    /// one it was not told of yet, from the window it was last told of.
-    fn switch(&mut self, from: WindowKey, to: WindowKey, listed: &[Listed]) {
+    /// The session moves from window `from` to window `to` (CUA-001), for
+    /// `why`: `from` is gone, or an act opened `to` in front of it. The move
+    /// is kept for the agent's next answer, joined with one it was not told
+    /// of yet, from the window it was last told of.
+    fn switch(
+        &mut self,
+        from: WindowKey,
+        to: WindowKey,
+        listed: &[Listed],
+        why: WindowSwitchCause,
+    ) {
         self.window = Some(to);
         let from = self
             .switched
@@ -843,6 +862,7 @@ impl DesktopSession {
             app,
             title,
             from,
+            why,
         });
     }
 
@@ -1032,9 +1052,20 @@ impl DesktopSession {
     /// it; another window (a cut answer's) is walked on by its key.
     fn search(
         &mut self,
-        mut snapshot: Snapshot,
+        snapshot: Snapshot,
         until: Option<Instant>,
         wanted: impl Fn(&Row) -> bool,
+    ) -> Result<Snapshot, BrowserError> {
+        self.search_lines(snapshot, until, |line| wanted(&line.row))
+    }
+
+    /// [`Self::search`] for the lines `wanted` admits, where they are on
+    /// screen too.
+    fn search_lines(
+        &mut self,
+        mut snapshot: Snapshot,
+        until: Option<Instant>,
+        wanted: impl Fn(&Line) -> bool,
     ) -> Result<Snapshot, BrowserError> {
         // Whether the last walk on asked for the longest walk there is.
         let mut longest = false;
@@ -1044,7 +1075,7 @@ impl DesktopSession {
             };
             if longest
                 || cut.walk_ms >= WALK_ON_MS_MOST
-                || snapshot.lines.iter().any(|line| wanted(&line.row))
+                || snapshot.lines.iter().any(&wanted)
                 || until.is_some_and(|until| Instant::now() >= until)
             {
                 return Ok(snapshot);
@@ -1100,7 +1131,8 @@ impl DesktopSession {
 
     /// Runs `act` on the desktop as `read` saw it, then returns the settled
     /// window as an edit of `base`, or whole when the act opened a window in
-    /// front: that window is where the next step reads. No read comes
+    /// front: that window is where the next step reads, and the move is kept
+    /// for the agent's next answer as [`Self::switch`] keeps it. No read comes
     /// between `read` and the act, since each read retires the last one's
     /// tokens.
     fn act(
@@ -1114,8 +1146,9 @@ impl DesktopSession {
         let start = Instant::now();
         act(self)?;
         self.settle(before, start)?;
-        if let Some(opened) = front(&self.listed()?, |window| !windows.contains(&window.key)) {
-            self.window = Some(opened);
+        let listed = self.listed()?;
+        if let Some(opened) = front(&listed, |window| !windows.contains(&window.key)) {
+            self.switch(read.key, opened, &listed, WindowSwitchCause::Opened);
             let before = self.fingerprint()?;
             self.settle(before, Instant::now())?;
         }
@@ -1336,6 +1369,15 @@ fn key_row(key: &str) -> Row {
         states: Vec::new(),
         depth: 0,
     }
+}
+
+/// The press of a click at screen point (`x`, `y`) whose read is still cut
+/// at the walk on's longest with no row under the point (Rule 5): the
+/// control there may lie past the cut, so the click takes the gate's floor,
+/// a person's press for every send, as a class no grant names does. A
+/// press is a gate step, not a refusal: the person presses it.
+fn floor_press(x: f64, y: f64) -> BrowserError {
+    BrowserError::NeedsPress(format!("the point ({x:.0}, {y:.0}) past the tree's cut"))
 }
 
 fn text_of(value: &Value, name: &str) -> String {
@@ -1755,14 +1797,22 @@ impl BrowserDriver for DesktopSession {
         {
             return Err(BrowserError::StaleImage(input.image));
         }
-        let row = snapshot.line_at(x, y).map(|line| line.row.clone());
+        // The row under the point judges the press (Rule 5): a read cut
+        // before a row is there walks on first, as an act on a row does. A
+        // walk that gave way to another window leaves the image stale.
+        let read = self.search_lines(snapshot, None, |line| line.covers(x, y))?;
+        if read.key != frame.window {
+            return Err(BrowserError::StaleImage(input.image));
+        }
+        let row = read.line_at(x, y).map(|line| line.row.clone());
         let class = row.as_ref().and_then(|row| effect_class(&row.name));
         let press = match (class, &row) {
             (Some(class), Some(row)) => press_for(&mut self.policy, class, row)?,
+            (_, None) if read.partial.is_some() => return Err(floor_press(x, y)),
             _ => PressMode::None,
         };
-        let key = snapshot.key;
-        let mut observation = self.act(&snapshot, &Base::of(input.base), |session| {
+        let key = read.key;
+        let mut observation = self.act(&read, &Base::of(input.base), |session| {
             session
                 .input(
                     "click",
