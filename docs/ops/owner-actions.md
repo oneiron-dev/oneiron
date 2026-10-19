@@ -93,7 +93,7 @@ keeps its backups in
 private and on the vault's own disk (`/vault/data.backups` and `/vault/data.rehearsals` in the
 vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). The
 server also takes a backup on demand: `POST /v1/owner/backups`. `GET /v1/owner/backups` lists the
-backups.
+backups. The vault's key custody publishes beside them: [Key custody beside your backups](key-custody.md).
 
 ### The owner's backup setting
 

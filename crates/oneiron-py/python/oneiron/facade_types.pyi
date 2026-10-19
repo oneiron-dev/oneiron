@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1068 facade rows, 3644 declarations.
+Census: 1068 facade rows, 3645 declarations.
 Inputs: 1003 of 1068 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 958 of 1068 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -6792,6 +6792,9 @@ class RecordEraseOutcome(TypedDict):
     same_bytes: list[EraseSameBytesRow]
 class RecordEraseSweepRequest(TypedDict):
     receipt_ref: str
+class RecordEraseCustody(TypedDict):
+    state: str
+    pending: list[str]
 class RecordEraseSweep(TypedDict):
     receipt_ref: str
     request_id: str
@@ -6799,6 +6802,7 @@ class RecordEraseSweep(TypedDict):
     sweep_queued_at: NotRequired[int | None]
     deadline_at: NotRequired[int | None]
     sweep_complete_at: NotRequired[int | None]
+    custody: NotRequired[RecordEraseCustody | None]
 class ResearchChildWire(TypedDict):
     root: EntityId
     parent: EntityId

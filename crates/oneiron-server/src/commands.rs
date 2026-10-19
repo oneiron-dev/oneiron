@@ -31,7 +31,7 @@ use crate::skills_pack::{self, OutputMode};
 /// second HTTP stack, and its whole surface is routes this server already
 /// serves — no endpoint, no authority model, and no response interpretation is
 /// added here.
-mod api;
+pub(crate) mod api;
 pub(crate) mod credential_file;
 mod host_init;
 pub use self::host_init::host_init;
