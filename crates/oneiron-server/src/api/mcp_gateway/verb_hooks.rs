@@ -114,6 +114,13 @@ fn mcp_hooks_admitted(
         }
         crate::api::facade::row_door_admits(server, auth, tool).map_err(mcp_facade_error)?;
     }
+    if actor.auth.is_none() && matches!(tool, "host.compact" | "host.wake" | "host.budget.hit") {
+        return Err(McpGatewayError::new(
+            -32020,
+            "forbidden",
+            "a host trigger requires the owner's verified credential",
+        ));
+    }
     let reader = VerbCall::reader_of(memory, tool).map_err(mcp_facade_error)?;
     Ok((reader, Some(mcp_rewrite_admit(server, tool, actor))))
 }
@@ -202,6 +209,7 @@ impl McpCallContext {
             off_record_session: None,
             room_turn: None,
             drain: Some(drain),
+            forwarded: None,
         };
         mcp_rewrite_admit(server, &call.verb, &context)(&call.verb, &call.args)
             .map_err(|_| VerbAskRefusal::ScopeRefused)?;

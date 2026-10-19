@@ -25,6 +25,12 @@
 //!
 //! A successor that carries the owner's approved prompt continuation of its
 //! failed predecessor (FIX 3694) runs as the fork of that run, from its cut.
+//!
+//! A leased run's planned team writes its start on the run's own seat and
+//! line, and a planned team's leader runs with the exact pattern pack its
+//! launch froze (DOOR-111 S4c, `pattern_launch`).
+pub(super) mod pattern_launch;
+
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -69,7 +75,7 @@ use oneiron::{DreamerRunnerStore, EntityId, LlmError, RetryableLlmError, Vault, 
 use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
-use super::{ReaderSeats, SyncServer};
+use super::{HousekeepingAdmission, ReaderSeats, SyncServer, admit_every_pass};
 use crate::ai_host::payer_funding::{
     PayerFault, park_for_payer, resume_payer_parks, scope_funding,
 };
@@ -180,14 +186,26 @@ impl SyncServer {
     /// Starts the pump, or returns `None` when no engine-native code host
     /// serves this vault.
     pub(crate) fn spawn_resident_pump(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
+        self.spawn_resident_pump_admitted(admit_every_pass())
+    }
+
+    /// Starts the pump on a host with a write freeze: each pass and each run
+    /// is admitted through `admit`, and holds that admission on its blocking
+    /// thread until its last write, so an aborted pump's work still counts
+    /// until its writes do. A run is admitted after its permit wait and
+    /// before its claim. Nothing is admitted while the pump waits.
+    pub(crate) fn spawn_resident_pump_admitted(
+        self: &Arc<Self>,
+        admit: HousekeepingAdmission,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         self.code_execution_host()?.engine_native()?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
-            server.pump_residents_forever().await
+            server.pump_residents_forever(admit).await
         }))
     }
 
-    async fn pump_residents_forever(self: Arc<Self>) {
+    async fn pump_residents_forever(self: Arc<Self>, admit: HousekeepingAdmission) {
         // Subscribed before the first pass, so a commit between that pass
         // and the first wait still wakes the loop.
         let mut wake = AttemptQueue::new(self.vault()).subscribe();
@@ -195,13 +213,22 @@ impl SyncServer {
         let running: Arc<Mutex<HashSet<AttemptId>>> = Arc::default();
         let mut failing: BTreeMap<String, String> = BTreeMap::new();
         loop {
+            // A refused pass (a vault frozen for reap) wakes and resumes
+            // nothing, and asks again.
+            let Some(admission) = admit() else {
+                tokio::time::sleep(PASS_SPACING).await;
+                continue;
+            };
             let server = Arc::clone(&self);
-            let pass = tokio::task::spawn_blocking(move || server.resident_pass(unix_now()))
-                .await
-                .unwrap_or_else(|error| Pass {
-                    ready: Vec::new(),
-                    faults: BTreeMap::from([("pass".to_owned(), error.to_string())]),
-                });
+            let pass = tokio::task::spawn_blocking(move || {
+                let _admission = admission;
+                server.resident_pass(unix_now())
+            })
+            .await
+            .unwrap_or_else(|error| Pass {
+                ready: Vec::new(),
+                faults: BTreeMap::from([("pass".to_owned(), error.to_string())]),
+            });
             for (what, reason) in &pass.faults {
                 if failing.get(what) != Some(reason) {
                     tracing::warn!(%what, %reason, "the resident pump cannot serve this; it retries");
@@ -220,8 +247,9 @@ impl SyncServer {
                 }
                 let server = Arc::clone(&self);
                 let running = Arc::clone(&running);
+                let admit = Arc::clone(&admit);
                 tokio::spawn(async move {
-                    if !server.run_agent(id, of).await {
+                    if !server.run_agent(id, of, &admit).await {
                         held(&running).remove(&id);
                     }
                 });
@@ -307,7 +335,12 @@ impl SyncServer {
     /// Waits its agent's turn for a permit, then claims, runs and settles
     /// one run on its own thread. Returns whether later passes must leave the
     /// run alone: a claim that failed fails again on every pass.
-    async fn run_agent(self: Arc<Self>, id: AttemptId, of: RunOf) -> bool {
+    async fn run_agent(
+        self: Arc<Self>,
+        id: AttemptId,
+        of: RunOf,
+        admit: &HousekeepingAdmission,
+    ) -> bool {
         let key = of.key();
         let permit = loop {
             let wait = match self
@@ -323,16 +356,25 @@ impl SyncServer {
                 break permit;
             }
         };
+        // Admitted with its permit in hand and before its claim. A refused
+        // run (a vault frozen for reap) stays unclaimed, and a later pass
+        // reads it again.
+        let Some(admission) = admit() else {
+            return false;
+        };
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let server = Arc::clone(&self);
         // The run's host door runs its rows on this runtime.
         let runtime = tokio::runtime::Handle::current();
         // The engine REPL driver's future is not `Send`: each run drives it
         // on its own thread with its own reactor, as `execute_code` does.
+        // The admission goes with it, held through its claim, its run and
+        // its settlement.
         let spawned = std::thread::Builder::new()
             .name("oneiron-agent-run".to_owned())
             .spawn(move || {
                 let leave = server.run_agent_blocking(id, of, &key, runtime);
+                drop(admission);
                 drop(permit);
                 let _ = sender.send(leave);
             });
@@ -521,6 +563,12 @@ fn run_bound(
             tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a wake's model change was not noted in the agent's diary");
         }
     }
+    // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
+    // pack its launch froze, its SKILL.md before any other skill's body; a
+    // continued run's task, its source's fork, already holds it there.
+    let leader =
+        pattern_launch::leader_exposure(vault, &status.attempt, &mut config, continues, unix_now())
+            .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled. The
     // body is tagged where it went, so the run's first step is captured with
@@ -528,7 +576,7 @@ fn run_bound(
     // it too, and its task already holds the body: it is tagged where its
     // source's append put it.
     let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
-    let mut exposures = Vec::new();
+    let mut exposures: Vec<TaskExposure> = leader.into_iter().collect();
     if let Some(skill) = AgentDispatcher::new(vault)
         .prepare_project_conversation_run(
             &status.attempt,
@@ -726,8 +774,9 @@ fn continued_seat(
 /// calls do (FIX 3194): `spend`'s guard for the entry, else the provider's.
 /// It runs on `model_seat`, the one `run_bound` bore it on. With the host's
 /// `[models.planner]` seats, its spawns are planned on `decisions`' ladder
-/// and its leader calls answer; `issuer` signs its leader's subproject
-/// spawn.
+/// and its leader calls answer, and its planned team's start is written on
+/// `model_seat` and the entry's line (DOOR-111 S4c-4); `issuer` signs its
+/// leader's subproject spawn.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -756,8 +805,19 @@ fn enter_run(
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
         .with_reader_spawn(seat.clone())
         .with_replay_exposures(exposures.to_vec());
+    let meter = spend
+        .map(|scope| ScopeMeter::open(vault, scope))
+        .transpose()?;
+    // The line the entry's model calls spend on: its scope's meter and the
+    // payer it bills, else the provider's.
+    let line = match &meter {
+        Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
+        None => provider.host_meter().map(|guard| (guard, None)),
+    };
     let planner = decisions.host_planner_decisions(actor.entity_ref());
-    if let Some(planner) = planner_binding(vault, provider, config, planner)? {
+    if let Some(mut planner) = planner_binding(vault, provider, config, planner)? {
+        planner.pattern_runner =
+            pattern_launch::agent_runner(vault, provider, status, actor, model_seat, line.clone());
         bound = bound.with_planner(planner);
     }
     if let Some(issuer) = issuer {
@@ -776,16 +836,13 @@ fn enter_run(
             proof,
             provider.planner().cloned(),
             config.model.as_str().to_owned(),
+            model_seat.cloned(),
+            status.input.definition.clone(),
+            spend.cloned(),
         )
         .map_err(text)?
         .enter();
-    let meter = spend
-        .map(|scope| ScopeMeter::open(vault, scope))
-        .transpose()?;
-    door.bind_meter(match &meter {
-        Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
-        None => provider.host_meter().map(|guard| (guard, None)),
-    });
+    door.bind_meter(line);
     let entered = enter_engine_native_run(
         vault, provider, &bound, config, compaction, reactor, meter, model_seat,
     );
@@ -844,6 +901,9 @@ pub(crate) fn seated_planner<'a>(
         decisions: Some(decisions),
         leader: LeaderStarterSkills::seeded().map_err(text)?,
         top: settings.top,
+        // A leased run's entry lends its own (`enter_run`); a host action
+        // binds none.
+        pattern_runner: None,
     }))
 }
 
@@ -919,7 +979,9 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .then(|| brief.to_owned())
         .into_iter()
         .chain(parts)
-        .chain(std::iter::once(status.input.comm.prompt_block()))
+        .chain(std::iter::once(oneiron::agent_dispatch::comm_prompt_block(
+            status.input.comm,
+        )))
         .collect::<Vec<_>>()
         .join("\n\n")
 }

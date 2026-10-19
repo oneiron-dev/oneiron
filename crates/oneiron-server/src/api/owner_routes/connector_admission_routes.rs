@@ -31,17 +31,20 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::connector_key::qualification::ConnectorQualificationReceipt;
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
     ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
-    ProbeManifestQualifier, SlateDisposition, SlateManifest, SlateOwnerOverride, SlateRow,
-    SlateToolManifest,
+    ProbeManifestQualifier, SlateDisposition, SlateManifest, SlateOwnerOverride, SlateToolManifest,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::retrieval_depth::RetrievalDeadline;
-use oneiron::vault_shape::ShapePlanReach;
+pub(crate) use oneiron::task_verb::sdk::{
+    ConnectorKeyView as KeyView, ConnectorSlateView as SlateView,
+};
+use oneiron::task_verb::sdk::{
+    ProxyConnectorAdmitRequest, ProxyConnectorRegistration, ProxyConnectorRevokeWriteRequest,
+};
 use oneiron::{EntityId, Vault};
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
@@ -70,6 +73,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/connectors/refresh", post(refresh))
         .route("/connectors/enabled", post(enabled))
         .route("/connectors/proxy", post(proxy))
+        .route("/connectors/proxy/revoke-write", post(revoke_proxy_write))
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,21 +141,6 @@ struct EnabledRequest {
     enabled: bool,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ProxyRequest {
-    /// The paired actor the proxy is admitted for, as 32 hex.
-    actor: String,
-}
-
-#[derive(Debug, Serialize)]
-struct ProxyAdmitted {
-    /// The actor's catalog name on the proxy connector.
-    connector: String,
-    key: KeyView,
-    slate: SlateView,
-}
-
 #[derive(Debug, Serialize)]
 struct Refreshed {
     connector: String,
@@ -178,45 +167,6 @@ struct Registered {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct SlateView {
-    id: String,
-    revision: u64,
-    /// An owner stamp whose manifest and grant still hold.
-    stamped: bool,
-    facet_limit: Option<Vec<String>>,
-    manifest: Vec<SlateToolManifest>,
-    rows: Vec<SlateRow>,
-    /// What every actor can send now, and once a stamp of these rows lands
-    /// and its keys qualify (ARCH-0070 `shape:reach-line`). It informs the
-    /// stamp and never blocks it.
-    reach: ShapePlanReach,
-}
-
-impl SlateView {
-    /// `slate` with the reach a stamp of its rows as they stand brings.
-    fn new(vault: &Vault, id: EntityId, slate: &ConnectorGrantSlate) -> OwnerResult<Self> {
-        let reach = vault
-            .slate_stamp_reach(id, &BTreeMap::new())
-            .map_err(engine)?;
-        Ok(Self::with_reach(id, slate, reach))
-    }
-
-    fn with_reach(id: EntityId, slate: &ConnectorGrantSlate, reach: ShapePlanReach) -> Self {
-        Self {
-            id: id.to_hex(),
-            revision: slate.revision(),
-            stamped: slate.owner_actor().is_some() && slate.stamp_holds(),
-            facet_limit: slate
-                .facet_limit()
-                .map(|facets| facets.iter().map(EntityId::to_hex).collect()),
-            manifest: slate.manifest().to_vec(),
-            rows: slate.rows().to_vec(),
-            reach,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
 struct Setup {
     connector: String,
     summary: String,
@@ -224,57 +174,6 @@ struct Setup {
     endpoint: Option<String>,
     key: KeyView,
     slate: Option<SlateView>,
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct KeyView {
-    id: String,
-    status: &'static str,
-    secret_ref: Option<String>,
-    protocol_revision: Option<String>,
-    /// The slate revision the last qualification accepted.
-    accepted_slate_revision: Option<u64>,
-    consent_required: bool,
-    qualification: Option<ConnectorQualificationReceipt>,
-    /// The approved resolved manifest's hash, as 64 hex.
-    manifest_hash: Option<String>,
-    pending_manifest: Option<PendingView>,
-}
-
-impl KeyView {
-    fn new(id: EntityId, record: ConnectorKeyRecord) -> OwnerResult<Self> {
-        let manifest_hash = record
-            .retained_manifest
-            .as_ref()
-            .map(|manifest| manifest.hash().map(|hash| hex(&hash)))
-            .transpose()?;
-        Ok(Self {
-            id: id.to_hex(),
-            status: record.status.as_str(),
-            secret_ref: record.secret_ref,
-            protocol_revision: record.protocol_revision,
-            accepted_slate_revision: record.slate_revision,
-            consent_required: record.consent_required,
-            qualification: record.qualification_receipt,
-            manifest_hash,
-            pending_manifest: record.pending_manifest.map(|pending| PendingView {
-                candidate: hex(&pending.candidate_id),
-                protocol_revision: pending.protocol_revision,
-                report_hash: pending.qualification_report_hash,
-            }),
-        })
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct PendingView {
-    candidate: String,
-    protocol_revision: String,
-    report_hash: Option<String>,
-}
-
-fn hex(bytes: &[u8; 32]) -> String {
-    blake3::Hash::from(*bytes).to_hex().to_string()
 }
 
 /// An engine refusal as the owner reads it: a fixed sentence about the
@@ -629,10 +528,10 @@ pub(crate) fn qualify_connector(
     // After a refresh the suite may find no manifest change, or apply a
     // proved narrow itself: nothing is left to approve.
     if record.pending_manifest.is_none() && record.retained_manifest.is_some() {
-        return KeyView::new(catalog.key, record);
+        return Ok(KeyView::new(catalog.key, record)?);
     }
     let approved = approve(vault, owner, catalog.key)?;
-    KeyView::new(catalog.key, approved)
+    Ok(KeyView::new(catalog.key, approved)?)
 }
 
 /// Stages the resolved manifest under the suite, then runs the suite again
@@ -849,7 +748,7 @@ fn switch_connector(vault: &Vault, request: &EnabledRequest) -> OwnerResult<KeyV
         }
         (ConnectorKeyStatus::Revoked, _) => return Err(removed()),
     };
-    KeyView::new(catalog.key, record)
+    Ok(KeyView::new(catalog.key, record)?)
 }
 
 /// `POST /v1/owner/connectors/proxy`: admits the OpenAI proxy for one
@@ -858,28 +757,43 @@ fn switch_connector(vault: &Vault, request: &EnabledRequest) -> OwnerResult<KeyV
 async fn proxy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ProxyRequest>, JsonRejection>,
-) -> OwnerReply<ProxyAdmitted> {
+    payload: Result<Json<ProxyConnectorAdmitRequest>, JsonRejection>,
+) -> OwnerReply<ProxyConnectorRegistration> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let reply = blocking(move || -> OwnerResult<ProxyAdmitted> {
+    let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
         let actor = entity_id("actor", &request.actor)?;
         let admitted = server
             .vault()
             .admit_proxy_connector(&owner, actor, unix_seconds_now())
             .map_err(engine)?;
-        let connector = admitted
-            .key
-            .catalog
-            .as_ref()
-            .map(|entry| entry.name.clone())
-            .unwrap_or_default();
-        let slate = SlateView::new(server.vault(), admitted.slate_ref, &admitted.slate)?;
-        Ok(ProxyAdmitted {
-            connector,
-            key: KeyView::new(admitted.key_ref, admitted.key)?,
-            slate,
-        })
+        Ok(ProxyConnectorRegistration::from_registration(
+            server.vault(),
+            admitted,
+        )?)
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+async fn revoke_proxy_write(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ProxyConnectorRevokeWriteRequest>, JsonRejection>,
+) -> OwnerReply<ProxyConnectorRegistration> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
+        let actor = entity_id("actor", &request.actor)?;
+        let key = entity_id("key", &request.key)?;
+        let registration = server
+            .vault()
+            .revoke_proxy_connector_write(&owner, actor, key, request.revision, unix_seconds_now())
+            .map_err(engine)?;
+        Ok(ProxyConnectorRegistration::from_registration(
+            server.vault(),
+            registration,
+        )?)
     })
     .await?;
     Ok(Json(reply))

@@ -17,6 +17,8 @@ oneiron = { path = "../oneiron" }
 # ONE-1441 WIRE-P1: the shared SDK backend. This crate reaches an embedded or
 # remote vault THROUGH it and never depends on an HTTP client directly.
 oneiron-remote = { path = "../oneiron-remote" }
+# The engine-backed served client (OF-237), behind `engine`.
+oneiron-server = { path = "../oneiron-server", optional = true }
 napi = { version = "3", default-features = false, features = ["napi8", "serde-json"] }
 napi-derive = "3"
 base64 = "0.22"
@@ -35,6 +37,12 @@ napi = { version = "3", default-features = false, features = ["dyn-symbols"] }
 
 [build-dependencies]
 napi-build = "2"
+
+[features]
+# `Oneiron.startEngine`: the full server inside this process, and handles it
+# serves under the caller's own credential. Off by default, so the addon
+# builds exactly as before; build it with `--features engine`.
+engine = ["dep:oneiron-server"]
 
 [lints]
 workspace = true

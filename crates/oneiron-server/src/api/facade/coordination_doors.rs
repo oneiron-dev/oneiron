@@ -5,15 +5,19 @@
 //! spawned agent by its attempt; and the owner's run doors over one TASK's
 //! branches (DOOR-100): the unrefusable force-stop of every live branch,
 //! and the read of every branch; and the owner's read of one consult's
-//! terminal register (DOOR-063). `host_doors` re-exports them, so the
-//! generated HTTP facade handler and the MCP dispatcher call them by the
-//! name every host door has.
+//! terminal register (DOOR-063); and the owner's reads of this node's
+//! Dreamer runner (DOOR-101): its MACRO home and one consolidation job's
+//! lineage. `host_doors` re-exports them, so the generated HTTP facade
+//! handler and the MCP dispatcher call them by the name every host door has.
 use std::sync::Arc;
 use std::time::Instant;
 
 use oneiron::agent_dispatch::PlannerDecisions;
 use oneiron::code_run::HostPlannerBinding;
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::{
+    ConsolidationHomeView, ConsolidationLineageRequest, ConsolidationLineageView,
+};
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_type::PlacementDecisions;
@@ -21,6 +25,7 @@ use oneiron::task_verb::run_doors::{
     CancelForceReceipt, CancelForceRequest, ConsultInspection, ConsultReadRequest,
     ConsultSummaryView, RunBranchesRequest, RunBranchesView,
 };
+use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::team::PlannedSpawnHost;
 use oneiron::team::doors::{
     CriticAssociation, PlannedSpawnObservation, PlannedSpawnRead, SpawnIntentReply,
@@ -274,6 +279,50 @@ fn consult_rows(read: &ConsultInspection) -> Option<Vec<oneiron::EntityId>> {
     rows.sort_unstable();
     rows.dedup();
     Some(rows)
+}
+
+/// A home read names no row: the designation and the client id are this
+/// node's private runner state, not vault records.
+pub(crate) async fn vault_consolidation_home_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> MaybeListed<ConsolidationHomeView> {
+    const VERB: &str = "vault.consolidation.home.get";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        |server, owner| oneiron::dreamer_runner::consolidation_home_as(server.vault(), &owner),
+        |_| Some(Vec::new()),
+    )
+    .await
+}
+
+/// A lineage read names each committed step's claim; the tries are this
+/// node's private queue rows, not vault records.
+pub(crate) async fn vault_consolidation_lineage(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ConsolidationLineageRequest,
+) -> MaybeListed<Option<ConsolidationLineageView>> {
+    const VERB: &str = "vault.consolidation.lineage";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::dreamer_runner::consolidation_lineage_as(server.vault(), &owner, input)
+        },
+        |read| {
+            Some(
+                read.iter()
+                    .flat_map(|lineage| lineage.steps.iter().map(|step| step.claim_ref))
+                    .collect(),
+            )
+        },
+    )
+    .await
 }
 
 fn spawn_intent_rows(reply: &SpawnIntentReply) -> Option<Vec<oneiron::EntityId>> {

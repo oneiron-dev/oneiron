@@ -271,6 +271,10 @@ pub struct ServeArgs {
     #[arg(long)]
     pub dimensions: Option<usize>,
 
+    /// Measured MRL prefix width: 1 <= fast-dims < dimensions, fixed at vault open.
+    #[arg(long)]
+    pub fast_dims: Option<u16>,
+
     /// LMDB map size in bytes.
     #[arg(long)]
     pub map_size: Option<usize>,
@@ -395,7 +399,9 @@ pub struct ServeArgs {
     /// hosting is opt-in.
     #[arg(long, value_parser = parse_privacy_posture)]
     pub privacy_posture: Option<HostingPrivacyPosture>,
-    /// Failure-signal participation for self-hosted deployments (default off).
+    /// "Help improve Oneiron": send the content-free failure counts and the
+    /// Coach's code-fix records. Default on for a hosted vault, which can
+    /// turn it off; off on self-host until set true.
     #[arg(long, action = clap::ArgAction::Set)]
     pub failure_signal_export: Option<bool>,
     /// Separate, explicit training consent (default off in every tier).
@@ -461,6 +467,7 @@ impl fmt::Debug for ServeArgs {
             .field("allowed_origins", &self.allowed_origins)
             .field("trusted_proxies", &self.trusted_proxies)
             .field("dimensions", &self.dimensions)
+            .field("fast_dims", &self.fast_dims)
             .field("map_size", &self.map_size)
             .field("log_level", &self.log_level)
             .field("dict_search_paths", &self.dict_search_paths)

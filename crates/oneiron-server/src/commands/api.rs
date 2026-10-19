@@ -139,6 +139,15 @@ pub(crate) fn request_for_command(
     let base = normalized_base(base_url)?;
 
     match command {
+        ApiCommand::GraphFs(command) => {
+            let (verb, body) = command.request(read_body)?;
+            Ok(CurlRequest {
+                method: "POST".to_owned(),
+                url: format!("{base}/v1/core/facade/{}", percent_encoded(verb)),
+                body: Some(body),
+                content_type: Some(JSON_CONTENT_TYPE.to_owned()),
+            })
+        }
         ApiCommand::Discover => Ok(CurlRequest {
             method: "GET".to_owned(),
             url: format!("{base}/api/core/discover"),

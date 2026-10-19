@@ -28,6 +28,90 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     server: &Arc<SyncServer>,
 ) -> Result<McpCallContext, McpGatewayError> {
     let credential = mcp_connector_credential(headers)?;
+    let proof_headers = mcp_proof_headers(headers)?;
+    let auth = crate::auth::CoreAuth::from_headers(
+        &proof_headers,
+        &server.config,
+        server.vault().as_ref(),
+    )
+    .map_err(|_| mcp_proof_error())?
+    .at(locality);
+    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
+        McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
+    })?;
+    let room_turn = headers
+        .get(crate::api::facade::ROOM_TURN_HEADER)
+        .map(|room| {
+            room.to_str()
+                .ok()
+                .and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
+                .ok_or_else(|| {
+                    McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header")
+                })
+        })
+        .transpose()?;
+    // A narrower caller's own holder proof, for the home an opened device
+    // asks (FIX 2905): the one this request was admitted on.
+    let forwarded = (!auth.is_owner_grade())
+        .then(|| auth.forwarded_caller_proof(&proof_headers))
+        .flatten();
+    let mut context = registered_actor(
+        server,
+        &credential,
+        auth,
+        mode,
+        request_id,
+        session,
+        room_turn,
+    )
+    .await?;
+    context.forwarded = forwarded;
+    Ok(context)
+}
+
+impl McpCallContext {
+    /// This call, on a connection that proved `peer` (mesh PR2b): its reads
+    /// and every release, final, after an await, replayed or an error, judge
+    /// that machine. An unproved peer leaves an unknown destination.
+    pub(crate) fn toward(mut self, peer: oneiron::authority::PeerMachine) -> Self {
+        self.actor.auth = self.actor.auth.take().map(|auth| auth.toward(peer));
+        self
+    }
+}
+
+/// The same connector resolution after the facade or MCP door verified the
+/// caller's holder proof. The token is the bound request's, never an input.
+pub(crate) async fn resolve_mcp_actor_for_auth(
+    server: &Arc<SyncServer>,
+    auth: &crate::auth::CoreAuth,
+    session: Option<oneiron::EntityId>,
+) -> Result<McpCallContext, McpGatewayError> {
+    let credential = auth
+        .invocation_slip()
+        .ok_or_else(mcp_proof_error)?
+        .credential_token()
+        .map_err(|_| mcp_proof_error())?;
+    registered_actor(
+        server,
+        &credential,
+        auth.clone(),
+        McpSurfaceMode::Primary,
+        "memory-proxy",
+        session,
+        None,
+    )
+    .await
+}
+
+async fn registered_actor(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    auth: crate::auth::CoreAuth,
+    mode: McpSurfaceMode,
+    request_id: &str,
+    session: Option<oneiron::EntityId>,
+    room_turn: Option<oneiron::EntityId>,
+) -> Result<McpCallContext, McpGatewayError> {
     // A paired record expires when its slip does, and a slip's lifetime runs
     // on the vault's authority clock. Judge it on that clock, as the vault
     // judges the slip: the wall clock runs ahead of it by all the time the
@@ -47,69 +131,40 @@ pub(crate) async fn resolve_mcp_gateway_actor(
     // HTTP. A live paired slip it has not seen gets its record now, by the
     // same rule, once the slip verifies — so a restart or a credential minted
     // on the stopped vault does not lock an agent out.
-    let mut actor = match registry.resolve(&credential, now, ceiling_exists) {
+    let mut actor = match registry.resolve(credential, now, ceiling_exists) {
         Err(McpConnectorActorResolutionError::UnknownCredential)
             if crate::api::pairing::register_live_paired_mcp(
                 &mut registry,
-                &credential,
-                headers,
+                credential,
+                &auth,
                 server,
             ) =>
         {
-            registry.resolve(&credential, now, ceiling_exists)
+            registry.resolve(credential, now, ceiling_exists)
         }
         resolved => resolved,
     }
     .map_err(mcp_actor_resolution_error)?;
     drop(registry);
-    // Verify the exact instrument the connector header selected, with its
-    // holder proof.
-    let proof_headers = mcp_proof_headers(headers)?;
-    let auth = crate::auth::CoreAuth::from_headers(
-        &proof_headers,
-        &server.config,
-        server.vault().as_ref(),
-    )
-    .map_err(|_| mcp_proof_error())?;
     mcp_proof_admits(server, &actor, &auth)?;
-    // OF-063 (FIX 1668): its handles act inside the session the request
-    // names, as an HTTP caller's do.
-    actor.auth = Some(
-        auth.at(locality)
-            .in_off_record_session(crate::api::call_receipt::request_session_ref(headers)),
-    );
-    // Where this request's writes land, judged once from the session it
-    // names (owner ruling FACET-READ).
-    let session = crate::api::write_facet::request_session(headers).map_err(|()| {
-        McpGatewayError::new(-32602, "tool_args_invalid", "invalid session header")
-    })?;
+    let session_ref = session.map(|session| session.to_hex());
+    actor.auth = Some(auth.in_off_record_session(session_ref.as_deref()));
     let landing = crate::api::write_facet::landing_facet(
         &server.vault,
         session,
         &actor.scope.facets,
         actor.scope.facet_ref,
     );
-    let room_turn = headers
-        .get(crate::api::facade::ROOM_TURN_HEADER)
-        .map(|room| {
-            room.to_str()
-                .ok()
-                .and_then(|room| oneiron::EntityId::from_hex(room.trim()).ok())
-                .ok_or_else(|| {
-                    McpGatewayError::new(-32602, "tool_args_invalid", "invalid room turn header")
-                })
-        })
-        .transpose()?;
     Ok(McpCallContext {
         actor,
         mode,
         request_id: request_id.to_owned(),
         landing,
         invocation: None,
-        off_record_session: crate::api::call_receipt::request_session_ref(headers)
-            .map(str::to_owned),
+        off_record_session: session_ref,
         room_turn,
         drain: None,
+        forwarded: None,
     })
 }
 

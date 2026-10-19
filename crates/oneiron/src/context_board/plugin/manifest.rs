@@ -21,7 +21,7 @@ pub const SECTION_MANIFEST_SCHEMA_VERSION: u16 = 1;
 /// Versioned wrapper over the pinned manifest. `deny_unknown_fields` is the
 /// schema's fail-closed edge: a pack cannot smuggle a field the engine will
 /// silently ignore today and interpret tomorrow.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SectionManifestEnvelope {
     pub schema_version: u16,
@@ -31,7 +31,7 @@ pub struct SectionManifestEnvelope {
 /// The pinned section recipe. The four recipe components
 /// (`state_family` · `verbs` · `authority_lane` · `budget_policy`) are typed
 /// REFERENCES, never callbacks or prompt fragments.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SectionManifest {
     pub section_id: SectionId,
@@ -43,7 +43,9 @@ pub struct SectionManifest {
     pub provenance: SectionManifestProvenance,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct SectionId(pub String);
 
@@ -66,7 +68,7 @@ pub struct AuthorityLaneRef(pub String);
 
 /// Exact package identity the manifest claims to come from. Both validation
 /// phases compare this against real bytes; neither trusts it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SectionManifestProvenance {
     pub pack_id: String,

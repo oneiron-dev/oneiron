@@ -400,9 +400,10 @@ impl Memory<'_> {
                 if admitted.len() == limit {
                     break;
                 }
+                let claim = EntityId::from_bytes(record.claim_id)?;
                 if !self
                     .vault
-                    .device_local_keeps(&EntityId::from_bytes(record.claim_id)?)?
+                    .device_local_keeps_for(&claim, &self.destination)?
                 {
                     admitted.push(record);
                 }
@@ -434,9 +435,12 @@ impl Memory<'_> {
                 if records.len() == limit {
                     break;
                 }
-                let kept = self.locality == crate::claim::CallerLocality::OffDevice
+                let kept = self.destination.is_off_device()
                     && match record.claim_id {
-                        Some(id) => self.vault.device_local_keeps(&EntityId::from_bytes(id)?)?,
+                        Some(id) => self.vault.device_local_keeps_for(
+                            &EntityId::from_bytes(id)?,
+                            &self.destination,
+                        )?,
                         None => false,
                     };
                 if !kept {
@@ -472,8 +476,10 @@ impl Memory<'_> {
     /// decision ledger. With kinds (`ReceiptKind` names: `gate`, `hook`,
     /// `outbound`, ...), the unified receipt family's receipts of those
     /// kinds, newest first, each in the same shape with its own fields. A
-    /// caller off this device sees none whose trigger is a device-local row.
-    /// An unknown kind is refused.
+    /// caller off this device sees none that names a device-local row,
+    /// judged on its family's explicit rows (its trigger, a hook run's reads,
+    /// a share's parties) before any takes a place in its page, which refills
+    /// past them (FIX 1119, FIX 1120). An unknown kind is refused.
     pub fn receipts_of_kinds(
         &self,
         limit: usize,
@@ -494,22 +500,12 @@ impl Memory<'_> {
             })?;
             query = query.with_kind(kind);
         }
-        let mut receipts = Vec::new();
-        for record in self.vault.receipts(query)? {
-            let trigger = record.trigger_ref.as_deref().and_then(|reference| {
-                EntityId::from_hex(reference.strip_prefix("claim:").unwrap_or(reference)).ok()
-            });
-            let withheld = match trigger {
-                Some(id) if self.locality == crate::claim::CallerLocality::OffDevice => {
-                    self.vault.device_local_keeps(&id)?
-                }
-                _ => false,
-            };
-            if !withheld {
-                receipts.push(family_receipt(record));
-            }
-        }
-        Ok(receipts)
+        Ok(self
+            .vault
+            .receipts_for_caller(query, &self.destination)?
+            .into_iter()
+            .map(family_receipt)
+            .collect())
     }
 
     // ── query verbs (BRIDGE-02) ─────────────────────────────────────────
