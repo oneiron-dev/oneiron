@@ -679,7 +679,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WorkflowDefinition"
@@ -687,7 +687,7 @@
      "path": "src/agent_def/workflow.rs",
      "purpose": "Saved ordered agent compositions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9,
       "struct": 1
      }
@@ -1347,6 +1347,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/agent_dispatch/workflow/workflow_task.rs",
+     "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/agent_dispatch/workflow_host.rs",
      "purpose": "Typed headless host door for running the one ready workflow leaf",
      "surface": {
@@ -1374,7 +1385,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -2844,7 +2855,7 @@
      "path": "src/authority/guest_revoke.rs",
      "purpose": "OF-232: the owner mints an Ask or Connect guest's capability slip, bound to its grant, and withdraws one…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -6098,7 +6109,7 @@
      "path": "src/batch/verified_claim_transition.rs",
      "purpose": "Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -19024,13 +19035,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/gate.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -24575,7 +24586,7 @@
      "path": "src/entity_doc/document.rs",
      "purpose": "The common actor-stamped Loro document primitive",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "fn": 9,
       "struct": 3
      }
@@ -35298,7 +35309,7 @@
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
       "crate-vis": 50,
-      "fn": 33,
+      "fn": 34,
       "struct": 2,
       "type": 1
      }
@@ -37575,7 +37586,7 @@
      "purpose": "The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -44647,7 +44658,7 @@
       "crate-vis": 12,
       "enum": 2,
       "fn": 4,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 4
      }
     },
@@ -44683,7 +44694,21 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CustodyManifestCheck"
+     ],
+     "path": "src/secret_custody/control/manifest.rs",
+     "purpose": "A sealed register whose surface stated no `manifest_ref` (CALLS CUSTODY_MANIFEST_UNSTATED)",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -44948,7 +44973,7 @@
      "path": "src/secret_custody/transition/rebind.rs",
      "purpose": "A rewrap's bindings on a machine that already holds its record (WILL L04 row 04, CALLS CUSTODY_BIND_TRAVEL)…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -53585,7 +53610,17 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_runner/workflow_try.rs",
+     "purpose": "A saved workflow's wrapper as the try that realizes a TASK (FIX 4391)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -53948,7 +53983,7 @@
      "path": "src/task_verb/runner_done.rs",
      "purpose": "A runner's \"Done means met?\", answered before it settles (OF-533)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "struct": 2
      }
@@ -56819,7 +56854,7 @@
      "path": "src/vault/entity_revision/mod.rs",
      "purpose": "Per-entity Loro history, exact reads, and idle-only index publication",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 1
      }
     },
@@ -60802,7 +60837,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61929,7 +61964,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62139,7 +62174,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62309,7 +62344,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3808,
+   "source_files": 3811,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74559,7 +74594,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -76015,7 +76050,7 @@
      "path": "src/api/facade/owner_binding.rs",
      "purpose": "WILL-PLAN L13 row 01: one revalidated binding for a managed vault's attested owner, shared by the policy…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 7
      }
     },
     {
@@ -77745,7 +77780,7 @@
      "path": "src/api/pairing.rs",
      "purpose": "Pairing-only enrollment and unauthenticated liveness discovery",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -80181,6 +80216,7 @@
      "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 20,
       "struct": 6
      }
@@ -80212,6 +80248,16 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedded/runtime.rs",
+     "purpose": "The runtime an embedded engine serves on, under the app's advisory CPU share (FIX 2661, OF-237)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -80680,6 +80726,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/protocol_close.rs",
+     "purpose": "A socket the server closes on a protocol rejection (FIX 3303, OF-538): a hello it refused, a frame it would…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -80712,7 +80768,7 @@
      "path": "src/handler/transport.rs",
      "purpose": "Guarded socket chokepoint with revocation consults on queue and flush",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -84298,7 +84354,7 @@
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the elected home dials its home and keeps its…"
     },
     "embedded": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -84333,7 +84389,7 @@
      "purpose": "The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every…"
     },
     "handler": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84566,7 +84622,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 812,
+   "source_files": 814,
    "test_files": 182
   },
   "oneiron-spawn": {

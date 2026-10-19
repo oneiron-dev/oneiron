@@ -10,7 +10,7 @@ use crate::store::legal_hold::HoldActor;
 use super::super::erase::{stage_sweep_refs_in_txn, sweep_extras};
 use super::super::gate::{
     GatedDeletion, claim_in_txn, reverify_deletion_authority_before_publication,
-    reverify_deletion_authority_when_unpublished,
+    reverify_deletion_authority_when_unpublished, revoke_guest_grants_in_txn,
 };
 use super::super::receipt::{RedactionReceiptInput, RedactionScope};
 use super::super::rendezvous::{
@@ -366,6 +366,8 @@ impl Vault {
             // arm publishes its tombstone after the scrub, so the re-fold below
             // in the publish txn is the decision that binds.
             reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
+            // A Connect guest's PERSON leaves its pacts first (FIX 3875).
+            revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
             // This scrub is the first destructive commit. The intent rides
             // the same transaction as the pt: propagation marker.
             reserve_topology_delete_in_txn(
@@ -560,6 +562,9 @@ impl Vault {
             if !authority_settled {
                 self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
             }
+            // With nothing published, this scrub is the first to touch the
+            // PERSON: a Connect guest's pacts end here (FIX 3875).
+            revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
             reserve_topology_delete_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -678,6 +683,9 @@ impl Vault {
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }
+        // A purge nothing published or scrubbed before ends a Connect
+        // guest's pacts itself (FIX 3875); otherwise they are gone already.
+        revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,

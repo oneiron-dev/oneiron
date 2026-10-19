@@ -10,12 +10,14 @@
 //! target read listed, and the rows the review itself reads raw.
 use std::sync::Arc;
 
+use oneiron::attempt_queue::{AttemptId, AttemptQueue};
 use oneiron::critic::review::{CriticReviewOutcome, CriticReviewSubmit, review_artifact};
 use oneiron::memory::{EntityView, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, ProducerRows};
+use oneiron::registry::ENTITY_TYPE_TASK;
 use oneiron::{EdgeActorClass, EntityId, Error, WriteActor};
 use serde_json::{Value, json};
 
-use super::host_doors::{Listed, internal, refused};
+use super::host_doors::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -29,6 +31,9 @@ pub(crate) async fn vault_critic_review(
     auth: &CoreAuth,
     input: CriticReviewSubmit,
 ) -> Listed<CriticReviewOutcome> {
+    if let Err(refusal) = super::owner_binding::host_preflight(server, auth) {
+        return refused(refusal);
+    }
     let (actor, class) = match super::facade_actor(server, auth) {
         Ok(caller) => caller,
         Err(_) => {
@@ -66,6 +71,10 @@ fn review(
 ) -> MemoryResult<CriticReviewOutcome> {
     let vault = server.vault();
     let (request, catalog) = input.bind(WriteActor::new(actor, class), vault.now_recorded_at())?;
+    let declared = match request.spawn_attempt {
+        Some(spawn) => admit_declared_spawn(server, auth, spawn)?,
+        None => None,
+    };
     // The session, every lens's skill and every critic are the caller's to
     // read; one it cannot read is absent to it.
     let named = std::iter::once(request.session).chain(
@@ -86,6 +95,7 @@ fn review(
         .value
         .ok_or(Error::EntityNotFound)?;
     read.extend([request.target, request.session]);
+    read.extend(declared);
     read.extend(
         request
             .critics
@@ -97,6 +107,53 @@ fn review(
     let result = review_artifact(vault, &request, &catalog, &decisions)?;
     read.push(result.verdict_claim);
     Ok(result.into())
+}
+
+/// A review names the spawn attempt it critiques only when the caller can
+/// read that attempt (FIX 5250): the vault owner reads every attempt, and
+/// anyone else reads one through the TASK it realizes. An attempt that names
+/// nothing answers as one the caller cannot read, so the refusal tells no
+/// one what exists. Returns the TASK the declaration stood on, for the rows
+/// the review was derived from.
+fn admit_declared_spawn(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    spawn: EntityId,
+) -> MemoryResult<Option<EntityId>> {
+    let vault = server.vault();
+    let unreadable = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!(
+                "spawn_attempt_ref {} is not readable by this caller",
+                spawn.to_hex()
+            ),
+            &[
+                "Omit spawn_attempt_ref to submit the review without an association, or name an attempt this caller can read.",
+            ],
+        )
+    };
+    let Some(attempt) = AttemptQueue::new(vault).get(AttemptId::from_bytes(spawn.as_bytes())?)?
+    else {
+        return Err(unreadable());
+    };
+    if let Ok(owner) = owner_proof(auth, server, VERB) {
+        owner.revalidate(vault)?;
+        return Ok(None);
+    }
+    let task = attempt
+        .task_ref
+        .as_deref()
+        .and_then(|task| EntityId::from_hex(task).ok());
+    match task {
+        Some(task)
+            if vault.get_entity_type(&task)? == Some(ENTITY_TYPE_TASK)
+                && auth.can_read_entity(vault, &task)? =>
+        {
+            Ok(Some(task))
+        }
+        _ => Err(unreadable()),
+    }
 }
 
 /// The target as every lens's questions read it: the caller's view of it,

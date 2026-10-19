@@ -199,6 +199,70 @@ impl VerifiedClaimTransition {
         Self::after_validation(store, txn, op)
     }
 
+    /// The owner's reviewed rejection of an ordinary proposal that waits in
+    /// no pending-consent row (DOOR-115). With no tray binding to answer, the
+    /// settlement door's owner proof, review handle and live Gate replay are
+    /// its authorization input; we check only the exact closing shape. The
+    /// row must still be an active Proposed claim outside MACHINE signed
+    /// history with no tray row, and the Put may only reject and retract it
+    /// with `valid_to` at `now`, end its occurred range at `now` (never
+    /// before its start) and keep its learned time.
+    pub(crate) fn after_reviewed_rejection(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        op: &BatchOp,
+        now: u64,
+    ) -> Result<Self> {
+        let BatchOp::Put {
+            id,
+            occurred,
+            learned_at,
+            data,
+            ..
+        } = op
+        else {
+            return Err(Error::InvalidClaimBody("rejection requires claim put"));
+        };
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+            .ok_or(Error::EntityNotFound)?;
+        let header = EntityMetadataHeader::parse(&raw)
+            .filter(|h| h.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+            .ok_or(Error::InvalidClaimBody(
+                "rejection predecessor is not a claim",
+            ))?;
+        let prior = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
+        if prior.approval != crate::claim::ClaimApprovalStatus::Proposed
+            || prior.lifecycle != crate::claim::ClaimLifecycleStatus::Active
+        {
+            return Err(Error::InvalidClaimBody(
+                "rejection predecessor must be an active proposal",
+            ));
+        }
+        if crate::authority::machine_claim_needs_history(store, txn, &prior)? {
+            return Err(Error::InvalidClaimBody(
+                "a MACHINE claim rejects through its signed history",
+            ));
+        }
+        if store.pending_gate_consent_in_txn(txn, id)?.is_some() {
+            return Err(Error::InvalidClaimBody(
+                "a proposal in the tray rejects through its consent",
+            ));
+        }
+        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
+        let mut expected = prior;
+        expected.approval = crate::claim::ClaimApprovalStatus::Rejected;
+        expected.lifecycle = crate::claim::ClaimLifecycleStatus::Retracted;
+        expected.valid_to = Some(now);
+        let closed = TimeRange {
+            start: header.occurred_start,
+            end: now.max(header.occurred_start),
+        };
+        if expected != next || *occurred != closed || *learned_at != header.learned_at {
+            return Err(Error::InvalidClaimBody("rejection body changed"));
+        }
+        Self::after_validation(store, txn, op)
+    }
+
     /// Inbox has verified the pending binding and an owner edit preserving
     /// predicate and subject before applying this exact Approved body.
     pub(crate) fn after_consented_edit(

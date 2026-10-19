@@ -16,7 +16,6 @@ use super::app_tier::{
 };
 use super::conn_state::ConnState;
 use super::ephemeral::late_join_presence;
-use super::hello::HelloOutcome;
 use super::socket_stop::StoppingTransport;
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 
@@ -273,22 +272,12 @@ async fn handle_connection(
     // A token can idle here — upgraded but silent — for the whole hello
     // timeout, so a revocation can land between the handshake and the first
     // frame. The sends below therefore cannot rely on the handshake's proof
-    // of liveness, and do not: they consult at the chokepoint.
-    let protocol_version = match transport.hello().await {
-        HelloOutcome::Valid(version) => version,
-        HelloOutcome::Reject(reason) => {
-            tracing::warn!(conn_id, reason, "protocol hello rejected — closing");
-            let close = WsMessage::Close(Some(CloseFrame {
-                code: close_codes::VERSION_MISMATCH,
-                reason: Utf8Bytes::from_static(reason),
-            }));
-            transport.send_unguarded_close_frame(close).await;
-            return;
-        }
-        HelloOutcome::Disconnected => {
-            tracing::info!(conn_id, "client disconnected before protocol hello");
-            return;
-        }
+    // of liveness, and do not: they consult at the chokepoint. A rejected
+    // hello is its connection's receipt before its close (FIX 3303).
+    let Some(protocol_version) =
+        super::protocol_close::hello(&mut transport, &server, conn_id).await
+    else {
+        return;
     };
 
     // Subscribe to broadcast channel for outbound messages
@@ -644,6 +633,8 @@ async fn handle_connection(
         };
 
         let Some(msg_result) = next_message else {
+            // A frame the transport refused is receipted, then closed (FIX 3303).
+            super::protocol_close::close_read_refusal(&server, &mut transport).await;
             break;
         };
         let data = match msg_result {

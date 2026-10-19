@@ -430,6 +430,9 @@ pub struct Memory<'v> {
     /// The vault owner's authentication, when a host bound the owner's own
     /// direct request (`with_owner_authorship`).
     pub(super) owner_authorship: Option<crate::consent::AuthenticatedOwner>,
+    /// The host's own slip issuer, when a host bound it
+    /// (`with_host_slip_issuer`, FIX 3875).
+    pub(super) host_slip_issuer: Option<&'v crate::authority::HostSlipIssuer>,
     /// The logical verb's id a host carried in (`with_invocation`): verb
     /// hooks run once per id, across wrappers (ARCH-0080 §3).
     pub(super) invocation: Option<crate::runtime_hooks::InvocationId>,
@@ -581,6 +584,7 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            host_slip_issuer: None,
             invocation: None,
             invocation_slip: None,
             transport_invocation: false,
@@ -628,6 +632,7 @@ impl Vault {
             producers: None,
             birth_position: Default::default(),
             owner_authorship: None,
+            host_slip_issuer: None,
             invocation: None,
             invocation_slip: None,
             transport_invocation: false,
@@ -683,6 +688,7 @@ impl<'v> Memory<'v> {
                 // A room turn writes into the room's talk, not as the owner
                 // in person.
                 owner_authorship: None,
+                host_slip_issuer: None,
                 // The same logical verb, run inside the turn.
                 invocation: self.invocation,
                 invocation_slip: self.invocation_slip.clone(),
@@ -716,6 +722,17 @@ impl<'v> Memory<'v> {
     /// The task surface's decision path a host bound, if any.
     pub(crate) fn task_decisions(&self) -> Option<&crate::task_verb::TaskDecisions<'v>> {
         self.task_decisions.as_deref()
+    }
+
+    /// Binds the host's own slip issuer, the key that signs a Connect pact's
+    /// disconnect (FIX 3875). A delete the owner makes in person through this
+    /// surface ([`Self::with_owner_authorship`]) then withdraws each live
+    /// Connect guest grant naming the PERSON it deletes, before the delete
+    /// scrubs or publishes. A surface without it deletes as before.
+    #[must_use]
+    pub fn with_host_slip_issuer(mut self, issuer: &'v crate::authority::HostSlipIssuer) -> Self {
+        self.host_slip_issuer = Some(issuer);
+        self
     }
 }
 
