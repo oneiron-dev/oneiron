@@ -104,6 +104,13 @@ side_tables! {
     AUTOREASON_BEAM_DEFAULT: VaultMeta b"authoring/default-beam-winner" LegacyJson;
     /// The id of the newest checkpoint v2 image of this vault's local chain (OF-469). Key: ().
     AUTHORITY_CHECKPOINT_V2_HEAD: VaultMeta b"authority.checkpoint.head.v2" Raw;
+    /// What this home's root signed for a linked machine's own checkpoint image (FIX 5195): the
+    /// image id, the posture and policy it was made under, the attestation and the local second
+    /// the machine last asked for it. A reply cache, so a last part whose answer the machine's RPC
+    /// timeout lost is answered from it on the machine's next pass; no image bytes, never the
+    /// delivery cache or the attestation table. Runtime-tier. Key: the machine's id16 + root key
+    /// (suite byte + key bytes).
+    AUTHORITY_CHECKPOINT_COUNTERSIGN: VaultMeta b"authority.checkpoint.local.countersign.v1:" Named;
     /// The checkpoint v2 head this install kept, the authority totals it accounts for, the local
     /// second it was kept at and the root policy this install built it under (OF-469 cutoffs).
     /// Runtime-tier: no checkpoint image carries it. Key: ().

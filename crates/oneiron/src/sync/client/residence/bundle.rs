@@ -461,12 +461,15 @@ impl SlotRelay<'_> {
             }
             let manager = Arc::clone(self.manager);
             let slot = self.slot;
+            // A full machine lands what the assembly merges (FIX 4788).
+            let materialize = self.mode == SyncResidenceMode::All;
             let (upload, back) = turn::renewing_turn(rpc, move || {
                 let upload = manager.assemble_sealed_bundle(
                     slot,
                     holder,
                     held.as_ref().map(|(bundle, pads)| (bundle, pads)),
                     None,
+                    materialize,
                 );
                 (upload, held)
             })

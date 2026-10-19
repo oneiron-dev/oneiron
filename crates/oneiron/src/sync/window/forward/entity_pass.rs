@@ -8,6 +8,7 @@ use super::{RematCtx, RematLedger};
 
 use crate::EntityId;
 use crate::error::Result;
+use crate::secret_custody::moves_custody_floor;
 use crate::sync::ingest::{
     EntityStep, IngestCtx, RefusalRetry, Residence, authority_parent_order,
     ingest_entity_in_savepoint, is_authority_row, note_born, note_delivered_in_txn,
@@ -60,6 +61,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             Ok((step, unborn)) => {
                 if unborn && let (Some(id), Some(blob)) = (step.written(), value) {
                     note_born(vault, id, blob);
+                }
+                // FIX 5338: a floor this commit moved re-judges pending custody.
+                if step.written().is_some() && value.is_some_and(moves_custody_floor) {
+                    vault.apply_pending_rebinds_after_commit();
                 }
                 step
             }
