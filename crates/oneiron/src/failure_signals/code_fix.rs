@@ -33,7 +33,7 @@ use crate::authority::{AuthorityFold, EffectiveRead};
 use crate::batch::secret_scan::scan_joined_text;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::failure_ladder::{BlockedReportRef, HealerCase, healer_case_in_txn};
+use crate::failure_ladder::{BlockedReportRef, HealerCase, failure_case_ref, healer_case_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -111,7 +111,8 @@ pub enum CodeFixSource {
 
 /// What a code fix's source stands on.
 pub(crate) struct CodeFixSubject {
-    /// The failure-ladder case, for a fix that follows one.
+    /// The failure-ladder case: the one a fix follows, or a blocked report's
+    /// run's failed case, which left its code fix to the report's.
     pub(crate) case: Option<HealerCase>,
     /// The failure's blocked reports.
     pub(crate) reports: Vec<BlockedReportRef>,
@@ -555,8 +556,9 @@ pub(crate) fn failed_case_in(
 
 /// What `source` stands on, while it stands: a case while its attempt
 /// stands failed; a blocked report while its run's filing of it is on record
-/// and the run's attempt is there, in whatever state. `None` once it does
-/// not.
+/// and the run's attempt is there, in whatever state, with the run's case
+/// and that case's reports joined on while the attempt stands failed.
+/// `None` once it does not.
 pub(crate) fn code_fix_subject_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -583,11 +585,20 @@ pub(crate) fn code_fix_subject_in(
                 return Ok(None);
             };
             let failure = failure_source_in(vault, txn, attempt.task_ref.as_deref(), &attempt)?;
+            // A failed case on the run left its own code fix to this report's
+            // (OF-380): its ladder class and evidence join the report here.
+            let case = failed_case_in(vault, txn, &failure_case_ref(id))?.map(|(case, _)| case);
+            let mut reports = vec![BlockedReportRef {
+                receipt_ref: receipt.to_hex(),
+            }];
+            for report in case.iter().flat_map(|case| &case.blocked_reports) {
+                if !reports.contains(report) {
+                    reports.push(report.clone());
+                }
+            }
             Ok(Some(CodeFixSubject {
-                case: None,
-                reports: vec![BlockedReportRef {
-                    receipt_ref: receipt.to_hex(),
-                }],
+                case,
+                reports,
                 failure,
             }))
         }
