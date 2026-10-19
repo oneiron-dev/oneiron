@@ -143,7 +143,24 @@ impl Vault {
         digest: [u8; 32],
     ) -> Result<String> {
         let mut txn = self.store.env.write_txn()?;
-        let created_at = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
+        let receipt =
+            self.append_sandbox_gate_receipt_in_txn(&mut txn, run_id, kind, outcome, body, digest)?;
+        txn.commit()?;
+        Ok(receipt)
+    }
+
+    /// The shared receipt writer for an admission whose proof and receipts
+    /// must be judged in the same write transaction.
+    pub(crate) fn append_sandbox_gate_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        run_id: EntityId,
+        kind: &str,
+        outcome: &str,
+        body: String,
+        digest: [u8; 32],
+    ) -> Result<String> {
+        let created_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let mut notices = Vec::new();
         // Compact JSON holds whitespace only inside its strings; escaped
@@ -173,7 +190,7 @@ impl Vault {
             remaining = rest;
         }
         self.store.append_gate_decision_in_txn(
-            &mut txn,
+            txn,
             &GateDecisionRecord {
                 version: 0,
                 decision_id,
@@ -193,7 +210,6 @@ impl Vault {
                 redacted_at: None,
             },
         )?;
-        txn.commit()?;
         Ok(format!("gate:{}", decision_id.to_hex()))
     }
 }

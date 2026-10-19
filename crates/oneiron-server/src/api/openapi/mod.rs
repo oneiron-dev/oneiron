@@ -6,7 +6,9 @@ mod descriptions;
 mod endpoints_merge;
 mod facade_paths;
 mod owner_paths;
+mod openai_proxy_paths;
 mod security;
+mod signing_paths;
 mod voice_bank_paths;
 
 // The children keep the `super::...` paths they carried in the flat module;
