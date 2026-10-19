@@ -2600,6 +2600,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/checkpoint_root_countersign.rs",
+     "purpose": "What this home's root signed for a linked machine's own checkpoint image (FIX 5195), kept until the machine…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RootAttestationDelivery",
       "RootAttestationDeliveryState"
@@ -5720,7 +5730,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "enum": 1,
       "re-export": 1
      }
@@ -5898,7 +5908,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -5929,6 +5939,16 @@
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/stream_known.rs",
+     "purpose": "Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -21615,7 +21635,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "mod": 18,
       "re-export": 8
@@ -21811,7 +21831,17 @@
      "path": "src/dreamer_runner/maintenance/type_tree_gate.rs",
      "purpose": "The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): \"revised by the loop from…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/type_tree_prior.rs",
+     "purpose": "The project tree's donor prior (ARCH-0079 #task-type, OF-420, FIX 5176): a thin leaf of a project's own tree…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -21828,7 +21858,7 @@
      "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 3,
       "struct": 3,
@@ -21952,10 +21982,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArmTurnProgram",
+      "DisarmTurnProgram",
       "LandedTurnRef",
       "ProgramRecipePin",
       "TurnProgramAdmissionOutcome",
@@ -21966,10 +21997,10 @@
      "path": "src/dreamer_runner/program/types.rs",
      "purpose": "The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 1,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -26056,7 +26087,7 @@
      "purpose": "Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval…",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 20,
       "struct": 4,
@@ -26292,7 +26323,20 @@
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export",
      "surface": {
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetainedFeedbackPreview"
+     ],
+     "path": "src/feedback/preview_store.rs",
+     "purpose": "The feedback previews an owner was shown, kept until they expire (FIX 5212): a send reads back the exact…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -36359,6 +36403,7 @@
      "path": "src/merge_queue/landing.rs",
      "purpose": "Crash-consistent gated landing and trailing-check green/rollback transitions",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -43762,7 +43807,7 @@
      "path": "src/repo_mutation/reviewed_stack.rs",
      "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -45239,7 +45284,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 4
      }
     },
@@ -45294,7 +45339,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -45318,7 +45363,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "re-export": 10
      }
     },
@@ -45443,7 +45488,7 @@
      "path": "src/secret_custody/transition.rs",
      "purpose": "OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1
      }
     },
@@ -45464,7 +45509,7 @@
      "path": "src/secret_custody/transition/rebind.rs",
      "purpose": "A rewrap's bindings on a machine that already holds its record (WILL L04 row 04, CALLS CUSTODY_BIND_TRAVEL)…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -49745,7 +49790,7 @@
      "path": "src/store/asset_body/stage.rs",
      "purpose": "Staging an ASSET body from a reader before the transaction that puts it (FIX 3677): the body streams into…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -55130,7 +55175,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1080
+      "fn": 1082
      }
     },
     {
@@ -61528,7 +61573,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 177,
+     "files": 178,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61542,7 +61587,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -61969,7 +62014,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 82,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62088,7 +62133,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -62986,7 +63031,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3866,
+   "source_files": 3870,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71732,7 +71777,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1051
+      "fn": 1053
      }
     },
     {
@@ -72853,7 +72898,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1052
+      "fn": 1054
      }
     },
     {
@@ -83325,7 +83370,7 @@
      "path": "src/owner/feedback.rs",
      "purpose": "Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -85787,6 +85832,7 @@
       "ArchiveOutputRef",
       "ArchiveOutputScore",
       "ArchiveQualityMetric",
+      "ArmTurnProgram",
       "ArtifactAdmitSubmit",
       "ArtifactAskOutcome",
       "ArtifactAskRecord",
@@ -86696,6 +86742,7 @@
       "DiaryReviewState",
       "DirectionOutcome",
       "DirectionSlide",
+      "DisarmTurnProgram",
       "DiscardedProposal",
       "DisclosureBand",
       "DisclosureBoundRequest",
@@ -87969,6 +88016,7 @@
       "ProductivityRole",
       "ProductivityTree",
       "ProductivityTreeRequest",
+      "ProgramRecipePin",
       "ProjectBudgetShare",
       "ProjectCardConfirmRequest",
       "ProjectCardDismissal",
@@ -89012,6 +89060,7 @@
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
+      "TurnProgramRegistration",
       "TurnTagsView",
       "TwoClocksAtom",
       "TypeByteFamily",
@@ -89198,7 +89247,7 @@
      "purpose": "—",
      "surface": {
       "enum": 848,
-      "struct": 2688
+      "struct": 2692
      }
     },
     {
