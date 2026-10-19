@@ -1915,7 +1915,7 @@
      "path": "src/attempt_queue/cancel/types.rs",
      "purpose": "Durable wire types of the ONE-1896 two-rung graceful-cancel protocol",
      "surface": {
-      "const": 8,
+      "const": 5,
       "crate-vis": 3,
       "enum": 5,
       "fn": 20,
@@ -2113,7 +2113,7 @@
      "path": "src/attempt_queue/mod.rs",
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 16,
       "re-export": 7
      }
     },
@@ -2337,7 +2337,7 @@
      "path": "src/attempt_queue/validate/field_validators.rs",
      "purpose": "Length caps, error literals, and per-field validators plus lease/manifest mutators",
      "surface": {
-      "crate-vis": 77
+      "crate-vis": 76
      }
     },
     {
