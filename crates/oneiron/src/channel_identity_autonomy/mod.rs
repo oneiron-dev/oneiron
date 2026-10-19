@@ -17,6 +17,7 @@ pub use self::types::{
     DEFAULT_GRADUATION_UNCHANGED_STREAK, DraftReviewOutcome, GraduationEvidence, GraduationOffer,
     GraduationScopeKey, MailboxReadCandidate, MailboxReadEnvelope, PREDICATE_ACTION_ENVELOPE,
     PREDICATE_AUTONOMY_MODE, PREDICATE_GRADUATION_EVIDENCE, PREDICATE_MAILBOX_READ_ENVELOPE,
+    SendAutonomyContext, send_counterparty_class,
 };
 
 use self::codec::invalid_autonomy;

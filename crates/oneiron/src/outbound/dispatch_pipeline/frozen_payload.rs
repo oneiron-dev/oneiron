@@ -61,4 +61,26 @@ pub(super) struct FrozenOutboundPayload<'a> {
     pub(super) reply_thread_ref: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) facet_ref: Option<String>,
+    /// FIX 1158: the send's relationship context and counterparty class, so
+    /// a retry cannot switch the envelope it releases on; elided when the
+    /// host supplied none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) send_autonomy: Option<FrozenSendAutonomy<'a>>,
+}
+
+/// The frozen form of [`crate::channel_identity_autonomy::SendAutonomyContext`].
+/// An unclassified send freezes `counterparty_class: null`.
+#[derive(Serialize)]
+pub(super) struct FrozenSendAutonomy<'a> {
+    pub(super) relationship: &'a str,
+    pub(super) counterparty_class: Option<&'a str>,
+}
+
+impl<'a> FrozenSendAutonomy<'a> {
+    pub(super) fn of(context: &'a crate::channel_identity_autonomy::SendAutonomyContext) -> Self {
+        Self {
+            relationship: context.relationship.as_str(),
+            counterparty_class: context.counterparty_class.as_deref(),
+        }
+    }
 }

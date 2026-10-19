@@ -86,6 +86,7 @@ fn effect(
         has_opted_in: false,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::Normal,
+        send_autonomy: None,
     }
 }
 

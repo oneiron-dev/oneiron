@@ -1,3 +1,4 @@
+use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::claim::ClaimSource;
 use crate::comm::SendOverrideMatch;
 use crate::counterparty_contact::CounterpartyFirstTouch;
@@ -288,6 +289,10 @@ pub(crate) struct ExternalEffectGateInput {
     pub(crate) has_opted_in: bool,
     pub(crate) has_permission: bool,
     pub(crate) policy_risk: ExternalEffectPolicyRisk,
+    /// FIX 1158 (OF-374): the relationship context and counterparty class
+    /// the host sent under, copied from the frozen request; read only by the
+    /// envelope release. `None`: no context supplied.
+    pub(crate) send_autonomy: Option<SendAutonomyContext>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

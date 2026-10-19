@@ -191,10 +191,13 @@ pub(super) fn touch_standing_outbound_grant_in_txn(
 /// snapshot and not yet written. `effect_key` is the canonical mail digest an
 /// owner press would bind, so an exact replay of one send finds its own slot.
 ///
-/// The Gate input carries no relationship context or counterparty class, so
-/// only an unambiguous envelope admits: exactly one context on this row at
-/// that rung, with no counterparty-class pin, bound to the effect's own actor.
-/// Anything else is `None` and the send keeps its press.
+/// FIX 1158: a send whose host supplied its relationship context (and
+/// counterparty class) reads only that context's autonomy row, so a
+/// multi-context row releases on the send's own context and a class-pinned
+/// envelope matches a send of that class. With no context supplied, only an
+/// unambiguous envelope admits: exactly one context on this row at that rung,
+/// with no counterparty-class pin. Either way it is bound to the effect's own
+/// actor, and anything else is `None`: the send keeps its press.
 pub(super) fn channel_identity_envelope_reservation_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -222,21 +225,34 @@ pub(super) fn channel_identity_envelope_reservation_in_txn(
         Ok(_) | Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(None),
         Err(error) => return Err(error),
     }
-    let mut autonomous = None;
-    for context in crate::channel_identity_selection::RelationshipContext::ALL {
-        let mode = match reader.autonomy_mode_in_txn(txn, identity, context, now, now) {
+    let (mode, counterparty_class) = if let Some(send) = effect.send_autonomy.as_ref() {
+        let mode = match reader.autonomy_mode_in_txn(txn, identity, send.relationship, now, now) {
             Ok(mode) => mode,
-            Err(Error::Gate(GateError::InvalidConsentBound(_))) => continue,
+            Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(None),
             Err(error) => return Err(error),
         };
-        if mode.rung == ChannelIdentityAutonomyRung::AutonomousWithinEnvelope
-            && autonomous.replace(mode).is_some()
-        {
+        if mode.rung != ChannelIdentityAutonomyRung::AutonomousWithinEnvelope {
             return Ok(None);
         }
-    }
-    let Some(mode) = autonomous else {
-        return Ok(None);
+        (mode, send.counterparty_class.clone())
+    } else {
+        let mut autonomous = None;
+        for context in crate::channel_identity_selection::RelationshipContext::ALL {
+            let mode = match reader.autonomy_mode_in_txn(txn, identity, context, now, now) {
+                Ok(mode) => mode,
+                Err(Error::Gate(GateError::InvalidConsentBound(_))) => continue,
+                Err(error) => return Err(error),
+            };
+            if mode.rung == ChannelIdentityAutonomyRung::AutonomousWithinEnvelope
+                && autonomous.replace(mode).is_some()
+            {
+                return Ok(None);
+            }
+        }
+        let Some(mode) = autonomous else {
+            return Ok(None);
+        };
+        (mode, None)
     };
     let Some(grant_ref) = mode.action_grant_ref else {
         return Ok(None);
@@ -245,7 +261,7 @@ pub(super) fn channel_identity_envelope_reservation_in_txn(
         identity_ref: identity,
         relationship_context: mode.relationship_context,
         verb_class: "mail.send".to_owned(),
-        counterparty_class: None,
+        counterparty_class,
         effect_key,
     };
     crate::outbound_grant::reserve_channel_identity_grant_in_txn(

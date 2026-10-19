@@ -279,6 +279,7 @@ impl Vault {
             has_opted_in: request.gate.has_opted_in,
             has_permission: request.gate.has_permission,
             policy_risk: request.gate.policy_risk.to_gate(),
+            send_autonomy: None,
         };
         // An allowed lifecycle intent is applied immediately in this same
         // txn, so it is always admitted for execution.

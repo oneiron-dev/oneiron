@@ -31,5 +31,6 @@ pub(super) fn gate_input(
         has_opted_in: request.gate.has_opted_in,
         has_permission: request.gate.has_permission,
         policy_risk,
+        send_autonomy: request.send_autonomy.clone(),
     }
 }

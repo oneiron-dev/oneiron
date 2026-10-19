@@ -170,7 +170,9 @@ pub(crate) fn channel_identity_send_holder_in_txn(
 impl crate::Vault {
     /// The candidates [`resolve_channel_identity_selection`] chooses among
     /// for `actor_ref` on `channel`, read from claim heads on one snapshot.
-    /// The host supplies the faces and, in its query, the relationship.
+    /// The host supplies the faces and, in its query, the relationship. It
+    /// carries that relationship onto the send it builds with
+    /// [`crate::outbound::OutboundDispatchRequest::send_autonomy`] (FIX 1158).
     ///
     /// [`resolve_channel_identity_selection`]: crate::channel_identity_selection::resolve_channel_identity_selection
     pub fn channel_identity_selection_candidates(

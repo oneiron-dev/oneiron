@@ -91,6 +91,40 @@ pub struct ChannelIdentityEffectCandidate {
     pub effect_key: [u8; 32],
 }
 
+/// FIX 1158 (OF-374): the relationship context a send's host asked sender
+/// selection with, and the counterparty class it named. Rides the outbound
+/// request, frozen with its sender and recipient, into the Gate's envelope
+/// release, which then reads only this context's autonomy row. A request
+/// with no context keeps the Gate's unambiguous-row rule.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendAutonomyContext {
+    pub relationship: RelationshipContext,
+    /// None is an unclassified counterparty: as on an envelope, it matches
+    /// only an unclassified envelope, never a class-pinned one.
+    pub counterparty_class: Option<String>,
+}
+
+impl SendAutonomyContext {
+    /// The host's handoff: the relationship its selection query named, and
+    /// the class [`send_counterparty_class`] takes from what it passed.
+    #[must_use]
+    pub fn from_host(relationship: RelationshipContext, explicit_class: Option<&str>) -> Self {
+        Self {
+            relationship,
+            counterparty_class: send_counterparty_class(explicit_class),
+        }
+    }
+}
+
+/// Where a send's counterparty class comes from (CALLS `FIX 1158 class
+/// source`): the envelope-row class label the host passed explicitly on this
+/// send, verbatim, else unclassified. No inference; a classifier replaces
+/// this one fn. A label no envelope can store matches no envelope.
+#[must_use]
+pub fn send_counterparty_class(explicit_class: Option<&str>) -> Option<String> {
+    explicit_class.map(str::to_owned)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChannelIdentityGrantWindowUsage {
     pub window_started_at: u64,

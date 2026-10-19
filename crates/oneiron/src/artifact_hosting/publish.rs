@@ -178,6 +178,7 @@ fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInp
         has_opted_in: false,
         has_permission: true,
         policy_risk: ExternalEffectPolicyRisk::HoldToProposal,
+        send_autonomy: None,
     }
 }
 
