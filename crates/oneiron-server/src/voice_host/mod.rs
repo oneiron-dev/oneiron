@@ -19,6 +19,7 @@ mod brain;
 mod connection;
 mod entry_barrier;
 mod extraction;
+mod hello_refusal;
 mod media_bridge;
 mod public;
 mod public_events;

@@ -285,24 +285,26 @@ impl ManagedState {
 
     /// The owner a managed voice hello's supervisor attestation names
     /// (FIX 2391): signed for this vault over the room and roster the hello
-    /// names and its `issued_at`, issued within
+    /// names, its `issued_at` and its fresh nonce, issued within
     /// [`MANAGED_VOICE_MAX_SKEW_SECS`](oneiron_vault_contract::MANAGED_VOICE_MAX_SKEW_SECS)
     /// of now, and not taken before, so a captured hello opens no second
-    /// call. The person is the call's owner only while the owner door says
-    /// so; this proves only the supervisor's word.
+    /// call while two hellos in the same second each open one. The person
+    /// is the call's owner only while the owner door says so; this proves
+    /// only the supervisor's word.
     pub(crate) fn verify_voice_owner(
         &self,
         action: &oneiron_vault_contract::ManagedOwnerAction,
         room: &str,
         roster: &str,
         issued_at: UnixTs,
+        nonce: &[u8; oneiron_vault_contract::MANAGED_VOICE_NONCE_BYTES],
     ) -> Option<oneiron::EntityId> {
         let skew = oneiron_vault_contract::MANAGED_VOICE_MAX_SKEW_SECS;
         let now = now_ts();
         if now.abs_diff(issued_at) > skew {
             return None;
         }
-        let body = issued_at.to_be_bytes();
+        let body = oneiron_vault_contract::managed_voice_body(issued_at, nonce);
         let request = oneiron_vault_contract::ManagedOwnerRequest::voice(room, roster, &body);
         if !self.ledger.verify_owner_action(action, &request) {
             return None;
@@ -1038,6 +1040,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         ledger,
     ));
     let _ = reap_gate.set(Arc::clone(&state));
+    // A public live voice session (`ai.voice.start`) holds an admission like
+    // a served write for its whole life, as a voice loop call does: a session
+    // in flight keeps a reap from finding the vault quiescent, and a frozen
+    // vault opens none. Bound before anything serves.
+    sync_server
+        .live_voice
+        .admit_with(state.background_admission());
 
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
@@ -1204,8 +1213,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 move |action: &oneiron_vault_contract::ManagedOwnerAction,
                       room: &str,
                       roster: &str,
-                      issued_at: UnixTs| {
-                    state.verify_voice_owner(action, room, roster, issued_at)
+                      issued_at: UnixTs,
+                      nonce: &[u8; oneiron_vault_contract::MANAGED_VOICE_NONCE_BYTES]| {
+                    state.verify_voice_owner(action, room, roster, issued_at, nonce)
                 },
             )
         }),
