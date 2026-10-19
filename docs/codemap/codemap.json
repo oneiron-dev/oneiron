@@ -3431,6 +3431,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/owner_work/cancel.rs",
+     "purpose": "What keeps a root request from running (FIX 4739): the owner's cancel of it, and a newer request on its target",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/owner_work/custody.rs",
      "purpose": "Custody work in the fold (WILL L04 row 04): the revision a custody request's `seen` is over, and the…",
      "surface": {
@@ -60523,9 +60533,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "OwnerWorkCancelNote",
+      "OwnerWorkCancelState",
       "OwnerWorkReceipt",
       "OwnerWorkStatus",
       "OwnerWorkUnassigned"
@@ -60534,10 +60546,10 @@
      "purpose": "The owner's work an install records for another to do, and what the named install did with it (owner work…",
      "surface": {
       "crate-vis": 4,
-      "enum": 2,
-      "fn": 3,
+      "enum": 3,
+      "fn": 4,
       "re-export": 2,
-      "struct": 1
+      "struct": 2
      }
     },
     {
@@ -60554,13 +60566,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/owner_work/record.rs",
-     "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor",
+     "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor; and…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -60724,7 +60736,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -61748,7 +61760,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 181,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63206,7 +63218,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3882,
+   "source_files": 3883,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63566,11 +63578,26 @@
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
       "const": 4,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 12,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkCancel"
+     ],
+     "path": "src/authority/owner_work/cancel.rs",
+     "purpose": "The owner's cancel of one pending root request, and its wire codec (FIX 4739, CALLS ROOT_WORK_CANCEL)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -63872,7 +63899,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63902,7 +63929,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 39,
+   "source_files": 40,
    "test_files": 1
   },
   "oneiron-bench": {
