@@ -17,6 +17,7 @@ mod redact;
 mod resume;
 mod served;
 mod state;
+mod storage;
 
 use std::sync::Arc;
 
@@ -42,6 +43,7 @@ pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
 pub use state::{InvocationClaim, InvocationEntry, InvocationOutcome, InvocationWait};
+pub(crate) use storage::{HookRecordsKept, SessionHooks, VerbHookStorage};
 
 /// One logical verb's id, minted once where the call enters and passed
 /// across transport wrappers and internal dispatch (review fix M7).
@@ -200,6 +202,9 @@ pub struct VerbHookPre {
     /// A restrictive call's own args and what its hooks changed, when a hook
     /// ran on it ([`crate::task_verb::revoke_lands`]; FIX 5076).
     pub(crate) landing: Option<crate::task_verb::revoke_lands::Landing>,
+    /// A session-only call's records its pre chain holds for its post chain
+    /// to keep ([`storage`]; WILL L11-01 S01-2c).
+    session: Option<storage::SessionCarry>,
 }
 
 impl VerbHookPre {
@@ -246,7 +251,15 @@ impl Vault {
         args: Value,
         check: VerbArgsCheck<'_>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check, None, None)
+        chain::pre(
+            self,
+            VerbHookStorage::Canonical,
+            call,
+            args,
+            check,
+            None,
+            None,
+        )
     }
 
     /// [`Self::pre_verb_hooks`] for a call settlement can run again without
@@ -268,7 +281,15 @@ impl Vault {
         resume: Option<VerbResume>,
         turn: Option<Arc<TaskWorkTurn>>,
     ) -> Result<std::result::Result<VerbHookPre, VerbHookStop>> {
-        chain::pre(self, call, args, check, resume.as_ref(), turn)
+        chain::pre(
+            self,
+            VerbHookStorage::Canonical,
+            call,
+            args,
+            check,
+            resume.as_ref(),
+            turn,
+        )
     }
 
     /// [`Self::pre_verb_hooks`] for a credential caller's call its host can
@@ -313,7 +334,7 @@ impl Vault {
         pre: VerbHookPre,
         result: Value,
     ) -> Result<std::result::Result<Value, VerbHookStop>> {
-        chain::post(self, pre, result)
+        chain::post(self, VerbHookStorage::Canonical, pre, result)
     }
 
     /// The pre chain, the verb and the post chain for one call. `run` gets

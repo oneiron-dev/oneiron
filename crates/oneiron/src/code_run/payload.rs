@@ -1,3 +1,5 @@
+mod session_hooks;
+
 use rmpv::Value;
 
 use crate::{
@@ -16,7 +18,7 @@ use super::support::{
 use super::types::{
     AgentVerbRefusalWords, SelfCall, SelfContextResult, SelfDeniedResult, SelfDispatchOutcome,
     SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFailedResult,
-    SelfMemoryEdgeWriteResult, SelfMemorySearchResult, SelfMemoryWriteResult, SelfSpeechResult,
+    SelfMemoryEdgeWriteResult, SelfMemoryWriteResult, SelfSpeechResult,
 };
 use crate::error::GateError;
 
@@ -291,25 +293,7 @@ pub(super) fn self_dispatch_outcome_value(outcome: &SelfDispatchOutcome) -> Resu
         SelfDispatchOutcome::TaskAskStatus(result) => {
             super::coordination_codec::status_value(result)?
         }
-        SelfDispatchOutcome::MemorySearch(result) => request_map(vec![
-            ("kind", Value::from("memory_search")),
-            ("query", Value::from(result.query.as_str())),
-            (
-                "results",
-                Value::Array(
-                    result
-                        .results
-                        .iter()
-                        .map(|hit| {
-                            request_map(vec![
-                                ("id", entity_id_value(hit.id)),
-                                ("score", Value::F32(hit.score)),
-                            ])
-                        })
-                        .collect(),
-                ),
-            ),
-        ]),
+        SelfDispatchOutcome::MemorySearch(result) => session_hooks::memory_search_value(result)?,
         SelfDispatchOutcome::MemoryWrite(result) => request_map(vec![
             ("kind", Value::from("memory_write")),
             ("id", entity_id_value(result.id)),
@@ -522,13 +506,7 @@ pub(super) fn decode_self_dispatch_outcome(value: &Value) -> Result<SelfDispatch
         "task_ask_status" => Ok(SelfDispatchOutcome::TaskAskStatus(
             super::coordination_codec::decode_status(value)?,
         )),
-        "memory_search" => {
-            let results = decode_array(map_get(entries, "results")?, decode_scored_entity)?;
-            Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
-                query: str_value(map_get(entries, "query")?)?.to_owned(),
-                results,
-            }))
-        }
+        "memory_search" => session_hooks::decode_memory_search(entries),
         "memory_write" => Ok(SelfDispatchOutcome::MemoryWrite(SelfMemoryWriteResult {
             id: entity_value(map_get(entries, "id")?)?,
         })),
