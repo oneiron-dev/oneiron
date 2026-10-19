@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oneiron::VaultPageSeal;
-use oneiron::recovery::checkpoint::{CheckpointKey, RestoreReason, SideRestoreSource};
+use oneiron::recovery::checkpoint::{CheckpointKey, CustodyRecovery, SideRestoreSource};
 use oneiron::world_keys::VaultKeyUnlock;
 use serde::Serialize;
 
@@ -292,23 +292,42 @@ pub(crate) struct RestoredFresh {
     pub(crate) vault: PathBuf,
     pub(crate) kinds: BTreeMap<String, u64>,
     pub(crate) entities: u64,
+    /// Claim-bound gate decisions not brought back, by id (hex): the backup
+    /// predates custody heads and their keys stayed on the old host.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) dropped_gate_decisions: Vec<String>,
+    /// Why they were dropped, when any were.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) dropped_reason: Option<&'static str>,
+    /// What the restore says about the custody head it used: "rollback not
+    /// proven: no custody anchor configured" with no anchor root set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) custody_note: Option<String>,
 }
 
+/// Why a new-host restore of a backup that names no custody head left a
+/// claim-bound gate decision out (CALLS CUSTODY_NO_HEAD_GATE_ROWS).
+const KEY_STAYED_ON_OLD_HOST: &str = "its claim key stayed on the host the backup was taken on:      the backup predates custody heads";
+
 /// Restores `backup` into a new vault at `vault_path`, where none is: the
-/// restore on a clean host. The vault takes the backup's vault's place; its
-/// exterior key custody is whatever this host holds, which on a new host is
-/// none, so gate rows sealed under claim keys kept elsewhere do not come back.
-/// The vault comes back open, its writer lease held, for the caller to unlock
-/// its data key and wrap it to this install.
+/// restore on a clean host. The vault takes the backup's vault's place. Its
+/// exterior key custody is this host's when it is here; otherwise the
+/// custody head `custody` finds beside the backup is admitted and lands
+/// with the vault (refused when a configured anchor is missing or stale, or
+/// the head's seal, chain or coverage is bad), and a backup that names no
+/// head comes back without the claim-bound gate rows whose keys stayed on
+/// the old host, each listed. The vault comes back open, its writer lease
+/// held, for the caller to unlock its data key and wrap it to this install.
 ///
 /// `finish` runs on the restored vault before it is kept, so the caller wraps
 /// its key to this install before the vault is published; a refusal there
-/// removes the vault and its page-seal mirror.
+/// removes the vault, its page-seal mirror and any custody it landed.
 pub(crate) fn restore_fresh(
     backup: &Path,
     vault_path: &Path,
     config: oneiron::VaultConfig,
     key: &CheckpointKey,
+    custody: &CustodyRecovery<'_>,
     finish: impl FnOnce(&oneiron::Vault) -> oneiron::Result<()>,
 ) -> anyhow::Result<(oneiron::Vault, RestoredFresh)> {
     let path = std::path::absolute(vault_path)?;
@@ -317,13 +336,13 @@ pub(crate) fn restore_fresh(
         "vault {} exists; a restore over it keeps its authority and custody",
         path.display()
     );
-    let (restored, report) = oneiron::Vault::restore_checkpoint_finishing(
+    let (restored, report) = oneiron::Vault::restore_checkpoint_recovering(
         backup,
         key,
         &path,
         config,
-        RestoreReason::Restore,
         now_unix_ms() / 1_000,
+        custody,
         finish,
     )
     .map_err(|error| anyhow::anyhow!("backup {} does not restore: {error}", backup.display()))?;
@@ -336,6 +355,10 @@ pub(crate) fn restore_fresh(
             vault: path,
             entities: kinds.values().sum(),
             kinds,
+            dropped_reason: (!report.dropped_gate_decisions.is_empty())
+                .then_some(KEY_STAYED_ON_OLD_HOST),
+            dropped_gate_decisions: report.dropped_gate_decisions,
+            custody_note: report.custody_note,
         },
     ))
 }

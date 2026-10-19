@@ -22,6 +22,10 @@
 //! [`restore_target_seal`]: over a vault or beside it, at that vault's tier;
 //! where no vault is, at the tier the config asks for. Re-sealing is a new
 //! sealed vault and a row-level copy, never a converter.
+//!
+//! The vault's exterior key custody publishes beside the backups instead, as
+//! a sealed, recovery-wrapped custody head and keyless log (`custody`,
+//! KS-4A1); a restore on a host without that custody recovers it from there.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -33,10 +37,12 @@ use serde::Serialize;
 use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
 use crate::machine::DiskFloor;
 
+mod custody;
 mod rehearse;
 mod restore;
 pub(crate) mod write_budget;
 
+pub(crate) use self::custody::{custody_status, take_publishing};
 #[cfg(test)]
 use self::rehearse::Owned;
 #[cfg(test)]
@@ -60,6 +66,9 @@ pub(crate) struct BackupPlan {
     /// File-name prefix scoping listing and pruning to this vault.
     pub(crate) label: String,
     pub(crate) keep: usize,
+    /// The owner-selected custody anchor root (CALLS CUSTODY_ANCHOR_ROOT):
+    /// unset by default, the anchor step pending by name (`custody`).
+    pub(crate) custody_anchor: Option<PathBuf>,
     /// The free-space floor a serving host keeps under its uploads, lent so
     /// this vault's backups and rehearsals claim their writes on it
     /// ([`write_budget`], FIX 5479); `None` on a stopped vault.
@@ -72,6 +81,7 @@ impl BackupPlan {
             dir,
             label: vault_label(vault_path),
             keep,
+            custody_anchor: None,
             floor: None,
         }
     }

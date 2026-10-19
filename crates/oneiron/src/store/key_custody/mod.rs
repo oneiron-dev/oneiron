@@ -11,9 +11,14 @@
 //! rows a retired entry takes with it. Claim-bound Gate decisions
 //! (`gate_decision::orcb`) are its first client.
 
+mod anchor;
 mod files;
 mod fork;
+mod head;
 mod identity;
+mod log;
+mod publish;
+mod recovery;
 mod retirement;
 
 use std::path::PathBuf;
@@ -25,12 +30,16 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;
 
+pub(crate) use self::anchor::{AnchorAdvance, AnchorStore, FileAnchor};
 #[cfg(test)]
 pub(in crate::store) use self::files::arm_after_key_marker_check;
-pub(crate) use self::files::{LocalCustody, custody_present};
+pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
 pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};
+pub(crate) use self::head::{CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients};
 pub(crate) use self::identity::{CustodyBinding, CustodyKind, CustodySubject};
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
+pub(crate) use self::publish::{FolderTarget, Publication, PublicationState};
+pub(crate) use self::recovery::{CustodyRequirement, CustodyRoute, CustodySourceAt, route_custody};
 #[cfg(test)]
 pub(crate) use self::retirement::arm_before_retire_lock;
 pub(crate) use self::retirement::{
@@ -195,6 +204,17 @@ pub(crate) fn binding_in_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<Option<Cust
         .find(|(key, _)| key == binding_key())
         .map(|(_, value)| BINDING.decode_value(value))
         .transpose()
+}
+
+/// Drops the image's custody binding and every retirement intent from a
+/// restored vault in `wtxn`: a new-host restore of an image that names no
+/// head, whose custody stayed on the old host. Its claim-bound rows are
+/// dropped with them; the vault mints a binding of its own when it next
+/// takes a key into custody, and no intent of the old custody's reaches a
+/// key minted here.
+pub(crate) fn unbind_in_txn(dbs: &impl SideTableDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    BINDING.delete(dbs, wtxn, &())?;
+    retirement::clear_all_in_txn(dbs, wtxn)
 }
 
 /// The binding row's full key.

@@ -426,6 +426,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/custody-anchor",
+        summary: "One custody lineage's current anchor record in this server's custody anchor root (query `vault`, 64 hex, and `namespace`, 32 hex): a position and a tag, never a key; `record` is null while it has none.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/custody-anchor",
+        summary: "Makes `record` (hex) its lineage's current anchor record while the current one is still the one whose BLAKE3 is `expected` (64 hex; null when none): `advanced` is false when another writer moved it first, and an advance that does not extend the anchored position is refused.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/decisions/asks",
         summary: "The asks after after, oldest first.",
         row: None,

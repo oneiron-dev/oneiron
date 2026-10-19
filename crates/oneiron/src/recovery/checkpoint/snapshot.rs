@@ -27,6 +27,9 @@ impl Vault {
         self.unlock_vault_key()?;
         let keys = self.checkpoint_signing_keys()?;
         let _custody = self.store.gate_custody_read_guard()?;
+        // What the image needs of its custody, read under the same guard:
+        // its position and every live id, never a key (KS-4).
+        let required = self.store.custody_requirement()?;
         let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
         if let Some(owner) = owner {
@@ -179,6 +182,7 @@ impl Vault {
             kind,
             &carried,
             &link,
+            required.as_ref(),
             created_at,
             &bytes,
             &files.streams(),

@@ -20,6 +20,7 @@ mod artifact;
 mod authority_plane;
 mod carried_bodies;
 mod commitment;
+mod custody_head;
 mod decisions;
 mod host_holds;
 mod rebuild;
@@ -33,6 +34,10 @@ use crate::store::{DB_MANIFEST, ForkedCustodyDir, LiveCustody, MadeDestination};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
 pub use commitment::CheckpointSigner;
+pub use custody_head::{
+    CUSTODY_ANCHOR_PENDING, CUSTODY_FENCED, CUSTODY_NONE, CUSTODY_PUBLISHED,
+    CUSTODY_TARGET_PENDING, CustodyAnchorRoot, CustodyRecovery, CustodyStatus,
+};
 use heed::types::Bytes;
 pub use host_holds::HostOrderHolds;
 use serde::{Deserialize, Serialize};
@@ -96,6 +101,11 @@ enum Custody<'a> {
     /// holds a key the source's live state, when given, says is destroyed or
     /// committed to be.
     Fork(Option<&'a LiveCustody>),
+    /// As `Keep`, for a new-host restore of an image that names no custody
+    /// head and whose custody is not on this host: its claim-bound rows whose
+    /// keys stayed there are dropped and named, and its binding and
+    /// retirement intents go with them (CALLS CUSTODY_NO_HEAD_GATE_ROWS).
+    NewHost,
 }
 /// The custody a side restore forked, removed on drop unless kept: a restore
 /// that fails or is refused after its fork leaves no copy of a live key.
@@ -256,6 +266,14 @@ pub struct RestoreReport {
     pub rebuilt_entities: usize,
     pub rebuilt_text_documents: usize,
     pub pending_embeddings: usize,
+    /// Claim-bound gate decisions a new-host restore dropped because their
+    /// keys stayed on the old host, by decision id (hex): the image named
+    /// no custody head (CALLS CUSTODY_NO_HEAD_GATE_ROWS).
+    pub dropped_gate_decisions: Vec<String>,
+    /// What the restore says about the custody head it used: rollback is
+    /// not proven when no anchor was configured (CALLS
+    /// CUSTODY_ANCHOR_UNSET_RESTORE).
+    pub custody_note: Option<String>,
 }
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
@@ -266,6 +284,19 @@ fn read_image<'k>(
     path: &Path,
     key: &'k CheckpointKey,
 ) -> Result<(CheckpointImage, String, artifact::SealedBodies<'k>)> {
+    read_image_required(path, key).map(|(image, id, bodies, _)| (image, id, bodies))
+}
+
+/// [`read_image`], with what the image needs of its custody (KS-4).
+fn read_image_required<'k>(
+    path: &Path,
+    key: &'k CheckpointKey,
+) -> Result<(
+    CheckpointImage,
+    String,
+    artifact::SealedBodies<'k>,
+    Option<crate::store::CustodyRequirement>,
+)> {
     let opened = artifact::open_artifact(path, key)?;
     let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != 2
@@ -298,7 +329,7 @@ fn read_image<'k>(
         return Err(codec_error());
     }
     let id = blake3::Hash::from(opened.image_id).to_hex().to_string();
-    Ok((image, id, opened.bodies))
+    Ok((image, id, opened.bodies, opened.custody))
 }
 impl Vault {
     /// Create-new output only: one sealed artifact under this vault's
@@ -409,24 +440,15 @@ impl Vault {
         restored_at: u64,
         finish: impl FnOnce(&Self) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
-        let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
-        image.drop_machine_identity();
-        let (made, forked, mut vault, report) = Self::restore_image(
-            image,
-            checkpoint_id,
-            bodies,
+        Self::restore_keeping_custody(
+            path,
+            key,
             destination,
             config,
-            reason,
-            restored_at,
-            Custody::Keep,
-            &BTreeSet::new(),
-            &write_budget::Unfloored,
-        )?;
-        finish(&vault)?;
-        forked.keep();
-        made.keep(&mut vault);
-        Ok((vault, report))
+            (reason, restored_at),
+            None,
+            finish,
+        )
     }
     /// [`Vault::restore_checkpoint`] as a copy served beside its source vault.
     /// Key custody forks at restore time: the copy gets its own custody beside
@@ -699,12 +721,16 @@ impl Vault {
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
         let (fork, source, home) = match custody {
-            Custody::Keep => (false, None, None),
+            Custody::Keep | Custody::NewHost => (false, None, None),
             Custody::Replace(home) => (false, None, Some(home)),
             Custody::Fork(source) => (true, source, None),
         };
-        let gate_custody =
-            crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?;
+        let new_host = matches!(custody, Custody::NewHost);
+        let gate_custody = if new_host {
+            crate::store::preflight_absent_custody_rows(&image.databases["vault_meta"])?
+        } else {
+            crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?
+        };
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
@@ -765,7 +791,10 @@ impl Vault {
             }
             vault
                 .store
-                .drop_erased_gate_decisions_in_txn(txn, gate_custody.erased())?;
+                .drop_erased_gate_decisions_in_txn(txn, &gate_custody.dropped())?;
+            if new_host {
+                crate::store::unbind_custody_in_txn(&vault.store, txn)?;
+            }
             // A written-here mark carried from the live vault binds only a
             // carrier the restored rows hold, byte for byte.
             crate::identity_topology::drop_unheld_author_marks_in_txn(&vault.store, txn)?;
@@ -848,6 +877,12 @@ impl Vault {
             rebuilt_entities,
             rebuilt_text_documents,
             pending_embeddings,
+            dropped_gate_decisions: gate_custody
+                .lost()
+                .iter()
+                .map(|(id, _)| id.to_hex())
+                .collect(),
+            custody_note: None,
         };
         Ok((made, forked, vault, report))
     }

@@ -12,7 +12,9 @@ use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs};
 use crate::store::Store;
 
+use super::files::LocalCustody;
 use super::identity::{CustodyKind, CustodySubject};
+use super::log::LogEntry;
 
 /// Why a subject's entries retire. An erase is complete, so nothing defers
 /// it (ARCH-0038 #erasure-completeness); a retention's may wait on its
@@ -128,6 +130,19 @@ pub(crate) fn retirements_in_txn(
         .collect())
 }
 
+/// Clears every standing intent in `wtxn`, whatever its kind.
+pub(super) fn clear_all_in_txn(dbs: &impl SideTableDbs, wtxn: &mut RwTxn<'_>) -> Result<()> {
+    let subjects: Vec<CustodySubject> = RETIRE_PENDING
+        .scan(dbs, &*wtxn)?
+        .into_iter()
+        .map(|(subject, _)| subject)
+        .collect();
+    for subject in subjects {
+        RETIRE_PENDING.delete(dbs, wtxn, &subject)?;
+    }
+    Ok(())
+}
+
 /// Every intent among raw `vault_meta` rows (a checkpoint's, or a live
 /// vault's custody rows). A key the engine would not write is no intent.
 pub(crate) fn retirements_in_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<RetirementIntent>> {
@@ -152,15 +167,24 @@ pub(crate) fn retirements_in_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<Vec<Ret
 /// Clears an intent whose generations are all retired here, in the
 /// finisher's own write transaction.
 ///
-/// KS-4 (custody head, FIX 5685) waits HERE: before an intent may clear, every
-/// target holding a copy of the subject's custody must have acknowledged the
-/// retirement durably. Until KS-4 lands, an intent clears on local
-/// durability alone, and the claim finisher stays warning-only.
+/// KS-4 (custody head, FIX 5685) waits HERE. KS-4A1: the retirement is
+/// handed to the exterior journal first, a keyless log frame synced before
+/// the intent clears, so the next head excludes the retired entries and its
+/// publication deletes every superseded head that held them; a publication
+/// that lags stays pending by name and never holds the intent. KS-4A2 adds
+/// the wait for every target's durable acknowledgement. The claim finisher
+/// stays warning-only.
 fn clear_finished_intent_in_txn(
     store: &Store,
+    custody: LocalCustody<'_>,
     wtxn: &mut RwTxn<'_>,
     intent: &RetirementIntent,
 ) -> Result<()> {
+    custody.journal_entry(&LogEntry::Retire {
+        subject: intent.subject.clone(),
+        through: intent.through,
+        cause: intent.cause,
+    })?;
     RETIRE_PENDING.delete(store, wtxn, &intent.subject)?;
     Ok(())
 }
@@ -238,7 +262,7 @@ impl Store {
                 }
                 custody.retire_local(&id)?;
             }
-            clear_finished_intent_in_txn(self, &mut wtxn, &intent)?;
+            clear_finished_intent_in_txn(self, custody, &mut wtxn, &intent)?;
             wtxn.commit()?;
         }
         Ok(())

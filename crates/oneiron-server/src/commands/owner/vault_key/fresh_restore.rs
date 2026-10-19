@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
+use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner, CustodyRecovery};
 use oneiron::world_keys::VaultKeyUnlock;
 use oneiron_keystore::DeviceKeystore;
 use serde::Serialize;
@@ -54,9 +54,17 @@ pub(crate) fn restore_fresh(
         key: &key,
     })?;
     let path = &config.vault_path;
+    // The custody head beside the backup, checked against the configured
+    // anchor when there is one, and opened with the kit when the restore
+    // was unlocked with it (KS-4A1).
+    let mut custody =
+        CustodyRecovery::beside(backup).anchored_at(config.backup.custody_anchor_root.clone());
+    if let Some(root) = super::super::recovery_kit::kit_custody_root(unlock) {
+        custody = custody.with_kit(root);
+    }
     // Before the vault is kept: its key unlocks the same way and is wrapped
     // to this install, so a sealed one is published only once it opens here.
-    let (vault, restored) = backup::restore_fresh(backup, path, target, &key, |vault| {
+    let (vault, restored) = backup::restore_fresh(backup, path, target, &key, &custody, |vault| {
         let installed = config.keystore.install_on(vault, path);
         unlock.unlock_live(vault)?;
         // A device unlock of a plain vault wraps the key to this install on
