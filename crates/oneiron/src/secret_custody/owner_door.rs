@@ -241,7 +241,7 @@ impl Vault {
             refuse_bindings_wider_than_live_floor(&self.store, &wtxn, &rec.0)?;
             let recorded = self.record_custody_change_in_txn(
                 &mut wtxn,
-                owner,
+                actor,
                 surface,
                 ActiveChange {
                     change: CustodyChange::Register,

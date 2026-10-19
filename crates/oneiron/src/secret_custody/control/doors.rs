@@ -3,8 +3,9 @@
 //! surface sealed, and the value-free view a surface reads to ask either.
 //!
 //! A rewrap seals the value a holder holds again, same generation and
-//! status, to the recipients the owner names now: how a machine he links
-//! later gets a secret, since linking alone adds nobody. A sealed change
+//! status, to the recipients the owner names now: how a linked machine he
+//! did not make his gets a secret (one he made his gets it from its holders'
+//! own rewrap, CALLS CUSTODY_ROSTER_REWRAP). A sealed change
 //! hands this install only ciphertext: the surface seals the metadata and
 //! value to the holder's key under the binding the view gives it (the id,
 //! generation, revision, holder and exact permits), so no console sees the
@@ -240,9 +241,9 @@ impl Vault {
     /// Seals the portable secret `secret_ref` names again, at its generation
     /// and status, to the installs `plan` permits, by the holder it names,
     /// this install by default: a custody rewrap request, executed here in
-    /// the same commit when this install is the holder. How a machine linked
-    /// later gets the secret: nobody is added by linking. `surface` is audit
-    /// only.
+    /// the same commit when this install is the holder. How a linked
+    /// machine that is not his gets the secret: linking alone adds nobody.
+    /// `surface` is audit only.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is no
@@ -263,7 +264,7 @@ impl Vault {
     ) -> Result<SecretCustodyWork> {
         self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
-        live_owner_in_txn(self, owner, &wtxn, "only the vault owner rewraps a secret")?;
+        let actor = live_owner_in_txn(self, owner, &wtxn, "only the vault owner rewraps a secret")?;
         let known = self
             .known_custody_in_txn(&wtxn, secret_ref)?
             .ok_or_else(|| {
@@ -290,7 +291,7 @@ impl Vault {
         }
         let recorded = self.record_custody_change_in_txn(
             &mut wtxn,
-            owner,
+            actor,
             surface,
             ActiveChange {
                 change: CustodyChange::Rewrap,
@@ -360,7 +361,7 @@ impl Vault {
             None
         };
         let mut wtxn = self.store.env.write_txn()?;
-        live_owner_in_txn(
+        let actor = live_owner_in_txn(
             self,
             owner,
             &wtxn,
@@ -379,7 +380,7 @@ impl Vault {
         };
         let recorded = self.record_custody_change_in_txn(
             &mut wtxn,
-            owner,
+            actor,
             surface,
             ActiveChange {
                 change: sealed.change,

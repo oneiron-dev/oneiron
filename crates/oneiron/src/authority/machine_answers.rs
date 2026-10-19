@@ -137,7 +137,7 @@ impl Vault {
         let folded = self.enroll_machine_in_txn(&mut txn, answer, request, role)?;
         txn.commit()?;
         #[cfg(feature = "sync")]
-        self.after_machine_admission();
+        self.reseal_after_machine_admission()?;
         Ok(folded)
     }
 
@@ -188,7 +188,7 @@ impl Vault {
         let folded = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
         txn.commit()?;
         #[cfg(feature = "sync")]
-        self.after_machine_admission();
+        self.reseal_after_machine_admission()?;
         Ok(folded)
     }
 

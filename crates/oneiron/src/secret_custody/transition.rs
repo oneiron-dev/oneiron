@@ -310,6 +310,19 @@ pub(crate) fn transition_named_in_txn(
     Ok(found.map(|(transition, record)| (transition.id, record)))
 }
 
+/// Every transition this vault holds that decodes, in `txn`.
+#[cfg(feature = "sync")]
+pub(crate) fn held_transitions_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<CustodyTransition>> {
+    Ok(TRANSITIONS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .filter_map(|(_, carrier)| CustodyTransition::decode(&carrier).ok())
+        .collect())
+}
+
 /// Every transition this vault holds, by record id.
 pub(crate) fn custody_transitions(vault: &Vault) -> Result<Vec<(EntityId, Vec<u8>)>> {
     let rtxn = vault.store.env.read_txn()?;

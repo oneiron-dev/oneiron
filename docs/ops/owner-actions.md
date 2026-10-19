@@ -1648,9 +1648,11 @@ SDK client waits up to 30 minutes for a check, as for an export.
 A portable secret's register, rotate, rewrap and revoke are each a custody request your install
 carries for your other machines. The request names the install that holds the secret and does the
 change (this install unless you name another) and the installs you permit to hold its value. Any
-linked install may hold it or be permitted, in any role. Linking a machine never adds it: a machine
-you link later gets the secret only when you rewrap it to that machine. A changed key on a machine
-needs a fresh permit; a role change alone does not.
+linked install may hold it or be permitted, in any role. A machine you mark yours gets each portable
+secret on its own: once it is admitted, every install of yours that holds the secret rewraps it to
+that machine as its holder, with no step of yours. A linked machine you have not marked yours (work,
+school, rented, a hosted node) gets a secret only when you rewrap it to that machine. A changed key
+on a machine needs a fresh permit; a role change alone does not.
 
 ```sh
 oneiron api raw POST /v1/owner/secrets/register --data '{"name": "deploy-token",

@@ -4,9 +4,11 @@
 //! transition that enacts it (CALLS CUSTODY_PERMITS).
 //!
 //! Any live linked install may be permitted, in any role: his own machine, a
-//! linked work, school or rented one, or a hosted node. A machine is never
-//! added because it was linked or because the roster gained it: linking
-//! alone is not his consent. A permit stands while its machine is still a
+//! linked work, school or rented one, or a hosted node. Linking alone is not
+//! his consent: a linked machine he did not make his gets nothing until he
+//! permits it. One he made his (mine under the holder's pin) is added by
+//! each holder's own rewrap, as the retired reseal added it (CALLS
+//! CUSTODY_ROSTER_REWRAP). A permit stands while its machine is still a
 //! live linked install of the vault with the very key permitted; a changed
 //! key needs a fresh permit, and a role change between linked roles alone
 //! leaves it standing. Only a key that imports may be permitted, as a value
@@ -26,8 +28,9 @@ enum CustodyPermits {
     /// The request carries each permitted recipient inline, with the exact
     /// profile entry and encryption key digest the owner permitted; its
     /// transition seals to exactly those, and a receiver checks the two
-    /// lists are one. No automatic list of the owner's machines, no reseal
-    /// for a machine the roster gains.
+    /// lists are one. No automatic list of the owner's machines rides a
+    /// change; a machine he makes his is added by a rewrap request its
+    /// holder records (CALLS CUSTODY_ROSTER_REWRAP).
     InlineExactBytePermits,
 }
 

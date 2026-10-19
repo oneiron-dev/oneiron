@@ -418,8 +418,9 @@ pub enum SecretsCommand {
     /// stdin.
     Reveal(Box<SecretRevealArgs>),
     /// Seal a portable secret again, same generation, to the installs you
-    /// name: how a machine you link later gets it, since linking alone
-    /// permits nobody. Reads nothing from stdin.
+    /// name: how a linked machine you have not marked yours gets it (one you
+    /// marked yours gets it from its holders on its own). Reads nothing from
+    /// stdin.
     Rewrap(Box<SecretRewrapArgs>),
     /// Push a portable secret's current custody transition, signed with
     /// your owner anchor, to the installs you name, from an install with no

@@ -572,8 +572,8 @@ pub(crate) fn revoke(
 }
 
 /// Seals a portable secret again to the installs `plan` permits, by its
-/// holder (WILL L04 row 04): how a machine linked later gets it, since
-/// linking alone permits nobody.
+/// holder (WILL L04 row 04): how a linked machine the owner has not made
+/// his gets it. One he made his gets it from its holders' own rewrap.
 pub(crate) fn rewrap(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,

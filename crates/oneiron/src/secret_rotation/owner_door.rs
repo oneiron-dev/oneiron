@@ -120,7 +120,7 @@ impl Vault {
                 .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
             let recorded = self.record_custody_change_in_txn(
                 &mut wtxn,
-                owner,
+                actor,
                 surface,
                 ActiveChange {
                     change: CustodyChange::Rotate,

@@ -27,8 +27,11 @@
 //!   committing transaction, with the value this machine opens. A machine
 //!   the value was not sealed to keeps the transition unread. The holder a
 //!   pending request names keeps the input it names.
-//! - A machine the roster gains gets no value on its own: only a rewrap the
-//!   owner records permits it (CALLS CUSTODY_PERMITS).
+//! - A machine the roster gains that is the owner's (mine under the holder's
+//!   pin) gets each portable value from a rewrap its holder records on its
+//!   own after the admission and on this upkeep (CALLS
+//!   CUSTODY_ROSTER_REWRAP); any other linked machine only from a rewrap the
+//!   owner records (CALLS CUSTODY_PERMITS).
 
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};

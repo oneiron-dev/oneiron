@@ -39,6 +39,8 @@ mod doors;
 mod execute;
 pub(super) mod input;
 pub(super) mod permits;
+#[cfg(feature = "sync")]
+mod roster;
 
 use zeroize::{Zeroize, Zeroizing};
 
@@ -136,7 +138,9 @@ pub struct CustodyPlan {
     /// The installs he permits to hold its bytes, each a live linked install
     /// with an importable key, in any role. Empty: a register permits its
     /// holder alone, a rotate keeps the permits of the secret's live change,
-    /// and a rewrap is refused. Linking a machine never adds it.
+    /// and a rewrap is refused. A machine he makes his is added by its
+    /// holders' own rewrap (CALLS CUSTODY_ROSTER_REWRAP); any other linked
+    /// machine only by his.
     pub recipients: Vec<EntityId>,
 }
 
@@ -339,7 +343,8 @@ impl Vault {
     }
 
     /// Records the owner's active custody change in the door's write
-    /// transaction, carried by this install: a custody request whose
+    /// transaction, carried by this install for `actor`, a live vault owner
+    /// the caller checked in it: a custody request whose
     /// executor is the holder the plan names, this install by default, with
     /// the permits he gave and the digest of its protected input. When this
     /// install is the holder it executes the change in the same commit, and
@@ -351,7 +356,7 @@ impl Vault {
     pub(crate) fn record_custody_change_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
+        actor: EntityId,
         surface: ActSurface,
         change: ActiveChange<'_>,
         at: u64,
@@ -412,7 +417,8 @@ impl Vault {
             holder: Some(holder),
             recipients: permits,
         };
-        let receipt = self.record_owner_work_in_txn(txn, owner, surface, change.id, seen, work)?;
+        let receipt =
+            self.record_owner_work_for_in_txn(txn, actor, surface, change.id, seen, work)?;
         let Some(hash) = receipt.request_entry() else {
             return Ok(Recorded {
                 custody: SecretCustodyWork::recorded(receipt),
