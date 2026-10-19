@@ -276,18 +276,20 @@ impl Vault {
     }
 
     /// Leaves `awaiting` as the root a pin door awaits, after a door that
-    /// pinned `root`: a wait for another root stays.
+    /// pinned `root`: a wait for another root stays. `for_request` is the
+    /// root request whose pickup awaits it, which owns the wait (FIX 5582).
     fn end_wait_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         root: RecoveryRootId,
         awaiting: Option<RecoveryRootId>,
+        for_request: Option<AuthorityEntryHash>,
     ) -> Result<()> {
         let row = read_pin_row_in_txn(&self.store, txn)?;
         if awaiting.is_none() && row.awaiting != Some(root) {
             return Ok(());
         }
-        write_awaited_root_in_txn(&self.store, txn, awaiting)
+        write_awaited_root_in_txn(&self.store, txn, awaiting, for_request)
     }
 
     /// The pin, written only when it moves. Whose seals count follows the
@@ -399,7 +401,7 @@ impl Vault {
             appended.push(self.append_anchor_mark_in_txn(txn, &anchor, actor, mark)?);
         }
         self.move_pin_in_txn(txn, old.pinned_root, pin, start.earlier_admitter)?;
-        self.end_wait_in_txn(txn, root.id, None)?;
+        self.end_wait_in_txn(txn, root.id, None, None)?;
         let mid = self.authority_view_readonly_in_txn(txn)?;
         let stands = marks
             .iter()
@@ -571,7 +573,7 @@ impl Vault {
         }
         let mark = self.append_anchor_mark_in_txn(txn, &anchor, actor, request)?;
         self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
-        self.end_wait_in_txn(txn, root.id, None)?;
+        self.end_wait_in_txn(txn, root.id, None, None)?;
         let mid = self.authority_view_readonly_in_txn(txn)?;
         if !anchor_mark_stands(&mid, root.anchor_key, mark, request) || mid.pinned_root != Some(pin)
         {
@@ -663,7 +665,7 @@ impl Vault {
             Some(self.append_anchor_mark_in_txn(txn, &anchor, actor, request)?)
         };
         self.move_pin_in_txn(txn, fold.pinned_root, pin, start.earlier_admitter)?;
-        self.end_wait_in_txn(txn, root.id, None)?;
+        self.end_wait_in_txn(txn, root.id, None, None)?;
         let mid = self.authority_view_readonly_in_txn(txn)?;
         let stands =
             mark.is_none_or(|mark| anchor_mark_stands(&mid, root.anchor_key, mark, request));
@@ -704,7 +706,7 @@ impl Vault {
         if !stored {
             self.with_write_txn(|txn| {
                 owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-                write_awaited_root_in_txn(&self.store, txn, Some(root))
+                write_awaited_root_in_txn(&self.store, txn, Some(root), None)
             })?;
             return Ok(RepinReport {
                 awaiting: Some(root),
@@ -714,19 +716,22 @@ impl Vault {
         let (secret, _) = self.own_request()?;
         self.with_write_txn(|txn| {
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            self.pin_owner_root_in_txn(txn, actor, &secret, root)
+            self.pin_owner_root_in_txn(txn, actor, &secret, root, None)
         })
     }
 
     /// [`Self::pin_owner_root`]'s transaction, in the caller's, for `owner`:
     /// a vault owner the caller read live in it, never a synthetic proof. A
     /// root this vault does not store yet is awaited, the pin staying.
+    /// `for_request` is the root request whose pickup runs it, which owns a
+    /// wait it commits (FIX 5582); `None` at the owner's own pin door.
     pub(super) fn pin_owner_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
         secret: &MachineSecret,
         root: RecoveryRootId,
+        for_request: Option<AuthorityEntryHash>,
     ) -> Result<RepinReport> {
         if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &owner)? {
             return Err(refused("the owner is no longer a live owner of this vault"));
@@ -734,7 +739,7 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let Some((_, record)) = owner_root_records_in_txn(&self.store, txn, &fold)?.remove(&root)
         else {
-            write_awaited_root_in_txn(&self.store, txn, Some(root))?;
+            write_awaited_root_in_txn(&self.store, txn, Some(root), for_request)?;
             return Ok(RepinReport {
                 awaiting: Some(root),
                 ..RepinReport::default()
@@ -760,7 +765,7 @@ impl Vault {
             .trusted_machine(secret.machine)
             .is_none()
             .then_some(root);
-        self.end_wait_in_txn(txn, root, report.awaiting)?;
+        self.end_wait_in_txn(txn, root, report.awaiting, for_request)?;
         Ok(report)
     }
 }

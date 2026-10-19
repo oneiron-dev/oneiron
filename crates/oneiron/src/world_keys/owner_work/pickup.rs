@@ -67,7 +67,9 @@ impl Vault {
     /// custody revoke is settled here, byte-free (`settle_revoked_custody`
     /// in `crate::secret_custody`), each kept custody input whose request is
     /// answered is forgotten, and each revoke this install owes the owner's
-    /// other machines is carried once it can sign (FIX 4851). The machine
+    /// other machines is carried once it can sign (FIX 4851). A wait a root
+    /// request's pickup committed is cleared once the fold holds that
+    /// request cancelled or superseded, byte-free (FIX 5582). The machine
     /// secret is read outside every transaction, and only when a request's
     /// kind reads it: with no keystore, slot or secret here each such
     /// request stays pending, and nothing is taken over. A custody revoke,
@@ -104,6 +106,14 @@ impl Vault {
         // A revoke this install could not carry when the owner made it is
         // carried once it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
         self.carry_owed_revokes();
+        // A root request's wait ends with the request, whether or not any
+        // work names this install now (FIX 5582).
+        if let Err(error) = self.settle_root_request_waits() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "an ended root request's wait was not cleared on this install"
+            );
+        }
         let (machine, pending): (EntityId, Vec<(AuthorityEntryHash, bool)>) = {
             let txn = self.store.env.read_txn()?;
             let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -185,7 +195,7 @@ impl Vault {
                 self.world_key_work_in_txn(txn, &fold, hash, request, *mode, secret)?
             }
             (OwnerWorkBody::Root { change }, Some(secret)) => {
-                self.root_work_in_txn(txn, &fold, request, *change, secret)?
+                self.root_work_in_txn(txn, &fold, hash, request, *change, secret)?
             }
             (OwnerWorkBody::PublishBundle { home }, Some(_)) => {
                 self.publish_bundle_work_in_txn(txn, &fold, request, *home, machine)?

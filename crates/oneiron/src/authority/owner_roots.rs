@@ -75,7 +75,9 @@ impl Vault {
                 }
             }
         }
-        let awaiting = match super::pinned_root::read_pin_row_in_txn(&self.store, &txn)?.awaiting {
+        // A wait a root request committed ends with the request (FIX 5582).
+        let row = super::pinned_root::read_pin_row_in_txn(&self.store, &txn)?;
+        let awaiting = match super::pinned_root::effective_awaited_root(&row, &fold) {
             Some(root) if pinned == Some(root) => {
                 let me = crate::identity::read_machine_id_in_txn(self, &txn)?;
                 let arrived = me.is_some_and(|me| fold.trusted_machine(me).is_some());

@@ -14,7 +14,8 @@
 //! (`MAX_REMOTE_REQUEST_BYTES`, 64 MiB): `GET /ws` among them, whose upgrade
 //! carries an empty body; the attestation covers the handshake, never the
 //! frames after it. The staged routes keep their streaming and their own
-//! ceilings: git smart HTTP and LFS, whose bodies have no ceiling, and the
+//! ceilings: git smart HTTP, LFS and the owner's sealed custody change (FIX
+//! 5674), whose bodies have no ceiling, and the
 //! blob artifact uploads (`POST /v1/core/artifacts` and an artifact's
 //! `versions` and `outputs`) and the `/v1/ai` media uploads, which take up
 //! to 96 MiB. Managed ingress stages their bodies on the vault's disk and
@@ -227,8 +228,8 @@ const OWNER_ROUTES: &[Route] = &[
 /// How far managed ingress stages a staged route's body.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Staged {
-    /// Git smart HTTP and LFS: the whole body, however long; only the
-    /// vault disk's floor ends it.
+    /// Git smart HTTP, LFS and the sealed custody change: the whole body,
+    /// however long; only the vault disk's floor ends it.
     Whole,
     /// An upload route: no further than the body limit the route itself
     /// applies.
@@ -282,6 +283,9 @@ const STAGED_ROUTES: &[(Route, Staged)] = &[
         ("POST", "/git/{repo}/info/lfs/objects/{oid}/verify"),
         Staged::Whole,
     ),
+    // The owner's sealed custody change, whose frame of numbered envelopes
+    // has no ceiling (FIX 5674).
+    (("POST", "/v1/owner/secrets/custody"), Staged::Whole),
     // The blob artifact uploads.
     (
         ("POST", "/v1/core/artifacts"),
