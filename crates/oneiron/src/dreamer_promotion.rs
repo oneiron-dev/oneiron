@@ -49,11 +49,13 @@ pub(crate) use admission::{
 };
 mod corrections;
 mod scoped;
+mod settlement;
 /// What the live policy lets the vault's Dreamer do (see
 /// `Vault::dreamer_weave_reach` and the owner's `Vault::grant_dreamer_weave`).
 pub use crate::gate::DreamerWeaveReach;
 pub use attempt_sink::AttemptPromotionSink;
 pub use scoped::promote_scoped_consolidation;
+pub(crate) use settlement::land_kept_alternative_in_txn;
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;

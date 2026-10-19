@@ -81,7 +81,14 @@ fn continuous(
                 policy.continuous_rung_spans as usize,
             )? {
                 if !span.owed.is_empty() {
-                    super::sieve::enqueue_rungs_in_txn(&store, txn, attempt, &span, false, now)?;
+                    super::sieve::enqueue_rungs_in_txn(
+                        &store,
+                        txn,
+                        &attempt.status,
+                        &span,
+                        false,
+                        now,
+                    )?;
                 }
             }
         }

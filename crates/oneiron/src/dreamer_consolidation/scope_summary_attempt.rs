@@ -22,7 +22,7 @@ use crate::llm::{
     call_as_step,
 };
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::scope_summary::{ComposedSummary, SummarySourceMessage, SummarySourceVersion};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -367,6 +367,21 @@ pub(crate) fn scope_summary_evidence_in_txn(
     let mut evidence = ScopeSummaryEvidence::default();
     for (record, row) in sources.iter().zip(rows) {
         let mut pin = source_pin(vault, txn, *record, row.as_ref())?;
+        // A NOTE reads as the Dreamer's one NOTE projection (FIX 907): its
+        // admitted text, pinned by the projection's fingerprint beside the
+        // row, its frontier and the policy the plan pins.
+        if let Some((ENTITY_TYPE_NOTE, _, body)) = &row {
+            if let Some(note) = super::note_text::note_text_in(vault, txn, record, body)? {
+                pin.projected_text = Some(note.fingerprint);
+                evidence
+                    .text
+                    .push_str(&format!("[{}] {}\n", record.to_hex(), note.text));
+                evidence.covers.push(*record);
+                evidence.readable.insert(note.version);
+            }
+            evidence.source_versions.push(pin);
+            continue;
+        }
         let Some((ENTITY_TYPE_TURN, _, body)) = row else {
             evidence.source_versions.push(pin);
             continue;
