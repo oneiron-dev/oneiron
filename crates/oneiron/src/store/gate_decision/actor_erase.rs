@@ -77,11 +77,12 @@ impl Store {
         actor_ref: &str,
     ) -> Result<()> {
         let mut cleared = Vec::new();
+        let custody = self.core.key_custody.local();
         for row in LEDGER.iter_from(self, &*wtxn, &[])? {
             let (decision_id, raw) = row?;
             let mut record = match self.decode_gate_decision_value(decision_id, &raw) {
                 Err(error @ Error::CorruptedIndex("gate decision ORCB")) => {
-                    if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)? {
+                    if orcb::raw_key_retired(custody, &raw)? {
                         continue;
                     }
                     return Err(error);
@@ -93,11 +94,12 @@ impl Store {
             }
             record.actor_ref = None;
             vet_gate_decision_record(&record)?;
-            let value = match orcb::raw_claim_generation(&raw) {
-                Some((_, generation)) => {
-                    orcb::encode_hot_at(&self.core.gate_custody_root, &record, generation)?
+            let value = match (orcb::raw_claim_generation(&raw), custody) {
+                (Some((_, generation)), Some(custody)) => {
+                    orcb::encode_hot_at(custody, &record, generation)?
                 }
-                None => encode_gate_decision(&record)?,
+                (Some(_), None) => return Err(orcb::corrupt()),
+                (None, _) => encode_gate_decision(&record)?,
             };
             cleared.push((decision_id, value));
         }

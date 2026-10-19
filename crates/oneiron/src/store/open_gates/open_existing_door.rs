@@ -134,27 +134,26 @@ impl Store {
                 clock.observe_floor(floor)?;
             }
         }
-        let (gate_custody_root, gate_custody_archived_at_open) = {
+        let key_custody = {
             let txn = env.read_txn()?;
-            let root = vault_meta_view
-                .get(&txn, crate::store::CUSTODY_ROOT_KEY)?
-                .map(|raw| crate::store::decode_custody_root(&raw))
-                .transpose()?
-                .unwrap_or_else(|| registered_path.path.clone());
+            let binding =
+                vault_meta_view.get(&txn, crate::side_table::KEY_CUSTODY_BINDING.prefix)?;
             let mark =
                 vault_meta_view.get(&txn, crate::side_table::VAULT_ARCHIVED_BY_RESTORE.prefix)?;
             let archived = crate::store::archived_by(mark.as_deref(), &registered_path.path)?;
-            (root, archived)
+            crate::store::key_custody::KeyCustody::at_open(
+                registered_path.path.clone(),
+                binding.as_deref(),
+                archived,
+            )?
         };
         let shared_env: Env = (*env).clone();
         let core = Arc::new(StoreCore {
-            gate_custody_root,
-            gate_custody_archived_at_open,
+            key_custody,
             env: StoreEnv::new(shared_env),
             raw,
             kind_registry,
             off_record_sessions: OffRecordSessionRegistry::default(),
-            gate_retirement_lock: std::sync::RwLock::new(()),
             device_only_flag_lock: std::sync::RwLock::new(()),
             retrieval_blend_tuning_lock: Mutex::new(()),
             retrieval_writes_disabled: std::sync::atomic::AtomicBool::new(false),

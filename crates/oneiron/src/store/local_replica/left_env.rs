@@ -120,7 +120,11 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::STRUCTURAL_KIND_REGISTRY,
     &side_table::PACK_BYTE_MAP_LOCAL_HEAD,
     &side_table::ORIGIN_LFS_CDC_SEED,
-    &side_table::GATE_DECISION_CUSTODY_ROOT,
+    // Typed key custody: the binding and every durable retirement intent,
+    // shared by every kind's entries, so a committed retirement still
+    // finishes and the custody stays this vault's.
+    &side_table::KEY_CUSTODY_BINDING,
+    &side_table::KEY_CUSTODY_RETIRE_PENDING,
     &side_table::VAULT_ARCHIVED_BY_RESTORE,
     &side_table::RETRIEVAL_TRACE_KEY_LOCAL,
     &side_table::RECEIPT_FAMILY_INDEX_VERSION,
@@ -132,17 +136,15 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::SCOPE_POLICY_SWEEP_DONE,
 ];
 
-/// The gate-decision ledger and every family beside it: partitions, custody,
+/// The gate-decision ledger and every family beside it: partitions,
 /// retention, claim and grant indexes. Kept whole while
-/// [`keeps_gate_ledger`] holds.
+/// [`keeps_gate_ledger`] holds. Its key custody is kept always
+/// ([`LEAVE_KEPT_FAMILIES`]).
 static GATE_LEDGER_FAMILIES: &[&SideTableDecl] = &[
     &side_table::GATE_DECISION_LEDGER,
     &side_table::GATE_DECISION_CLAIM_CONTEXT,
-    &side_table::GATE_DECISION_CUSTODY_ROOT,
     &side_table::GATE_DECISION_GRANT_REF_INDEX,
-    &side_table::GATE_DECISION_PARTITION_ERASE_PENDING,
     &side_table::GATE_DECISION_PARTITION_RETAIN_UNTIL,
-    &side_table::GATE_DECISION_PARTITION_RETIRE_PENDING,
     &side_table::GATE_DECISION_RETENTION_CONTEXT,
     &side_table::GATE_DECISION_CLAIM_INDEX,
     &side_table::GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE,

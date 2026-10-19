@@ -21,12 +21,12 @@ use super::types::{
 };
 use super::vet::vet_gate_decision_record;
 
+mod custody;
+
 /// The stored value is plain named MessagePack or encrypted ORCB bytes;
-/// the Store door decodes with its current custody root after this typed read.
+/// the Store door decodes with its current custody after this typed read.
 pub(super) const LEDGER: SideTable<GateDecisionId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_DECISION_LEDGER);
-pub(super) const CUSTODY_ROOT: SideTable<(), Vec<u8>, Raw> =
-    SideTable::new(&side_table::GATE_DECISION_CUSTODY_ROOT);
 
 /// Presence marker literal byte `b"1"`, matching the marker already on disk
 /// for the grant-ref and attempt-run secondary indexes and the unapplied
@@ -96,29 +96,6 @@ pub(in crate::store) fn arm_before_gate_grant_decode(callback: impl FnOnce() + '
 }
 
 impl Store {
-    /// Readers acquire this BEFORE opening an LMDB snapshot. Retirement takes
-    /// the write half BEFORE the exterior marker/unlink, so no healthy live
-    /// snapshot loses custody between its key check and file open.
-    pub(crate) fn gate_custody_read_guard(&self) -> Result<std::sync::RwLockReadGuard<'_, ()>> {
-        self.core
-            .gate_retirement_lock
-            .read()
-            .map_err(|_| Error::InvariantViolation("gate decision custody lock poisoned"))
-    }
-
-    /// Decode one row against its key, decrypting only claim-bound ORCB values.
-    pub(in crate::store) fn decode_gate_decision_value(
-        &self,
-        decision_id: GateDecisionId,
-        raw: &[u8],
-    ) -> Result<GateDecisionRecord> {
-        if orcb::is_orcb(raw) {
-            orcb::decode_hot(&self.core.gate_custody_root, decision_id, raw)
-        } else {
-            decode_gate_decision(raw)
-        }
-    }
-
     /// One-time ERASE-A (ONE-1637) backfill: indexes every pre-existing
     /// claim-bound ledger row and sets the durable completeness flag in ONE
     /// write txn, so a crash leaves either nothing or everything (RCPT-1
@@ -210,17 +187,11 @@ impl Store {
     ) -> Result<()> {
         crate::ports::recorded_at_in_txn(self, wtxn)?;
         if record.claim_id.is_some() {
-            // The first claim-bound append pins a path to LIVE exterior custody
-            // in the same LMDB transaction as the value. A restore in this vault's
-            // place reuses that path; a side restore forks it (checkpoint_custody).
-            let expected = orcb::encode_custody_root(&self.core.gate_custody_root)?;
-            match CUSTODY_ROOT.get(self, &*wtxn, &())? {
-                Some(bound) if bound != expected => {
-                    return Err(Error::CorruptedIndex("gate decision custody binding"));
-                }
-                Some(_) => {}
-                None => CUSTODY_ROOT.put(self, wtxn, &(), &expected)?,
-            }
+            // The first claim-bound append pins the binding to LIVE exterior
+            // custody in the same LMDB transaction as the value. A restore in
+            // this vault's place keeps it; a side restore forks it
+            // (checkpoint_custody).
+            self.core.key_custody.pin_in_txn(self, wtxn)?;
         }
         append_gate_decision_row_in_txn(self, wtxn, record)
     }
@@ -361,55 +332,6 @@ impl Store {
         Ok(changed)
     }
 
-    /// Erase destroys the claim's exterior key in the same act (ARCH-0038
-    /// #erasure-completeness): a restored pre-erase image must not decrypt
-    /// the rows this erase redacted. The retirement intent commits with the
-    /// redaction, marked as an erase's so no later hold can defer it; the
-    /// caller's post-commit finisher destroys the key. A future receipt that
-    /// batch preflight staged in this transaction stays readable: it moves
-    /// to the generation after the retired one before the intent lands.
-    fn stage_erased_claim_key_retirement_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        claim_id: &[u8; 16],
-    ) -> Result<()> {
-        if cfg!(not(unix)) {
-            // No exterior custody exists here, so no claim key can either.
-            return Ok(());
-        }
-        if self.core.gate_custody_archived() {
-            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
-        }
-        let root = &self.core.gate_custody_root;
-        let overflow = || Error::ArithmeticOverflow("gate decision key generation");
-        let first = orcb::key_generation(root, claim_id)?;
-        // An earlier erase whose key is not destroyed yet may already have
-        // moved kept receipts one generation up.
-        let mut through = None;
-        let mut generation = first;
-        while orcb::key_published(root, claim_id, generation)? {
-            through = Some(generation);
-            generation = generation.checked_add(1).ok_or_else(overflow)?;
-        }
-        let pending = super::retention::RETIRE_PENDING.get(self, &*wtxn, claim_id)?;
-        let Some(through) = through.max(pending) else {
-            return Ok(());
-        };
-        let next = through.checked_add(1).ok_or_else(overflow)?;
-        for record in self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)? {
-            if record.redacted_at.is_none() {
-                LEDGER.put(
-                    self,
-                    wtxn,
-                    &record.decision_id,
-                    &orcb::encode_hot_at(root, &record, next)?,
-                )?;
-            }
-        }
-        super::retention::RETIRE_PENDING.put(self, wtxn, claim_id, &through)?;
-        super::retention::ERASE_PENDING.put(self, wtxn, claim_id, &[1])
-    }
-
     /// Drops the rows a restore must not bring back: a checkpoint row whose
     /// key generation was retired after the image was taken, with every
     /// index row and the pending ask that named it. Runs in the restore's
@@ -470,8 +392,7 @@ impl Store {
         &self,
         grant_ref: &str,
     ) -> Result<Vec<GateDecisionRecord>> {
-        let _custody = self.gate_custody_read_guard()?;
-        let rtxn = self.env.read_txn()?;
+        let rtxn = self.custody_snapshot()?;
         #[cfg(test)]
         BEFORE_GATE_GRANT_DECODE.with(|slot| {
             if let Some(callback) = slot.borrow_mut().take() {
@@ -720,9 +641,10 @@ impl Store {
                 // failure here; only a row addressable by decision id can be
                 // re-read below as removed.
                 let mut retired_keys = Vec::new();
+                let custody = self.core.key_custody.local();
                 for row in LEDGER.iter_raw_from(self, &rtxn, &[])? {
                     let (key, raw) = row?;
-                    if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)?
+                    if orcb::raw_key_retired(custody, &raw)?
                         && let Some(decision_id) = GateDecisionId::decode_key(&key)
                     {
                         retired_keys.push(decision_id);
@@ -808,19 +730,7 @@ fn append_gate_decision_row_in_txn(
         return Err(Error::InvariantViolation("gate decision id collision"));
     }
     let value = if let Some(claim) = record.claim_id {
-        // An archived vault's custody is its replacement's; it mints no key
-        // there.
-        if store.gate_custody_archived() {
-            return Err(Error::Store(crate::error::StoreError::ArchivedVault));
-        }
-        // A committed age sweep may still be retiring this partition's
-        // exterior key. No new ciphertext may reuse it in that interval.
-        if super::retention::RETIRE_PENDING.contains(store, &*wtxn, &claim)? {
-            return Err(Error::InvalidConfig(
-                "gate decision partition is retiring".into(),
-            ));
-        }
-        orcb::encode_hot(store.gate_key_root(), record)?
+        custody::sealed_claim_row_in_txn(store, wtxn, record, &claim)?
     } else {
         encode_gate_decision(record)?
     };

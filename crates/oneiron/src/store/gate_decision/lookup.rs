@@ -149,7 +149,7 @@ impl Store {
         };
         let record = match self.decode_gate_decision_value(decision_id, &raw) {
             Err(error @ Error::CorruptedIndex("gate decision ORCB")) => {
-                if orcb::raw_key_retired(&self.core.gate_custody_root, &raw)? {
+                if orcb::raw_key_retired(self.core.key_custody.local(), &raw)? {
                     return Ok(ClaimLookup::Retired(decision_id));
                 }
                 return Err(error);

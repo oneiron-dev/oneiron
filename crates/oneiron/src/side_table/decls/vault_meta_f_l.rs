@@ -71,19 +71,10 @@ side_tables! {
     /// the retention-scope module's own layout. Key: id16 (claim).
     GATE_DECISION_CLAIM_CONTEXT: VaultMeta b"gate_decision:claim_context:v1:" Raw;
     /// Grant-reference index over the gate decision ledger. Key: u64be len + string + id16.
-    /// Exterior-key root binding of encrypted claim-bound gate decisions. Key: ().
-    GATE_DECISION_CUSTODY_ROOT: VaultMeta b"gate_decision:custody_root:v1" Raw;
     GATE_DECISION_GRANT_REF_INDEX: VaultMeta b"gate_decision:grant_ref_index:v1:" Raw;
-    /// A committed erase whose claim-partition key retirement is still pending; the value is
-    /// the single byte 1. No hold defers that retirement or lands while it stands. Key: id16
-    /// (claim).
-    GATE_DECISION_PARTITION_ERASE_PENDING: VaultMeta b"gate_decision:partition_erase_pending:v1:" Raw;
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
-    /// Committed intent to retire one claim partition's exterior key, holding the newest key
-    /// generation (u64be) an erase or the sweep removed rows under. Key: id16 (claim).
-    GATE_DECISION_PARTITION_RETIRE_PENDING: VaultMeta b"gate_decision:partition_retire_pending:v1:" Raw;
     /// Append-time retention ancestry of one gate decision; the retention-scope module's own
     /// layout. Key: id16 (decision).
     GATE_DECISION_RETENTION_CONTEXT: VaultMeta b"gate_decision:retention_context:v1:" Raw;
@@ -274,6 +265,14 @@ side_tables! {
     /// Empty-marker age index over the tagging traces. Key: u64be recorded-at + turn id16 + u64be
     /// sequence.
     TAGGING_TRACE_AGE: VaultMeta b"job:tagging_trace_age:v1:" Raw;
+    /// The vault's typed key custody binding (`store::key_custody`): version 1, namespace
+    /// (16), vault id (32), then the native absolute root path the custody sits beside; never
+    /// key material. Pinned by the first publication with what it protects. Key: ().
+    KEY_CUSTODY_BINDING: VaultMeta b"key_custody:binding:v1" Raw;
+    /// A committed intent to retire one custody subject's entries through a generation:
+    /// u64be generation, then cause (0 retention, 1 erase). Key: vault id (32) + kind tag (1) +
+    /// item.
+    KEY_CUSTODY_RETIRE_PENDING: VaultMeta b"key_custody:retire_pending:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
     /// A `learning.*` cell's key, estimate form and what counted. Key: cell digest (32 bytes).

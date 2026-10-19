@@ -15,7 +15,8 @@
 //! image carries (OF-470 C2). A source's whole host-order family is read with
 //! its custody, and a restore beside it, or an activation, takes it on.
 
-use std::collections::BTreeMap;
+mod destination;
+
 use std::path::{Path, PathBuf};
 
 use heed::types::Bytes;
@@ -23,17 +24,20 @@ use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Raw, SideKey, SideTable};
-use crate::store::not_an_existing_root;
+use crate::store::key_custody::{
+    self, CustodyBinding, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
+    decode_native_path, encode_native_path,
+};
 #[cfg(unix)]
 use crate::store::root_directory::{
-    FileIdentity, file_identity, make_directory, named_directory_identity, parent_or_here,
-    refuse_shared_path, refuse_shared_vault_root, remove_held_directory,
+    FileIdentity, file_identity, named_directory_identity, refuse_shared_vault_root,
 };
-use crate::store::{Store, VaultWriterLease, read_existing_vault_meta};
+use crate::store::{Store, not_an_existing_root, read_existing_vault_meta};
 
+pub(crate) use self::destination::MadeDestination;
 use super::keys::GATE_DECISION_KEY_PREFIX;
-use super::ledger::{CUSTODY_ROOT, LEDGER};
-use super::orcb::{self, CUSTODY_ROOT_KEY, ForkedCustodyDir, corrupt};
+use super::ledger::LEDGER;
+use super::orcb::{self, corrupt};
 use super::retention::{checkpoint_retirements, retirement_prefixes};
 use super::types::GateDecisionId;
 
@@ -68,14 +72,21 @@ pub(in crate::store) fn archived_by(mark: Option<&[u8]>, own_root: &Path) -> Res
     match mark {
         None => Ok(false),
         Some([ARCHIVED_ANYWHERE]) => Ok(true),
-        Some([LIVE_ONLY_AT, home @ ..]) => Ok(orcb::decode_custody_root(home)? != own_root),
-        Some(_) => Err(Error::CorruptedIndex("vault archive mark")),
+        Some([LIVE_ONLY_AT, home @ ..]) => {
+            Ok(decode_native_path(home).ok_or_else(archive_mark_corrupt)? != own_root)
+        }
+        Some(_) => Err(archive_mark_corrupt()),
     }
 }
 
+fn archive_mark_corrupt() -> Error {
+    Error::CorruptedIndex("vault archive mark")
+}
+
+/// The mark: `LIVE_ONLY_AT`, then the home's native absolute path.
 fn live_only_at(home: &Path) -> Result<Vec<u8>> {
     let mut mark = vec![LIVE_ONLY_AT];
-    mark.extend(orcb::encode_custody_root(home)?);
+    mark.extend(encode_native_path(home).ok_or_else(archive_mark_corrupt)?);
     Ok(mark)
 }
 
@@ -84,7 +95,7 @@ fn live_only_at(home: &Path) -> Result<Vec<u8>> {
 /// intents, and its host orders, whose target index the intents read.
 fn live_custody_prefixes() -> Vec<&'static [u8]> {
     let mut prefixes = vec![
-        CUSTODY_ROOT_KEY,
+        key_custody::binding_key(),
         ARCHIVED.decl().prefix,
         STORE_IDENTITY.decl().prefix,
     ];
@@ -140,10 +151,12 @@ pub(crate) fn replace_host_holds_in_txn(
 }
 
 /// One vault's live key-custody state, read when a side restore of it
-/// starts: where its custody is, and its key-retirement intents with their
-/// erase marks and holds.
+/// starts: its custody binding, and its key-retirement intents with the
+/// holds they read.
 pub(crate) struct LiveCustody {
-    root: PathBuf,
+    /// The canonical root it opened at.
+    own_root: PathBuf,
+    binding: Option<CustodyBinding>,
     store_identity: Option<Vec<u8>>,
     rows: Rows,
     /// Its whole host-order family, for the vault a restore makes beside it.
@@ -156,7 +169,7 @@ impl LiveCustody {
     /// `own_root`. An archived vault's custody belongs to the vault that
     /// replaced it, so its own state is no source's.
     fn from_rows(own_root: &Path, rows: Rows) -> Result<Self> {
-        let mut root = own_root.to_path_buf();
+        let binding = key_custody::binding_in_rows(&rows)?;
         let mut mark = None;
         let mut store_identity = None;
         let mut intents = Vec::new();
@@ -166,8 +179,8 @@ impl LiveCustody {
                 mark = Some(value);
             } else if key == STORE_IDENTITY.decl().prefix {
                 store_identity = Some(value);
-            } else if key == CUSTODY_ROOT_KEY {
-                root = orcb::decode_custody_root(&value)?;
+            } else if key == key_custody::binding_key() {
+                // Read above.
             } else if key.starts_with(HOST_HOLD_PREFIX) {
                 if host_row_is_intent(&key) {
                     intents.push((key.clone(), value.clone()));
@@ -181,11 +194,28 @@ impl LiveCustody {
             return Err(archived());
         }
         Ok(Self {
-            root,
+            own_root: own_root.to_path_buf(),
+            binding,
             store_identity,
             rows: intents,
             host_holds,
         })
+    }
+
+    /// Where its custody is: its binding's root, or beside its own root
+    /// while it binds none.
+    fn custody_root(&self) -> &Path {
+        self.binding
+            .as_ref()
+            .map_or(self.own_root.as_path(), CustodyBinding::root)
+    }
+
+    /// Whether `bound`, an image's binding, is this vault's live custody.
+    fn binds(&self, bound: &CustodyBinding) -> bool {
+        match &self.binding {
+            Some(binding) => binding == bound,
+            None => bound.root() == self.own_root.as_path(),
+        }
     }
 
     /// The source's whole host-order family, as it was read.
@@ -194,9 +224,12 @@ impl LiveCustody {
     }
 
     /// Whether `other`, read later, is the state of the same vault: the same
-    /// store, bound to the same custody.
+    /// store, bound to the same custody. A binding its first publication
+    /// pinned since is the same custody.
     pub(crate) fn same_vault(&self, other: &Self) -> bool {
-        self.root == other.root && self.store_identity == other.store_identity
+        self.custody_root() == other.custody_root()
+            && self.store_identity == other.store_identity
+            && (self.binding.is_none() || other.binding.is_none() || self.binding == other.binding)
     }
 }
 
@@ -292,159 +325,6 @@ fn names(_: &Path, (): &()) -> Result<bool> {
     Ok(true)
 }
 
-/// The directory a restore made for its copy, and the copy's writer lease.
-/// Each open of the copy goes by name, and is checked against the directory
-/// made: rows are written into, and a mark lifted from, only that one, never a
-/// directory moved in under its name since.
-///
-/// The lease is taken as the directory is made and held to the commit, where
-/// the copy's vault takes it over ([`MadeDestination::keep`]): no other owner
-/// opens the copy between the restore's opens. Dropped before that, after the
-/// copy's vault has closed, this removes the directory it made with
-/// everything in it, through the descriptor it holds and still under the
-/// lease. A directory moved in under the name since is left as it is, and so
-/// is one another owner leased first (review r1, both F1). Off unix, with no
-/// identity to check, it removes the destination by name, still only under
-/// the copy's lease, as main's discard did once the copy had opened; no lease
-/// is granted off unix today, so there it removes nothing.
-pub(crate) struct MadeDestination {
-    destination: PathBuf,
-    #[cfg(unix)]
-    made: std::fs::File,
-    #[cfg(unix)]
-    identity: FileIdentity,
-    lease: Option<VaultWriterLease>,
-    /// The page-seal mirror a sealed copy's open writes beside it (OF-570),
-    /// removed with the copy.
-    mirror: Option<PathBuf>,
-    kept: bool,
-}
-
-impl MadeDestination {
-    /// Makes `destination`, which must not exist yet, owner-only, and takes
-    /// its writer lease. It is refused unless no other user can move an entry
-    /// on the way to it, or, for a copy that will replace the live vault at
-    /// `home`, on the way to that vault or inside it: on such a path no name
-    /// this restore makes, opens or exchanges can be changed under it.
-    pub(crate) fn make(destination: &Path, home: Option<&Path>) -> Result<Self> {
-        #[cfg(unix)]
-        let made = {
-            refuse_shared_path(parent_or_here(destination.parent().unwrap_or(destination)))?;
-            if let Some(home) = home {
-                refuse_shared_vault_root(home)?;
-            }
-            make_directory(destination)?
-        };
-        #[cfg(not(unix))]
-        {
-            let _ = home;
-            std::fs::create_dir(destination)?;
-        }
-        let mut guard = Self {
-            destination: destination.to_owned(),
-            #[cfg(unix)]
-            identity: file_identity(&made.metadata()?),
-            #[cfg(unix)]
-            made,
-            lease: None,
-            mirror: None,
-            kept: false,
-        };
-        #[cfg(test)]
-        if let Some(callback) = AFTER_RESTORE_DESTINATION_MADE.with(|slot| slot.borrow_mut().take())
-        {
-            callback();
-        }
-        // Through the directory made, so nothing is locked or written in one
-        // moved in under the name (review r2, Astra F2).
-        #[cfg(unix)]
-        let lease =
-            VaultWriterLease::acquire_held(guard.made.try_clone()?, &destination.canonicalize()?)?;
-        #[cfg(not(unix))]
-        let lease = VaultWriterLease::acquire(&destination.canonicalize()?)?;
-        guard.lease = Some(lease);
-        Ok(guard)
-    }
-
-    /// Takes the page-seal mirror beside the copy as this restore's, for a
-    /// copy made sealed: none may be there yet, since a mirror with no vault
-    /// is another vault's custody, and a refusal removes the one the copy's
-    /// open writes.
-    pub(crate) fn owns_page_seal_mirror(&mut self) -> Result<()> {
-        let mirror = crate::world_keys::page_seal_custody_path(&self.destination)?;
-        if std::fs::symlink_metadata(&mirror).is_ok() {
-            return Err(Error::InvalidConfig(
-                "a page-seal mirror is already beside a restore's copy".into(),
-            ));
-        }
-        self.mirror = Some(mirror);
-        Ok(())
-    }
-
-    /// The copy's writer lease, for each open of it.
-    pub(crate) fn lease(&self) -> Result<&VaultWriterLease> {
-        self.lease
-            .as_ref()
-            .ok_or_else(|| Error::InvalidConfig("a restore's copy holds no writer lease".into()))
-    }
-
-    /// Refuses unless `store` is open on the directory made.
-    pub(crate) fn holds(&self, store: &Store) -> Result<()> {
-        #[cfg(unix)]
-        if opened_directory(store)? != self.identity {
-            return Err(moved());
-        }
-        #[cfg(not(unix))]
-        let _ = store;
-        Ok(())
-    }
-
-    /// Keeps the copy, its restore committed: `copy`, its vault, takes over
-    /// the writer lease.
-    pub(crate) fn keep(mut self, copy: &mut crate::Vault) {
-        self.kept = true;
-        if let Some(lease) = self.lease.take() {
-            copy.adopt_writer_lease(lease);
-        }
-    }
-}
-
-/// A restore's copy is no longer where the restore made it.
-fn moved() -> Error {
-    Error::InvalidConfig("a restore's copy no longer sits where it was made".into())
-}
-
-impl Drop for MadeDestination {
-    fn drop(&mut self) {
-        if self.kept {
-            return;
-        }
-        // Only under its own lease: without it, the copy is another owner's,
-        // or, off unix, was never opened (review r3, Sol F3).
-        let removed = self.lease.take().is_some_and(|lease| {
-            #[cfg(unix)]
-            let removed = remove_held_directory(&self.destination, &self.made).is_ok();
-            // With no directory identity to check, the destination goes by
-            // name after the copy's vault has closed, as main's discard took
-            // it (Engine ruling on review r1's F2).
-            #[cfg(not(unix))]
-            let removed = std::fs::remove_dir_all(&self.destination).is_ok();
-            drop(lease);
-            removed
-        });
-        if !removed {
-            tracing::warn!("a refused restore left the copy it made in place");
-            return;
-        }
-        if let Some(mirror) = self.mirror.take()
-            && let Err(error) = std::fs::remove_file(&mirror)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!("a refused restore left the page-seal mirror it wrote in place");
-        }
-    }
-}
-
 /// Syncs the directory holding `path`, so a rename of `path` is on disk.
 fn sync_parent(path: &Path) -> std::io::Result<()> {
     match path.parent() {
@@ -456,11 +336,10 @@ fn sync_parent(path: &Path) -> std::io::Result<()> {
 /// The custody a checkpoint's claim-bound receipts bind to, checked before a
 /// restore creates its destination.
 pub(crate) struct CheckpointCustody {
-    bound: Option<PathBuf>,
+    /// The image's binding, the claim keys each row needs and the
+    /// retirements it and its live source committed.
+    plan: CustodyPlan,
     erased: Vec<(GateDecisionId, [u8; 16])>,
-    /// Per claim: the newest key generation a row or a retirement intent
-    /// names, and the newest one a committed retirement destroys.
-    claims: BTreeMap<[u8; 16], (u64, Option<u64>)>,
 }
 
 impl CheckpointCustody {
@@ -472,7 +351,7 @@ impl CheckpointCustody {
 }
 
 /// Authenticate encrypted canonical rows against CURRENT exterior keys before
-/// restore creates its destination. The image supplies a pointer, not a key;
+/// restore creates its destination. The image supplies a binding, not a key;
 /// deleted keys remain absent when an old checkpoint is replayed.
 ///
 /// A row whose key generation carries a retirement marker was erased (or
@@ -487,57 +366,43 @@ pub(crate) fn preflight_checkpoint_rows(
     rows: &[(Vec<u8>, Vec<u8>)],
     source: Option<&LiveCustody>,
 ) -> Result<CheckpointCustody> {
-    let bound = rows
-        .iter()
-        .find(|(key, _)| key == CUSTODY_ROOT_KEY)
-        .map(|(_, value)| orcb::decode_custody_root(value))
-        .transpose()?;
+    let bound = key_custody::binding_in_rows(rows)?;
     let mut retirements = checkpoint_retirements(rows)?;
     if let Some(source) = source {
         // The source's intents say nothing about another vault's keys.
-        if bound.as_ref().is_some_and(|bound| *bound != source.root) {
+        if bound.as_ref().is_some_and(|bound| !source.binds(bound)) {
             return Err(Error::InvalidConfig(
                 "this checkpoint's key custody is not its source vault's".into(),
             ));
         }
         retirements.extend(checkpoint_retirements(&source.rows)?);
     }
-    let mut claims = BTreeMap::new();
-    for (claim, through, committed) in retirements {
-        claims.insert(claim, (through, committed.then_some(through)));
-    }
+    let mut plan = CustodyPlan::new(bound.clone(), retirements);
     let mut erased = Vec::new();
     for (key, value) in rows {
         if key.starts_with(GATE_DECISION_KEY_PREFIX) && orcb::is_orcb(value) {
-            let root = bound.as_deref().ok_or_else(corrupt)?;
             let id = key
                 .strip_prefix(GATE_DECISION_KEY_PREFIX)
                 .and_then(GateDecisionId::decode_key)
                 .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
             let (claim, generation) = orcb::raw_claim_generation(value).ok_or_else(corrupt)?;
-            let (through, committed) = claims.entry(claim).or_insert((generation, None));
-            *through = (*through).max(generation);
-            if committed.is_some_and(|newest| generation <= newest)
-                || orcb::generation_retired(root, &claim, generation)?
-            {
-                erased.push((id, claim));
-            } else {
-                orcb::decode_hot(root, id, value)?;
+            let custody = LocalCustody::at(bound.as_ref().ok_or_else(corrupt)?);
+            match plan.require(&orcb::claim_subject(custody, &claim)?.at(generation))? {
+                Requirement::Retired => erased.push((id, claim)),
+                Requirement::Live => {
+                    orcb::decode_hot(custody, id, value)?;
+                }
             }
         }
     }
-    Ok(CheckpointCustody {
-        bound,
-        erased,
-        claims,
-    })
+    Ok(CheckpointCustody { plan, erased })
 }
 
 /// A side restore forks custody into a directory of its own beside
 /// `destination`. One already there, left by a vault removed without its
 /// custody, is refused before the destination is created, never merged.
 pub(crate) fn refuse_custody_beside(destination: &Path) -> Result<()> {
-    if cfg!(unix) && orcb::custody_present(&std::path::absolute(destination)?)? {
+    if cfg!(unix) && key_custody::custody_present(&std::path::absolute(destination)?)? {
         return Err(Error::InvalidConfig(
             "key custody already exists beside the restore destination; restore elsewhere".into(),
         ));
@@ -557,40 +422,45 @@ impl Store {
     }
 
     /// Forks the custody `custody` binds to into this restored copy's own,
-    /// beside its root, and binds the copy to it in this transaction. The
-    /// copied keys are synced before the binding commits. Returns the
-    /// directory the fork created, if it had anything to copy.
+    /// in a new namespace beside its root, and binds the copy to it in this
+    /// transaction. The copied keys are synced before the binding commits.
+    /// Returns the directory the fork created, if it had anything to copy.
     pub(crate) fn fork_gate_custody_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         custody: &CheckpointCustody,
     ) -> Result<Option<ForkedCustodyDir>> {
-        self.fork_gate_custody_to_in_txn(wtxn, custody, &self.core.gate_custody_root)
+        let forked =
+            self.fork_gate_custody_to_in_txn(wtxn, custody, self.core.key_custody.home())?;
+        // This handle reads the copy's receipts under the copy's own custody
+        // from here on, as the copy's reopen will (the restore's actor
+        // scrubs read them in this transaction).
+        let adopted = key_custody::binding_in_txn(self, wtxn)
+            .and_then(|binding| self.core.key_custody.adopt(binding.as_ref()));
+        if let Err(err) = adopted {
+            if let Some(forked) = forked {
+                forked.remove();
+            }
+            return Err(err);
+        }
+        Ok(forked)
     }
 
+    /// An image that binds no custody holds no claim key: the copy mints its
+    /// own at its first claim-bound append.
     fn fork_gate_custody_to_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         custody: &CheckpointCustody,
         root: &Path,
     ) -> Result<Option<ForkedCustodyDir>> {
-        if cfg!(not(unix)) {
+        let Some(source) = custody.plan.source().filter(|_| cfg!(unix)) else {
             // No exterior custody exists here, so there is none to fork.
             return Ok(None);
-        }
-        let binding = orcb::encode_custody_root(root)?;
-        let forked = match custody.bound.as_deref() {
-            Some(source) => {
-                let claims: Vec<_> = custody
-                    .claims
-                    .iter()
-                    .map(|(claim, (through, committed))| (*claim, *through, *committed))
-                    .collect();
-                orcb::fork_custody(source, root, &claims)?
-            }
-            None => None,
         };
-        if let Err(err) = CUSTODY_ROOT.put(self, wtxn, &(), &binding) {
+        let binding = source.fork_to(root.to_path_buf());
+        let forked = LocalCustody::at(source).fork(&binding, &custody.plan)?;
+        if let Err(err) = key_custody::put_binding_in_txn(self, wtxn, &binding) {
             if let Some(forked) = forked {
                 forked.remove();
             }
@@ -617,7 +487,7 @@ impl Store {
     pub(crate) fn unseal_replacement(&self, home: &Path) -> Result<()> {
         if cfg!(unix) {
             let mark = ARCHIVED.get(self, &self.env.read_txn()?, &())?;
-            if mark != Some(live_only_at(home)?) || !self.core.gate_custody_archived_at_open {
+            if mark != Some(live_only_at(home)?) || !self.core.key_custody.archived_at_open() {
                 return Err(Error::InvariantViolation("a replacement's archive mark"));
             }
         }
@@ -737,7 +607,7 @@ impl Store {
 
     /// Whether this vault is archived: by its mark, read in `txn`, or by the
     /// seal a restore's swap put on this handle.
-    pub(super) fn archived_in_txn(&self, txn: &RoTxn<'_>) -> Result<bool> {
+    pub(in crate::store) fn archived_in_txn(&self, txn: &RoTxn<'_>) -> Result<bool> {
         Ok(self.env.is_sealed()
             || archived_by(ARCHIVED.get(self, txn, &())?.as_deref(), self.env.path())?)
     }
@@ -785,7 +655,7 @@ impl Store {
         let forked = self.fork_gate_custody_to_in_txn(&mut wtxn, &custody, &root)?;
         let committed = self
             .drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased())
-            .and_then(|()| self.read_back_in_txn(&wtxn, &root))
+            .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // The orders standing on its source now, not the ones it had.
             .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
@@ -800,14 +670,16 @@ impl Store {
         Ok(())
     }
 
-    /// Reads every encrypted receipt in `txn` under the custody at `root`.
-    fn read_back_in_txn(&self, txn: &RoTxn<'_>, root: &Path) -> Result<()> {
+    /// Reads every encrypted receipt in `txn` under the custody it binds.
+    fn read_back_in_txn(&self, txn: &RoTxn<'_>) -> Result<()> {
+        let binding = key_custody::binding_in_txn(self, txn)?;
         for row in LEDGER.iter_raw_from(self, txn, &[])? {
             let (key, raw) = row?;
             if orcb::is_orcb(&raw) {
                 let id = GateDecisionId::decode_key(&key)
                     .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
-                orcb::decode_hot(root, id, &raw)?;
+                let custody = LocalCustody::at(binding.as_ref().ok_or_else(corrupt)?);
+                orcb::decode_hot(custody, id, &raw)?;
             }
         }
         Ok(())
