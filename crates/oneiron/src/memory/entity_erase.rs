@@ -158,7 +158,13 @@ impl Memory<'_> {
                 &self.vault.store,
                 &txn,
                 &preview.entity(),
-            )? && crate::blob_artifact::carrier_content_hash(&preview.entity(), &raw)?.is_some()
+            )? && crate::blob_artifact::carrier_content_hash(
+                &self.vault.store,
+                &txn,
+                &preview.entity(),
+                &raw,
+            )?
+            .is_some()
             {
                 return Err(carrier_erase_refused());
             }
