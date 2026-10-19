@@ -3346,12 +3346,12 @@ export_facade! {
     let output = client.vault_artifacts_release_wait(&input)?;
     crate::codec::lift_record("vault.artifacts.release_wait", &output)
 };
-"vault.artifacts.review_slides" => fn vault_artifacts_review_slides(&self, input: SlideReviewSubmit) -> SlideReviewOutcome = |client| {
+"vault.artifacts.review_slides" => fn vault_artifacts_review_slides(&self, input: SlideReviewSubmit) -> ActAnswerSlideReviewOutcome = |client| {
     let input: oneiron::blob_artifact::SlideReviewSubmit = crate::codec::lower_record("vault.artifacts.review_slides", input)?;
     let output = client.vault_artifacts_review_slides(&input)?;
     crate::codec::lift_record("vault.artifacts.review_slides", &output)
 };
-"vault.artifacts.ask" => fn vault_artifacts_ask(&self, input: ArtifactAskSubmit) -> ArtifactAskOutcome = |client| {
+"vault.artifacts.ask" => fn vault_artifacts_ask(&self, input: ArtifactAskSubmit) -> ActAnswerArtifactAskOutcome = |client| {
     let input: oneiron::blob_artifact::ArtifactAskSubmit = crate::codec::lower_record("vault.artifacts.ask", input)?;
     let output = client.vault_artifacts_ask(&input)?;
     crate::codec::lift_record("vault.artifacts.ask", &output)
@@ -4101,7 +4101,7 @@ export_facade! {
     let output = client.connector_status(&input)?;
     crate::codec::lift_record("connector.status", &output)
 };
-"connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ConnectorCallReply = |client| {
+"connector.call" => fn connector_call(&self, input: ConnectorCallRequest) -> ActAnswerConnectorCallReply = |client| {
     let input: oneiron::outbound_consent::ConnectorCallRequest = crate::codec::lower_record("connector.call", input)?;
     let output = client.connector_call(&input)?;
     crate::codec::lift_record("connector.call", &output)
@@ -4650,6 +4650,21 @@ export_facade! {
     let input: oneiron::engine_executor::checkpoint_read::CheckpointReadRequest = crate::codec::lower_record("vault.runs.checkpoint", input)?;
     let output = client.vault_runs_checkpoint(&input)?;
     crate::codec::lift_record("vault.runs.checkpoint", &output)
+};
+"vault.turn_programs.admission" => fn vault_turn_programs_admission(&self, input: TurnProgramAdmissionRequest) -> Option<TurnProgramAdmissionView> = |client| {
+    let input: oneiron::dreamer_runner::TurnProgramAdmissionRequest = crate::codec::lower_record("vault.turn_programs.admission", input)?;
+    let output = client.vault_turn_programs_admission(&input)?;
+    crate::codec::lift_record("vault.turn_programs.admission", &output)
+};
+"vault.runs.program" => fn vault_runs_program(&self, input: ProgramRunRequest) -> Option<ProgramRunView> = |client| {
+    let input: oneiron::dreamer_runner::ProgramRunRequest = crate::codec::lower_record("vault.runs.program", input)?;
+    let output = client.vault_runs_program(&input)?;
+    crate::codec::lift_record("vault.runs.program", &output)
+};
+"vault.runs.program_step" => fn vault_runs_program_step(&self, input: SettledProgramStepRequest) -> Option<SettledProgramStepView> = |client| {
+    let input: oneiron::dreamer_runner::SettledProgramStepRequest = crate::codec::lower_record("vault.runs.program_step", input)?;
+    let output = client.vault_runs_program_step(&input)?;
+    crate::codec::lift_record("vault.runs.program_step", &output)
 };
 "vault.consolidation.home.get" => fn vault_consolidation_home_get(&self) -> ConsolidationHomeView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consolidation.home.get")?;

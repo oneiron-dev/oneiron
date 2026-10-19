@@ -2089,10 +2089,10 @@ impl OneironClient {
                     oneiron::blob_artifact::ReleasedWait,
                 >(client, verb, &input),
                 "vault.artifacts.review_slides" => remote_agent_verb_output::<
-                    oneiron::blob_artifact::SlideReviewOutcome,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>,
                 >(client, verb, &input),
                 "vault.artifacts.ask" => remote_agent_verb_output::<
-                    oneiron::blob_artifact::ArtifactAskOutcome,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::ArtifactAskOutcome>,
                 >(client, verb, &input),
                 "vault.artifacts.admit" => remote_agent_verb_output::<
                     oneiron::blob_artifact::ArtifactAskOutcome,
@@ -2550,7 +2550,7 @@ impl OneironClient {
                     Option<oneiron::task_verb::sdk::ConnectorView>,
                 >(client, verb, &input),
                 "connector.call" => remote_agent_verb_output::<
-                    oneiron::task_verb::sdk::ConnectorCallReply,
+                    oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::ConnectorCallReply>,
                 >(client, verb, &input),
                 "connector.schema" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorSchemaReply,
@@ -2892,6 +2892,15 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.runs.checkpoint" => remote_agent_verb_output::<
                     Option<oneiron::engine_executor::checkpoint_read::CheckpointView>,
+                >(client, verb, &input),
+                "vault.turn_programs.admission" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::TurnProgramAdmissionView>,
+                >(client, verb, &input),
+                "vault.runs.program" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::ProgramRunView>,
+                >(client, verb, &input),
+                "vault.runs.program_step" => remote_agent_verb_output::<
+                    Option<oneiron::dreamer_runner::SettledProgramStepView>,
                 >(client, verb, &input),
                 "vault.consolidation.home.get" => remote_agent_verb_output::<
                     oneiron::dreamer_runner::ConsolidationHomeView,
@@ -11545,7 +11554,10 @@ impl OneironClient {
     pub fn vault_artifacts_review_slides(
         &self,
         input: &oneiron::blob_artifact::SlideReviewSubmit,
-    ) -> Result<oneiron::blob_artifact::SlideReviewOutcome, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::SlideReviewOutcome>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -11557,7 +11569,10 @@ impl OneironClient {
     pub fn vault_artifacts_ask(
         &self,
         input: &oneiron::blob_artifact::ArtifactAskSubmit,
-    ) -> Result<oneiron::blob_artifact::ArtifactAskOutcome, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::blob_artifact::ArtifactAskOutcome>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -13370,7 +13385,10 @@ impl OneironClient {
     pub fn connector_call(
         &self,
         input: &oneiron::outbound_consent::ConnectorCallRequest,
-    ) -> Result<oneiron::task_verb::sdk::ConnectorCallReply, MemoryError> {
+    ) -> Result<
+        oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::ConnectorCallReply>,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -14776,6 +14794,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runs.checkpoint", value)
+    }
+    pub fn vault_turn_programs_admission(
+        &self,
+        input: &oneiron::dreamer_runner::TurnProgramAdmissionRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::TurnProgramAdmissionView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.turn_programs.admission", value)
+    }
+    pub fn vault_runs_program(
+        &self,
+        input: &oneiron::dreamer_runner::ProgramRunRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::ProgramRunView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.program", value)
+    }
+    pub fn vault_runs_program_step(
+        &self,
+        input: &oneiron::dreamer_runner::SettledProgramStepRequest,
+    ) -> Result<Option<oneiron::dreamer_runner::SettledProgramStepView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.program_step", value)
     }
     pub fn vault_consolidation_home_get(
         &self,

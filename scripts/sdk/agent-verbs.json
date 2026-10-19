@@ -10348,8 +10348,8 @@
       "name": "vault.artifacts.review_slides",
       "description": "Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard.",
       "input": "crate::blob_artifact::SlideReviewSubmit",
-      "output": "crate::blob_artifact::SlideReviewOutcome",
-      "call": "memory.artifacts_review_slides(&input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::blob_artifact::SlideReviewOutcome>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(memory.artifacts_review_slides(&input)?)",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -10374,8 +10374,8 @@
       "name": "vault.artifacts.ask",
       "description": "Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard.",
       "input": "crate::blob_artifact::ArtifactAskSubmit",
-      "output": "crate::blob_artifact::ArtifactAskOutcome",
-      "call": "memory.artifacts_ask(&input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::blob_artifact::ArtifactAskOutcome>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(memory.artifacts_ask(&input)?)",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -12807,8 +12807,8 @@
       "name": "connector.call",
       "description": "Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data.",
       "input": "crate::outbound_consent::ConnectorCallRequest",
-      "output": "crate::task_verb::sdk::ConnectorCallReply",
-      "call": "crate::task_verb::sdk::connector_call_host_only(memory, &input)?",
+      "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::ConnectorCallReply>",
+      "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::connector_call_host_only(memory, &input)?)",
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
@@ -15617,6 +15617,54 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.turn_programs.admission",
+      "description": "Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential.",
+      "input": "crate::dreamer_runner::TurnProgramAdmissionRequest",
+      "output": "Option<crate::dreamer_runner::TurnProgramAdmissionView>",
+      "call": "crate::dreamer_runner::turn_program_admission(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.program",
+      "description": "Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it.",
+      "input": "crate::dreamer_runner::ProgramRunRequest",
+      "output": "Option<crate::dreamer_runner::ProgramRunView>",
+      "call": "crate::dreamer_runner::program_run(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.program_step",
+      "description": "Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body.",
+      "input": "crate::dreamer_runner::SettledProgramStepRequest",
+      "output": "Option<crate::dreamer_runner::SettledProgramStepView>",
+      "call": "crate::dreamer_runner::settled_program_step(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
       },
       "section": false,
       "openapi": true

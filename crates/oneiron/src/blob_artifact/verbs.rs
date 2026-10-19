@@ -566,9 +566,13 @@ impl Memory<'_> {
             .blob_artifact_head(artifact)
             .and_then(|head| {
                 let head = head.ok_or(Error::EntityNotFound)?;
-                self.vault()
-                    .read_blob_artifact_version(artifact, head.version)?
-                    .ok_or(Error::EntityNotFound)
+                let (deck, rows) = self
+                    .vault()
+                    .read_blob_artifact_version_listing(artifact, head.version)?
+                    .ok_or(Error::EntityNotFound)?;
+                // The head it draws is read for the review (FIX 5455).
+                self.produced_from(rows);
+                Ok(deck)
             })
             .and_then(|deck| renderer.render(&deck, slides));
         match rendered {
@@ -739,6 +743,8 @@ impl Memory<'_> {
                 SlideReviewError::Vault(error) => MemoryError::from(error),
                 other => MemoryError::from(Error::InvalidConfig(other.to_string())),
             })?;
+        // The head version the review read (FIX 5455).
+        self.produced_from(run.read_rows.iter().copied());
         let proposed = match &run.proposal {
             Some(proposal) => Some(self.vault().retain_edit_proposal(
                 &artifact,
@@ -788,7 +794,9 @@ impl Memory<'_> {
 
     /// `vault.artifacts.ask` through a host's decide(): asks each unit as
     /// the bound actor and holds the answers as one proposal for Keep or
-    /// Discard (`vault.artifacts.keep`/`discard`).
+    /// Discard (`vault.artifacts.keep`/`discard`). It lists the rows its
+    /// reads picked (FIX 5455): each version it read, the asked artifact's
+    /// head and every folder file's.
     pub fn artifacts_ask_through(
         &self,
         input: &ArtifactAskSubmit,
@@ -796,6 +804,20 @@ impl Memory<'_> {
         dial: DecisionDial,
         policy: &DecisionBandPolicy,
     ) -> MemoryResult<ArtifactAskOutcome> {
+        let (outcome, read) = self.artifacts_ask_run(input, decider, dial, policy)?;
+        self.produced_from(read);
+        Ok(outcome)
+    }
+
+    /// [`Self::artifacts_ask_through`]'s ask, beside the rows its reads
+    /// picked.
+    fn artifacts_ask_run(
+        &self,
+        input: &ArtifactAskSubmit,
+        decider: &dyn UnitDecider,
+        dial: DecisionDial,
+        policy: &DecisionBandPolicy,
+    ) -> MemoryResult<(ArtifactAskOutcome, Vec<EntityId>)> {
         let artifact = entity(&input.artifact_ref)?;
         let question = input.question.clone();
         question.validate()?;
@@ -891,6 +913,7 @@ impl Memory<'_> {
                         proposal: None,
                         abstained: Vec::new(),
                         refused: Vec::new(),
+                        read_rows: Vec::new(),
                     }
                 } else {
                     vault.ask_folder_items_into_sheet(
@@ -925,11 +948,12 @@ impl Memory<'_> {
             )?),
             None => None,
         };
-        Ok(ArtifactAskOutcome {
+        let outcome = ArtifactAskOutcome {
             proposed,
             abstained: run.abstained,
             refused: run.refused,
-        })
+        };
+        Ok((outcome, run.read_rows))
     }
 
     /// `vault.artifacts.admit` on an embedded handle: a server's host door
@@ -966,7 +990,9 @@ impl Memory<'_> {
         let decider = AdmittedDecider {
             decisions: std::sync::Mutex::new(input.decisions.iter().cloned().collect()),
         };
-        self.artifacts_ask_through(&input.ask, &decider, dial, policy)
+        // An admission lists the rows it listed before FIX 5455.
+        self.artifacts_ask_run(&input.ask, &decider, dial, policy)
+            .map(|(outcome, _)| outcome)
     }
 
     /// `vault.artifacts.waits`: the organ calls held beside one artifact

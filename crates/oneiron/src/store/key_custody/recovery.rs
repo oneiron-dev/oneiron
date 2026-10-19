@@ -30,15 +30,16 @@ use zeroize::Zeroizing;
 use crate::error::{Error, Result};
 use crate::store::Store;
 
-use super::anchor::{
-    AnchorAdvance, AnchorStore, anchor_record, anchored_position, verified_position,
-};
+use super::anchor::{anchor_record, anchored_position, verified_position};
 use super::files::{EntryState, LocalCustody, container, make_new_dir};
+use super::folder::FolderTarget;
 use super::fork::ForkedCustodyDir;
 use super::head::{CustodyOpener, OpenedHead, open_head, serde_bytes_vec};
-use super::identity::{CustodyBinding, CustodyId, CustodyKind, CustodySecret, CustodySubject};
+use super::identity::{
+    CustodyBinding, CustodyId, CustodyKind, CustodySecret, CustodySubject, decode_native_path,
+};
 use super::log::{Control, CustodyPosition, FrameHeader, LogEntry, frame_hash, open_frame};
-use super::publish::{CustodySource, Lineage};
+use super::protocol::{AnchorAdvance, AnchorStore, CustodySource, Lineage};
 
 /// What a restore with no anchor configured says about the head it used
 /// (Engine 10-20 04:0x).
@@ -315,8 +316,10 @@ pub(crate) fn admit_recovery(
 /// Lands `admitted` beside the restore's destination under `binding`, the
 /// image's own rebound there (the same namespace): a new container, every
 /// retirement fact first, then every live entry, then the journal at the
-/// next writer epoch, all synced. The directory it made is removed when the
-/// restore fails.
+/// next writer epoch, all synced. The admitted retirements stay owed as one
+/// takeover obligation at the admitted position: the new writer's targets
+/// and anchor must reach it at its epoch before they count complete
+/// (KS-4A2). The directory it made is removed when the restore fails.
 pub(crate) fn land_recovery(
     admitted: &AdmittedCustody,
     binding: &CustodyBinding,
@@ -339,7 +342,14 @@ pub(crate) fn land_recovery(
             custody.publish(id, secret)?;
         }
         let control = Control::taken_over(admitted.control.clone(), &admitted.position)?;
-        custody.journal()?.install(&control)?;
+        let journal = custody.journal()?;
+        journal.install(&control)?;
+        if !admitted.retired.is_empty() || !admitted.retired_through.is_empty() {
+            journal.record_takeover(&CustodyPosition {
+                epoch: control.epoch,
+                ..admitted.position
+            })?;
+        }
         landed.sync()
     })();
     match staged {
@@ -382,25 +392,27 @@ pub(crate) fn fence_takeover(admitted: &AdmittedCustody, anchor: &dyn AnchorStor
 
 /// Where a restore that keeps its image's custody takes it from.
 pub(crate) enum CustodyRoute {
-    /// As before: the custody is on this host, the image binds none, or the
-    /// caller reads no head (a wake, a migration, an engine restore).
+    /// As before: the custody is on this host, or the image binds none.
     Local,
     /// The image names a head, and its custody is not on this host: the
     /// head was admitted and landed beside the destination.
     Landed(Box<CustodyLanding>),
-    /// The image names no head (or needs no live key and none is beside
-    /// it), and its custody is not on this host: its claim-bound rows whose
-    /// keys stayed there are dropped and named (CALLS
+    /// No head is found for the image (none named, none beside the backup
+    /// with no anchor to owe one, or the caller reads none: a wake, a
+    /// migration, an engine restore), or it carries only the legacy untyped
+    /// marker, and its custody is not on this host: its claim-bound rows
+    /// whose keys stayed there are dropped and named (CALLS
     /// CUSTODY_NO_HEAD_GATE_ROWS).
     Absent,
 }
 
 /// Where a restore on a new host finds its custody head, and what opens it:
-/// the folder beside the backup, the anchor root when one is configured,
-/// and the kit's recovery root when the restore was unlocked with the kit.
+/// the folder beside the backup, the anchor when one is configured (a root
+/// or a door), and the kit's recovery root when the restore was unlocked
+/// with the kit.
 pub(crate) struct CustodySourceAt<'a> {
     pub(crate) folder: &'a std::path::Path,
-    pub(crate) anchor_root: Option<&'a std::path::Path>,
+    pub(crate) anchor: Option<&'a dyn AnchorStore>,
     pub(crate) root: Option<&'a oneiron_crypto::HybridSecretKey>,
 }
 
@@ -409,7 +421,6 @@ pub(crate) struct CustodySourceAt<'a> {
 pub(crate) struct CustodyLanding {
     landed: Option<ForkedCustodyDir>,
     admitted: AdmittedCustody,
-    anchor_root: Option<std::path::PathBuf>,
 }
 
 impl CustodyLanding {
@@ -418,13 +429,11 @@ impl CustodyLanding {
         self.admitted.note()
     }
 
-    /// With an anchor configured, fences the lineage's old writer before
-    /// the restore is kept.
-    pub(crate) fn fence(&self) -> Result<()> {
-        match &self.anchor_root {
-            Some(root) => {
-                fence_takeover(&self.admitted, &super::anchor::FileAnchor::at(root.clone()))
-            }
+    /// With an anchor configured (the one admission read), fences the
+    /// lineage's old writer before the restore is kept.
+    pub(crate) fn fence(&self, anchor: Option<&dyn AnchorStore>) -> Result<()> {
+        match anchor {
+            Some(anchor) => fence_takeover(&self.admitted, anchor),
             None => Ok(()),
         }
     }
@@ -443,49 +452,89 @@ impl Drop for CustodyLanding {
     }
 }
 
+/// The pre-typed-custody marker (`gate_decision:custody_root:v1`): the
+/// absolute vault root whose `.<name>.gate-decision-keys` held the claim
+/// keys. No reader of those keys exists; the marker only says where they
+/// were.
+const LEGACY_CUSTODY_ROOT: &[u8] = b"gate_decision:custody_root:v1";
+
+/// Whether `rows` carry only the legacy untyped marker, no typed binding,
+/// and the keys it names are not on this host: the image binds no custody
+/// here (Engine 10-20 05:2x). The marker leaves the rows with it.
+fn legacy_binding_absent(rows: &mut Vec<(Vec<u8>, Vec<u8>)>) -> Result<bool> {
+    let Some(root) = rows
+        .iter()
+        .find(|(key, _)| key.as_slice() == LEGACY_CUSTODY_ROOT)
+        .and_then(|(_, value)| decode_native_path(value))
+    else {
+        return Ok(false);
+    };
+    let Some(name) = root.file_name() else {
+        return Ok(false);
+    };
+    let mut keys = std::ffi::OsString::from(".");
+    keys.push(name);
+    keys.push(".gate-decision-keys");
+    match std::fs::symlink_metadata(root.with_file_name(keys)) {
+        Ok(_) => Ok(false),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            rows.retain(|(key, _)| key.as_slice() != LEGACY_CUSTODY_ROOT);
+            Ok(true)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 /// The route a restore that keeps its image's custody takes, decided on the
 /// image's `rows` before anything is made at `destination`. A landed head
 /// rebinds the image's binding row beside `destination` in `rows`, so the
 /// restore's preflight reads the landed custody. `data_key` is the backup
-/// key's custody subkey; `source` is `None` where the caller reads no head,
-/// which restores as before.
+/// key's custody subkey; `source` is `None` where the caller reads no head
+/// (a wake, a migration, an engine restore).
+///
+/// Whatever the entry point, an image opened where no head is found and its
+/// custody is not (no source root, or only the legacy untyped marker with
+/// its keys elsewhere) routes [`CustodyRoute::Absent`]: its claim-bound rows
+/// whose keys stayed behind drop and are named, and the restore completes
+/// (Engine 10-20 05:2x, ruling 4 widened). A head the image names, with an
+/// anchor configured, is still admitted fail-closed.
 pub(crate) fn route_custody(
-    rows: &mut [(Vec<u8>, Vec<u8>)],
+    rows: &mut Vec<(Vec<u8>, Vec<u8>)>,
     required: Option<&CustodyRequirement>,
     destination: &std::path::Path,
     data_key: Zeroizing<[u8; 32]>,
     source: Option<&CustodySourceAt<'_>>,
 ) -> Result<CustodyRoute> {
     let Some(bound) = super::binding_in_rows(rows)? else {
-        return Ok(CustodyRoute::Local);
+        return Ok(if legacy_binding_absent(rows)? {
+            CustodyRoute::Absent
+        } else {
+            CustodyRoute::Local
+        });
     };
     if super::custody_present(bound.root())? {
         return Ok(CustodyRoute::Local);
     }
     let Some(source) = source else {
-        return Ok(CustodyRoute::Local);
+        return Ok(CustodyRoute::Absent);
     };
     let Some(required) = required else {
         return Ok(CustodyRoute::Absent);
     };
-    let target = super::publish::FolderTarget::at(source.folder.to_path_buf());
-    // An image that needs no live key has nothing for a head to recover.
-    if required.required.is_empty() && target.head(Lineage::of(&required.position()?))?.is_none() {
+    let target = FolderTarget::at(source.folder.to_path_buf());
+    // No head beside the backup: an image that needs no live key has
+    // nothing for one to recover, and with no anchor configured nothing
+    // says one is owed. With an anchor, admission refuses (fail-closed).
+    if target.head(Lineage::of(&required.position()?))?.is_none()
+        && (required.required.is_empty() || source.anchor.is_none())
+    {
         return Ok(CustodyRoute::Absent);
     }
     let opener = CustodyOpener {
         root: source.root,
         data_key: Some(data_key),
     };
-    let anchor = source
-        .anchor_root
-        .map(|root| super::anchor::FileAnchor::at(root.to_path_buf()));
-    let admitted = admit_recovery(
-        required,
-        &target,
-        &opener,
-        anchor.as_ref().map(|anchor| anchor as &dyn AnchorStore),
-    )?;
+    let admitted = admit_recovery(required, &target, &opener, source.anchor)?;
     // The restored vault opens at its canonical root: its parent resolved,
     // its own name as made.
     let name = destination
@@ -506,7 +555,6 @@ pub(crate) fn route_custody(
     let landing = Box::new(CustodyLanding {
         landed: Some(landed),
         admitted,
-        anchor_root: source.anchor_root.map(std::path::Path::to_path_buf),
     });
     let raw = crate::side_table::RawValue::to_raw(&binding)
         .map_err(|_| super::identity::custody_corrupt())?;

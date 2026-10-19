@@ -830,6 +830,8 @@ export class Oneiron {
       arm: (input: Facade.ArmTurnProgram): Facade.TurnProgramRegistration => this.#call(() => this.#client.vaultTurnProgramsArm(input) as Facade.TurnProgramRegistration),
       /** Disarms one of the caller's own armed turn programs; true when it was armed. */
       disarm: (input: Facade.DisarmTurnProgram): boolean => this.#call(() => this.#client.vaultTurnProgramsDisarm(input) as boolean),
+      /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
+      admission: (input: Facade.TurnProgramAdmissionRequest): Facade.TurnProgramAdmissionView | null => this.#call(() => this.#client.vaultTurnProgramsAdmission(input) as Facade.TurnProgramAdmissionView | null),
     },
     weave: {
       /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
@@ -1838,9 +1840,9 @@ export class Oneiron {
       /** Lets one held organ call go, by its run ref, under the consent a Discard needs. */
       release_wait: (request: Facade.ProposalSettleRequest): Facade.ReleasedWait => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReleaseWait(keyedJson(request))) as Facade.ReleasedWait; return result }),
       /** Reviews an artifact's slides through the host's decision ladder and holds the comments as one proposal for Keep. */
-      review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
+      review_slides: (request: Facade.SlideReviewSubmit): Facade.ActAnswer<Facade.SlideReviewOutcome> => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.ActAnswer<Facade.SlideReviewOutcome>; return result }),
       /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
-      ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
+      ask: (input: Facade.ArtifactAskSubmit): Facade.ActAnswer<Facade.ArtifactAskOutcome> => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ActAnswer<Facade.ArtifactAskOutcome>),
       /** Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard. */
       admit: (input: Facade.ArtifactAdmitSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAdmit(input) as Facade.ArtifactAskOutcome),
       /** Proposes a closed typed deck outline as a brief NOTE for the person to keep or decline. */
@@ -2145,6 +2147,10 @@ export class Oneiron {
       step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
       /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
       checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
+      /** Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it. */
+      program: (input: Facade.ProgramRunRequest): Facade.ProgramRunView | null => this.#call(() => this.#client.vaultRunsProgram(input) as Facade.ProgramRunView | null),
+      /** Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body. */
+      program_step: (input: Facade.SettledProgramStepRequest): Facade.SettledProgramStepView | null => this.#call(() => this.#client.vaultRunsProgramStep(input) as Facade.SettledProgramStepView | null),
       /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
       review: (input: Facade.RunReviewRequest): Facade.RunReview => this.#call(() => this.#client.vaultRunsReview(input) as Facade.RunReview),
       /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */
@@ -3073,7 +3079,7 @@ export class Oneiron {
     /** One catalogued connector by name, removed ones included. */
     status: (input: Facade.ConnectorNameRequest): Facade.ConnectorView | null => this.#call(() => this.#client.connectorStatus(input) as Facade.ConnectorView | null),
     /** Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data. */
-    call: (input: Facade.ConnectorCallRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorCall(input) as Facade.ConnectorCallReply),
+    call: (input: Facade.ConnectorCallRequest): Facade.ActAnswer<Facade.ConnectorCallReply> => this.#call(() => this.#client.connectorCall(input) as Facade.ActAnswer<Facade.ConnectorCallReply>),
     /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
     schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
     /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */

@@ -1629,6 +1629,8 @@ class Oneiron:
             """Arms a pinned callable skill entry for the caller's own future turns, in one conversation or any of its own; arming the same definition again returns the standing registration."""
         def disarm(self, spec: Facade.DisarmTurnProgram) -> bool:
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
+        def admission(self, spec: Facade.TurnProgramAdmissionRequest) -> Facade.TurnProgramAdmissionView | None:
+            """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
     class _VaultWeaveVerbs:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
@@ -2654,8 +2656,8 @@ class Oneiron:
         def proposals(self, request: Facade.ArtifactRefRequest) -> list[Facade.PendingProposalView]: ...
         def waits(self, request: Facade.ArtifactRefRequest) -> list[Facade.OrganWaitView]: ...
         def release_wait(self, request: Facade.ProposalSettleRequest) -> Facade.ReleasedWait: ...
-        def review_slides(self, request: Facade.SlideReviewSubmit) -> Facade.SlideReviewOutcome: ...
-        def ask(self, spec: Facade.ArtifactAskSubmit) -> Facade.ArtifactAskOutcome:
+        def review_slides(self, request: Facade.SlideReviewSubmit) -> Facade.ActAnswer[Facade.SlideReviewOutcome]: ...
+        def ask(self, spec: Facade.ArtifactAskSubmit) -> Facade.ActAnswer[Facade.ArtifactAskOutcome]:
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
         def admit(self, spec: Facade.ArtifactAdmitSubmit) -> Facade.ArtifactAskOutcome:
             """Admits the caller's own provider measurements for one artifact ask's units in place of the host ladder's, validating each decision and its provider-bound paired readings before holding the answers as one proposal for Keep or Discard."""
@@ -2973,6 +2975,10 @@ class Oneiron:
             """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
         def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+        def program(self, spec: Facade.ProgramRunRequest) -> Facade.ProgramRunView | None:
+            """Reads where one of the caller's turn programs stands, or any program when the owner asks: its admission, queue tries, held park, code-run lifecycle and one page of its steps, without running, resuming or leasing it."""
+        def program_step(self, spec: Facade.SettledProgramStepRequest) -> Facade.SettledProgramStepView | None:
+            """Reads one settled step of a turn program's run and its exact result as far as the caller's credential reads it: a model step's terminal claim and stored response, a write's receipt, or a send's kept body."""
         def review(self, spec: Facade.RunReviewRequest) -> Facade.RunReview:
             """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
         def settle(self, spec: Facade.RunSettleRequest) -> Facade.RunSettlement:
@@ -3913,7 +3919,7 @@ class Oneiron:
             """Every live catalogued connector whose name or summary matches the query."""
         def status(self, spec: Facade.ConnectorNameRequest) -> Facade.ConnectorView | None:
             """One catalogued connector by name, removed ones included."""
-        def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ConnectorCallReply:
+        def call(self, spec: Facade.ConnectorCallRequest) -> Facade.ActAnswer[Facade.ConnectorCallReply]:
             """Calls one tool of one catalogued connector under the caller's own grant and gate; the tool's reply comes back as foreign data."""
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
