@@ -29,8 +29,6 @@ use crate::{EntityId, Error, MemoryError, Result, Vault};
 
 use super::{InvocationId, VerbCall, VerbDomain, VerbHookStop, VerbResume, credential};
 
-pub(super) mod in_session;
-
 /// Leads a verb hook's ask intent key, `hook.verb/<invocation>/<binding>`:
 /// settlement parses the rest, and an ask's Changed deliveries skip it.
 pub(crate) const VERB_HOOK_INTENT: &str = "hook.verb/";

@@ -117,16 +117,6 @@ pub(super) fn put_in_txn(
     )
 }
 
-/// The row [`put_in_txn`] writes for `chain`: its full key and its encoded
-/// value, for a session-only call's store, which keeps it outside the vault
-/// (FIX 4283).
-pub(super) fn lineage_row(row: &[u8; 16], chain: &[LineageLink]) -> Result<(Vec<u8>, Vec<u8>)> {
-    let lineage = HookLineage {
-        chain: chain.to_vec(),
-    };
-    Ok((LINEAGE.key_bytes(row), LINEAGE.encode_value(&lineage)?))
-}
-
 pub(super) fn raise_check_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

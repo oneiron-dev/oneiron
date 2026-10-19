@@ -72,7 +72,6 @@ mod room;
 mod save_grant;
 mod saving;
 mod session;
-pub(crate) mod session_hooks;
 mod telemetry;
 mod types;
 mod vault_api;

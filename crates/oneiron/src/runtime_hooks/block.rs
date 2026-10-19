@@ -106,13 +106,6 @@ pub(super) fn put_new_block_in_txn(
     Ok(true)
 }
 
-/// The row [`put_new_block_in_txn`] writes for `block`: its full key and its
-/// encoded value, for a session-only call's store, which keeps it outside the
-/// vault (FIX 4283).
-pub(super) fn block_row(id: EntityId, block: &HookBlock) -> Result<(Vec<u8>, Vec<u8>)> {
-    Ok((BLOCKS.key_bytes(&id), BLOCKS.encode_value(block)?))
-}
-
 pub(super) fn put_block_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

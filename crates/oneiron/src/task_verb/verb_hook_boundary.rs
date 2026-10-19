@@ -26,8 +26,9 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::off_record::session_hooks::SessionHookKey;
-use crate::runtime_hooks::verb::{HOOK_RESULT_NOT_RETAINED, VerbArgsCheck, VerbAskCredential};
+use crate::runtime_hooks::verb::{
+    HOOK_RESULT_NOT_RETAINED, SessionHooks, VerbArgsCheck, VerbAskCredential, VerbHookStorage,
+};
 use crate::runtime_hooks::{VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume};
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{
@@ -45,9 +46,24 @@ pub const SESSION_PAUSE_NOTE: &str = "This call keeps no record, so its hook's p
 
 /// Where a call that keeps no record keeps its verb hooks' records: its live
 /// off-record session, in this process only, never the vault (FIX 4283).
-/// Only [`hook_session`] makes one; a door hands it to the chain as it is.
+/// Only [`hook_session`] makes one; a door hands it to the chain as it is,
+/// and the chain's session storage (L11-B S01-2c) keys its records by it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HookSession(pub(crate) SessionHookKey);
+pub struct HookSession {
+    /// The off-record session the call's surface binds and the principal it
+    /// binds it for, as `Memory::keeps_no_record` reads them; `None` for a
+    /// `no_record` row called outside one.
+    pub(crate) binding: Option<(String, Option<EntityId>)>,
+}
+
+impl HookSession {
+    /// The one place a session-only call's storage reaches its chain: the
+    /// session's own (`VerbHookStorage::Session`), never the vault's.
+    fn with_storage<T>(&self, vault: &Vault, chain: impl FnOnce(VerbHookStorage<'_>) -> T) -> T {
+        let hooks = SessionHooks::session_only(vault, self);
+        chain(VerbHookStorage::Session(&hooks))
+    }
+}
 
 /// The session a call of row `verb` keeps its verb hooks' records for when
 /// it keeps no record (FIX 4283; Engine ruling 10-19): a `no_record` row
@@ -65,10 +81,10 @@ pub fn hook_session(memory: Option<&Memory<'_>>, verb: &str) -> Option<HookSessi
     if !anonymous && !NO_RECORD_ROWS.contains(&verb) {
         return None;
     }
-    Some(HookSession(match memory {
-        Some(memory) => SessionHookKey::of(memory.vault(), memory.off_record_binding()),
-        None => SessionHookKey::Process,
-    }))
+    let binding = memory
+        .and_then(Memory::off_record_binding)
+        .map(|(session, principal)| (session.trim().to_owned(), principal));
+    Some(HookSession { binding })
 }
 
 /// The pre chain of a session-only call ([`hook_session`]) a server door
@@ -88,7 +104,26 @@ pub fn session_pre(
     session: &HookSession,
     turn: Option<Arc<TaskWorkTurn>>,
 ) -> crate::Result<Result<VerbHookPre, VerbHookStop>> {
-    vault.pre_verb_hooks_resumable(call, args, check, None, turn, Some(session))
+    session.with_storage(vault, |storage| {
+        vault.pre_verb_hooks_in(storage, call, args, check, turn)
+    })
+}
+
+/// The post chain of a session-only call over its `result`: the caller's
+/// view, its hooks' records kept with `session`, as its pre chain's were.
+///
+/// # Errors
+///
+/// Storage errors as they occur; a hook's own failure is never one.
+pub fn session_post(
+    vault: &Vault,
+    pre: VerbHookPre,
+    result: Value,
+    session: &HookSession,
+) -> crate::Result<Result<Value, VerbHookStop>> {
+    session.with_storage(vault, |storage| {
+        vault.post_verb_hooks_in(storage, pre, result)
+    })
 }
 
 /// The refusal a caller reads for a hook's stop. A session-only call's
@@ -206,7 +241,7 @@ fn row_pre_resumable(
         (None, Some(credential)) => {
             vault.pre_verb_hooks_for_credential(call, args, &check, Some(credential), turn)?
         }
-        (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn, None)?,
+        (None, None) => vault.pre_verb_hooks_resumable(call, args, &check, resume, turn)?,
     };
     if let Ok(pre) = &mut ended {
         revoke_lands::settle(pre, &|args| validate(verb, args).is_ok());
@@ -230,22 +265,34 @@ pub fn row_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<
     // The write committed: the owner hears what a hook changed on a
     // restrictive call, or what was ignored (FIX 5076).
     revoke_lands::notify(vault, &pre);
+    // A session-only call's post chain keeps its records where its pre chain
+    // kept them (FIX 4283).
+    let session = pre.session().cloned();
     if let Some(masked) = masked_reveal_reply(&pre.call().verb, &result)
         && masked != result
     {
-        let view = chain_post(vault, pre, masked.clone())?;
+        let view = chain_post(vault, pre, masked.clone(), session.as_ref())?;
         return Ok(revealed_hook_view(view, &masked, &result));
     }
-    chain_post(vault, pre, result)
+    chain_post(vault, pre, result, session.as_ref())
 }
 
-fn chain_post(vault: &Vault, pre: VerbHookPre, result: Value) -> MemoryResult<Value> {
+fn chain_post(
+    vault: &Vault,
+    pre: VerbHookPre,
+    result: Value,
+    session: Option<&HookSession>,
+) -> MemoryResult<Value> {
+    let post = |pre, result| match session {
+        Some(session) => session_post(vault, pre, result, session),
+        None => vault.post_verb_hooks(pre, result),
+    };
     if pre.call().domain == VerbDomain::Read {
-        return vault.post_verb_hooks(pre, result)?.map_err(stopped);
+        return post(pre, result)?.map_err(stopped);
     }
     let verb = pre.call().verb.clone();
     let committed = result.clone();
-    match vault.post_verb_hooks(pre, result) {
+    match post(pre, result) {
         Ok(view) => view.map_err(stopped),
         Err(error) => {
             tracing::warn!(%verb, %error, "a committed write's post hooks failed");

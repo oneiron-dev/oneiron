@@ -28,7 +28,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
-use crate::runtime_hooks::VerbHookPre;
+use crate::runtime_hooks::{VerbCall, VerbHookPre};
 use crate::{EntityId, Vault};
 
 /// Whether a hook's valid change to a restrictive call's pinned field is
@@ -543,7 +543,7 @@ pub fn notify(vault: &Vault, pre: &VerbHookPre) {
     else {
         return;
     };
-    if let Err(error) = record_notice(vault, pre, landing) {
+    if let Err(error) = record_notice(vault, pre.call(), landing) {
         tracing::warn!(
             verb = %pre.call().verb,
             %error,
@@ -552,33 +552,16 @@ pub fn notify(vault: &Vault, pre: &VerbHookPre) {
     }
 }
 
-fn record_notice(vault: &Vault, pre: &VerbHookPre, landing: &Landing) -> crate::Result<()> {
-    let call = pre.call();
-    // A call that keeps no record names no invocation in the vault (FIX
-    // 4283): its notice is keyed by the id that stands for it in this
-    // process, and its text leaves the invocation out.
-    let (invocation, detail) = match pre.session() {
-        Some(session) => (
-            crate::runtime_hooks::InvocationId(
-                vault
-                    .verb_hook_state
-                    .session
-                    .hidden_invocation(&session.0, call.invocation.0),
-            )
-            .to_hex(),
-            format!("{}: {}", call.verb, landing.notes.join("; ")),
+fn record_notice(vault: &Vault, call: &VerbCall, landing: &Landing) -> crate::Result<()> {
+    let invocation = call.invocation.to_hex();
+    let detail = clip(
+        &format!(
+            "{} (invocation {invocation}): {}",
+            call.verb,
+            landing.notes.join("; ")
         ),
-        None => {
-            let invocation = call.invocation.to_hex();
-            let detail = format!(
-                "{} (invocation {invocation}): {}",
-                call.verb,
-                landing.notes.join("; ")
-            );
-            (invocation, detail)
-        }
-    };
-    let detail = clip(&detail, NOTICE_DETAIL_MAX);
+        NOTICE_DETAIL_MAX,
+    );
     let target = landing.target();
     vault.with_write_txn(|txn| {
         let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;

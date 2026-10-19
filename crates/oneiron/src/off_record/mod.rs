@@ -50,7 +50,6 @@ pub(crate) use lifecycle::OverlayShellReservation;
 /// the recall host reach the room's telemetry handles through this path; the
 /// type stays crate-private, so no public surface gains a session channel.
 pub(crate) use lifecycle::SessionRetrievalTelemetry;
-pub(crate) use lifecycle::session_hooks;
 /// `FloorWrites` lives in `promote.rs` from ONE-1728 on; this re-export keeps
 /// the `crate::off_record::FloorWrites` path stable, so the `gate.rs` and
 /// `deletion.rs` call sites are diff-quiet across the move.

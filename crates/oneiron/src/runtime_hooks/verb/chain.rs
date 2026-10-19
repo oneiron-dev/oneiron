@@ -25,7 +25,6 @@ use crate::runtime_hooks::store::{
 use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
 use crate::task_verb::revoke_lands::Landing;
-use crate::task_verb::verb_hook_boundary::HookSession;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -35,8 +34,6 @@ use super::{
     InvocationId, VerbArgsCheck, VerbCall, VerbDomain, VerbHookPre, VerbHookStop, VerbResume, ask,
     redact, served,
 };
-
-mod session_sink;
 
 /// Receipts the input's tail carries.
 const RECEIPT_TAIL: usize = 8;
@@ -87,9 +84,7 @@ pub(super) fn may_run(vault: &Vault, verb: &str) -> bool {
 /// free of reads. `resume` is how settlement could run the call again
 /// without its caller: an ask saves it. `turn` is the task-work turn the
 /// calling operation already holds: a hook's ask and a retry's read of it run
-/// on it as the hook's author ([`ask::retry`], [`ask::open`]). `session` is
-/// set for a call that keeps no record (FIX 4283): its saved ask, its rows and
-/// its answer's use live in that session's store, never in the vault.
+/// on it as the hook's author ([`ask::retry`], [`ask::open`]).
 pub(super) fn pre(
     vault: &Vault,
     call: VerbCall,
@@ -97,7 +92,6 @@ pub(super) fn pre(
     check: VerbArgsCheck<'_>,
     resume: Option<&VerbResume>,
     turn: Option<Arc<TaskWorkTurn>>,
-    session: Option<&HookSession>,
 ) -> Result<Stopped<VerbHookPre>> {
     if depth() > 0 {
         return through(call, args);
@@ -113,10 +107,7 @@ pub(super) fn pre(
     let mut landing = Landing::of(&call.verb, &args);
     let saved = {
         let _depth = HookDepth::enter();
-        match session {
-            Some(session) => ask::in_session::retry(vault, &call, session, turn.as_ref())?,
-            None => ask::retry(vault, &call, resume, turn.as_ref())?,
-        }
+        ask::retry(vault, &call, resume, turn.as_ref())?
     };
     let resumed = match saved {
         ask::Retry::Fresh => None,
@@ -164,7 +155,6 @@ pub(super) fn pre(
     let carry = Carry {
         mark,
         now: vault.store.clock.now_recorded_at().saturating_mul(1_000),
-        session: session.cloned(),
     };
     if token.is_none() && hooks.is_empty() {
         return Ok(Ok(VerbHookPre {
@@ -183,7 +173,6 @@ pub(super) fn pre(
     let _depth = HookDepth::enter();
     let mut chain = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now, turn);
     chain.landing = landing.as_mut();
-    chain.session = session;
     let ended = chain.pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
@@ -215,9 +204,8 @@ pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Sto
         return Ok(Ok(result));
     };
     let _depth = HookDepth::enter();
-    let mut chain = Chain::new(vault, &call, HookPhase::Post, runtime, carry.now, None);
-    chain.session = carry.session.as_ref();
-    let ended = chain.post(&hooks, &args, result);
+    let ended = Chain::new(vault, &call, HookPhase::Post, runtime, carry.now, None)
+        .post(&hooks, &args, result);
     // A nested boundary of this invocation passes through until here.
     drop(carry.mark);
     ended
@@ -296,10 +284,6 @@ struct Chain<'c> {
     /// A restrictive pre chain's landing: each rewrite is pinned, and one
     /// still refused keeps the prior args, no hook failure (FIX 5076).
     landing: Option<&'c mut Landing>,
-    /// The session sink of a call that keeps no record, set only by its
-    /// verb-hook boundary (FIX 4283): the commit hands its rows to the
-    /// session's store and writes none to the vault.
-    session: Option<&'c HookSession>,
 }
 
 /// One run, as its receipt tells it, and what its saved copy keeps.
@@ -378,7 +362,6 @@ impl<'c> Chain<'c> {
             used: Cell::new(false),
             turn,
             landing: None,
-            session: None,
         }
     }
 
@@ -789,30 +772,17 @@ impl<'c> Chain<'c> {
         label: &str,
         resume: Option<&VerbResume>,
     ) -> Result<std::result::Result<VerbHookStop, String>> {
-        let opened = match self.session {
-            Some(session) => ask::in_session::open(
-                self.vault,
-                self.call,
-                hook,
-                index,
-                args,
-                label,
-                session,
-                self.turn.as_ref(),
-                &|| self.commit_in_session(session),
-            ),
-            None => ask::open(
-                self.vault,
-                self.call,
-                hook,
-                index,
-                args,
-                label,
-                resume,
-                self.turn.as_ref(),
-                &|txn: &mut heed::RwTxn<'_>| self.write_in_txn(txn),
-            ),
-        };
+        let opened = ask::open(
+            self.vault,
+            self.call,
+            hook,
+            index,
+            args,
+            label,
+            resume,
+            self.turn.as_ref(),
+            &|txn: &mut heed::RwTxn<'_>| self.write_in_txn(txn),
+        );
         if self.used.get() {
             return Ok(Ok(self.used_stop()));
         }
@@ -860,9 +830,6 @@ impl<'c> Chain<'c> {
         if self.runs.is_empty() && self.token.is_none() {
             return Ok(());
         }
-        if let Some(session) = self.session {
-            return self.commit_in_session(session);
-        }
         self.vault
             .with_write_txn_grouped(|txn| self.write_in_txn(txn))
     }
@@ -905,8 +872,7 @@ impl<'c> Chain<'c> {
     /// author with source Generated. One that does not land now stays
     /// pending for the runner's start-up drain: the verb's result stands.
     fn apply(&self) {
-        // A session-only call's intents stay in its session's store.
-        if self.intents.is_empty() || self.session.is_some() {
+        if self.intents.is_empty() {
             return;
         }
         let bindings = match self.vault.pack_hook_bindings() {
