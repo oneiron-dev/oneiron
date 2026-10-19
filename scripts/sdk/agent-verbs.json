@@ -241,7 +241,15 @@
       },
       "mcp_required_fields": [],
       "mcp_scope": "filtered",
-      "section": true
+      "section": true,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardRefreshRequest>",
+        "output": "crate::task_verb::sdk::BoardFrameReply",
+        "description": "Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "openapi": true
+      }
     },
     {
       "name": "self.focus.subscribe",
@@ -258,7 +266,15 @@
         "scopes"
       ],
       "mcp_scope": "filtered",
-      "section": true
+      "section": true,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>",
+        "output": "crate::task_verb::sdk::BoardSubscriptionReply",
+        "description": "Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "openapi": true
+      }
     },
     {
       "name": "self.focus.unsubscribe",
@@ -275,7 +291,30 @@
         "scopes"
       ],
       "mcp_scope": "filtered",
-      "section": true
+      "section": true,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>",
+        "output": "crate::task_verb::sdk::BoardSubscriptionReply",
+        "description": "Unsubscribes the attached run's board STREAM connection from the named scopes.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.focus.wakes",
+      "description": "Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardWakeRequest>",
+      "output": "crate::task_verb::sdk::BoardWakeReply",
+      "call": "crate::code_run::fold_api::host_required(memory, &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.focus.scratchpad.recall",
@@ -991,6 +1030,21 @@
       "input": "crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest",
       "output": "crate::agent_dispatch::budget_doors::LocalRunnerBudgetView",
       "call": "crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.local\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.budgets.reservations",
+      "description": "The owner reads a device-local runner budget counter and one page of the child reservations held against it, without creating or refilling it.",
+      "input": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest",
+      "output": "crate::agent_dispatch::budget_doors::RunnerBudgetReservationsView",
+      "call": "crate::agent_dispatch::budget_doors::runner_budget_reservations_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.reservations\")?, &input).map_err(crate::memory::MemoryError::from)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -2144,9 +2198,9 @@
     },
     {
       "name": "vault.search.vector",
-      "description": "Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt.",
+      "description": "Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit.",
       "input": "crate::memory::VectorSearchRequest",
-      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>",
+      "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchResult>",
       "call": "memory.query_vector(&input)?",
       "scope": "Read",
       "admission": {
@@ -2155,7 +2209,11 @@
       },
       "section": false,
       "mcp_scope": "filtered",
-      "openapi": true
+      "openapi": true,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
     },
     {
       "name": "vault.images.view",
@@ -3995,6 +4053,77 @@
       "section": false
     },
     {
+      "name": "vault.org_admin.configure",
+      "description": "The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured.",
+      "input": "crate::task_verb::sdk::OrgAdminConfigureRequest",
+      "output": "crate::task_verb::sdk::OrgAdminConfigured",
+      "call": "crate::task_verb::sdk::configure_org_admin_as_owner(memory.vault(), &memory.embedded_owner(\"vault.org_admin.configure\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.org_admin.powers",
+      "description": "The caller reads only the organization's fixed named Admin powers that their own credential carries.",
+      "input": "crate::task_verb::sdk::OrgAdminPowersRequest",
+      "output": "crate::task_verb::sdk::OrgAdminPowers",
+      "call": "crate::task_verb::sdk::read_org_admin_powers(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.members.reset_project_access",
+      "description": "An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override.",
+      "input": "crate::task_verb::sdk::SharedProjectAccessResetRequest",
+      "output": "crate::task_verb::sdk::SharedProjectAccessReset",
+      "call": "crate::task_verb::sdk::reset_shared_project_access(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.members.delegate",
+      "description": "A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward.",
+      "input": "crate::task_verb::sdk::FederationDelegateRequest",
+      "output": "crate::task_verb::sdk::FederationMemberGrant",
+      "call": "crate::task_verb::sdk::create_federation_delegate_as(memory.vault(), &memory.embedded_owner(\"vault.members.delegate\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.members.projection",
+      "description": "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority.",
+      "input": "crate::task_verb::sdk::SharedMemberRequest",
+      "output": "crate::task_verb::sdk::MemberProjection",
+      "call": "crate::task_verb::sdk::read_member_projection(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.members.add",
       "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",
@@ -4952,6 +5081,144 @@
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
       "host_door": true,
       "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.status",
+      "description": "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.status\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.start",
+      "description": "A person starts an off-record stretch in a room they belong to, on their own credential.",
+      "input": "crate::task_verb::sdk::OffRecordRoomStartRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.start\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.witness",
+      "description": "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant.",
+      "input": "crate::task_verb::sdk::OffRecordRoomWitnessRequest",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.witness\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.save",
+      "description": "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomSaved",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.save\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.save_from_here",
+      "description": "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.save_from_here\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.export",
+      "description": "A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomExport",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "attachment": "off-record-talk.json"
+    },
+    {
+      "name": "vault.off_record.rooms.suggest_save",
+      "description": "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.suggest_save\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "proposes": true,
+      "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.off_record.rooms.confirm_save",
+      "description": "A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomSaved",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.confirm_save\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.decline_save",
+      "description": "A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.decline_save\", &input)?",
+      "host_door": true,
       "no_record": true,
       "scope": "Write",
       "admission": {
@@ -7550,6 +7817,146 @@
         ]
       },
       "section": false,
+      "openapi": true
+    },
+    {
+      "name": "mount",
+      "description": "Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash.",
+      "input": "crate::memory::graph_fs_doors::GraphFsMountRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsMounted",
+      "call": "memory.graph_fs_mount(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.readdir",
+      "description": "List one directory at the mounted reference under the caller read gate, with a sealed continuation.",
+      "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsDirectoryView",
+      "call": "memory.graph_fs_readdir(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.read_file",
+      "description": "Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation.",
+      "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_read_file(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.read_link",
+      "description": "Resolve a visible graph link at the mounted reference without following a host filesystem link.",
+      "input": "crate::memory::graph_fs_doors::GraphFsLinkRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsLinkView",
+      "call": "memory.graph_fs_read_link(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.ls",
+      "description": "List names at the mounted reference, using the live temporal index when requested.",
+      "input": "crate::memory::graph_fs_doors::GraphFsLsRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_ls(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.find",
+      "description": "Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index.",
+      "input": "crate::memory::graph_fs_doors::GraphFsFindRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_find(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.grep",
+      "description": "Search visible mounted file bytes, using the live claim text index for supported recursive patterns.",
+      "input": "crate::memory::graph_fs_doors::GraphFsGrepRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_grep(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.cat",
+      "description": "Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference.",
+      "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_cat(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.head",
+      "description": "Read the first requested lines at the mounted reference with bounded output and a sealed continuation.",
+      "input": "crate::memory::graph_fs_doors::GraphFsHeadRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_head(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.wc",
+      "description": "Count lines, words and bytes of a visible file at the mounted reference.",
+      "input": "crate::memory::graph_fs_doors::GraphFsLinkRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_wc(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
       "openapi": true
     },
     {
@@ -10292,6 +10699,201 @@
       "openapi": true
     },
     {
+      "name": "vault.models.catalog.refresh",
+      "description": "Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding.",
+      "input": "crate::llm::catalog_doors::ModelCatalogRefresh",
+      "output": "crate::llm::catalog_doors::ModelCatalogRevision",
+      "call": "memory.vault().refresh_model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.refresh\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.catalog.get",
+      "description": "Reads a pinned model catalog revision with its prices, backend offers and score evidence.",
+      "input": "crate::llm::catalog_doors::ModelCatalogGet",
+      "output": "crate::llm::catalog_doors::ModelCatalogRevision",
+      "call": "memory.vault().model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.catalog.diff",
+      "description": "Diffs two immutable model catalog revisions, including prices, scores and retired offers.",
+      "input": "crate::llm::catalog_doors::ModelCatalogDiffRequest",
+      "output": "crate::llm::catalog_doors::ModelCatalogDiff",
+      "call": "memory.vault().diff_model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.diff\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.nominate",
+      "description": "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority.",
+      "input": "crate::llm::catalog_doors::ModelTrialNominate",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().nominate_model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.nominate\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.get",
+      "description": "Reads a retained held-out trial, its catalog revision, independent labels and measured cost.",
+      "input": "crate::llm::catalog_doors::ModelTrialRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.approve",
+      "description": "Approves exploration for a held-out model trial only; leaves its role binding unchanged.",
+      "input": "crate::llm::catalog_doors::ModelTrialRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().approve_model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.approve\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.run",
+      "description": "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost.",
+      "input": "crate::llm::catalog_doors::ModelTrialRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.trials.run\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.complete",
+      "description": "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer.",
+      "input": "crate::llm::catalog_doors::ModelTrialComplete",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().complete_model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.complete\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.propose",
+      "description": "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it.",
+      "input": "crate::llm::catalog_doors::ModelBindingPropose",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().propose_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.propose\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.get",
+      "description": "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence.",
+      "input": "crate::llm::catalog_doors::ModelBindingProposalRef",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().model_binding_proposal_as_owner(&memory.embedded_owner(\"vault.models.bindings.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.read",
+      "description": "Reads the currently active manifest binding for a model role.",
+      "input": "crate::llm::catalog_doors::ModelBindingRead",
+      "output": "crate::llm::manifest::ModelBinding",
+      "call": "memory.vault().model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.read\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.accept",
+      "description": "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks.",
+      "input": "crate::llm::catalog_doors::ModelBindingAccept",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().accept_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.accept\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.deny",
+      "description": "Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding.",
+      "input": "crate::llm::catalog_doors::ModelBindingProposalRef",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().deny_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.deny\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.options",
       "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",
@@ -12168,6 +12770,36 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.search.vector.config",
+      "description": "Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search.",
+      "input": "EmptyRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>",
+      "call": "memory.vector_search_config()?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_fields": {},
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.vectors.put",
+      "description": "Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically.",
+      "input": "crate::memory::VectorPutRequest",
+      "output": "crate::memory::VectorPutReceipt",
+      "call": "memory.put_vector_as_owner(&memory.embedded_owner(\"vault.vectors.put\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.search.hybrid",
       "description": "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence.",
       "input": "crate::memory::HybridSearchRequest",
@@ -13449,6 +14081,36 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.home.get",
+      "description": "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything.",
+      "input": "EmptyRequest",
+      "output": "crate::dreamer_runner::ConsolidationHomeView",
+      "call": "crate::dreamer_runner::consolidation_home_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.home.get\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.lineage",
+      "description": "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model.",
+      "input": "crate::dreamer_runner::ConsolidationLineageRequest",
+      "output": "Option<crate::dreamer_runner::ConsolidationLineageView>",
+      "call": "crate::dreamer_runner::consolidation_lineage_as(memory.vault(), &memory.embedded_owner(\"vault.consolidation.lineage\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true

@@ -266,7 +266,6 @@ impl Vault {
 
     /// Foreign pack intake: resolve and enforce the acting agent under the
     /// SAME writer transaction that creates the durable event handoff.
-    #[cfg(any(test, feature = "microvm-firecracker"))]
     pub(crate) fn enqueue_pack_surface_event_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
