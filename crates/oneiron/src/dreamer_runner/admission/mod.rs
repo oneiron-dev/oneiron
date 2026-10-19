@@ -32,8 +32,8 @@ use super::constants::{
     DREAMER_NOTE_REVIEW_ATTEMPT_KIND, DREAMER_RECIPE_WAKE_ATTEMPT_KIND,
     DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DREAMER_RUNNER_ATTEMPT_KIND,
     DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND, DREAMER_TASK_REALIZE_ATTEMPT_KIND,
-    DREAMER_VAULT_CLEANUP_ATTEMPT_KIND, DREAMER_WEAVE_LENS_ATTEMPT_KIND,
-    DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DREAMER_VAULT_CLEANUP_ATTEMPT_KIND,
+    DREAMER_WEAVE_LENS_ATTEMPT_KIND, DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
 };
 use super::milestone::apply_milestone_claim_in_txn;
 use super::store::{DreamerRunnerStore, decode_dreamer_attempt_status};
@@ -365,6 +365,8 @@ impl DreamerRunnerStore<'_> {
     ) -> Result<DreamerKindAdmissionResult> {
         let candidate = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
             self.ready_macro_candidate_in_txn(wtxn, &input)?
+        } else if queue_kind == DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
+            self.ready_unparked_program_in_txn(wtxn, input.now)?
         } else {
             self.attempts
                 .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
@@ -430,7 +432,11 @@ impl DreamerRunnerStore<'_> {
             lease_owner: input.lease_owner,
             now: input.now,
         };
-        let claim = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
+        // A candidate chosen on its own row (a MACRO bucket, a program's
+        // park) is claimed by id, never as whichever row of its kind is next.
+        let claim = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind()
+            || queue_kind == DREAMER_TURN_PROGRAM_ATTEMPT_KIND
+        {
             crate::ports::JobQueue::port_job_claim_id(
                 self.vault,
                 wtxn,

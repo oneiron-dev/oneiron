@@ -41,7 +41,7 @@ fn refused(reason: &'static str) -> Error {
 /// The tail rows whose every parent is covered or such a row, the tail rows
 /// above a gap, and the parents tail rows name that the image does not cover
 /// and this vault does not hold.
-fn tail_closure(
+pub(super) fn tail_closure(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, TailRow>,
 ) -> (

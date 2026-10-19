@@ -616,6 +616,19 @@ impl Memory<'_> {
                 }
             };
             effect(wtxn)?;
+            // DOOR-141: a turn that lands new words at base owes each program
+            // its actor armed a wake, recorded in this commit so a crash after
+            // it cannot lose one. An import is a source's words and a host
+            // door's turn the engine's own: neither wakes a program. The
+            // record never fails the turn; one it cannot write is logged.
+            if matches!(&sink, WitnessSink::Base(_))
+                && plan.imported.is_none()
+                && !door.is_host()
+                && (matches!(admission.turn, AdmittedTurn::Mint { .. })
+                    || admission.has_new_messages())
+            {
+                self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
+            }
             if let Some(project) = leader_project {
                 let message_ids = plan.message_ids();
                 for id in std::iter::once(plan.turn_id).chain(message_ids.iter().copied()) {
