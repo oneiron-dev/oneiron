@@ -181,12 +181,18 @@ pub(super) async fn handle_sync_message(
                     let msg = protocol::encode_root_update(&delta);
                     let _ = direct_tx.send(msg);
                 }
-                Err(_) => {
+                Err(error) => {
                     tracing::error!(
                         conn_id,
                         reason = "root_delta_export_failed",
                         "failed to export root delta for VV response"
                     );
+                    // FIX 5849: the server's own fault closes 1011, as a
+                    // window export's does, instead of leaving the request
+                    // unanswered on a socket it keeps.
+                    if protocol::ROOT_EXPORT_FAULT_CLOSES {
+                        return Err(ProtocolError::ExportFailed(error));
+                    }
                 }
             }
             Ok(())

@@ -388,10 +388,12 @@ impl CoreAuth {
 
     /// Long-lived sessions refold liveness for their original verified mint.
     /// A managed vault's attested owner has no mint and no token id: his
-    /// session stands while the vault records him as its live owner.
+    /// session stands while the vault records him as its live owner. A
+    /// booking door's stale owner sign-in (FIX 5327) is built for its one
+    /// call alone and stands for it: he holds no owner standing to lose.
     pub(crate) fn credential_is_live(&self, vault: &oneiron::Vault) -> bool {
         if let Some(holder) = self.managed_owner {
-            return managed_owner_is_live(vault, holder);
+            return self.is_attested_booking_holder() || managed_owner_is_live(vault, holder);
         }
         if let Some(verified) = &self.verified_slip {
             vault.capability_slip_is_live(verified).unwrap_or(false)

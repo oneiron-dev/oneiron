@@ -145,9 +145,9 @@ impl Vault {
                     .put(Tag::Released, body.blake3.as_bytes(), &[])?;
             }
         }
-        // The custody values a result body's sweep replaces, read before the
-        // write transaction opens.
-        let known = self.known_values()?;
+        // The custody values a result body's sweep replaces, and the body
+        // instances it spills into, read and minted before the writer opens.
+        let known = super::result_reserve::staged_result_sinks(self, &archive)?;
         let mut wtxn = self.store.env.write_txn()?;
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
@@ -513,7 +513,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     archive: &mut IndexedArchive<'_, R>,
-    known: Option<std::sync::Arc<crate::secret_custody::KnownValues>>,
+    known: crate::code_run::StagedSinks,
 ) -> Result<(usize, usize)> {
     let (mut imported, mut withheld) = (0, 0);
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);

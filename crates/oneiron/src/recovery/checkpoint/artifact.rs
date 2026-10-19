@@ -24,8 +24,10 @@
 //! against the manifest, as the body is read back into the restored vault.
 //!
 //! The key header holds no key: it lets a host without the vault unlock the
-//! artifact's key from one wrap ([`CheckpointKey::unlock`]). Claim keys are
-//! never in an image either; exterior custody stays live (`checkpoint_custody`).
+//! artifact's key from one wrap ([`CheckpointKey::unlock`]). Claim keys and
+//! body instance keys are never in an image either, nor a wrap that
+//! recovers one: exterior custody stays live (`checkpoint_custody`), and each
+//! body travels sealed under its instance's key (KS-2A).
 //!
 //! The commitment names the sealed manifest by digest, and a reader verifies
 //! its signature against the signers its key trusts before the manifest opens
@@ -108,9 +110,6 @@ impl ArtifactKind {
 pub struct CheckpointKey {
     vault_id: [u8; 32],
     kek: Kek,
-    /// The vault's body-file wrap key, which opens the sealed body files'
-    /// key rows the artifact's image carries (FIX 5348).
-    body_wrap: zeroize::Zeroizing<[u8; 32]>,
     /// The data key's custody-head subkey, which opens a custody head's
     /// host-readable compartments on a host without the vault (KS-4).
     custody_wrap: zeroize::Zeroizing<[u8; 32]>,
@@ -169,7 +168,6 @@ impl CheckpointKey {
         Ok(Self {
             vault_id: prelude.vault_id,
             kek: Kek::from_bytes(*key),
-            body_wrap: opened.subkey(crate::store::BODY_FILE_WRAP_CONTEXT),
             custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
             trust: Trust::Nobody,
             opened: Some(opened),
@@ -221,11 +219,6 @@ impl CheckpointKey {
     pub(super) fn custody_wrap(&self) -> zeroize::Zeroizing<[u8; 32]> {
         self.custody_wrap.clone()
     }
-
-    /// The seal the artifact's sealed body files' key rows open under.
-    pub(super) fn body_seal(&self) -> crate::store::BodySeal {
-        crate::store::BodySeal::new(self.vault_id, &self.body_wrap)
-    }
 }
 
 impl Vault {
@@ -237,7 +230,6 @@ impl Vault {
         Ok(CheckpointKey {
             vault_id: *self.vault_id().as_bytes(),
             kek: Kek::from_bytes(*self.vault_subkey(SEAL_CONTEXT)?),
-            body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
             custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
@@ -256,7 +248,6 @@ impl Vault {
             CheckpointKey {
                 vault_id: *self.vault_id().as_bytes(),
                 kek: Kek::from_bytes(*key),
-                body_wrap: self.vault_subkey(crate::store::BODY_FILE_WRAP_CONTEXT)?,
                 custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
                 trust: Trust::Nobody,
                 opened: None,
@@ -504,11 +495,6 @@ fn read_at(file: &mut File, at: u64, len: u64) -> Result<Vec<u8>> {
 }
 
 impl<'k> SealedBodies<'k> {
-    /// The key the artifact opened with.
-    pub(super) fn checkpoint_key(&self) -> &'k CheckpointKey {
-        self.sealer.key
-    }
-
     /// Each body stream's BLAKE3 and length, in the manifest's order.
     pub(super) fn list(&self) -> Vec<([u8; 32], u64)> {
         self.streams
