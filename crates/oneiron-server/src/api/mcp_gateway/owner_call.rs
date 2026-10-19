@@ -134,17 +134,20 @@ fn managed_owner_context(
 }
 
 /// The refusal of an owner's call the vault no longer records him as its
-/// live owner for.
+/// live owner for, told to sign in again (FIX 5327).
 fn owner_not_live() -> McpGatewayError {
     McpGatewayError::new(
         -32001,
         "mcp_auth_required",
-        "the attested owner is not this vault's live owner",
+        format!(
+            "the attested owner is not this vault's live owner. {}",
+            crate::error::MANAGED_OWNER_SIGN_IN_AGAIN
+        ),
     )
 }
 
 /// The route an owner's call on `mode` names, where its caller is placed.
-fn owner_path(mode: McpSurfaceMode) -> &'static str {
+pub(super) fn owner_path(mode: McpSurfaceMode) -> &'static str {
     match mode {
         McpSurfaceMode::Primary => crate::cli::McpSurface::Primary.path(),
         McpSurfaceMode::ToolFirst => crate::cli::McpSurface::ToolFirst.path(),
@@ -153,7 +156,10 @@ fn owner_path(mode: McpSurfaceMode) -> &'static str {
 
 /// The owner whose held MCP socket this request came on, on a managed vault
 /// (FIX 5128): what the socket's upgrade attested, never this request.
-fn session_owner(connection: &Extensions, server: &SyncServer) -> Option<oneiron::EntityId> {
+pub(super) fn session_owner(
+    connection: &Extensions,
+    server: &SyncServer,
+) -> Option<oneiron::EntityId> {
     connection
         .get::<crate::managed::ManagedOwnerSession>()
         .filter(|_| server.managed_issuer.is_some())

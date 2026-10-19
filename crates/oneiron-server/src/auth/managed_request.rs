@@ -19,6 +19,12 @@
 //! the host's root or the dev mode. A slip beside an attestation of the same
 //! person stays the slip, with its own bounds; beside another person's, the
 //! request is refused.
+//!
+//! At a booking door alone (`BOOKING_PAYER_DOORS`), an attested holder the
+//! vault no longer records as its live owner is still that person, as a
+//! booking caller and nothing more (FIX 5327): core read and write, never
+//! owner grade, no slip and no owner authority. The booking door judges
+//! whom he pays as; every other door refuses him as before.
 
 use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, request::Parts};
@@ -184,11 +190,27 @@ impl CoreAuth {
         if server.managed_issuer.is_none() {
             return Err(ApiError::unauthorized());
         }
-        let auth = Self {
+        let auth = Self::attested(holder, super::CoreScope::owner(), true);
+        crate::api::require_live_managed_owner(server, &auth)?;
+        Ok(auth)
+    }
+
+    /// The person `holder` his supervisor attested, as `scopes` name him,
+    /// built without reading any header and without the host's root: a
+    /// human, with no slip, instrument, token id or Grant of anyone's. Only
+    /// [`Self::for_attested_owner`] makes him the owner (`owner_scopes`,
+    /// after it checks he is the live owner), and only
+    /// [`Self::for_attested_booking_holder`] a booking caller.
+    fn attested(
+        holder: oneiron::EntityId,
+        scopes: std::collections::BTreeSet<super::CoreScope>,
+        owner_scopes: bool,
+    ) -> Self {
+        Self {
             principal: holder.to_hex(),
             principal_ref: Some(holder.to_hex()),
-            scopes: super::CoreScope::owner(),
-            implicit_all_scopes: true,
+            scopes,
+            implicit_all_scopes: owner_scopes,
             jti: None,
             actor_class: Some("human".to_owned()),
             org_ref: None,
@@ -200,9 +222,58 @@ impl CoreAuth {
             facets_owner_exempt: false,
             off_record_session: None,
             managed_owner: Some(holder),
-        };
-        crate::api::require_live_managed_owner(server, &auth)?;
-        Ok(auth)
+        }
+    }
+
+    /// The holder his supervisor attested, at a booking door (FIX 5327):
+    /// the live owner as [`Self::for_attested_owner`] builds him; one the
+    /// vault does not record as its live owner now, or whose standing it
+    /// cannot read, a booking caller with core read and write only, never
+    /// owner grade, still naming him as its managed holder so no other door
+    /// takes him and the booking door judges whom he pays as. His
+    /// attestation is never verified again here. Only a booking door builds
+    /// one ([`Self::for_managed_request`], `api::mcp_gateway::booking_call`).
+    pub(crate) fn for_attested_booking_holder(
+        holder: oneiron::EntityId,
+        server: &SyncServer,
+    ) -> Result<Self, ApiError> {
+        if server.managed_issuer.is_none() {
+            return Err(ApiError::unauthorized());
+        }
+        Ok(Self::for_attested_owner(holder, server).unwrap_or_else(|_| {
+            Self::attested(
+                holder,
+                [super::CoreScope::Read, super::CoreScope::Write]
+                    .into_iter()
+                    .collect(),
+                false,
+            )
+        }))
+    }
+
+    /// Whether this caller is a stale owner sign-in a booking door admitted
+    /// ([`Self::for_attested_booking_holder`]): a managed holder at less
+    /// than owner grade. He books and pays as the booking door resolves
+    /// him, and is nobody's owner.
+    pub(crate) fn is_attested_booking_holder(&self) -> bool {
+        self.managed_owner.is_some() && !self.implicit_all_scopes
+    }
+
+    /// [`Self::for_attested_booking_holder`]'s booking caller, placed where
+    /// the request at `path` puts him, or `None` for the live owner, who
+    /// keeps his own path: a managed-MCP booking tool's caller
+    /// (`api::mcp_gateway::booking_call`, FIX 5327).
+    pub(crate) fn for_placed_booking_holder(
+        holder: oneiron::EntityId,
+        headers: &HeaderMap,
+        extensions: &Extensions,
+        path: &str,
+        server: &SyncServer,
+    ) -> Option<Self> {
+        Self::for_attested_booking_holder(holder, server)
+            .ok()
+            .filter(Self::is_attested_booking_holder)
+            .map(|auth| auth.placed(headers, extensions, path))
     }
 
     /// The one caller of a request, from its headers and its extensions
@@ -251,6 +322,11 @@ impl CoreAuth {
                         Err(caller_conflicts_with_owner())
                     }
                 }),
+            // A booking door takes him even once he is no longer the live
+            // owner, as a booking caller alone (FIX 5327).
+            Some(holder) if crate::api::is_booking_payer_door(path) => {
+                Self::for_attested_booking_holder(holder, server)
+            }
             Some(holder) => Self::for_attested_owner(holder, server),
         };
         Some(caller.map(|auth| auth.placed(headers, extensions, path)))
