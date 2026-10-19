@@ -44814,7 +44814,7 @@
      "path": "src/secret_custody/control.rs",
      "purpose": "Custody control on the shared owner-work request (WILL L04 row 04): every change to a portable secret's…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 4,
       "re-export": 2,
@@ -44853,7 +44853,7 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 25
      }
     },
     {
@@ -44874,6 +44874,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/secret_custody/control/pending_revoke.rs",
+     "purpose": "A revoke this install could not carry for the owner when he made it (FIX 4851)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/secret_custody/control/permits.rs",
      "purpose": "Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each…",
      "surface": {
@@ -44887,7 +44897,7 @@
      "path": "src/secret_custody/control/revoked.rs",
      "purpose": "The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -44950,7 +44960,7 @@
      "purpose": "The owner's four answers to a found key: rotate (the rotate door settles it), delete, grant and not a secret",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -45126,7 +45136,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/transition/rebind.rs",
@@ -45420,7 +45430,7 @@
      "path": "src/secret_rotation/revoke.rs",
      "purpose": "Revocation: terminal value death everywhere the vault reaches",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -62135,7 +62145,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62515,7 +62525,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3824,
+   "source_files": 3825,
    "test_files": 902
   },
   "oneiron-android": {
