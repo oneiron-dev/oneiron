@@ -729,10 +729,16 @@ pub(crate) async fn row_hooks_pre_with(
                 .as_ref()
                 .map_or(Ok(()), |check| check(verb.as_str(), args))
         };
-        server
+        let mut pre = server
             .vault
             .pre_verb_hooks_for_credential(call, args, &admit, resume.credential, turn)?
-            .map_err(|stop| MemoryError::from(oneiron::Error::from(stop)))
+            .map_err(|stop| MemoryError::from(oneiron::Error::from(stop)))?;
+        // A restrictive call's args that fail the row's input check give way
+        // to the caller's own (FIX 5076).
+        oneiron::task_verb::revoke_lands::settle(&mut pre, &|args| {
+            oneiron::task_verb::sdk::validate_input(&verb, args).is_ok()
+        });
+        Ok(pre)
     })
     .await
     .map_err(|_| hooks_did_not_finish())?
@@ -1252,6 +1258,19 @@ fn facade_input<T: serde::de::DeserializeOwned>(
             ["Send a JSON body matching this verb's documented input."],
         )
     })
+}
+
+/// [`facade_input`] for a host door, on the args its pre chain left: a
+/// restrictive call's args that do not decode as the door's own typed input
+/// give way to the caller's, and the owner hears of it (FIX 5076).
+fn facade_door_input<T: serde::de::DeserializeOwned>(
+    hooks: &mut VerbHookPre,
+) -> Result<T, FacadeApiError> {
+    oneiron::task_verb::revoke_lands::settle(
+        hooks,
+        &oneiron::task_verb::revoke_lands::decodes::<T>,
+    );
+    facade_input(hooks.args.clone())
 }
 
 /// Encodes a typed verb result in the facade's vocabulary.

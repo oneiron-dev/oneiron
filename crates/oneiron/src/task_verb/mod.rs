@@ -83,6 +83,7 @@ mod report_journal;
 pub(crate) use report_journal::{
     erase_in_txn as erase_report_journal_in_txn, erase_report_actor_in_txn,
 };
+pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
 pub mod run_doors;

@@ -1327,12 +1327,14 @@ def facade_dispatch(facade_rows):
             # own handles, so no list here names the rows it read, unless the
             # door lists them itself (`host_door_lists`). A flagged one wakes
             # the turn producer after it, as its MCP arm does.
+            # A restrictive call's args that do not decode as the door's typed
+            # input give way to the caller's own (`facade_door_input`, FIX 5076).
             lands = r.get('lands_turn')
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
             lens_arg = 'call.lens_owner(), ' if r.get('host_door_lens_owner') else ''
             surface_arg = 'call.surface(), ' if r.get('host_door_surface') else ''
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_input(hooks.args.clone())?).await'
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{"caller, Some(hooks.call().invocation), " if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
             answer = (f'''let (output, listed) = {door};
                 let output = facade_output(output?)?;{landed}
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
@@ -1346,7 +1348,7 @@ def facade_dispatch(facade_rows):
                 facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(server, auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(server, auth)?;" if lands else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
-                let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
+                let mut hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
                 {answer}
             }}\n'''
             continue

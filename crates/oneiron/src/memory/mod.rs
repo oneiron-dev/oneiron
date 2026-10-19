@@ -186,6 +186,7 @@ pub use export::{
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,
 };
+pub(crate) use key_value::address_parses as key_value_address_parses;
 pub use key_value::{
     KeyValueAddress, KeyValueDeleteReceipt, KeyValueItem, KeyValueNamespaces, KeyValuePut,
     KeyValuePutReceipt, KeyValueSearch,

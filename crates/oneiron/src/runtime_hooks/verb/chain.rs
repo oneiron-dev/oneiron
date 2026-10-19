@@ -24,6 +24,7 @@ use crate::runtime_hooks::store::{
 };
 use crate::runtime_hooks::{HookBodyRuntime, HookPassReport, apply, filter, grant, read, scope};
 use crate::skill_hub::pack_catalog::{HookPhase, HookSelector, PackHookBinding};
+use crate::task_verb::revoke_lands::Landing;
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -101,6 +102,9 @@ pub(super) fn pre(
         Entered::Draining(group) => return Ok(Err(ask::pending(call.invocation, group))),
         Entered::Fresh(mark) => mark,
     };
+    // The owner's revoke always lands (FIX 5076): a restrictive call, judged
+    // on its caller's own args, keeps them to fall back to.
+    let mut landing = Landing::of(&call.verb, &args);
     let saved = {
         let _depth = HookDepth::enter();
         ask::retry(vault, &call, resume, turn.as_ref())?
@@ -157,6 +161,7 @@ pub(super) fn pre(
             call,
             args,
             carry: Some(carry),
+            landing: None,
         }));
     }
     // A resumed call with no sandbox runs no hook after the asking one, as a
@@ -166,19 +171,26 @@ pub(super) fn pre(
         None => (Err(NO_SANDBOX), Vec::new()),
     };
     let _depth = HookDepth::enter();
-    let ended = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now, turn)
-        .pre(&hooks, start, args, check, token, resume)?;
+    let mut chain = Chain::new(vault, &call, HookPhase::Pre, runtime, carry.now, turn);
+    chain.landing = landing.as_mut();
+    let ended = chain.pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
         args,
         carry: Some(carry),
+        landing,
     }))
 }
 
 /// The post chain over the verb's `result`, for a call whose pre chain found
 /// hooks live.
 pub(super) fn post(vault: &Vault, pre: VerbHookPre, result: Value) -> Result<Stopped<Value>> {
-    let VerbHookPre { call, args, carry } = pre;
+    let VerbHookPre {
+        call,
+        args,
+        carry,
+        ..
+    } = pre;
     let state = &vault.verb_hook_state;
     let Some(carry) = carry else {
         return Ok(Ok(result));
@@ -207,6 +219,7 @@ fn through(call: VerbCall, args: Value) -> Result<Stopped<VerbHookPre>> {
         call,
         args,
         carry: None,
+        landing: None,
     }))
 }
 
@@ -271,6 +284,9 @@ struct Chain<'c> {
     /// The task-work turn the calling operation holds, which a hook's ask
     /// runs on; `None` in a post chain, which opens no ask.
     turn: Option<Arc<TaskWorkTurn>>,
+    /// A restrictive pre chain's landing: each rewrite is pinned, and one
+    /// still refused keeps the prior args, no hook failure (FIX 5076).
+    landing: Option<&'c mut Landing>,
 }
 
 /// One run, as its receipt tells it, and what its saved copy keeps.
@@ -348,6 +364,7 @@ impl<'c> Chain<'c> {
             token: None,
             used: Cell::new(false),
             turn,
+            landing: None,
         }
     }
 
@@ -382,9 +399,26 @@ impl<'c> Chain<'c> {
                 crate::runtime_hooks::host_doors::check_rewrite(&verb, &args, next)?;
                 check(next)
             };
-            let stop = match self.run(id, binding, &args, None, Some(&rewrite_check))? {
+            // A restrictive call's rewrite is pinned and checked here, not in
+            // the run: one still refused keeps the prior args, is recorded as
+            // refused and fails nothing (FIX 5076).
+            let landed = |_: &Value| -> std::result::Result<(), String> { Ok(()) };
+            let run_check: VerbArgsCheck<'_> = if self.landing.is_some() {
+                &landed
+            } else {
+                &rewrite_check
+            };
+            let stop = match self.run(id, binding, &args, None, Some(run_check))? {
                 Some(HookOutcome::Rewrite { args: next }) => {
-                    args = next;
+                    let (chosen, refused) = match self.landing.as_deref_mut() {
+                        Some(landing) => landing.select(&args, next, &rewrite_check),
+                        None => (next, None),
+                    };
+                    if let (Some(reason), Some(run)) = (refused, self.runs.last_mut()) {
+                        run.token = "refused".to_owned();
+                        run.reason = Some(bounded(&reason));
+                    }
+                    args = chosen;
                     None
                 }
                 Some(HookOutcome::Skip { reason }) => Some(VerbHookStop::Skipped {

@@ -197,6 +197,9 @@ pub struct VerbHookPre {
     pub args: Value,
     /// Set when hooks are live for this call: the post chain runs on it.
     carry: Option<state::Carry>,
+    /// A restrictive call's own args and what its hooks changed, when a hook
+    /// ran on it ([`crate::task_verb::revoke_lands`]; FIX 5076).
+    pub(crate) landing: Option<crate::task_verb::revoke_lands::Landing>,
 }
 
 impl VerbHookPre {
