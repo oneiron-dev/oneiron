@@ -32,6 +32,7 @@
 
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
+mod act_standing;
 mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
@@ -250,7 +251,7 @@ pub use observation_policy::*;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
     GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
-    owner_act_signer_admits, owner_live_in_fold,
+    owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
 pub(crate) use owner_roots::anchor_signed_entry;
@@ -279,6 +280,9 @@ pub use vault_api::AuthorityEntryStatus;
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by
 // `batch`, `batch::export`, `facade`, `store` and `federation`.
+pub(crate) use act_standing::{
+    CausalPoints, ExternalAct, ExternalActStanding, act_heads, causal_points_in_txn,
+};
 pub(crate) use adopted_evidence::adopted_evidence_in_txn;
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::adopted_authority_checkpoint_in_txn;

@@ -57,7 +57,9 @@ pub(super) struct AdoptedTail<'a> {
     pub(super) tail: &'a [(AuthorityEntryHash, AuthorityLogEntry)],
     /// The covered rows still stored here: held, never tail.
     pub(super) held_covered: &'a BTreeSet<AuthorityEntryHash>,
-    /// Hashes a caller names as needed.
+    /// Hashes a caller names as needed: the fold past the image needs them
+    /// held or kept, and the image-grade capture keeps each one's state
+    /// beside the new frontier's (a seal's causal point, FIX 4649).
     pub(super) required: &'a BTreeSet<AuthorityEntryHash>,
     /// The tail rows' first-seen seconds, and no covered row's.
     pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
@@ -263,6 +265,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         .collect();
     let per_parent = frontier
         .iter()
+        .chain(log.required)
         .map(|hash| {
             let state = if tail.contains_key(hash) {
                 states.get(hash).cloned()

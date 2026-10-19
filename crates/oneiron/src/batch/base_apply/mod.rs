@@ -203,6 +203,8 @@ pub(super) fn apply_ops_with_origin(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
+    // FIX 4652: rows this batch deleted, for the seal standing rerun.
+    let mut deleted_entity_ids = BTreeSet::new();
     let mut project_edge_endpoints = BTreeSet::new();
     let mut touched_projects = BTreeSet::new();
     let local_chat_turns = super::leader_chat_admission::local_turns(&ops);
@@ -680,6 +682,7 @@ pub(super) fn apply_ops_with_origin(
             }
             BatchOp::Delete { id } => {
                 reject_engine_authored_delete(store, wtxn, &id)?;
+                deleted_entity_ids.insert(id);
                 crate::counterparty_contact::retire_family_claims_for_batch_delete_in_txn(
                     store,
                     config,
@@ -808,6 +811,14 @@ pub(super) fn apply_ops_with_origin(
         text_index_trusted,
         wtxn,
         &materialized_entity_ids,
+    )?;
+    crate::identity_topology::reconcile_identity_topology_for_deleted_entities_in_txn(
+        store,
+        config,
+        analyzer,
+        text_index_trusted,
+        wtxn,
+        &deleted_entity_ids,
     )?;
     // ONE-1604-D1 (fix-leg 5): the dominance eviction removed a type-76 event
     // ROW, which both hides the removed event's own participants from the

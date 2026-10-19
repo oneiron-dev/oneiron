@@ -6,21 +6,26 @@
 //! covers an [`OwnerAct`] (`topology_seal`, its target the decision event)
 //! beside the carrier machine, the core digest, the verdict and the reason.
 //! Every replica, this one included, admits it the same way: the one carrier
-//! rule ([`owner_act_signer_admits`]) for the carrier, the act's owner live,
-//! and an agent's Grant naming `topology_seal` where this replica holds the
-//! Grant row (a replica without it trusts the carrier, CALLS "mesh agent
-//! grant on replicas"). `SEALED_HERE` records only provenance for it. An
+//! rule ([`owner_act_signer_admits`]) for the carrier and the act's owner
+//! live, both at the seal's signed authority heads, and an agent's Grant
+//! naming `topology_seal` where this replica holds the Grant row (a replica
+//! without it trusts the carrier, CALLS "mesh agent grant on replicas").
+//! `SEALED_HERE` records only provenance for it. An
 //! **engine seal** is the engine's own bookkeeping: it carries a typed
 //! [`EngineCause`], never the owner's will, and keeps today's admission
 //! exactly (this install's own seal locally, a trusted machine's on
 //! replicas). Each cause is a named variant, so a later ruling moves one cause
 //! and nothing else.
 //!
-//! Known limit (FIX-LIST): the type-76 family records no authority-log
-//! frontier, so a reader judges a carrier's removal, an owner's revoked
-//! binding or a Grant's revocation in the fold it holds now, not at the
-//! act's causal point; a removal therefore also retires the carrier's earlier
-//! seals, as the trusted-machine rule already did on replicas.
+//! Causal point (FIX 4649): a decision seal signs the authority-log heads its
+//! carrier held as it decided ([`crate::authority::act_heads`]). Every reader
+//! judges the carrier and the owner's binding at those heads, and a later
+//! removal of the carrier by the one removal race: a removal that saw the
+//! seal keeps it standing, one in its signed past or one that never saw it
+//! retires it ([`crate::authority::ExternalAct`]). A seal whose heads this
+//! replica does not hold is pending. Known limit (FIX-LIST, Phase 2): an
+//! agent's Grant is still judged on the row this replica holds now, so a
+//! later Grant revocation retires the agent's earlier seals.
 
 use std::collections::BTreeSet;
 
@@ -28,15 +33,16 @@ use ed25519_dalek::SigningKey;
 use rmpv::Value;
 
 use crate::authority::{
-    ActAuthority, ActBy, ActSurface, AuthorityFold, AuthorityKey, GrantStanding, OwnerAct,
-    OwnerActKind, grant_standing_in_txn, owner_act_signer_admits, owner_live_in_fold,
+    ActAuthority, ActBy, ActSurface, AuthorityEntryHash, AuthorityFold, AuthorityKey,
+    ExternalActStanding, GrantStanding, OwnerAct, OwnerActKind, grant_standing_in_txn,
+    owner_act_signer_admits,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 use crate::store::Store;
 use crate::vault::Vault;
 
-use super::admission_disposition::{AdmissionDisposition, SealTrust, core_digest};
+use super::admission_disposition::{SealTrust, core_digest};
 use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::stored_event::StoredIdentityOpAction;
 use super::transition_table::IdentityTopologyRejection;
@@ -60,6 +66,10 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
                           carry a topology decision; nothing was written";
 /// An agent's act never answers an owner's ask: only his own say-so does.
 const AGENT_ANSWER: &str = "an agent's topology decision cannot answer the owner's ask";
+/// The causal point a decision signs is bounded like an authority entry's
+/// parents ([`crate::authority::MAX_PARENTS`]).
+const HEADS_BOUND: &str = "this install's authority frontier is wider than one topology decision \
+                           may sign; nothing was written";
 
 /// Policy hook (CALLS "mesh PR2a unprofiled carrier fallback", open): the
 /// seal an owner's decision takes when this install has no live machine
@@ -268,11 +278,13 @@ enum SealBasis {
 }
 
 /// A seal context the writing transaction validated, with the carrier that
-/// signs: this install's machine and key.
+/// signs: this install's machine and key, and for a decision the causal
+/// point it signs (FIX 4649; empty for an engine seal).
 pub(crate) struct ResolvedSeal {
     carrier: EntityId,
     key: SigningKey,
     basis: SealBasis,
+    heads: BTreeSet<AuthorityEntryHash>,
 }
 
 impl ResolvedSeal {
@@ -287,6 +299,7 @@ impl ResolvedSeal {
             carrier,
             key,
             basis: SealBasis::Engine(cause),
+            heads: BTreeSet::new(),
         })
     }
 
@@ -296,6 +309,11 @@ impl ResolvedSeal {
 
     pub(super) fn key(&self) -> &SigningKey {
         &self.key
+    }
+
+    /// The causal point a decision this context seals signs.
+    pub(super) fn heads(&self) -> &BTreeSet<AuthorityEntryHash> {
+        &self.heads
     }
 
     /// The authority a seal on `target`, an event minted in this
@@ -335,7 +353,9 @@ fn seal_refused(reason: &'static str) -> Error {
 /// typed conflict naming the current revision; a decision's carrier is this
 /// install under the one carrier rule (an owner's decision with no carrier
 /// takes [`OWNER_DECISION_WITHOUT_CARRIER`]); the owner revalidates as a live
-/// owner of this vault, or the agent's Grant still names `topology_seal`.
+/// owner of this vault, or the agent's Grant still names `topology_seal`. A
+/// decision captures its causal point from the same snapshot, before any
+/// effect: the main-log heads and the carrier's standing rows.
 pub(super) fn resolve_seal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -357,6 +377,7 @@ pub(super) fn resolve_seal_in_txn(
         }
     }
     let (carrier, key) = crate::identity::machine_signer_in_txn(vault, txn)?;
+    let mut heads = BTreeSet::new();
     let basis = match &seal.by {
         TopologySealBy::Engine(cause) => SealBasis::Engine(*cause),
         TopologySealBy::Decision(authority) => {
@@ -379,9 +400,14 @@ pub(super) fn resolve_seal_in_txn(
                         carrier,
                         key,
                         basis: SealBasis::Engine(cause),
+                        heads,
                     });
                 }
                 (false, ..) => return Err(seal_refused(NO_CARRIER)),
+            }
+            heads = crate::authority::act_heads(&fold, carrier);
+            if heads.len() > crate::authority::MAX_PARENTS {
+                return Err(seal_refused(HEADS_BOUND));
             }
             match authority {
                 // Authority: the owner's proof, revalidated here.
@@ -415,6 +441,7 @@ pub(super) fn resolve_seal_in_txn(
         carrier,
         key,
         basis,
+        heads,
     })
 }
 
@@ -424,12 +451,14 @@ pub enum SealStanding {
     /// It counts: an engine seal under today's rule, or a decision seal whose
     /// carrier, owner and Grant stand.
     Admitted,
-    /// [`SEAL_NO_STANDING`], still pending: the carrier's profile has not
-    /// reached this replica.
+    /// [`SEAL_NO_STANDING`], still pending: an authority-log head the seal
+    /// signed has no fold state here, history this replica does not hold yet
+    /// (FIX 4649), never judged on the fold as it stands now.
     Pending,
-    /// [`SEAL_NO_STANDING`]: the carrier is removed or no live profile names
-    /// its key, its owner's bindings are revoked, or the agent's Grant row is
-    /// revoked or names no `topology_seal`.
+    /// [`SEAL_NO_STANDING`]: at the seal's signed heads its carrier was
+    /// removed or no live profile named its key, or its owner's bindings were
+    /// revoked; a removal of the carrier since did not see it; or the agent's
+    /// Grant row is revoked or names no `topology_seal`.
     Refused,
 }
 
@@ -444,25 +473,24 @@ impl SealStanding {
     }
 }
 
-/// A decision seal's standing in `fold` (mesh PR2-topology): the one carrier
-/// rule for the carrier (any role, no chain removed, never a roster key), the
-/// act's owner live, and an agent's Grant naming the act at `at`, the decided
-/// event's time; a replica without the Grant row trusts the carrier.
+/// A decision seal's standing (mesh PR2-topology): `causal`, its carrier
+/// under the one carrier rule (any role, no chain removed, never a roster
+/// key) and its owner live, both at its signed heads, with every later
+/// removal of the carrier having seen it (FIX 4649); and an agent's Grant
+/// naming the act at `at`, the decided event's time, on the Grant row this
+/// replica holds now (FIX 4649's Grant half is Phase 2). A replica without
+/// the Grant row trusts the carrier.
 pub(super) fn decision_standing_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    fold: &AuthorityFold,
-    fact: &AdmissionDisposition,
+    causal: ExternalActStanding,
     act: &OwnerAct,
     at: u64,
 ) -> Result<SealStanding> {
-    let Some(machine) = fold.machine(fact.carrier) else {
-        return Ok(SealStanding::Pending);
-    };
-    if !owner_act_signer_admits(Some(machine), &fold.roster, &fact.signer_pk)
-        || !owner_live_in_fold(fold, act.owner)
-    {
-        return Ok(SealStanding::Refused);
+    match causal {
+        ExternalActStanding::Pending => return Ok(SealStanding::Pending),
+        ExternalActStanding::Refused => return Ok(SealStanding::Refused),
+        ExternalActStanding::Stands => {}
     }
     if let ActBy::Agent { agent, grant } = act.by
         && grant_standing_in_txn(store, txn, grant, agent, act.act, at)? == GrantStanding::Refused
@@ -568,9 +596,12 @@ pub(crate) fn topology_seal_revision_for_store_in_txn(
 
 /// The decision-seal standing inputs, as one digest the reconcile pass keeps
 /// beside the trusted keys (mesh PR2-topology): each machine's carrier keys
-/// under the one carrier rule and its removal, the owners' human binding
-/// statuses, and the row state of every Grant a decision seal names. A
-/// revocation of any of them changes it, so the standing pass runs again.
+/// under the one carrier rule, its removal and its chains' head rows (a new
+/// revision, and the acts it saw), the owners' human binding statuses, each
+/// decision seal's token and whether every head it signed is held (FIX
+/// 4649), and the row state of every Grant a decision seal names. A change in
+/// any of them, a Grant delete included (FIX 4652), runs the standing pass
+/// again.
 pub(super) fn decision_standing_digest_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -592,6 +623,11 @@ pub(super) fn decision_standing_digest_in_txn(
         for key in &keys {
             hasher.update(key);
         }
+        let rows: Vec<AuthorityEntryHash> = folded.chains().map(|(_, chain)| chain.entry).collect();
+        hasher.update(&(rows.len() as u64).to_be_bytes());
+        for row in &rows {
+            hasher.update(row);
+        }
     }
     let bindings: BTreeSet<(EntityId, bool)> = fold
         .actor_bindings
@@ -610,24 +646,25 @@ pub(super) fn decision_standing_digest_in_txn(
         hasher.update(&[u8::from(*live)]);
     }
     let mut grants = BTreeSet::new();
-    for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-        store,
-        txn,
-        crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-        None,
-    )? {
-        let row = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
-            store, txn, &id?,
-        )?
-        .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-        if let StoredIdentityOpAction::AdmissionDisposition(fact) = row.action
-            && let SealAuthority::Decision(OwnerAct {
-                by: ActBy::Agent { grant, .. },
-                ..
-            }) = fact.authority
+    let mut seals = BTreeSet::new();
+    for fact in super::seal_standing::decision_seals_in_txn(store, txn)? {
+        if let SealAuthority::Decision(OwnerAct {
+            by: ActBy::Agent { grant, .. },
+            ..
+        }) = fact.authority
         {
             grants.insert(grant);
         }
+        let held = fact
+            .authority_heads
+            .iter()
+            .all(|head| fold.valid_entries.contains(head));
+        seals.insert((fact.act_token()?, held));
+    }
+    hasher.update(&(seals.len() as u64).to_be_bytes());
+    for (token, held) in &seals {
+        hasher.update(token);
+        hasher.update(&[u8::from(*held)]);
     }
     hasher.update(&(grants.len() as u64).to_be_bytes());
     for grant in &grants {

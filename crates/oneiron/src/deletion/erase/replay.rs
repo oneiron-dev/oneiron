@@ -73,8 +73,26 @@ impl Vault {
     /// Also returns the other documents whose local reads this apply changed
     /// (citing NOTEs, rewritten merge events, a restamped subject edge's
     /// endpoints); the caller notifies them only after its commit.
+    ///
+    /// Every branch, the absent-id ones included, ends at one post-effect
+    /// hook: a Grant a decision seal names decides seal standing again in
+    /// this transaction (FIX 4652).
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(crate) fn apply_replayed_tombstone_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        raw_value: &[u8],
+    ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+        let applied = self.replay_tombstone_effects_in_txn(wtxn, id, raw_value)?;
+        self.reconcile_identity_topology_after_delete_in_txn(wtxn, id)?;
+        Ok(applied)
+    }
+
+    /// [`Self::apply_replayed_tombstone_in_txn`]'s effects, before its
+    /// post-effect hook.
+    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
+    fn replay_tombstone_effects_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,

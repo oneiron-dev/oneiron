@@ -83,6 +83,7 @@ mod op_vocabulary;
 mod proposal_resolution;
 mod reassignment_map;
 mod replicated_event_validation;
+mod seal_standing;
 mod shell_edge_reconcile;
 mod store_entity_helpers;
 mod stored_event;
@@ -151,8 +152,10 @@ use reassignment_map::{
 pub(crate) use store_entity_helpers::guard_batch_identity_delete_in_txn;
 // Reached only from the sync bridge's test lane, so a plain re-export would read
 // as unused in a non-sync test build of the library.
+pub(crate) use seal_standing::carried_seal_tokens_in_txn;
 pub(crate) use shell_edge_reconcile::{
     identity_topology_shell_sources_for_store_in_txn,
+    reconcile_identity_topology_for_deleted_entities_in_txn,
     reconcile_identity_topology_for_materialized_entities_in_txn,
     reconcile_shell_edges_after_eviction_in_txn,
 };

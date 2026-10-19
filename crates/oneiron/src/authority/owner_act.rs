@@ -1,7 +1,8 @@
 //! The L02 side of the owner-act record (mesh contract §3): the one rule
 //! every owner act's carrier is judged by, the owner's liveness at an act's
-//! causal point (§4), and what an act's receipt says of the key work that
-//! follows it (contract §5). The record itself, its codec
+//! causal point (§4; a topology seal outside the log is read at its signed
+//! heads, [`super::act_standing`]), and what an act's receipt says of the key
+//! work that follows it (contract §5). The record itself, its codec
 //! and its shape check are `oneiron_authority::authority::OwnerAct`.
 
 use std::collections::BTreeMap;
@@ -94,25 +95,6 @@ pub enum KeyWork {
     /// same commit: it minted the world's first key, wrapped the current key
     /// to the readers that lacked it, or found every reader holding it.
     Enacted,
-}
-
-/// [`owner_live_at`] on a whole fold, for a signed record family outside the
-/// authority log that its readers judge against the fold they hold now (the
-/// identity-topology admission seal, mesh PR2a): an owner every human binding
-/// of whom the log revoked is removed; an owner it binds nowhere is trusted on
-/// the carrier's word ([`OWNER_UNBOUND_TRUSTS_CARRIER`]).
-pub(crate) fn owner_live_in_fold(fold: &AuthorityFold, owner: EntityId) -> bool {
-    let mut bound = false;
-    for binding in fold.actor_bindings.values() {
-        if binding.actor_ref != owner || binding.actor_class != "human" {
-            continue;
-        }
-        if binding.status == ActorBindingStatus::Active {
-            return true;
-        }
-        bound = true;
-    }
-    !bound && OWNER_UNBOUND_TRUSTS_CARRIER
 }
 
 /// Who decided an act, in process only and never on the wire (mesh contract

@@ -366,7 +366,53 @@ pub(crate) fn reconcile_identity_topology_for_materialized_entities_in_txn(
     Ok(())
 }
 
+/// The deleted-row boundary (FIX 4652): a delete of a Grant a decision seal
+/// names decides seal standing again in the delete's own transaction, as a
+/// Grant put does through the materialized boundary, whichever delete door
+/// tore it (a soft or hard delete here, a replayed tombstone, a batch
+/// delete). The seals' referenced ids decide, never a deleted row's type.
+pub(crate) fn reconcile_identity_topology_for_deleted_entities_in_txn(
+    store: &Store,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    text_index_trusted: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+    deleted: &BTreeSet<EntityId>,
+) -> Result<()> {
+    if !deleted.is_empty()
+        && super::seal_standing::seal_names_grant_in_txn(store, wtxn, deleted)?
+        && super::admission_disposition::mine_signers_changed_in_txn(store, wtxn)?
+    {
+        return reconcile_identity_topology_edges_for_store_in_txn(
+            store,
+            config,
+            analyzer,
+            text_index_trusted,
+            wtxn,
+        );
+    }
+    Ok(())
+}
+
 impl Vault {
+    /// [`reconcile_identity_topology_for_deleted_entities_in_txn`] for the
+    /// row `id` a delete door tore in `wtxn` (FIX 4652).
+    pub(crate) fn reconcile_identity_topology_after_delete_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+    ) -> Result<()> {
+        reconcile_identity_topology_for_deleted_entities_in_txn(
+            &self.store,
+            &self.config,
+            &self.analyzer,
+            self.text_index_trusted
+                .load(std::sync::atomic::Ordering::Acquire),
+            wtxn,
+            &BTreeSet::from([*id]),
+        )
+    }
+
     /// The shell edges the ledger fold currently mandates for `entity`, as
     /// `(kind, target, created_at)` rows derived from its current topology
     /// writer — empty for `Active`. `created_at` is the current event's

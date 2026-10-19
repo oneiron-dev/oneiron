@@ -142,6 +142,9 @@ pub(super) const BODY_KEY_CARRIER: &str = "carrier";
 pub(super) const BODY_KEY_SEAL_ACT: &str = "act";
 /// An engine seal's typed cause; exclusive with [`BODY_KEY_SEAL_ACT`].
 pub(super) const BODY_KEY_SEAL_CAUSE: &str = "cause";
+/// A decision seal's causal point: the authority-log heads its carrier held,
+/// canonical ascending 32-byte hashes, never on an engine seal (FIX 4649).
+pub(super) const BODY_KEY_AUTHORITY_HEADS: &str = "authority_heads";
 pub(super) const BODY_KEY_SIGNATURE: &str = "signature";
 pub(super) const EVENT_KIND_AUTHOR_ATTRIBUTION: &str = "author_attribution";
 pub(super) const EVENT_KIND_AUTHOR_REDACTION: &str = "author_redaction";

@@ -727,6 +727,7 @@ impl Vault {
                 &tombstone.request_id,
                 false,
             )?;
+            self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
             wtxn.commit()?;
             return Ok(DeleteEntityOutcome::missing());
         }
@@ -832,6 +833,7 @@ impl Vault {
             sweep_extras(captured.as_ref()),
         )?;
         claim_in_txn(gate.as_ref(), &mut wtxn, &tombstone, Some(&receipt_id))?;
+        self.reconcile_identity_topology_after_delete_in_txn(&mut wtxn, id)?;
 
         wtxn.commit()?;
         self.notify_local_delete_materialized(&affected);
