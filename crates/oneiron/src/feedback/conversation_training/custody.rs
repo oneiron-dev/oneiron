@@ -268,7 +268,7 @@ pub(super) fn next_scope_seq_in(
     let known = state.months.get(month).map(|entry| entry.scope);
     let scope = match known {
         Some(scope) => scope,
-        None => link::scope_tag(&link::training_link_key_in(vault, txn, &mut state)?, month),
+        None => link::scope_tag(&*link::training_link_key_in(vault, txn, &mut state)?, month),
     };
     let entry = state.months.entry(month.to_owned()).or_insert(MonthState {
         scope,
