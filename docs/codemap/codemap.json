@@ -21496,6 +21496,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/fork_promote/project_upkeep.rs",
+     "purpose": "Project tree upkeep (ARCH-0079 #task-type, OF-420): a project on a tree of its own keeps reshaping it from…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/fork_promote/project_upkeep/state.rs",
+     "purpose": "The project tree upkeep journal: one row per project and body of its evidence, naming the Candidate revision…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -21795,6 +21815,7 @@
      "purpose": "Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): \"Splits, merges and names task types from the…",
      "surface": {
       "const": 4,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "struct": 3,
@@ -47662,7 +47683,7 @@
      "path": "src/skill_hub/admission_guard.rs",
      "purpose": "Imported and hub-derived instruction authority at the single SKILL materialization door",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -61915,7 +61936,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 80,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -62932,7 +62953,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3861,
+   "source_files": 3863,
    "test_files": 902
   },
   "oneiron-android": {
