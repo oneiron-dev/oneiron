@@ -59,10 +59,10 @@ pub use budget::{
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
     BUDGET_PLAN_PROMPT_TEMPLATE, BUDGET_PLAN_PROMPT_TEMPLATE_ID, BUDGET_PROMPT_TEMPLATES,
     BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE, BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
-    BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetPromptTemplate,
-    BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
-    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding, DispatchRefused,
-    FAILED_RUNGS_KEY, answered_units, answered_units_wide,
+    BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetLeaseState,
+    BudgetPromptTemplate, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel,
+    BudgetSteeringSignal, BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding,
+    DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
 };
 // Public so `oneiron`'s policy-manifest decoder and frontier hash (the only callers outside
 // this module) build and hash the policy rows a guard enforces. Rows are values; a guard

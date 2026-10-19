@@ -6,7 +6,7 @@ use super::super::{
 use super::schema_runtime::{self, SchemaValidationOutcome, SchemaValidationRequest};
 use super::types::ReplyCheck;
 use super::{DurableStepError, DurableStepResult};
-use crate::dreamer_wake::WakePassDeadline;
+use crate::dreamer_wake::{StepCalls, WakePassDeadline};
 
 /// The shared validator also serves hosts implementing self.json.validate.
 pub fn validate_json_schema(
@@ -60,7 +60,7 @@ pub(super) async fn generate(
     request: &LlmRequest,
     lease: &BudgetLease,
     guard: &BudgetGuard,
-    deadline: Option<&WakePassDeadline>,
+    calls: StepCalls<'_>,
     check: Option<&ReplyCheck>,
     max_retries: usize,
 ) -> DurableStepResult<LlmResponse> {
@@ -124,13 +124,18 @@ pub(super) async fn generate(
     let max_attempts = if native { 1 } else { 3 };
     let mut usage = LlmUsage::zero();
     for attempt in 1..=max_attempts {
+        // Declared first, a correction's observation closes after its lease.
+        let _correction_call;
         let correction;
         let active_lease = if attempt == 1 {
             lease
         } else {
             // A correction is a new paid call with a new lease, not a retry
             // under the admitted call's lease. The prior response is settled.
-            if deadline.is_some_and(WakePassDeadline::in_finalize_window) {
+            if calls
+                .deadline
+                .is_some_and(WakePassDeadline::in_finalize_window)
+            {
                 return Err(DurableStepError::SpentFinalizeRefused {
                     usage: Box::new(usage),
                 });
@@ -145,6 +150,9 @@ pub(super) async fn generate(
                     })?
                     .lease,
             };
+            // Its own call under the same logical step, bound as the step's
+            // first call is (DOOR-144); transport retries reuse it.
+            _correction_call = calls.admitted(guard, &correction.lease, u32::from(attempt - 1));
             &correction.lease
         };
         let mut response =

@@ -14,7 +14,7 @@ use super::types::{
     DREAMER_STEP_RETRY_BACKOFF_MS, DreamerTrapKind, DurableStepContext, DurableStepError,
     DurableStepResult, ReplyCheck, StepOutcome, StepProgression,
 };
-use crate::dreamer_wake::{BudgetLegibilityEnvelope, current_legibility};
+use crate::dreamer_wake::{BudgetLegibilityEnvelope, StepCalls, StepTerminal, current_legibility};
 use crate::error::Error;
 use std::future::Future;
 use std::pin::Pin;
@@ -215,7 +215,14 @@ async fn durable_step(
     {
         let response: LlmResponse = serde_json::from_slice(payload)?;
         let failure_policy = failure_policy(ctx.vault, &response)?;
-        log_terminal_step(ctx, &step_hash, &request, &response, payload)?;
+        log_terminal_step(
+            ctx,
+            &step_hash,
+            &request,
+            &response,
+            payload,
+            StepTerminal::Recovered,
+        )?;
         step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
         return Ok(StepOutcome::Finished {
             response,
@@ -253,6 +260,16 @@ async fn durable_step(
             return Err(classified_failure(ctx.vault, source)?);
         }
     };
+    // The admitted call binds to its wake in one short write before it is
+    // sent (DOOR-144), best-effort: unobserved, it runs exactly as before.
+    // Declared before the settlement guard, it closes after the lease does.
+    let calls = StepCalls {
+        vault: ctx.vault,
+        deadline: ctx.deadline,
+        attempt_id: ctx.attempt_id,
+        step_hash,
+    };
+    let mut observed = calls.admitted(guard, &admission.lease, 0);
 
     // The deadline only gates admission. Once admitted, the provider (and any
     // retries) runs to a terminal response so its lease can settle real usage.
@@ -267,7 +284,7 @@ async fn durable_step(
                 &request,
                 &admission.lease,
                 guard,
-                ctx.deadline,
+                calls,
                 check,
                 max_retries,
             ),
@@ -363,7 +380,15 @@ async fn durable_step(
     // The response is recoverable before any policy read that can fail. An
     // error may refuse downstream use, but replay must not re-spend the call.
     let failure_policy = failure_policy(ctx.vault, &response)?;
-    let claim_id = log_terminal_step(ctx, &step_hash, &request, &response, &payload)?;
+    let claim_id = log_terminal_step(
+        ctx,
+        &step_hash,
+        &request,
+        &response,
+        &payload,
+        observed.terminal(),
+    )?;
+    observed.claimed();
 
     lease_settle.settle().map_err(LlmError::from)?;
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;

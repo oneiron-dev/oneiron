@@ -70,10 +70,10 @@ pub use oneiron_model::llm::{
     BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE, BUDGET_OWNER_DIGEST_PROMPT_TEMPLATE_ID,
     BUDGET_PLAN_PROMPT_TEMPLATE, BUDGET_PLAN_PROMPT_TEMPLATE_ID, BUDGET_PROMPT_TEMPLATES,
     BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE, BUDGET_RESUME_PREAMBLE_PROMPT_TEMPLATE_ID,
-    BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetPromptTemplate,
-    BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal,
-    BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding, DispatchRefused,
-    FAILED_RUNGS_KEY, answered_units, answered_units_wide,
+    BudgetAdmission, BudgetExhaustionPolicy, BudgetGuard, BudgetLadderEvent, BudgetLeaseState,
+    BudgetPromptTemplate, BudgetRead, BudgetSettlement, BudgetSignalDeliveryChannel,
+    BudgetSteeringSignal, BudgetThreshold, DEFAULT_BUDGET_RESERVE_UNITS, DispatchBinding,
+    DispatchRefused, FAILED_RUNGS_KEY, answered_units, answered_units_wide,
 };
 pub(crate) use oneiron_model::llm::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 

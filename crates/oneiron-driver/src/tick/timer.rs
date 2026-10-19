@@ -16,8 +16,9 @@ use super::{CommitmentDeadline, DeadlineSource, NowMillis, system_now_ms};
 /// pending Dreamer consolidation attempt THIS NODE could admit. A queued attempt
 /// with no retry backoff is due at its enqueue stamp; a backoff-delayed attempt
 /// is due when the backoff clears, and a scheduled retry at its scheduled
-/// instant. Attempt stamps are stored in seconds and surfaced here in
-/// milliseconds.
+/// instant. A Checkpoint park whose cutting pass ended, which this node's
+/// next pass resumes, is due at once (DOOR-144). Attempt stamps are stored
+/// in seconds and surfaced here in milliseconds.
 ///
 /// MACRO attempts are gated at admission by the full local-admissibility
 /// predicate (`admit_next_consolidation`): `local_node_id` must match both
@@ -167,6 +168,54 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
             if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
                 next = Some(CommitmentDeadline { due_at_ms, scope });
             }
+        }
+        // A Checkpoint park whose cutting pass ended is due at once: the next
+        // pass of its scope resumes it as the same try (DOOR-144). Read-only
+        // and best-effort: an unreadable projection arms and silences nothing.
+        match DreamerRunnerStore::new(self.vault).checkpoint_resumes_due() {
+            Ok(due) => {
+                for park in due {
+                    let attempt = &park.attempt;
+                    let placed_elsewhere = attempt
+                        .placement
+                        .as_ref()
+                        .and_then(|placement| placement.worker.as_deref())
+                        .is_some_and(|worker| self.lease_owner.as_deref() != Some(worker));
+                    let Some(scope) = scope_for_attempt_kind(&attempt.kind) else {
+                        continue;
+                    };
+                    if placed_elsewhere {
+                        continue;
+                    }
+                    if scope == DreamerConsolidationScope::Macro {
+                        let eligible = match macro_admissible {
+                            Some(value) => value,
+                            None => match self.macro_locally_admissible() {
+                                Ok(value) => {
+                                    macro_admissible = Some(value);
+                                    value
+                                }
+                                Err(error) => {
+                                    macro_error = Some(error);
+                                    macro_admissible = Some(false);
+                                    continue;
+                                }
+                            },
+                        };
+                        if !eligible {
+                            continue;
+                        }
+                    }
+                    let due_at_ms = park.parked_at.saturating_mul(1_000);
+                    if next.is_none_or(|current| due_at_ms < current.due_at_ms) {
+                        next = Some(CommitmentDeadline { due_at_ms, scope });
+                    }
+                }
+            }
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "checkpoint resume deadline unavailable; keeping independent deadlines"
+            ),
         }
         // A digest is per vault, so only the elected home node arms its
         // cadence. Macro admission's local-home check is also the digest's

@@ -127,3 +127,18 @@ pub struct BudgetSettlement {
     pub read: BudgetRead,
     pub ladder_events: Vec<BudgetLadderEvent>,
 }
+
+/// One lease as its meter holds it, read without changing it
+/// ([`super::BudgetGuard::lease_observation`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BudgetLeaseState {
+    /// Admitted and not yet closed; `dispatched` once bytes may have left.
+    Open {
+        reserve_units: u64,
+        dispatched: bool,
+    },
+    /// Closed with the absolute units it charged.
+    Settled { used_units: u64 },
+    /// Released untouched.
+    Aborted,
+}

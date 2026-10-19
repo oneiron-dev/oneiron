@@ -22,8 +22,8 @@ pub use self::templates::{
     BudgetPromptTemplate,
 };
 pub use self::types::{
-    BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetRead, BudgetSettlement,
-    BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold,
+    BudgetAdmission, BudgetExhaustionPolicy, BudgetLadderEvent, BudgetLeaseState, BudgetRead,
+    BudgetSettlement, BudgetSignalDeliveryChannel, BudgetSteeringSignal, BudgetThreshold,
     DEFAULT_BUDGET_RESERVE_UNITS,
 };
 

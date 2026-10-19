@@ -2,7 +2,9 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use super::observation::{WakeBinding, WakeRef};
 
 /// Wake-pass wall-clock ceiling: the REAL ceiling (1184-D4-C), monotonic.
 pub const DREAMER_WAKE_PASS_WALL_CLOCK_CEILING_MS: u64 = 180_000;
@@ -19,28 +21,40 @@ type NowMsFn = Arc<dyn Fn() -> u64 + Send + Sync>;
 /// Monotonic wake-pass deadline (immune to wall-time jumps).
 ///
 /// ONE-1288 ships the type + reads; the pinned 180s ceiling constant and
-/// finalize-window behavior are ONE-1305.
+/// finalize-window behavior are ONE-1305. The wall-clock origin is recorded
+/// beside the monotonic one, for the wake observation only (DOOR-144): the
+/// ceiling is enforced on the monotonic clock alone.
 #[derive(Clone)]
 pub struct WakePassDeadline {
     ceiling_ms: u64,
     elapsed_ms: NowMsFn,
+    origin_unix_ms: Option<u64>,
+    /// The wake observation this pass's root committed, carried to clones.
+    wake: Option<WakeBinding>,
 }
 
 impl WakePassDeadline {
-    /// Starts a deadline NOW over a monotonic [`Instant`] clock.
+    /// Starts a deadline NOW over a monotonic [`Instant`] clock, and reads
+    /// the wall clock at the same origin.
     #[must_use]
     pub fn new(ceiling_ms: u64) -> Self {
         let origin = Instant::now();
+        let origin_unix_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .and_then(|since| u64::try_from(since.as_millis()).ok());
         Self {
             ceiling_ms,
             elapsed_ms: Arc::new(move || {
                 u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX)
             }),
+            origin_unix_ms,
+            wake: None,
         }
     }
 
     /// Test constructor with an injected elapsed-ms clock (no wall clock in
-    /// logic — chain test pin).
+    /// logic — chain test pin). It has no wall origin to report.
     ///
     /// A wake pass reads `elapsed_ms` inside the vault's write transaction,
     /// which may be one group commit shared with other writes. It must only
@@ -51,11 +65,66 @@ impl WakePassDeadline {
         Self {
             ceiling_ms,
             elapsed_ms,
+            origin_unix_ms: None,
+            wake: None,
         }
     }
 
     fn elapsed(&self) -> u64 {
         (self.elapsed_ms)()
+    }
+
+    /// Milliseconds since the origin, on the monotonic clock.
+    #[must_use]
+    pub fn elapsed_ms(&self) -> u64 {
+        self.elapsed()
+    }
+
+    /// The hard ceiling in milliseconds after the origin.
+    #[must_use]
+    pub const fn ceiling_ms(&self) -> u64 {
+        self.ceiling_ms
+    }
+
+    /// Unix milliseconds the wall clock read at the origin; `None` under an
+    /// injected clock.
+    #[must_use]
+    pub const fn origin_unix_ms(&self) -> Option<u64> {
+        self.origin_unix_ms
+    }
+
+    /// The ceiling anchored to the wall origin: a projection fixed at the
+    /// origin, which a later wall-clock jump never moves.
+    #[must_use]
+    pub fn ceiling_unix_ms(&self) -> Option<u64> {
+        self.origin_unix_ms?.checked_add(self.ceiling_ms)
+    }
+
+    /// The wake observation this pass's root committed; `None` outside an
+    /// observed pass.
+    #[must_use]
+    pub fn wake_ref(&self) -> Option<WakeRef> {
+        self.wake.as_ref().map(WakeBinding::wake)
+    }
+
+    pub(super) fn wake_binding(&self) -> Option<&WakeBinding> {
+        self.wake.as_ref()
+    }
+
+    /// Binds the root's committed wake, or clears it once the pass ends.
+    pub(super) fn bind_wake(&mut self, wake: Option<WakeBinding>) {
+        self.wake = wake;
+    }
+
+    /// The same clock with no wake bound: the live registry's copy, which
+    /// holds no pass alive.
+    pub(super) fn unbound(&self) -> Self {
+        Self {
+            ceiling_ms: self.ceiling_ms,
+            elapsed_ms: Arc::clone(&self.elapsed_ms),
+            origin_unix_ms: self.origin_unix_ms,
+            wake: None,
+        }
     }
 
     /// Milliseconds left before the hard ceiling.
@@ -96,6 +165,8 @@ impl fmt::Debug for WakePassDeadline {
         f.debug_struct("WakePassDeadline")
             .field("ceiling_ms", &self.ceiling_ms)
             .field("elapsed_ms", &self.elapsed())
+            .field("origin_unix_ms", &self.origin_unix_ms)
+            .field("wake", &self.wake_ref())
             .finish()
     }
 }

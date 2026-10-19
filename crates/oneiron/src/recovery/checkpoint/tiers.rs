@@ -23,6 +23,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"dreamer:parked:",
                 b"dreamer:peer_wait",
                 b"dreamer:trap_binding:",
+                // A pass's own observation of its clock, calls and leases
+                // (DOOR-144): no image restores a live lease.
+                b"dreamer:wake:observation:v1:",
                 // A parked code run's trap binding, node-local as the
                 // step's own.
                 b"code_run:wait_trap:",

@@ -13,6 +13,7 @@ mod driver;
 mod grain;
 mod legibility;
 pub(crate) mod nightly;
+mod observation;
 mod policy;
 mod projector;
 mod recipe;
@@ -28,6 +29,17 @@ pub use self::deadline::*;
 pub use self::driver::*;
 pub use self::grain::*;
 pub use self::legibility::*;
+pub(crate) use self::observation::{
+    ActiveWakes, StepCalls, StepClaimed, StepTerminal, checkpoint_resumable_in_txn,
+    record_call_terminal_in_txn, record_checkpoint_in_txn,
+};
+pub use self::observation::{
+    WAKE_OBSERVATION_PAGE_DEFAULT, WAKE_OBSERVATION_PAGE_MAX, WakeCallState, WakeLiveCall,
+    WakeLiveState, WakeObservation, WakeObservationCursor, WakeObservationRequest,
+    WakeObservationSelector, WakeObservedAttempt, WakeObservedCall, WakeObservedCallEnd,
+    WakeObservedCheckpoint, WakeObservedEnd, WakeObservedGeneration, WakeObservedHeader,
+    WakeObservedResume, WakeRef,
+};
 pub use self::policy::*;
 pub use self::projector::ProjectorPolicy;
 pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;

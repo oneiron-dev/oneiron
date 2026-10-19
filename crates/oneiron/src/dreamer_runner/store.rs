@@ -826,6 +826,7 @@ impl<'a> DreamerRunnerStore<'a> {
             ));
         }
         PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
+        crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
         Ok(record)
     }
 
@@ -875,8 +876,8 @@ impl<'a> DreamerRunnerStore<'a> {
                 "dreamer parked row is owned by a different parker",
             ));
         }
-        let status = self
-            .status(attempt_id)?
+        let (status, _) = self
+            .status_with_park_in_txn(wtxn, attempt_id)?
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {

@@ -17,6 +17,7 @@ mod progress;
 mod recipe;
 mod store;
 mod types;
+mod wake_park;
 
 #[cfg(test)]
 mod tests;
@@ -46,6 +47,7 @@ pub use self::progress::*;
 pub use self::recipe::*;
 pub use self::store::*;
 pub use self::types::*;
+pub use self::wake_park::DreamerCheckpointDue;
 
 // The flat dreamer_runner.rs module used to provide these names to the test
 // module through `use super::*`; after the directory split the seam re-imports

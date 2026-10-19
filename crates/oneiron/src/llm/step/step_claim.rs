@@ -19,6 +19,7 @@ use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::dreamer_wake::{StepClaimed, StepTerminal, record_call_terminal_in_txn};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
@@ -86,13 +87,16 @@ const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
 /// `payload` MUST be the serialized JSON bytes of `response` — the fresh path
 /// passes the one serialization it already wrote to the ResponseReceived row;
 /// the recovery path passes the row bytes the response was deserialized from,
-/// so the durable record carries those bytes verbatim.
+/// so the durable record carries those bytes verbatim. `terminal` names the
+/// wake-observed call the claim closes (DOOR-144), in a savepoint of the same
+/// write that never refuses it.
 pub(super) fn log_terminal_step(
     ctx: &DurableStepContext<'_>,
     step_hash: &[u8; 32],
     request: &LlmRequest,
     response: &LlmResponse,
     payload: &[u8],
+    terminal: StepTerminal,
 ) -> DurableStepResult<EntityId> {
     let params_hash = request_params_hash(request)?;
     let claim_id = ctx.vault.store.clock.entity_id()?;
@@ -195,6 +199,18 @@ pub(super) fn log_terminal_step(
                     response_payload: Some(payload.to_vec()),
                 },
             )?;
+            let claimed = StepClaimed {
+                attempt_id: ctx.attempt_id,
+                step_hash: *step_hash,
+                claim: claim_id,
+                used_units: response
+                    .usage
+                    .input
+                    .total
+                    .saturating_add(response.usage.output.total),
+                terminal,
+            };
+            record_call_terminal_in_txn(ctx.vault, wtxn, &claimed);
             Ok(claim_id)
         })
         .map_err(DurableStepError::from)
