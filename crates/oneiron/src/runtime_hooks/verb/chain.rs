@@ -118,6 +118,10 @@ pub(super) fn pre(
             ask::retry(vault, &call, resume, turn.as_ref())?
         }
     };
+    // A recorded call run as new after the ask its retry named was forgot
+    // says so in its receipts (FIX 5693).
+    let expired =
+        matches!(storage, VerbHookStorage::Canonical) && state.take_expired(call.invocation);
     let resumed = match saved {
         ask::Retry::Fresh => None,
         ask::Retry::Stop(stop) => return Ok(Err(stop)),
@@ -204,6 +208,7 @@ pub(super) fn pre(
         turn,
     );
     chain.landing = landing.as_mut();
+    chain.expired = expired;
     let ended = chain.pre(&hooks, start, args, check, token, resume)?;
     Ok(ended.map(|args| VerbHookPre {
         call,
@@ -336,6 +341,9 @@ struct Chain<'c> {
     /// A restrictive pre chain's landing: each rewrite is pinned, and one
     /// still refused keeps the prior args, no hook failure (FIX 5076).
     landing: Option<&'c mut Landing>,
+    /// Set on a recorded call's pre chain its retry runs as new, after the
+    /// drain's pass forgot the ask it named: each receipt says so (FIX 5693).
+    expired: bool,
 }
 
 /// One run, as its receipt tells it, and what its saved copy keeps.
@@ -418,6 +426,7 @@ impl<'c> Chain<'c> {
             used: Cell::new(false),
             turn,
             landing: None,
+            expired: false,
         }
     }
 

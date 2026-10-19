@@ -55,6 +55,13 @@ const SESSION_PAUSE_GONE: &str = "This hook pause was off the record and lived o
 /// session-only call's pause that is gone refuses either way.
 const PRUNED_RECORDED_ASK_RUNS_NEW: bool = true;
 
+/// What the hook receipts of a recorded call run as new that way say (FIX
+/// 5693; Engine 10-20): its own text, never the off-record one. Its hooks
+/// run again, so an asking hook asks again; the earlier approval is never
+/// replayed.
+pub(in crate::runtime_hooks::verb) const PRUNED_RECORDED_ASK_NOTE: &str =
+    "The earlier approval expired, so this ran as a new call.";
+
 /// The stop a resume of a gone pause ends with; `hook` names the asking hook
 /// when the keep still knows it.
 fn gone(hook: &str) -> VerbHookStop {
@@ -281,7 +288,8 @@ impl Vault {
     /// than run as a new call. `None` when the vault holds one: its own
     /// retry reads it. `None` too, while [`PRUNED_RECORDED_ASK_RUNS_NEW`]
     /// holds, when `ask` was this recorded call's own, whose saved call the
-    /// drain's pass forgot (FIX 5693).
+    /// drain's pass forgot (FIX 5693): the call runs as new, and its chain's
+    /// receipts carry [`PRUNED_RECORDED_ASK_NOTE`].
     ///
     /// # Errors
     ///
@@ -291,9 +299,11 @@ impl Vault {
         invocation: InvocationId,
         ask: EntityId,
     ) -> Result<Option<VerbHookStop>> {
-        if super::saved(self, invocation)?
-            || (PRUNED_RECORDED_ASK_RUNS_NEW && recorded_ask(self, invocation, ask)?)
-        {
+        if super::saved(self, invocation)? {
+            return Ok(None);
+        }
+        if PRUNED_RECORDED_ASK_RUNS_NEW && recorded_ask(self, invocation, ask)? {
+            self.verb_hook_state.note_expired(invocation);
             return Ok(None);
         }
         Ok(Some(gone("")))

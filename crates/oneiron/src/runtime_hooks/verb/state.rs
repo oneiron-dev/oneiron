@@ -4,7 +4,7 @@
 //! credential check. Nothing here is stored.
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, RwLock};
@@ -58,6 +58,10 @@ pub(crate) struct VerbHookState {
     credential: OnceLock<CredentialCheck>,
     /// Session-only hook records with no room overlay to keep them, in RAM.
     pub(crate) session: SessionHookKeep,
+    /// Recorded calls a retry runs as new because the drain's pass forgot
+    /// the ask it named, by invocation, until their chain starts (FIX 5693):
+    /// that chain's receipts say so.
+    expired: Mutex<HashSet<[u8; 16]>>,
 }
 
 /// The enabled verb bindings as of one read, in run order: priority
@@ -117,6 +121,23 @@ pub(crate) struct Carry {
 }
 
 impl VerbHookState {
+    /// Notes that `invocation`'s next chain runs a recorded call as new,
+    /// after the drain's pass forgot the ask its retry named (FIX 5693).
+    pub(super) fn note_expired(&self, invocation: InvocationId) {
+        self.expired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(invocation.0);
+    }
+
+    /// Whether [`Self::note_expired`] noted `invocation`, taken once.
+    pub(super) fn take_expired(&self, invocation: InvocationId) -> bool {
+        self.expired
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&invocation.0)
+    }
+
     pub(super) fn suppressed(&self) -> bool {
         self.suppressed.load(Ordering::Acquire)
     }
