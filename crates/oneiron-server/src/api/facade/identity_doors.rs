@@ -30,7 +30,8 @@ pub(crate) async fn vault_people_create(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.people_create_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_entities_look_before_mint(
@@ -47,7 +48,8 @@ pub(crate) async fn vault_entities_look_before_mint(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.entities_look_before_mint_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_identity_mention(
@@ -64,7 +66,8 @@ pub(crate) async fn vault_identity_mention(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.identity_mention_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn self_identity_answer(
@@ -81,5 +84,6 @@ pub(crate) async fn self_identity_answer(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.identity_answer_with_evidence_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }

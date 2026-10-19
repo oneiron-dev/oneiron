@@ -15,11 +15,16 @@ pub(crate) async fn vault_skills_bootstrap(
     auth: &CoreAuth,
     input: EmptyRequest,
 ) -> Listed<Vec<BootstrapSkillView>> {
-    owner_call(server, auth, "vault.skills.bootstrap", move |server, owner| {
-        let answer = sdk::skill_bootstrap_as_owner(server.vault(), owner, &input)?;
-        let rows = answer.iter().flat_map(BootstrapSkillView::rows).collect();
-        Ok((answer, rows))
-    })
+    owner_call(
+        server,
+        auth,
+        "vault.skills.bootstrap",
+        move |server, owner| {
+            let answer = sdk::skill_bootstrap_as_owner(server.vault(), owner, &input)?;
+            let rows = answer.iter().flat_map(BootstrapSkillView::rows).collect();
+            Ok((answer, rows))
+        },
+    )
     .await
 }
 
@@ -56,9 +61,11 @@ pub(crate) async fn vault_skills_restore_defaults(
         move |server, owner| {
             let answer = sdk::skill_restore_defaults_as_owner(server.vault(), owner, &input)?;
             let rows = std::iter::once(oneiron::skill_hub::default_skill_hub_id()?)
-                .chain(answer.iter().filter_map(|receipt| {
-                    EntityId::from_hex(&receipt.entity).ok()
-                }))
+                .chain(
+                    answer
+                        .iter()
+                        .filter_map(|receipt| EntityId::from_hex(&receipt.entity).ok()),
+                )
                 .collect();
             Ok((answer, rows))
         },

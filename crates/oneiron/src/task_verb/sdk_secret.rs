@@ -219,7 +219,9 @@ pub fn describe_secret_as_caller(
 ) -> MemoryResult<RevealHandleCard> {
     let asker = memory.reveal_asker()?;
     if input.handle.trim().starts_with("pr") {
-        let card = memory.vault().describe_person_handle(&asker, &input.handle)?;
+        let card = memory
+            .vault()
+            .describe_person_handle(&asker, &input.handle)?;
         let (reveal, grant_ref, refusal) = reveal_effect(card.reveal);
         return Ok(RevealHandleCard {
             label: card.handle.clone(),
@@ -228,10 +230,15 @@ pub fn describe_secret_as_caller(
             status: "active".to_owned(),
             band: card.band.as_str().to_owned(),
             provenance: Some(RevealProvenance {
-                record: card.claim.to_hex(), place: "claim".to_owned(),
-                kind: "names".to_owned(), masked_at: None, learned_at: Some(card.learned_at),
+                record: card.claim.to_hex(),
+                place: "claim".to_owned(),
+                kind: "names".to_owned(),
+                masked_at: None,
+                learned_at: Some(card.learned_at),
             }),
-            reveal: reveal.to_owned(), grant_ref, refusal,
+            reveal: reveal.to_owned(),
+            grant_ref,
+            refusal,
         });
     }
     let card: SecretHandleCard = memory

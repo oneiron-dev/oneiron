@@ -151,8 +151,11 @@ fn membership_page(
         let txn = vault.store.env.read_txn()?;
         let ids: Vec<_> = heads.iter().map(|head| head.entity_ref).collect();
         let readable = lane.entities_readable_in_txn(&txn, &ids)?;
-        heads = heads.into_iter().zip(readable)
-            .filter_map(|(head, admitted)| admitted.then_some(head)).collect();
+        heads = heads
+            .into_iter()
+            .zip(readable)
+            .filter_map(|(head, admitted)| admitted.then_some(head))
+            .collect();
     }
     // Sorted on the same triple the cursor encodes, so "everything after the
     // cursor" is a total order and a page boundary is stable across calls.

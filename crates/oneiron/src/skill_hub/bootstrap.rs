@@ -70,11 +70,8 @@ impl Vault {
             .map(|(name, markdown)| {
                 let package = package(name, markdown)?;
                 let hash = package.content_hash()?;
-                let source = HubRef::new(
-                    stable_id("hub")?,
-                    name,
-                    HubPin::ContentHash(hash.to_hex()),
-                )?;
+                let source =
+                    HubRef::new(stable_id("hub")?, name, HubPin::ContentHash(hash.to_hex()))?;
                 let seed = stable_id(name)?;
                 let entity = self
                     .default_skill_present_in_txn(&txn, &source, hash, name)?

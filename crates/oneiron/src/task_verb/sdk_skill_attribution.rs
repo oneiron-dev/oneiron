@@ -285,7 +285,9 @@ fn settlement_receipt(artifact: EntityId) -> String {
 /// match exactly once at its turn. Runs before any write.
 fn preview_final_text(input: &ProposalDeltaSettleRequest) -> MemoryResult<String> {
     if input.replacements.is_empty() {
-        return Err(invalid("a proposal settlement records at least one replacement"));
+        return Err(invalid(
+            "a proposal settlement records at least one replacement",
+        ));
     }
     let mut text = input.proposed_text.clone();
     for replacement in &input.replacements {
@@ -334,7 +336,9 @@ pub fn skill_attribution_settle_as_owner(
         }
         if matches!(
             input.cause,
-            Some(ProposalAmendmentCause::ExternalChange | ProposalAmendmentCause::DeciderPreference)
+            Some(
+                ProposalAmendmentCause::ExternalChange | ProposalAmendmentCause::DeciderPreference
+            )
         ) {
             return Err(invalid(
                 "a settled cause labels every hunk; per-hunk verdicts ride proposal_wrong",
@@ -347,16 +351,11 @@ pub fn skill_attribution_settle_as_owner(
     let delta = crate::edit_distance::delta::delta_from_recorded_ops(&record);
     vault.with_write_txn_grouped(|wtxn| {
         owner.revalidate_in_txn(vault, wtxn)?;
-        crate::edit_distance::delta::put_amendment_delta_in_txn(
-            vault,
-            wtxn,
-            &receipt_id,
-            &delta,
-        )?;
+        crate::edit_distance::delta::put_amendment_delta_in_txn(vault, wtxn, &receipt_id, &delta)?;
         Ok(())
     })?;
-    let mut evidence = AmendmentEvidence::new(receipt_id.as_str(), input.actor, input.scope.clone())
-        .at(input.at);
+    let mut evidence =
+        AmendmentEvidence::new(receipt_id.as_str(), input.actor, input.scope.clone()).at(input.at);
     evidence.skill = input.skill;
     evidence.attempt_receipt = input.attempt_receipt.clone();
     evidence.cause = input.cause.map(Into::into);
@@ -450,17 +449,13 @@ fn record_proposal_ops(
     input: &ProposalDeltaSettleRequest,
     expected_final: &str,
 ) -> MemoryResult<FinalizedProposalText> {
-    use crate::edit_distance::proposal_text::ProposalTextArtifact;
     use crate::edge::EdgeActorClass;
+    use crate::edit_distance::proposal_text::ProposalTextArtifact;
     use crate::write_envelope::WriteActor;
 
     let writer = WriteActor::new(owner_actor, EdgeActorClass::Human);
-    let mut artifact = ProposalTextArtifact::open(
-        vault,
-        &input.proposed_text,
-        &writer,
-        input.source_turn_ref,
-    )?;
+    let mut artifact =
+        ProposalTextArtifact::open(vault, &input.proposed_text, &writer, input.source_turn_ref)?;
     for replacement in &input.replacements {
         let current = artifact.text();
         let start = current

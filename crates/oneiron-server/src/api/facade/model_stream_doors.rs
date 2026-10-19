@@ -313,7 +313,10 @@ fn close_failed(
     let Ok(mut state) = entry.state.lock() else {
         return;
     };
-    if matches!(state.status, ModelStreamStatus::Finished | ModelStreamStatus::Failed) {
+    if matches!(
+        state.status,
+        ModelStreamStatus::Finished | ModelStreamStatus::Failed
+    ) {
         return;
     }
     state.bus.close_without_terminal();
@@ -329,7 +332,9 @@ pub(crate) async fn ai_streams_subscribe(
 ) -> MemoryResult<ModelStreamSubscribed> {
     const VERB: &str = "ai.streams.subscribe";
     let owner = owner_proof(auth, server, VERB)?;
-    let entry = server.model_streams.attach(server, auth, owner, &input.stream_key)?;
+    let entry = server
+        .model_streams
+        .attach(server, auth, owner, &input.stream_key)?;
     let handle = EntityId::now().to_hex();
     let mut state = entry.state.lock().map_err(|_| internal(VERB))?;
     let subscription = state.bus.subscribe();
@@ -350,10 +355,13 @@ pub(crate) async fn ai_streams_events(
     const VERB: &str = "ai.streams.events";
     owner_proof(auth, server, VERB)?;
     let entry = server.model_streams.get(auth, &input.stream_key)?;
-    let limit = usize::try_from(input.limit.unwrap_or(64).clamp(1, 512))
-        .map_err(|_| internal(VERB))?;
+    let limit =
+        usize::try_from(input.limit.unwrap_or(64).clamp(1, 512)).map_err(|_| internal(VERB))?;
     let mut state = entry.state.lock().map_err(|_| internal(VERB))?;
-    let subscription = state.subs.get_mut(&input.handle).ok_or_else(no_subscription)?;
+    let subscription = state
+        .subs
+        .get_mut(&input.handle)
+        .ok_or_else(no_subscription)?;
     let mut events = Vec::new();
     let mut closed = false;
     let waker: Waker = Waker::noop().clone();
@@ -435,7 +443,9 @@ pub(crate) async fn ai_streams_abort(
         model_stream::terminal_as_owner(
             vault,
             &owner,
-            &ModelStreamTerminalRequest { stream_key: input.stream_key },
+            &ModelStreamTerminalRequest {
+                stream_key: input.stream_key,
+            },
         )
     })
     .await
@@ -466,9 +476,10 @@ pub(crate) async fn ai_streams_terminal(
     // A subscription created after a restart holds a pending bus, not a
     // replacement producer. It cannot make an orphaned durable row live.
     let running = held.as_ref().is_some_and(|entry| {
-        entry.state.lock().is_ok_and(|state| {
-            state.opening || state.status == ModelStreamStatus::Live
-        })
+        entry
+            .state
+            .lock()
+            .is_ok_and(|state| state.opening || state.status == ModelStreamStatus::Live)
     });
     if read.status == ModelStreamStatus::Live && !running {
         let terminal = durable(server, VERB, move |vault| {

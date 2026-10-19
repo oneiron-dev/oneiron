@@ -11,13 +11,13 @@ use super::{
     FatalLlmError, LlmRequest, LlmResponse, LlmResult, LlmStreamEvent, LlmUsage, ModelId,
     TerminalSink,
 };
+use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::side_table::{self, Named, SideTable};
-use crate::Vault;
 
 const STREAMS: SideTable<AttemptId, StreamRow, Named> = SideTable::new(&side_table::MODEL_STREAM);
 

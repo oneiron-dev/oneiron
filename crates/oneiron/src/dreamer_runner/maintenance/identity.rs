@@ -36,7 +36,8 @@
 //! no merge of the two is proposed again.
 mod evidence;
 pub use evidence::{
-    IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView, IdentityResolutionView,
+    IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView,
+    IdentityResolutionView,
 };
 pub(crate) use evidence::{clear_mention_resolutions_in_txn, erase_mention_resolutions_in_txn};
 
@@ -1549,7 +1550,9 @@ impl Memory<'_> {
                     ));
                 }
                 crate::memory::identity_doors::require_identity_evidence_in_txn(
-                    self.vault(), txn, owner_evidence,
+                    self.vault(),
+                    txn,
+                    owner_evidence,
                 )?;
             }
             if !crate::policy_model::owners_in_txn(self.vault(), txn)?.contains(&self.actor()) {
@@ -1577,8 +1580,11 @@ impl Memory<'_> {
             if let Some(owner) = owner {
                 evidence::prove_owner_in_txn(self.vault(), txn, owner, &held, owner_evidence)?;
             }
-            self.produced_from(std::iter::once(held.turn).chain([held.message, entity])
-                .chain(owner_evidence.iter().copied()));
+            self.produced_from(
+                std::iter::once(held.turn)
+                    .chain([held.message, entity])
+                    .chain(owner_evidence.iter().copied()),
+            );
             Ok(IdentitySettled {
                 ask: key_hex(&key),
                 entity: entity.to_hex(),

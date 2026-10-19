@@ -7,10 +7,9 @@ use crate::pipeline::{RetrievalWithTelemetry, ScoredEntity};
 use crate::store::{
     GateDecisionRecord, PendingGateConsentGroup, PendingGateConsentRecord, RetrievalAction,
     RetrievalBlendSignal, RetrievalBlendTuningConfig, RetrievalBlendWeightTableEntry,
-    RetrievalBlendWeights,
-    RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalPolicyPins,
-    RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown, RetrievalScoreComponent,
-    RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
+    RetrievalBlendWeights, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord,
+    RetrievalPolicyPins, RetrievalRunId, RetrievalRunRecord, RetrievalScoreBreakdown,
+    RetrievalScoreComponent, RetrievalSignal, RetrievalTrace, RetrievalTraceForkHash,
 };
 use crate::{BatchBuilder, ContextPackBuilder, PipelineBuilder, bm25};
 use std::time::Instant;
@@ -390,7 +389,8 @@ impl Vault {
         config: RetrievalBlendTuningConfig,
         weights: RetrievalBlendWeights,
     ) -> Result<crate::store::RetrievalPolicyEvaluation> {
-        self.store.evaluate_retrieval_policy_candidate(config, weights)
+        self.store
+            .evaluate_retrieval_policy_candidate(config, weights)
     }
 
     /// Admits candidate blend weights judged on the named evidence

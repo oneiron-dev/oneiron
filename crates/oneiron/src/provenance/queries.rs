@@ -136,8 +136,11 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         subject: &EdgeRef,
     ) -> Result<Vec<EntityId>> {
-        Ok(self.live_edge_provenance_claims_in_txn(txn, subject, None)?
-            .into_iter().map(|claim| claim.id).collect())
+        Ok(self
+            .live_edge_provenance_claims_in_txn(txn, subject, None)?
+            .into_iter()
+            .map(|claim| claim.id)
+            .collect())
     }
 
     /// Enumerates the RETRACTED `edge.provenance` Claims for `subject`, a

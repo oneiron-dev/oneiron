@@ -64,7 +64,6 @@ pub use tags::{
     TurnTags,
 };
 pub use trace::{HandBackReason, SkipReason, TaggingFailure, TaggingOutcome, TaggingTrace};
-pub(crate) use verbs::{envelope_view, mention_view};
 pub use verbs::{
     DerivationEnvelopeView, MentionLinkView, MentionReferenceView, MergeEvidenceView,
     TaggedMentionView, TaggingFailureView, TaggingHistoryView, TaggingMarkerState,
@@ -72,6 +71,7 @@ pub use verbs::{
     TaggingOutcomeView, TaggingSpeakerTarget, TaggingStatusView, TaggingTagsView, TaggingTraceView,
     TaggingTurnRequest, TaggingVadView, TurnTagsView,
 };
+pub(crate) use verbs::{envelope_view, mention_view};
 
 pub(crate) use held::settle_held_tags_in_txn;
 pub(crate) use input::{shown_message_text, turn_members_in_txn, turn_messages_in_txn, turn_role};

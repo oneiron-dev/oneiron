@@ -270,11 +270,16 @@ pub(super) fn verify_swarm_evidence_bytes(
     trust_class: ClaimSource,
 ) -> Result<VerifiedSwarmEvidence> {
     match entry.claim_id {
-        Some(claim) if claim == entry.source_id
-            && entry.byte_range.is_none()
-            && kind == crate::registry::ENTITY_TYPE_CLAIM => {}
+        Some(claim)
+            if claim == entry.source_id
+                && entry.byte_range.is_none()
+                && kind == crate::registry::ENTITY_TYPE_CLAIM => {}
         None if kind == crate::registry::ENTITY_TYPE_TURN => {}
-        _ => return Err(invalid_consolidation("evidence locator does not match its source")),
+        _ => {
+            return Err(invalid_consolidation(
+                "evidence locator does not match its source",
+            ));
+        }
     }
     let bytes = super::turn_text::cited_evidence_bytes(entry, body, text)?;
     Ok(VerifiedSwarmEvidence {

@@ -566,8 +566,11 @@ pub(super) fn replace_in_txn(
 ) -> Result<()> {
     let store = &vault.store;
     let old = TAG_SET.get(store, txn, turn)?;
-    if tags.is_none() || old.as_ref().map(|tags| &tags.envelope) != tags.map(|tags| &tags.envelope) {
-        crate::dreamer_runner::maintenance::identity::clear_mention_resolutions_in_txn(store, txn, turn)?;
+    if tags.is_none() || old.as_ref().map(|tags| &tags.envelope) != tags.map(|tags| &tags.envelope)
+    {
+        crate::dreamer_runner::maintenance::identity::clear_mention_resolutions_in_txn(
+            store, txn, turn,
+        )?;
     }
     let before = old.map(|old| old.entities()).unwrap_or_default();
     let after = tags.map(TurnTags::entities).unwrap_or_default();
@@ -760,7 +763,10 @@ pub(crate) fn erase_in_txn(
     id: &EntityId,
 ) -> Result<bool> {
     let store = &vault.store;
-    let mut existed = crate::dreamer_runner::maintenance::identity::erase_mention_resolutions_in_txn(store, txn, id)?;
+    let mut existed =
+        crate::dreamer_runner::maintenance::identity::erase_mention_resolutions_in_txn(
+            store, txn, id,
+        )?;
     if TAG_SET.contains(store, txn, id)? {
         replace_in_txn(vault, txn, id, None)?;
         existed = true;
@@ -793,7 +799,9 @@ pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityI
             continue;
         };
         TAG_SET.delete(store, txn, &turn)?;
-        crate::dreamer_runner::maintenance::identity::clear_mention_resolutions_in_txn(store, txn, &turn)?;
+        crate::dreamer_runner::maintenance::identity::clear_mention_resolutions_in_txn(
+            store, txn, &turn,
+        )?;
         for entity in old.entities() {
             MENTION_REF.delete(store, txn, &(entity, turn))?;
             if provisional::get_in_txn(store, txn, &entity)?

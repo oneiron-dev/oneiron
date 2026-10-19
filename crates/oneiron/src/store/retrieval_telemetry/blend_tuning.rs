@@ -15,9 +15,8 @@ use super::types::{
     RETRIEVAL_BLEND_TUNER_ALGORITHM, RETRIEVAL_BLEND_WEIGHT_TABLE_VERSION, RetrievalBlendSignal,
     RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry,
     RetrievalBlendWeights, RetrievalOutcomeRecord, RetrievalPolicyCandidate,
-    RetrievalPolicyEvaluation, RetrievalPolicyHeldOut, RetrievalPolicyPins,
-    RetrievalPolicyPin, RetrievalPolicyVerdict, RetrievalRunRecord, RetrievalSignal,
-    RetrievalWeightOrigin,
+    RetrievalPolicyEvaluation, RetrievalPolicyHeldOut, RetrievalPolicyPin, RetrievalPolicyPins,
+    RetrievalPolicyVerdict, RetrievalRunRecord, RetrievalSignal, RetrievalWeightOrigin,
     retrieval_weight_rows,
 };
 
@@ -65,11 +64,16 @@ struct BlendEvidence {
 }
 
 fn held_out_score(weights: RetrievalBlendWeights, holdout_gradient: [f64; 4]) -> f64 {
-    [weights.recency, weights.salience, weights.confidence, weights.gravity]
-        .into_iter()
-        .zip(holdout_gradient)
-        .map(|(weight, credit)| f64::from(weight) * credit)
-        .sum()
+    [
+        weights.recency,
+        weights.salience,
+        weights.confidence,
+        weights.gravity,
+    ]
+    .into_iter()
+    .zip(holdout_gradient)
+    .map(|(weight, credit)| f64::from(weight) * credit)
+    .sum()
 }
 
 fn held_out_assessment(
@@ -132,8 +136,8 @@ impl Store {
         pins: RetrievalPolicyPins,
     ) -> Result<RetrievalBlendWeightTableEntry> {
         pins.validate()?;
-        let _tuning_guard = self
-            .tuning_guard("retrieval policy pin skipped inside active write transaction")?;
+        let _tuning_guard =
+            self.tuning_guard("retrieval policy pin skipped inside active write transaction")?;
         let mut wtxn = self.env.write_txn()?;
         let entry = self.write_retrieval_policy_pins_in_txn(&mut wtxn, &pins)?;
         wtxn.commit()?;
@@ -148,8 +152,8 @@ impl Store {
         signal: RetrievalBlendSignal,
         value: Option<f32>,
     ) -> Result<RetrievalBlendWeightTableEntry> {
-        let _tuning_guard = self
-            .tuning_guard("retrieval policy pin skipped inside active write transaction")?;
+        let _tuning_guard =
+            self.tuning_guard("retrieval policy pin skipped inside active write transaction")?;
         let mut wtxn = self.env.write_txn()?;
         let mut pins = self.retrieval_policy_pins_in_txn(&wtxn)?;
         pins.pins.retain(|pin| pin.signal != signal);
@@ -255,9 +259,8 @@ impl Store {
         config: RetrievalBlendTuningConfig,
     ) -> Result<RetrievalPolicyCandidate> {
         validate_retrieval_blend_tuning_config(config)?;
-        let _tuning_guard = self.tuning_guard(
-            "retrieval policy training skipped inside active write transaction",
-        )?;
+        let _tuning_guard =
+            self.tuning_guard("retrieval policy training skipped inside active write transaction")?;
         let evidence = self.collect_blend_evidence(config)?;
         let weights = if evidence.reward_count > 0 && evidence.component_count > 0 {
             evidence.pins.apply(apply_retrieval_blend_weight_update(
@@ -290,9 +293,8 @@ impl Store {
     ) -> Result<RetrievalPolicyEvaluation> {
         validate_retrieval_blend_tuning_config(config)?;
         let weights = weights.normalized()?;
-        let _tuning_guard = self.tuning_guard(
-            "retrieval policy evaluation skipped inside active write transaction",
-        )?;
+        let _tuning_guard = self
+            .tuning_guard("retrieval policy evaluation skipped inside active write transaction")?;
         let evidence = self.collect_blend_evidence(config)?;
         Ok(RetrievalPolicyEvaluation {
             candidate_weights: weights,
@@ -316,9 +318,8 @@ impl Store {
     ) -> Result<RetrievalBlendWeightTableEntry> {
         validate_retrieval_blend_tuning_config(config)?;
         let weights = weights.normalized()?;
-        let _tuning_guard = self.tuning_guard(
-            "retrieval policy admission skipped inside active write transaction",
-        )?;
+        let _tuning_guard = self
+            .tuning_guard("retrieval policy admission skipped inside active write transaction")?;
         let evidence = self.collect_blend_evidence(config)?;
         if evidence.manifest_digest != expected_manifest_digest {
             return Err(Error::InvalidConfig(
@@ -368,7 +369,10 @@ impl Store {
             "previous_tuned_at".to_owned(),
             evidence.previous.tuned_at.to_string(),
         );
-        provenance.insert("manifest_digest".to_owned(), evidence.manifest_digest.clone());
+        provenance.insert(
+            "manifest_digest".to_owned(),
+            evidence.manifest_digest.clone(),
+        );
         provenance.insert(
             "held_out_candidate_score".to_owned(),
             held_out.candidate_score.to_string(),
@@ -395,8 +399,7 @@ impl Store {
             || current.weights != evidence.previous.weights
         {
             return Err(Error::InvalidConfig(
-                "retrieval policy changed under the candidate; retrain before admission"
-                    .to_owned(),
+                "retrieval policy changed under the candidate; retrain before admission".to_owned(),
             ));
         }
         TABLE.put(self, &mut wtxn, &(), &entry)?;
@@ -404,10 +407,7 @@ impl Store {
         Ok(entry)
     }
 
-    fn collect_blend_evidence(
-        &self,
-        config: RetrievalBlendTuningConfig,
-    ) -> Result<BlendEvidence> {
+    fn collect_blend_evidence(&self, config: RetrievalBlendTuningConfig) -> Result<BlendEvidence> {
         let rtxn = self.env.read_txn()?;
         let previous = self.retrieval_blend_weight_table_in_txn(&rtxn)?;
         let pins = self.retrieval_policy_pins_in_txn(&rtxn)?;

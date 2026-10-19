@@ -2,6 +2,7 @@
 //! These registry dials change serialization only, after the caller's own read.
 use serde::{Deserialize, Serialize};
 
+use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey, claim_surfaceable};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -9,7 +10,6 @@ use crate::error::{Error, Result};
 use crate::federation::{Scope, Sensitivity, SensitivityCeiling};
 use crate::ports::{EntityStoreRead, ShortIdStoreRead};
 use crate::side_table::{self, Named, SideTable};
-use crate::Vault;
 
 const CEILINGS: SideTable<String, DisclosureBand, Named> =
     SideTable::new(&side_table::DISCLOSURE_MODEL_CEILING);
@@ -107,13 +107,18 @@ fn key(connection: &str, class: Option<DisclosureDataClass>) -> Result<String> {
         matches!(kind, "agent" | "owner") && EntityId::from_hex(id).is_ok()
     });
     if !valid {
-        return Err(Error::InvalidClaimBody("connection is agent:<hex> or owner:<hex>"));
+        return Err(Error::InvalidClaimBody(
+            "connection is agent:<hex> or owner:<hex>",
+        ));
     }
     Ok(dial_key(connection, class))
 }
 
 fn dial_key(connection: &str, class: Option<DisclosureDataClass>) -> String {
-    format!("{connection}/{}", class.map_or("*", DisclosureDataClass::as_str))
+    format!(
+        "{connection}/{}",
+        class.map_or("*", DisclosureDataClass::as_str)
+    )
 }
 
 impl Vault {
@@ -125,7 +130,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         let ceiling = CEILINGS.get(&self.store, &txn, &key(&input.connection, input.class)?)?;
-        Ok(DisclosureCeilingView { connection: input.connection, class: input.class, ceiling })
+        Ok(DisclosureCeilingView {
+            connection: input.connection,
+            class: input.class,
+            ceiling,
+        })
     }
 
     pub fn set_model_disclosure_ceiling(
@@ -138,7 +147,9 @@ impl Vault {
             let key = key(&input.connection, input.class)?;
             CEILINGS.put(&self.store, txn, &key, &input.ceiling)?;
             Ok(DisclosureCeilingView {
-                connection: input.connection, class: input.class, ceiling: Some(input.ceiling),
+                connection: input.connection,
+                class: input.class,
+                ceiling: Some(input.ceiling),
             })
         })
     }
@@ -151,7 +162,11 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             CEILINGS.delete(&self.store, txn, &key(&input.connection, input.class)?)?;
-            Ok(DisclosureCeilingView { connection: input.connection, class: input.class, ceiling: None })
+            Ok(DisclosureCeilingView {
+                connection: input.connection,
+                class: input.class,
+                ceiling: None,
+            })
         })
     }
 }
@@ -161,7 +176,9 @@ pub(crate) fn claim_data_class(body: &ClaimBody) -> Option<DisclosureDataClass> 
         return Some(DisclosureDataClass::Health);
     }
     match body.predicate.rsplit('.').next()? {
-        "name" | "display_name" | "full_name" | "given_name" | "family_name" => Some(DisclosureDataClass::Names),
+        "name" | "display_name" | "full_name" | "given_name" | "family_name" => {
+            Some(DisclosureDataClass::Names)
+        }
         "birthdate" | "date_of_birth" | "birthday" | "dob" => Some(DisclosureDataClass::Dates),
         "email" | "phone" | "address" | "contact" => Some(DisclosureDataClass::Contact),
         "id" | "identifier" => Some(DisclosureDataClass::Ids),
@@ -192,7 +209,15 @@ pub(crate) fn person_name_claim_in(
 }
 
 fn connection(reader: &ScopedReadActorKey) -> String {
-    format!("{}:{}", if reader.reads_as_vault_owner() { "owner" } else { "agent" }, reader.actor_ref())
+    format!(
+        "{}:{}",
+        if reader.reads_as_vault_owner() {
+            "owner"
+        } else {
+            "agent"
+        },
+        reader.actor_ref()
+    )
 }
 
 fn admits(
@@ -203,11 +228,22 @@ fn admits(
     band: DisclosureBand,
 ) -> Result<bool> {
     let connection = connection(reader);
-    let ceiling = CEILINGS.get(&vault.store, txn, &dial_key(&connection, Some(class)))?
+    let ceiling = CEILINGS
+        .get(&vault.store, txn, &dial_key(&connection, Some(class)))?
         .or(CEILINGS.get(&vault.store, txn, &dial_key(&connection, None))?)
-        .unwrap_or(if reader.reads_as_vault_owner() { DisclosureBand::Restricted } else { DisclosureBand::Public });
-    let channel = Scope { sensitivity: SensitivityCeiling::AtMost(ceiling.sensitivity()), ..Scope::top() };
-    let record = Scope { sensitivity: SensitivityCeiling::AtMost(band.sensitivity()), ..Scope::top() };
+        .unwrap_or(if reader.reads_as_vault_owner() {
+            DisclosureBand::Restricted
+        } else {
+            DisclosureBand::Public
+        });
+    let channel = Scope {
+        sensitivity: SensitivityCeiling::AtMost(ceiling.sensitivity()),
+        ..Scope::top()
+    };
+    let record = Scope {
+        sensitivity: SensitivityCeiling::AtMost(band.sensitivity()),
+        ..Scope::top()
+    };
     Ok(channel.admits("read", &record, &Scope::top()))
 }
 
@@ -228,17 +264,24 @@ pub(crate) fn claim_handle_in(
     reader: &ScopedReadActorKey,
     body: &ClaimBody,
 ) -> Result<Option<String>> {
-    let (ClaimSubject::Entity(person), Some(class)) = (&body.subject, claim_data_class(body)) else {
+    let (ClaimSubject::Entity(person), Some(class)) = (&body.subject, claim_data_class(body))
+    else {
         return Ok(None);
     };
-    if vault.store.port_entity_record(txn, person)?.map(|row| row.entity_type)
+    if vault
+        .store
+        .port_entity_record(txn, person)?
+        .map(|row| row.entity_type)
         != Some(crate::registry::ENTITY_TYPE_PERSON)
         || admits(vault, txn, reader, class, DisclosureBand::of_claim(body))?
     {
         return Ok(None);
     }
-    let handle = vault.store.port_short_id_reference(txn, person)?
-        .map(|(handle, _)| handle).ok_or(Error::EntityNotFound)?;
+    let handle = vault
+        .store
+        .port_short_id_reference(txn, person)?
+        .map(|(handle, _)| handle)
+        .ok_or(Error::EntityNotFound)?;
     Ok(Some(handle))
 }
 
@@ -255,8 +298,11 @@ pub(crate) fn project_model_pack_in(
             .map_err(|_| Error::InvariantViolation("model disclosure L2 JSON"))?;
         let mut changed = false;
         for row in &mut rows {
-            let id = row.get("id").and_then(serde_json::Value::as_str)
-                .and_then(|id| EntityId::from_hex(id).ok()).ok_or(Error::EntityNotFound)?;
+            let id = row
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|id| EntityId::from_hex(id).ok())
+                .ok_or(Error::EntityNotFound)?;
             if let Some(body) = vault.get_claim_in_txn(txn, &id)?
                 && let Some(handle) = claim_handle_in(vault, txn, reader, &body)?
             {
@@ -272,22 +318,31 @@ pub(crate) fn project_model_pack_in(
         }
     }
     for entity in pack.results.iter_mut().chain(&mut pack.neighbors) {
-        let Some(fields) = entity.fields.as_mut() else { continue };
+        let Some(fields) = entity.fields.as_mut() else {
+            continue;
+        };
         if entity.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
             if let Some(body) = vault.get_claim_in_txn(txn, &entity.id)?
                 && let Some(handle) = claim_handle_in(vault, txn, reader, &body)?
             {
-                fields.retain(|key, _| matches!(key.as_str(), "pred" | "conf" | "src" | "from" | "to"));
+                fields.retain(|key, _| {
+                    matches!(key.as_str(), "pred" | "conf" | "src" | "from" | "to")
+                });
                 fields.insert("val".to_owned(), serde_json::Value::String(handle));
                 entity.vector = None;
             }
         } else if entity.entity_type == crate::registry::ENTITY_TYPE_PERSON {
             let band = person_name_claim_in(vault, txn, entity.id)?
-                .map_or(DisclosureBand::Sensitive, |(_, body)| DisclosureBand::of_claim(&body));
+                .map_or(DisclosureBand::Sensitive, |(_, body)| {
+                    DisclosureBand::of_claim(&body)
+                });
             if !admits(vault, txn, reader, DisclosureDataClass::Names, band)? {
                 for field in ["name", "display_name", "full_name"] {
                     if fields.contains_key(field) {
-                        fields.insert(field.to_owned(), serde_json::Value::String(entity.short_id.clone()));
+                        fields.insert(
+                            field.to_owned(),
+                            serde_json::Value::String(entity.short_id.clone()),
+                        );
                     }
                 }
                 entity.vector = None;

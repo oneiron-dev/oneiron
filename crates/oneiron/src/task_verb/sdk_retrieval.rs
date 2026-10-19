@@ -493,8 +493,7 @@ pub fn retrieval_policy_update_as_owner(
     admitted(memory, owner)?;
     let config = input.config();
     let candidate = memory.vault().train_retrieval_policy_candidate(config)?;
-    let (disposition, reason) = if candidate.held_out.verdict == RetrievalPolicyVerdict::NotWorse
-    {
+    let (disposition, reason) = if candidate.held_out.verdict == RetrievalPolicyVerdict::NotWorse {
         match memory.vault().admit_retrieval_policy_candidate(
             config,
             candidate.weights,

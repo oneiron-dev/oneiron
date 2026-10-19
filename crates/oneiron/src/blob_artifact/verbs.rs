@@ -391,9 +391,7 @@ impl UnitDecider for AdmittedDecider {
             .lock()
             .map_err(|_| invalid("artifact admission decisions"))?
             .pop_front()
-            .ok_or_else(|| {
-                invalid("an artifact admission names fewer decisions than units asked")
-            })
+            .ok_or_else(|| invalid("an artifact admission names fewer decisions than units asked"))
     }
 }
 

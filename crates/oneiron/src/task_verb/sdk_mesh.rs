@@ -43,10 +43,9 @@ pub fn mesh_path_receipts_as_owner(
     Ok(memory.vault().mesh_path_receipts(input.bound())?)
 }
 
-
-pub use crate::authority::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
-use crate::authority::MeshMachineAddress;
 use crate::EntityId;
+use crate::authority::MeshMachineAddress;
+pub use crate::authority::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 
 /// The MACHINE whose address/key binding just committed, initially without grants.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

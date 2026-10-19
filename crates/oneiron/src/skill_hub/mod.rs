@@ -40,11 +40,11 @@ pub(crate) use claim_refinement::{
     claim_refinement_scope_exists_in_txn, erase_claim_refinement_in_txn,
 };
 pub use decisions::{ClaimReplayDecisions, UsefulUpstreamDecisions};
-pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
 pub use default_hub::{
     DefaultSkillHub, ModelCatalogSync, REVIEW_BUNDLE_EXPLAINER_SUBTREE, default_skill_hub_commit,
     default_skill_hub_id,
 };
+pub(crate) use default_hub::{MODEL_PACK_NAME, MODEL_PACK_SUBTREE, seed_default_skill_hub};
 pub use git_fetch::GitEndpointSkillHubAdapter;
 pub use http_fetch::HttpEndpointSkillHubAdapter;
 pub use install_transition::{InstallDisposition, InstallHoldReason, InstallLifecycle};

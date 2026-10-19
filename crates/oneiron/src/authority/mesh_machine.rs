@@ -3,8 +3,7 @@
 //! selects exact ALPN slips in AUTHORITY_LOG; it cannot grant permission itself.
 //! The host, pairing slip, logged grant and current MACHINE key are rechecked together.
 use super::{
-    AuthorityFold, AuthorityKey, HostSlipIssuer, invalid_authority,
-    roster_has_live_owner,
+    AuthorityFold, AuthorityKey, HostSlipIssuer, invalid_authority, roster_has_live_owner,
 };
 use crate::scan_check::ScanCount;
 use crate::{

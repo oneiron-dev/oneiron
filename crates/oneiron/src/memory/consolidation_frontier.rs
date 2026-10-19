@@ -19,7 +19,9 @@ pub struct ConsolidationRootBucket {
 
 /// A child's reference, never child-authored bytes, hashes or trust labels.
 /// Exactly one of claim_id and byte_range must be present.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct ConsolidationReference {
     pub source_id: String,
@@ -156,7 +158,9 @@ impl super::Memory<'_> {
             let accounting = crate::dreamer_consolidation::root_evidence::pin_in_txn(
                 self.vault, &read, txn, actor, input,
             )?;
-            self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(&accounting)?);
+            self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(
+                &accounting,
+            )?);
             Ok(accounting)
         })
     }
@@ -176,7 +180,9 @@ impl super::Memory<'_> {
             let accounting = crate::dreamer_consolidation::root_evidence::frontier_in_txn(
                 self.vault, &read, txn, actor, input,
             )?;
-            self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(&accounting)?);
+            self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(
+                &accounting,
+            )?);
             Ok(accounting)
         })
     }
@@ -187,12 +193,23 @@ impl super::Memory<'_> {
         input: &ConsolidationAccountingRequest,
     ) -> super::MemoryResult<ConsolidationRootAccounting> {
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
-        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         let actor = self.consolidation_root_owner_in_txn(owner, &txn)?;
         let accounting = crate::dreamer_consolidation::root_evidence::accounting_in_txn(
-            self.vault, &read, &txn, actor, &input.root_ref,
+            self.vault,
+            &read,
+            &txn,
+            actor,
+            &input.root_ref,
         )?;
-        self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(&accounting)?);
+        self.produced_from(crate::dreamer_consolidation::root_evidence::source_ids(
+            &accounting,
+        )?);
         Ok(accounting)
     }
 }

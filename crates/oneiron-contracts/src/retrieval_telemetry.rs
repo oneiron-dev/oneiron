@@ -51,9 +51,7 @@ impl RetrievalSignal {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalBlendSignal {
     Recency,

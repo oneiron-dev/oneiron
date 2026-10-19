@@ -221,7 +221,9 @@ pub struct UnitAbstention {
 }
 
 /// A unit the ask will not read as given.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct UnitRefusal {
     pub unit: Value,
     pub reason: String,

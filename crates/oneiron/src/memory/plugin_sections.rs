@@ -26,8 +26,8 @@ use crate::context_board::{
     pending_plugin_proposal_rows, propose_plugin_section_install, render_pack_sections,
 };
 use crate::dreamer_plugin_suggest::{
-    LocalSkillHubPackCatalog, PluginSuggestJob, PluginSuggestionDisposition,
-    WorkflowPatternNotice, run_plugin_suggestion_job,
+    LocalSkillHubPackCatalog, PluginSuggestJob, PluginSuggestionDisposition, WorkflowPatternNotice,
+    run_plugin_suggestion_job,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -361,8 +361,8 @@ impl Memory<'_> {
         input: &PluginSectionListRequest,
     ) -> MemoryResult<PluginSectionsView> {
         let vault = self.vault();
-        let limit = usize::try_from(input.limit.unwrap_or(256).clamp(1, 1024))
-            .unwrap_or(usize::MAX);
+        let limit =
+            usize::try_from(input.limit.unwrap_or(256).clamp(1, 1024)).unwrap_or(usize::MAX);
         let pending_rows = pending_plugin_proposal_rows(vault, limit).map_err(plugin_error)?;
         let registry =
             PluginSectionRegistry::rebuild(vault, &EngineSectionBindings).map_err(plugin_error)?;
@@ -518,7 +518,11 @@ impl Memory<'_> {
         let ids: Vec<EntityId> = if let Some(claim_ref) = &input.claim_ref {
             vec![claim_id(claim_ref)?]
         } else if let Some(wanted) = &input.section_id {
-            let rtxn = vault.store.env.read_txn().map_err(crate::error::Error::from)?;
+            let rtxn = vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::error::Error::from)?;
             vault
                 .claims_with_predicate_in_txn(&rtxn, PREDICATE_PLUGIN_SECTION_INSTALL)?
                 .into_iter()
@@ -608,28 +612,28 @@ impl Memory<'_> {
         let actor = WriteActor::new(self.actor(), self.actor_class());
         let source = VaultPluginInstallSource { vault };
         let now = vault.now_recorded_at();
-        let disposition = match vault.hub_ref_fetch(&pinned_tracking(input.hub_ref.clone())?, None)?
-        {
-            RefFetch::Git(adapter, _) => run_plugin_suggestion_job(
-                vault,
-                &LocalSkillHubPackCatalog { adapter: &adapter },
-                &source,
-                &job,
-                actor,
-                &EngineSectionBindings,
-                now,
-            ),
-            RefFetch::Http(adapter, _) => run_plugin_suggestion_job(
-                vault,
-                &LocalSkillHubPackCatalog { adapter: &adapter },
-                &source,
-                &job,
-                actor,
-                &EngineSectionBindings,
-                now,
-            ),
-        }
-        .map_err(plugin_error)?;
+        let disposition =
+            match vault.hub_ref_fetch(&pinned_tracking(input.hub_ref.clone())?, None)? {
+                RefFetch::Git(adapter, _) => run_plugin_suggestion_job(
+                    vault,
+                    &LocalSkillHubPackCatalog { adapter: &adapter },
+                    &source,
+                    &job,
+                    actor,
+                    &EngineSectionBindings,
+                    now,
+                ),
+                RefFetch::Http(adapter, _) => run_plugin_suggestion_job(
+                    vault,
+                    &LocalSkillHubPackCatalog { adapter: &adapter },
+                    &source,
+                    &job,
+                    actor,
+                    &EngineSectionBindings,
+                    now,
+                ),
+            }
+            .map_err(plugin_error)?;
         Ok(match disposition {
             PluginSuggestionDisposition::Disabled => PluginSectionSuggestion {
                 state: PluginSectionSuggestionState::Disabled,
