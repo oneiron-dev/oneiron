@@ -331,12 +331,13 @@ pub(crate) fn conversation_summary_covers(
 /// revision `raw` of `id`, or its current row, sits in: the root each TURN
 /// up its MESSAGE, reply, quote and spawn edges or a claim's subject names,
 /// and those of every record a summary, merge or reaction draws its words
-/// from. A TURN's `Parent` stays in its own thread or on the trunk, which
-/// names none, so it is not walked. A TASK also reaches the thread turns
-/// that bind it and the turns its thread and consult refs name (FIX 3124).
-/// A declared root that is gone or does not resolve denies, and with no
-/// viewers so does any private thread. No read is exempt: an owner's, a
-/// host's and an unbound one meet it too.
+/// from, each at that TURN, which a viewer added from a later turn on does
+/// not read (FIX 5545). A TURN's `Parent` stays in its own thread or on the
+/// trunk, which names none, so it is not walked. A TASK also reaches the
+/// thread turns that bind it and the turns its thread and consult refs name
+/// (FIX 3124). A declared root that is gone or does not resolve denies, and
+/// with no viewers so does any private thread. No read is exempt: an
+/// owner's, a host's and an unbound one meet it too.
 pub(crate) fn private_threads_readable_raw_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -374,7 +375,7 @@ pub(crate) fn private_threads_readable_with_read_in(
         pending.push((id, Some(live)));
     }
     let mut seen = BTreeSet::from([id]);
-    let mut roots = BTreeSet::new();
+    let mut placed = BTreeSet::new();
     while let Some((id, revision)) = pending.pop() {
         let bytes = match revision {
             Some(bytes) => bytes,
@@ -416,7 +417,7 @@ pub(crate) fn private_threads_readable_with_read_in(
         }
         let kinds: &[EdgeKind] = if h.entity_type == ENTITY_TYPE_TURN {
             if let Some(binding) = crate::workspace_roster::thread_binding(body)? {
-                roots.insert(binding.root);
+                placed.insert((binding.root, id));
             }
             &[EdgeKind::RepliesTo, EdgeKind::SpawnedBy]
         } else {
@@ -458,9 +459,9 @@ pub(crate) fn private_threads_readable_with_read_in(
             pending.extend(covered.into_iter().map(|id| (id, None)));
         }
     }
-    for root in roots {
-        if !crate::workspace_roster::thread_root_readable_with_read_in(
-            vault, dbs, txn, root, viewers,
+    for (root, turn) in placed {
+        if !crate::workspace_roster::thread_turn_readable_with_read_in(
+            vault, dbs, txn, root, turn, viewers,
         )? {
             return Ok(false);
         }

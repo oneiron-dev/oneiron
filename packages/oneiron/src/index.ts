@@ -875,6 +875,18 @@ export class Oneiron {
         /** Stops one reader's digest schedule under the owner's proof, keeping its saved periods. */
         clear: (input: Facade.WeaveReaderRef): Facade.WeaveScheduleCleared => this.#call(() => this.#client.vaultWeaveSchedulesClear(input) as Facade.WeaveScheduleCleared),
       },
+      setting_changes: {
+        /** Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof. */
+        list: (input: Facade.EmptyRequest = {}): Facade.WeaveDigestSettingChange[] => this.#call(() => this.#client.vaultWeaveSettingChangesList(input) as Facade.WeaveDigestSettingChange[]),
+        /** Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing. */
+        answer: (input: Facade.WeaveDigestSettingAnswer): Facade.WeaveDigestSettingChange => this.#call(() => this.#client.vaultWeaveSettingChangesAnswer(input) as Facade.WeaveDigestSettingChange),
+        /** Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since. */
+        undo: (input: Facade.WeaveDigestSettingUndo): Facade.WeaveDigestSettingChange => this.#call(() => this.#client.vaultWeaveSettingChangesUndo(input) as Facade.WeaveDigestSettingChange),
+      },
+      digest_feedback: {
+        /** Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are. */
+        put: (input: Facade.WeaveDigestFeedback): Facade.WeaveDigestFeedback => this.#call(() => this.#client.vaultWeaveDigestFeedbackPut(input) as Facade.WeaveDigestFeedback),
+      },
     },
     inbox: {
       concerns: {
@@ -2175,8 +2187,14 @@ export class Oneiron {
       reply_strips: (input: Facade.ReplyStripsRequest): Facade.ReplyStripsPage => this.#call(() => this.#client.vaultRoomsReplyStrips(input) as Facade.ReplyStripsPage),
       /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
       claim: (roomRef: string, turnRef: string): Facade.RoomClaimOutcome => this.#call(() => this.#client.vaultRoomsClaim({room_ref: roomRef, turn_ref: turnRef}) as Facade.RoomClaimOutcome),
-      /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later. */
+      /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove. */
       speak: (input: Facade.WitnessTurn): Facade.WitnessReceipt => this.#call(() => this.#client.vaultRoomsSpeak(input) as Facade.WitnessReceipt),
+      thread_audience: {
+        /** Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it. */
+        add: (input: Facade.ThreadAudienceAddRequest): Facade.ThreadAudienceReceipt => this.#call(() => this.#client.vaultRoomsThreadAudienceAdd(input) as Facade.ThreadAudienceReceipt),
+        /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. */
+        remove: (input: Facade.ThreadAudienceRemoveRequest): Facade.ThreadAudienceReceipt => this.#call(() => this.#client.vaultRoomsThreadAudienceRemove(input) as Facade.ThreadAudienceReceipt),
+      },
       /** Files and decides a request to take part in a room or one of its threads. */
       join: (input: Facade.JoinRequest): Facade.JoinOutcome => this.#call(() => this.#client.vaultRoomsJoin(input) as Facade.JoinOutcome),
       /** The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent. */

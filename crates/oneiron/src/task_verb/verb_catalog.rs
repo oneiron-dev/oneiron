@@ -188,6 +188,10 @@ pub enum AgentVerb {
     VaultWeaveSchedulesList,
     VaultWeaveSchedulesPut,
     VaultWeaveSchedulesClear,
+    VaultWeaveSettingChangesList,
+    VaultWeaveSettingChangesAnswer,
+    VaultWeaveSettingChangesUndo,
+    VaultWeaveDigestFeedbackPut,
     VaultWeaveOwnerDigestRender,
     VaultInboxConcernsReview,
     VaultInboxLens,
@@ -698,6 +702,8 @@ pub enum AgentVerb {
     VaultRoomsReplyStrips,
     VaultRoomsClaim,
     VaultRoomsSpeak,
+    VaultRoomsThreadAudienceAdd,
+    VaultRoomsThreadAudienceRemove,
     VaultProjectsPropose,
     VaultProjectsProposals,
     VaultProjectsDismissCard,
@@ -1266,6 +1272,10 @@ impl AgentVerb {
         Self::VaultWeaveSchedulesList,
         Self::VaultWeaveSchedulesPut,
         Self::VaultWeaveSchedulesClear,
+        Self::VaultWeaveSettingChangesList,
+        Self::VaultWeaveSettingChangesAnswer,
+        Self::VaultWeaveSettingChangesUndo,
+        Self::VaultWeaveDigestFeedbackPut,
         Self::VaultWeaveOwnerDigestRender,
         Self::VaultInboxConcernsReview,
         Self::VaultInboxLens,
@@ -1776,6 +1786,8 @@ impl AgentVerb {
         Self::VaultRoomsReplyStrips,
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
+        Self::VaultRoomsThreadAudienceAdd,
+        Self::VaultRoomsThreadAudienceRemove,
         Self::VaultProjectsPropose,
         Self::VaultProjectsProposals,
         Self::VaultProjectsDismissCard,
@@ -2347,6 +2359,10 @@ impl AgentVerb {
             Self::VaultWeaveSchedulesList => "vault.weave.schedules.list",
             Self::VaultWeaveSchedulesPut => "vault.weave.schedules.put",
             Self::VaultWeaveSchedulesClear => "vault.weave.schedules.clear",
+            Self::VaultWeaveSettingChangesList => "vault.weave.setting_changes.list",
+            Self::VaultWeaveSettingChangesAnswer => "vault.weave.setting_changes.answer",
+            Self::VaultWeaveSettingChangesUndo => "vault.weave.setting_changes.undo",
+            Self::VaultWeaveDigestFeedbackPut => "vault.weave.digest_feedback.put",
             Self::VaultWeaveOwnerDigestRender => "vault.weave.owner.digest.render",
             Self::VaultInboxConcernsReview => "vault.inbox.concerns.review",
             Self::VaultInboxLens => "vault.inbox.lens",
@@ -2875,6 +2891,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => "vault.rooms.reply_strips",
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
+            Self::VaultRoomsThreadAudienceAdd => "vault.rooms.thread_audience.add",
+            Self::VaultRoomsThreadAudienceRemove => "vault.rooms.thread_audience.remove",
             Self::VaultProjectsPropose => "vault.projects.propose",
             Self::VaultProjectsProposals => "vault.projects.proposals",
             Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
@@ -3453,6 +3471,10 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesList
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
@@ -3963,6 +3985,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -4558,6 +4582,10 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesList
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
@@ -5068,6 +5096,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -5463,6 +5493,7 @@ impl AgentVerb {
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveSchedulesList
+                | Self::VaultWeaveSettingChangesList
                 | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
                 | Self::VaultSkillsBootstrap
@@ -5768,6 +5799,10 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesList
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultInboxLens
@@ -6264,6 +6299,8 @@ impl AgentVerb {
                 | Self::VaultRoomsReplyStrips
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -6716,6 +6753,9 @@ impl AgentVerb {
                 | Self::VaultWeaveEnqueue
                 | Self::VaultWeaveSchedulesPut
                 | Self::VaultWeaveSchedulesClear
+                | Self::VaultWeaveSettingChangesAnswer
+                | Self::VaultWeaveSettingChangesUndo
+                | Self::VaultWeaveDigestFeedbackPut
                 | Self::VaultWeaveOwnerDigestRender
                 | Self::VaultInboxConcernsReview
                 | Self::VaultWeaveDigestRender
@@ -7030,6 +7070,8 @@ impl AgentVerb {
                 | Self::TasksAnswer
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
+                | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
@@ -7477,6 +7519,10 @@ impl AgentVerb {
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
             Self::VaultWeaveSchedulesClear => &["spec"],
+            Self::VaultWeaveSettingChangesList => &["spec"],
+            Self::VaultWeaveSettingChangesAnswer => &["spec"],
+            Self::VaultWeaveSettingChangesUndo => &["spec"],
+            Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
@@ -7987,6 +8033,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -8556,6 +8604,10 @@ impl AgentVerb {
             Self::VaultWeaveSchedulesList => &["spec"],
             Self::VaultWeaveSchedulesPut => &["spec"],
             Self::VaultWeaveSchedulesClear => &["spec"],
+            Self::VaultWeaveSettingChangesList => &["spec"],
+            Self::VaultWeaveSettingChangesAnswer => &["spec"],
+            Self::VaultWeaveSettingChangesUndo => &["spec"],
+            Self::VaultWeaveDigestFeedbackPut => &["spec"],
             Self::VaultWeaveOwnerDigestRender => &["spec"],
             Self::VaultInboxConcernsReview => &["spec"],
             Self::VaultInboxLens => &["spec"],
@@ -9066,6 +9118,8 @@ impl AgentVerb {
             Self::VaultRoomsReplyStrips => &["spec"],
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
+            Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -9997,6 +10051,18 @@ impl AgentVerb {
             }
             Self::VaultWeaveSchedulesClear => {
                 "Stops one reader's digest schedule under the owner's proof, keeping its saved periods."
+            }
+            Self::VaultWeaveSettingChangesList => {
+                "Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."
+            }
+            Self::VaultWeaveSettingChangesAnswer => {
+                "Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."
+            }
+            Self::VaultWeaveSettingChangesUndo => {
+                "Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."
+            }
+            Self::VaultWeaveDigestFeedbackPut => {
+                "Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."
             }
             Self::VaultWeaveOwnerDigestRender => {
                 "Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due."
@@ -11486,7 +11552,13 @@ impl AgentVerb {
                 "Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."
             }
             Self::VaultRoomsSpeak => {
-                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."
+                "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."
+            }
+            Self::VaultRoomsThreadAudienceAdd => {
+                "Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."
+            }
+            Self::VaultRoomsThreadAudienceRemove => {
+                "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."
             }
             Self::VaultProjectsPropose => {
                 "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."

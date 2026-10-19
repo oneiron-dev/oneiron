@@ -81,15 +81,18 @@ impl Vault {
         let mut batch = self.batch();
         let mut entities = Vec::with_capacity(input.entities.len());
         for entity in &input.entities {
-            // A thread binding is its room door's to stamp (FIX 2951).
+            // A thread binding is its room door's to stamp (FIX 2951), and
+            // an audience edit its thread's audience door's (FIX 5545).
             if entity.entity_type == crate::registry::ENTITY_TYPE_TURN
-                && entity
-                    .body
-                    .get(crate::workspace_roster::ROOM_THREAD_KEY)
-                    .is_some()
+                && [
+                    crate::workspace_roster::ROOM_THREAD_KEY,
+                    crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY,
+                ]
+                .iter()
+                .any(|key| entity.body.get(*key).is_some())
             {
                 return Err(MemoryError::bad_request(
-                    "a TURN's room_thread is stamped by its room's thread door",
+                    "a TURN's room_thread and room_thread_audience are stamped by its room's thread doors",
                 ));
             }
             let id = write_id(entity.id.as_deref())?;

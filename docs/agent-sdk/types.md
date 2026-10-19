@@ -169,7 +169,7 @@ export type WitnessTurn = {
   messages: WitnessMessage[]
   /** Unix seconds; omitted is stamped at the call boundary. */
   occurredAt?: number
-  /** A new project room thread root's audience (32-hex ids); fixed once set. */
+  /** A new project room thread root's audience seed (32-hex ids); edited later through vault.rooms.thread_audience. */
   threadAudience?: string[]
 }
 
@@ -553,7 +553,7 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     # Unix seconds; omitted is stamped at the call boundary.
     occurred_at: NotRequired[int]
-    # A new project room thread root's audience; fixed once set.
+    # A new project room thread root's audience seed; edited later through vault.rooms.thread_audience.
     thread_audience: NotRequired[list[str] | None]
 
 class WitnessReceipt(TypedDict):
@@ -1644,6 +1644,10 @@ class Oneiron:
             """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
         @property
         def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs": ...
+        @property
+        def setting_changes(self) -> "Oneiron._VaultWeaveSettingChangesVerbs": ...
+        @property
+        def digest_feedback(self) -> "Oneiron._VaultWeaveDigestFeedbackVerbs": ...
     class _VaultWeaveDigestVerbs:
         def __call__(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
             """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
@@ -1680,6 +1684,16 @@ class Oneiron:
             """Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof."""
         def clear(self, spec: Facade.WeaveReaderRef) -> Facade.WeaveScheduleCleared:
             """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
+    class _VaultWeaveSettingChangesVerbs:
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.WeaveDigestSettingChange]:
+            """Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."""
+        def answer(self, spec: Facade.WeaveDigestSettingAnswer) -> Facade.WeaveDigestSettingChange:
+            """Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."""
+        def undo(self, spec: Facade.WeaveDigestSettingUndo) -> Facade.WeaveDigestSettingChange:
+            """Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."""
+    class _VaultWeaveDigestFeedbackVerbs:
+        def put(self, spec: Facade.WeaveDigestFeedback) -> Facade.WeaveDigestFeedback:
+            """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
     class _VaultInboxVerbs:
         @property
         def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
@@ -3000,7 +3014,9 @@ class Oneiron:
         def claim(self, room_ref: str, turn_ref: str) -> Facade.RoomClaimOutcome:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
         def speak(self, spec: Facade.WitnessTurn) -> Facade.WitnessReceipt:
-            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."""
+        @property
+        def thread_audience(self) -> "Oneiron._VaultRoomsThreadAudienceVerbs": ...
         def join(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
             """Files and decides a request to take part in a room or one of its threads."""
         def invite(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
@@ -3015,6 +3031,11 @@ class Oneiron:
         def host(self) -> "Oneiron._VaultRoomsHostVerbs": ...
         def sharing(self, spec: Facade.RoomRefRequest) -> Facade.RoomSharingView:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
+    class _VaultRoomsThreadAudienceVerbs:
+        def add(self, spec: Facade.ThreadAudienceAddRequest) -> Facade.ThreadAudienceReceipt:
+            """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
+        def remove(self, spec: Facade.ThreadAudienceRemoveRequest) -> Facade.ThreadAudienceReceipt:
+            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
     class _VaultRoomsOfferVerbs:
         def __call__(self, spec: Facade.OfferDraft) -> Facade.OfferCard:
             """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""

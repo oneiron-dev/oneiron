@@ -1797,6 +1797,62 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_weave_setting_changes_list(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.setting_changes.list")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.weave.setting_changes.list", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_setting_changes_answer(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.setting_changes.answer")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.weave.setting_changes.answer", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_setting_changes_undo(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.setting_changes.undo")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.weave.setting_changes.undo", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_weave_digest_feedback_put(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.weave.digest_feedback.put")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.weave.digest_feedback.put", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_weave_owner_digest_render(
         &self,
         py: Python<'_>,
@@ -6355,6 +6411,34 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.rooms.speak")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.rooms.speak", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_audience_add(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_audience.add")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.rooms.thread_audience.add", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_audience_remove(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_audience.remove")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.rooms.thread_audience.remove", input)
+            })
             .map_err(raise)?;
         encode(&output)
     }

@@ -3373,7 +3373,7 @@
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 12,
       "enum": 2,
       "fn": 4,
       "struct": 1
@@ -11842,7 +11842,49 @@
       "crate-vis": 9,
       "enum": 2,
       "fn": 10,
+      "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/changes.rs",
+     "purpose": "The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/coach.rs",
+     "purpose": "The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WeaveDigestFeedback",
+      "WeaveDigestSettingAnswer",
+      "WeaveDigestSettingChange",
+      "WeaveDigestSettingChangeStatus",
+      "WeaveDigestSettingUndo",
+      "WeaveDigestSettings"
+     ],
+     "path": "src/claim/scoped_read/weave_digest/settings.rs",
+     "purpose": "The owner's own digest settings record (FIX 5495): the generation every change to his Owner schedule bumps…",
+     "surface": {
+      "crate-vis": 16,
+      "enum": 1,
+      "struct": 5
      }
     },
     {
@@ -18542,7 +18584,7 @@
      "path": "src/conversation_dag/writes.rs",
      "purpose": "Atomic append, explicit HEAD moves and canonical-index repair",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 5
      }
     },
@@ -55359,7 +55401,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1084
+      "fn": 1090
      }
     },
     {
@@ -56393,7 +56435,7 @@
      "path": "src/task_verb/sdk_weave.rs",
      "purpose": "Typed owner setup for weave work and the inbox's real producers",
      "surface": {
-      "fn": 5,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -59327,7 +59369,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
       "crate-vis": 24,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -60029,8 +60071,47 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ThreadAudienceAddRequest",
+      "ThreadAudienceReceipt",
+      "ThreadAudienceRemoveRequest"
+     ],
+     "path": "src/workspace_roster/rooms/audience_doors.rs",
+     "purpose": "The doors that edit a private thread's audience (FIX 5545): an add and a remove, each one audience edit TURN…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ThreadAudienceHistory"
+     ],
+     "path": "src/workspace_roster/rooms/audience_events.rs",
+     "purpose": "A private thread's audience edits (FIX 5545)",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_find.rs",
+     "purpose": "What the vault's Owner or an Admin learns of a room's private threads (FIX 5545): that they exist, by root…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -60136,10 +60217,10 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "enum": 2,
       "fn": 6,
-      "re-export": 11,
+      "re-export": 13,
       "struct": 6
      }
     },
@@ -61968,7 +62049,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 72,
+     "files": 75,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63270,7 +63351,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 96,
+     "files": 99,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63293,7 +63374,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3889,
+   "source_files": 3895,
    "test_files": 902
   },
   "oneiron-android": {
@@ -72084,7 +72165,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1055
+      "fn": 1061
      }
     },
     {
@@ -73223,7 +73304,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1056
+      "fn": 1062
      }
     },
     {
@@ -77589,7 +77670,7 @@
      "path": "src/api/facade/weave_doors.rs",
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 19
      }
     },
     {
@@ -89472,6 +89553,10 @@
       "TextCommitReceipt",
       "TextInputControl",
       "TextReceipt",
+      "ThreadAudienceAddRequest",
+      "ThreadAudienceHistory",
+      "ThreadAudienceReceipt",
+      "ThreadAudienceRemoveRequest",
       "ThreadEntryAtom",
       "ThreadMaskView",
       "ThreadPassportLookup",
@@ -89596,8 +89681,14 @@
       "WakeSettlementsPage",
       "WakeSettlementsRequest",
       "WeaveDigestCadence",
+      "WeaveDigestFeedback",
       "WeaveDigestRendered",
       "WeaveDigestRequest",
+      "WeaveDigestSettingAnswer",
+      "WeaveDigestSettingChange",
+      "WeaveDigestSettingChangeStatus",
+      "WeaveDigestSettingUndo",
+      "WeaveDigestSettings",
       "WeaveDigestView",
       "WeaveEnqueueRequest",
       "WeaveItemCorrectionView",
@@ -89707,8 +89798,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 852,
-      "struct": 2697
+      "enum": 854,
+      "struct": 2705
      }
     },
     {

@@ -13,7 +13,10 @@ use oneiron::claim::{
 use oneiron::consent::AuthenticatedOwner;
 
 use oneiron::agent_inbox_lens::{InboxLensPage, InboxLensRequest, InboxRunGroupsRequest};
-use oneiron::claim::{WeaveDigestRendered, WeaveReaderRef, WeaveScheduleView};
+use oneiron::claim::{
+    WeaveDigestFeedback, WeaveDigestRendered, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
+    WeaveDigestSettingUndo, WeaveReaderRef, WeaveScheduleView,
+};
 use oneiron::inbox::InboxGroup;
 use oneiron::lens::LensFrameCard;
 use oneiron::memory::DreamerAttemptRef;
@@ -319,6 +322,86 @@ pub(crate) async fn vault_weave_schedules_clear(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         oneiron::task_verb::sdk::weave_schedule_clear(&memory, &owner, input)
+    })
+    .await
+}
+
+/// `vault.weave.setting_changes.list`: the Coach's changes to the owner's
+/// own digest settings, newest first, under the owner's proof (FIX 5495).
+pub(crate) async fn vault_weave_setting_changes_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    _input: EmptyRequest,
+) -> Listed<Vec<WeaveDigestSettingChange>> {
+    const VERB: &str = "vault.weave.setting_changes.list";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_setting_changes(&memory, &owner)
+    })
+    .await
+}
+
+/// `vault.weave.setting_changes.answer`: the owner accepts, as his own act,
+/// or declines one proposed change to his digest settings.
+pub(crate) async fn vault_weave_setting_changes_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: WeaveDigestSettingAnswer,
+) -> Listed<WeaveDigestSettingChange> {
+    const VERB: &str = "vault.weave.setting_changes.answer";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_setting_change_answer(&memory, &owner, input)
+    })
+    .await
+}
+
+/// `vault.weave.setting_changes.undo`: the owner's one-tap undo of an
+/// applied or accepted change to his digest settings.
+pub(crate) async fn vault_weave_setting_changes_undo(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: WeaveDigestSettingUndo,
+) -> Listed<WeaveDigestSettingChange> {
+    const VERB: &str = "vault.weave.setting_changes.undo";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_setting_change_undo(&memory, &owner, input)
+    })
+    .await
+}
+
+/// `vault.weave.digest_feedback.put`: what the owner tells the Coach about
+/// his own digest.
+pub(crate) async fn vault_weave_digest_feedback_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: WeaveDigestFeedback,
+) -> Listed<WeaveDigestFeedback> {
+    const VERB: &str = "vault.weave.digest_feedback.put";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_digest_feedback_put(&memory, &owner, input)
     })
     .await
 }

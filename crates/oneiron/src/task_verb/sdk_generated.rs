@@ -994,6 +994,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveReaderRef>(),
             ),
             (
+                "vault.weave.setting_changes.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.weave.setting_changes.answer",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestSettingAnswer>(
+                ),
+            ),
+            (
+                "vault.weave.setting_changes.undo",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestSettingUndo>(
+                ),
+            ),
+            (
+                "vault.weave.digest_feedback.put",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestFeedback>(),
+            ),
+            (
                 "vault.weave.owner.digest.render",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -3827,6 +3845,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
             (
+                "vault.rooms.thread_audience.add",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadAudienceAddRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.thread_audience.remove",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadAudienceRemoveRequest,
+                >(),
+            ),
+            (
                 "vault.projects.propose",
                 crate::code_run::vault_read::request_schema::<
                     crate::workspace_roster::ProjectProposalRequest,
@@ -6070,6 +6100,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.weave.schedules.list",
     "vault.weave.schedules.put",
     "vault.weave.schedules.clear",
+    "vault.weave.setting_changes.list",
+    "vault.weave.setting_changes.answer",
+    "vault.weave.setting_changes.undo",
+    "vault.weave.digest_feedback.put",
     "vault.weave.owner.digest.render",
     "vault.inbox.concerns.review",
     "vault.inbox.lens",
@@ -7035,6 +7069,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.weave.schedules.clear" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WeaveScheduleCleared,
         >(),
+        "vault.weave.setting_changes.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::claim::WeaveDigestSettingChange>,
+        >(),
+        "vault.weave.setting_changes.answer" => {
+            crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestSettingChange>()
+        }
+        "vault.weave.setting_changes.undo" => {
+            crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestSettingChange>()
+        }
+        "vault.weave.digest_feedback.put" => {
+            crate::code_run::vault_read::request_schema::<crate::claim::WeaveDigestFeedback>()
+        }
         "vault.weave.owner.digest.render" => crate::code_run::vault_read::request_schema::<
             Option<crate::claim::WeaveDigestRendered>,
         >(),
@@ -10231,6 +10277,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.schedules.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.setting_changes.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.setting_changes.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.setting_changes.undo" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.digest_feedback.put" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13757,6 +13831,20 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.rooms.thread_audience.add" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.thread_audience.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.projects.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16930,6 +17018,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.weave.schedules.clear" => {
             let _input: crate::claim::WeaveReaderRef = decode(value.clone())?;
         }
+        "vault.weave.setting_changes.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.weave.setting_changes.answer" => {
+            let _input: crate::claim::WeaveDigestSettingAnswer = decode(value.clone())?;
+        }
+        "vault.weave.setting_changes.undo" => {
+            let _input: crate::claim::WeaveDigestSettingUndo = decode(value.clone())?;
+        }
+        "vault.weave.digest_feedback.put" => {
+            let _input: crate::claim::WeaveDigestFeedback = decode(value.clone())?;
+        }
         "vault.weave.owner.digest.render" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -18606,6 +18706,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.rooms.speak" => {
             let _input: crate::memory::WitnessTurn = decode(value.clone())?;
+        }
+        "vault.rooms.thread_audience.add" => {
+            let _input: crate::workspace_roster::ThreadAudienceAddRequest = decode(value.clone())?;
+        }
+        "vault.rooms.thread_audience.remove" => {
+            let _input: crate::workspace_roster::ThreadAudienceRemoveRequest =
+                decode(value.clone())?;
         }
         "vault.projects.propose" => {
             let _input: crate::workspace_roster::ProjectProposalRequest = decode(value.clone())?;
@@ -20292,6 +20399,18 @@ pub fn invoke(
         "vault.weave.schedules.clear" => {
             encode(vault_weave_schedules_clear(memory, decode(value)?)?)
         }
+        "vault.weave.setting_changes.list" => {
+            encode(vault_weave_setting_changes_list(memory, decode(value)?)?)
+        }
+        "vault.weave.setting_changes.answer" => {
+            encode(vault_weave_setting_changes_answer(memory, decode(value)?)?)
+        }
+        "vault.weave.setting_changes.undo" => {
+            encode(vault_weave_setting_changes_undo(memory, decode(value)?)?)
+        }
+        "vault.weave.digest_feedback.put" => {
+            encode(vault_weave_digest_feedback_put(memory, decode(value)?)?)
+        }
         "vault.weave.owner.digest.render" => {
             encode(vault_weave_owner_digest_render(memory, decode(value)?)?)
         }
@@ -21293,6 +21412,12 @@ pub fn invoke(
         "vault.rooms.reply_strips" => encode(vault_rooms_reply_strips(memory, decode(value)?)?),
         "vault.rooms.claim" => encode(vault_rooms_claim(memory, decode(value)?)?),
         "vault.rooms.speak" => encode(vault_rooms_speak(memory, decode(value)?)?),
+        "vault.rooms.thread_audience.add" => {
+            encode(vault_rooms_thread_audience_add(memory, decode(value)?)?)
+        }
+        "vault.rooms.thread_audience.remove" => {
+            encode(vault_rooms_thread_audience_remove(memory, decode(value)?)?)
+        }
         "vault.projects.propose" => encode(vault_projects_propose(memory, decode(value)?)?),
         "vault.projects.proposals" => encode(vault_projects_proposals(memory, decode(value)?)?),
         "vault.projects.dismiss_card" => {
@@ -23685,6 +23810,45 @@ pub fn vault_weave_schedules_clear(
     crate::task_verb::sdk::weave_schedule_clear(
         memory,
         &memory.embedded_owner("vault.weave.schedules.clear")?,
+        input,
+    )
+}
+pub fn vault_weave_setting_changes_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::claim::WeaveDigestSettingChange>> {
+    crate::task_verb::sdk::weave_setting_changes(
+        memory,
+        &memory.embedded_owner("vault.weave.setting_changes.list")?,
+    )
+}
+pub fn vault_weave_setting_changes_answer(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveDigestSettingAnswer,
+) -> MemoryResult<crate::claim::WeaveDigestSettingChange> {
+    crate::task_verb::sdk::weave_setting_change_answer(
+        memory,
+        &memory.embedded_owner("vault.weave.setting_changes.answer")?,
+        input,
+    )
+}
+pub fn vault_weave_setting_changes_undo(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveDigestSettingUndo,
+) -> MemoryResult<crate::claim::WeaveDigestSettingChange> {
+    crate::task_verb::sdk::weave_setting_change_undo(
+        memory,
+        &memory.embedded_owner("vault.weave.setting_changes.undo")?,
+        input,
+    )
+}
+pub fn vault_weave_digest_feedback_put(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveDigestFeedback,
+) -> MemoryResult<crate::claim::WeaveDigestFeedback> {
+    crate::task_verb::sdk::weave_digest_feedback_put(
+        memory,
+        &memory.embedded_owner("vault.weave.digest_feedback.put")?,
         input,
     )
 }
@@ -27945,6 +28109,18 @@ pub fn vault_rooms_speak(
     input: crate::memory::WitnessTurn,
 ) -> MemoryResult<crate::memory::WitnessReceipt> {
     memory.rooms_speak(&input)
+}
+pub fn vault_rooms_thread_audience_add(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadAudienceAddRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadAudienceReceipt> {
+    memory.rooms_thread_audience_add(&input)
+}
+pub fn vault_rooms_thread_audience_remove(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadAudienceRemoveRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadAudienceReceipt> {
+    memory.rooms_thread_audience_remove(&input)
 }
 pub fn vault_projects_propose(
     memory: &Memory<'_>,

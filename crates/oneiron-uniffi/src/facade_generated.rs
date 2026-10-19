@@ -921,6 +921,26 @@ export_facade! {
     let output = client.vault_weave_schedules_clear(&input)?;
     crate::codec::lift_record("vault.weave.schedules.clear", &output)
 };
+"vault.weave.setting_changes.list" => fn vault_weave_setting_changes_list(&self) -> Vec<WeaveDigestSettingChange> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.setting_changes.list")?;
+    let output = client.vault_weave_setting_changes_list(&input)?;
+    crate::codec::lift_record("vault.weave.setting_changes.list", &output)
+};
+"vault.weave.setting_changes.answer" => fn vault_weave_setting_changes_answer(&self, input: WeaveDigestSettingAnswer) -> WeaveDigestSettingChange = |client| {
+    let input: oneiron::claim::WeaveDigestSettingAnswer = crate::codec::lower_record("vault.weave.setting_changes.answer", input)?;
+    let output = client.vault_weave_setting_changes_answer(&input)?;
+    crate::codec::lift_record("vault.weave.setting_changes.answer", &output)
+};
+"vault.weave.setting_changes.undo" => fn vault_weave_setting_changes_undo(&self, input: WeaveDigestSettingUndo) -> WeaveDigestSettingChange = |client| {
+    let input: oneiron::claim::WeaveDigestSettingUndo = crate::codec::lower_record("vault.weave.setting_changes.undo", input)?;
+    let output = client.vault_weave_setting_changes_undo(&input)?;
+    crate::codec::lift_record("vault.weave.setting_changes.undo", &output)
+};
+"vault.weave.digest_feedback.put" => fn vault_weave_digest_feedback_put(&self, input: WeaveDigestFeedback) -> WeaveDigestFeedback = |client| {
+    let input: oneiron::claim::WeaveDigestFeedback = crate::codec::lower_record("vault.weave.digest_feedback.put", input)?;
+    let output = client.vault_weave_digest_feedback_put(&input)?;
+    crate::codec::lift_record("vault.weave.digest_feedback.put", &output)
+};
 "vault.weave.owner.digest.render" => fn vault_weave_owner_digest_render(&self) -> Option<WeaveDigestRendered> = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.weave.owner.digest.render")?;
     let output = client.vault_weave_owner_digest_render(&input)?;
@@ -3470,6 +3490,16 @@ export_facade! {
     let input: oneiron::memory::WitnessTurn = input.lower()?;
     let output = client.vault_rooms_speak(&input)?;
     Lift::lift(output)
+};
+"vault.rooms.thread_audience.add" => fn vault_rooms_thread_audience_add(&self, input: ThreadAudienceAddRequest) -> ThreadAudienceReceipt = |client| {
+    let input: oneiron::workspace_roster::ThreadAudienceAddRequest = crate::codec::lower_record("vault.rooms.thread_audience.add", input)?;
+    let output = client.vault_rooms_thread_audience_add(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_audience.add", &output)
+};
+"vault.rooms.thread_audience.remove" => fn vault_rooms_thread_audience_remove(&self, input: ThreadAudienceRemoveRequest) -> ThreadAudienceReceipt = |client| {
+    let input: oneiron::workspace_roster::ThreadAudienceRemoveRequest = crate::codec::lower_record("vault.rooms.thread_audience.remove", input)?;
+    let output = client.vault_rooms_thread_audience_remove(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_audience.remove", &output)
 };
 "vault.projects.propose" => fn vault_projects_propose(&self, input: ProjectProposalRequest) -> ProjectProposalCard = |client| {
     let input: oneiron::workspace_roster::ProjectProposalRequest = crate::codec::lower_record("vault.projects.propose", input)?;

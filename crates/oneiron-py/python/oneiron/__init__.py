@@ -1544,6 +1544,12 @@ class Oneiron:
         @property
         def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs":
             return Oneiron._VaultWeaveSchedulesVerbs(self._client)
+        @property
+        def setting_changes(self) -> "Oneiron._VaultWeaveSettingChangesVerbs":
+            return Oneiron._VaultWeaveSettingChangesVerbs(self._client)
+        @property
+        def digest_feedback(self) -> "Oneiron._VaultWeaveDigestFeedbackVerbs":
+            return Oneiron._VaultWeaveDigestFeedbackVerbs(self._client)
     class _VaultWeaveDigestVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1610,6 +1616,24 @@ class Oneiron:
         def clear(self, spec):
             """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
             return json.loads(_translate(lambda: self._client.vault_weave_schedules_clear(json.dumps(spec))))
+    class _VaultWeaveSettingChangesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec=None):
+            """Lists the Coach's proposed and applied changes to the owner's own digest rhythm and section order, newest first, under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_list(json.dumps({} if spec is None else spec))))
+        def answer(self, spec):
+            """Accepts, as the owner's own act, or declines one proposed change to the owner's digest settings; a stale accept applies nothing."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_answer(json.dumps(spec))))
+        def undo(self, spec):
+            """Undoes one applied or accepted change to the owner's digest settings, restoring the rhythm and section order before it while the settings are unchanged since."""
+            return json.loads(_translate(lambda: self._client.vault_weave_setting_changes_undo(json.dumps(spec))))
+    class _VaultWeaveDigestFeedbackVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """Tells the Coach the owner's own digest preference: a rhythm, a section to lead with, or keep the settings as they are."""
+            return json.loads(_translate(lambda: self._client.vault_weave_digest_feedback_put(json.dumps(spec))))
     class _VaultInboxVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3867,8 +3891,11 @@ class Oneiron:
             """Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed."""
             return json.loads(_translate(lambda: self._client.vault_rooms_claim(json.dumps({"room_ref": room_ref, "turn_ref": turn_ref}))))
         def speak(self, spec):
-            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
+            """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."""
             return json.loads(_translate(lambda: self._client.vault_rooms_speak(json.dumps(spec))))
+        @property
+        def thread_audience(self) -> "Oneiron._VaultRoomsThreadAudienceVerbs":
+            return Oneiron._VaultRoomsThreadAudienceVerbs(self._client)
         def join(self, spec):
             """Files and decides a request to take part in a room or one of its threads."""
             return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
@@ -3890,6 +3917,15 @@ class Oneiron:
         def sharing(self, spec):
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
             return json.loads(_translate(lambda: self._client.vault_rooms_sharing(json.dumps(spec))))
+    class _VaultRoomsThreadAudienceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def add(self, spec):
+            """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_add(json.dumps(spec))))
+        def remove(self, spec):
+            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_remove(json.dumps(spec))))
     class _VaultRoomsOfferVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
