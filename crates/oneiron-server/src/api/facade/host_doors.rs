@@ -1739,6 +1739,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
+        // A member's own TASK-bound workflow run (FIX 5316): a live person on
+        // their own slip, bound to it, as the door acts under.
+        "vault.workflows.dispatch_bound" => {
+            super::agent_definition_doors::member_proof(server, auth, verb).map(drop)
+        }
         // The off-record session rows admit their session's manager: the
         // owner, or a person or agent who starts and keeps their own
         // (WILL-PLAN L13 row 03). Each door binds the stretch for them again.

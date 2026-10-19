@@ -58,8 +58,10 @@ pub(super) fn run(
 }
 
 /// The agent the Coach asks "useful upstream?" for: the leader of the vault's
-/// root project, whose tree a promoted leaf joins. `None` when that leader is
-/// not an agent definition.
+/// root project, whose tree a promoted leaf joins. The Coach has no agent
+/// definition of its own, so this leader submits on the Coach's behalf, and
+/// the question names both. `None` when that leader is not an agent
+/// definition.
 fn coach_resident(vault: &Vault) -> oneiron::Result<Option<EntityId>> {
     let Some(root) = vault.project(vault.root_project()?)? else {
         return Ok(None);

@@ -35,7 +35,8 @@ use crate::temporal::TimeRange;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The version of the Coach's question; a changed wording takes the next.
-const QUESTION_VERSION: u32 = 1;
+/// 2: the question names the Coach and the leader it asks on behalf of.
+const QUESTION_VERSION: u32 = 2;
 
 /// The vault head a promotion revises, read again once a merge puts a new
 /// head in force.
@@ -348,7 +349,7 @@ fn offer_leaf(
             )?
         }
     };
-    let question = upstream_question(candidate, offer);
+    let question = upstream_question(candidate, offer, lent.seat.resident());
     let ask = vault.prepare_shared_skill_merge(candidate, lent.seat.resident(), question)?;
     let judge = TreeReplayScorer::new(
         vault,
@@ -425,8 +426,15 @@ fn promote_fork(
 /// `offer`'s leaf added to its tree (CALLS "UsefulUpstream wording"). It
 /// names the leaf, the decision it splits its parent on and that decision's
 /// winner, the project it comes from and its record on runs elsewhere, so
-/// the answer is about that one type.
-fn upstream_question(candidate: EntityId, offer: &Offer<'_>) -> DecisionQuestion {
+/// the answer is about that one type. The Coach has no agent definition of
+/// its own (its identity is a MACHINE the submission door does not take), so
+/// `resident`, the root project's leader, submits and is asked on its
+/// behalf, and the question says so: the work is the Coach's.
+fn upstream_question(
+    candidate: EntityId,
+    offer: &Offer<'_>,
+    resident: EntityId,
+) -> DecisionQuestion {
     let decision = match offer.axis {
         DecisionAxis::WinningPattern => "the winning coordination pattern",
         DecisionAxis::WinningModel => "the winning model",
@@ -435,11 +443,14 @@ fn upstream_question(candidate: EntityId, offer: &Offer<'_>) -> DecisionQuestion
     let (leaf, parent, winner) = (&offer.leaf.name, &offer.parent.name, offer.winner);
     let (runs, wins) = (offer.leaf.held_out_runs, offer.leaf.held_out_wins);
     let text = format!(
-        "Useful upstream? Project {project} keeps a task type of its own, \"{leaf}\" ({id}): the \
-tasks of \"{parent}\" where {decision} is {winner}. Of the {runs} runs outside that project placed \
-under \"{parent}\" whose team chose {winner}, {wins} succeeded. Candidate {candidate} is the \
-vault's team-shape skill with only this type added to its task-type tree. Answer yes if every \
-project that shares the vault tree should have this type, no if it should stay the project's own.",
+        "Useful upstream? Asked by the Coach, on behalf of {resident}, the leader of the \
+vault's root project, who submits it. Project {project} keeps a task type of its own, \
+\"{leaf}\" ({id}): the tasks of \"{parent}\" where {decision} is {winner}. Of the {runs} runs \
+outside that project placed under \"{parent}\" whose team chose {winner}, {wins} succeeded. \
+Candidate {candidate} is the vault's team-shape skill with only this type added to its \
+task-type tree. Answer yes if every project that shares the vault tree should have this type, \
+no if it should stay the project's own.",
+        resident = resident.to_hex(),
         project = offer.project.to_hex(),
         id = offer.leaf.node_id,
         candidate = candidate.to_hex(),

@@ -16,7 +16,10 @@
 //!
 //! That is client configuration, not a protocol change. An unauthenticated
 //! `info/refs` answers `401` with a bearer challenge, which is what makes a
-//! stock client ask for credentials instead of failing opaquely.
+//! stock client ask for credentials instead of failing opaquely. On a
+//! managed vault the owner's own request may instead carry his supervisor's
+//! attestation, which managed ingress verifies over the exact request; he
+//! then meets the same gates as himself, by his registered principal.
 //!
 //! # The gates
 //!

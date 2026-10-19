@@ -172,6 +172,109 @@ impl<'a> ManagedOwnerRequest<'a> {
             body,
         }
     }
+
+    /// Everything this request binds but its body.
+    fn head(&self) -> ManagedOwnerHead<'a> {
+        ManagedOwnerHead {
+            method: self.method,
+            path: self.path,
+            query: self.query,
+            headers: self.headers,
+        }
+    }
+}
+
+/// One request a [`ManagedOwnerAction`] covers, but its body: for a body
+/// that arrives in pieces ([`ManagedOwnerTranscript`]).
+#[derive(Debug, Clone, Copy)]
+pub struct ManagedOwnerHead<'a> {
+    /// The HTTP method, as sent.
+    pub method: &'a str,
+    /// The request path, without its query.
+    pub path: &'a str,
+    /// The request's query, its exact bytes as sent, without the `?`; empty
+    /// when absent.
+    pub query: &'a str,
+    /// The values of [`MANAGED_OWNER_BOUND_HEADERS`], in order; empty when
+    /// absent.
+    pub headers: [&'a str; 3],
+}
+
+/// The owner action's transcript of one request whose body arrives in
+/// pieces: the same keyed hash over the same length-prefixed items that
+/// [`ManagedOwnerAction`] signs and verifies over a whole
+/// [`ManagedOwnerRequest`], one format. The body's length goes in before
+/// its bytes, so it is the length counted once the body is held whole (a
+/// body of unknown length is spooled and counted first), never one the
+/// request declares; the transcript then takes exactly that many bytes, in
+/// order. It is never a hash of the body or of anything decoded from it.
+pub struct ManagedOwnerTranscript {
+    hasher: blake3::Hasher,
+    holder: String,
+    /// Body bytes still to take.
+    remaining: u64,
+    /// Whether more bytes came than the length it began with.
+    overrun: bool,
+}
+
+impl ManagedOwnerTranscript {
+    /// Begins the transcript `holder_ref`'s action covers on `vault`, for a
+    /// request with `head` whose body is `body_len` bytes.
+    #[must_use]
+    pub fn new(
+        spawn_token: &TokenHex,
+        vault: &str,
+        holder_ref: &str,
+        head: &ManagedOwnerHead<'_>,
+        body_len: u64,
+    ) -> Self {
+        let mut key = blake3::derive_key(OWNER_DOMAIN, spawn_token.expose().as_bytes());
+        let mut hasher = blake3::Hasher::new_keyed(&key);
+        key.zeroize();
+        let [room_turn, invocation, session] = head.headers;
+        for item in [
+            vault.as_bytes(),
+            holder_ref.as_bytes(),
+            head.method.as_bytes(),
+            head.path.as_bytes(),
+            head.query.as_bytes(),
+            room_turn.as_bytes(),
+            invocation.as_bytes(),
+            session.as_bytes(),
+        ] {
+            hasher.update(&(item.len() as u64).to_be_bytes());
+            hasher.update(item);
+        }
+        hasher.update(&body_len.to_be_bytes());
+        Self {
+            hasher,
+            holder: holder_ref.to_owned(),
+            remaining: body_len,
+            overrun: false,
+        }
+    }
+
+    /// Takes the body's next bytes.
+    pub fn update(&mut self, piece: &[u8]) {
+        let taken = piece.len() as u64;
+        self.overrun |= taken > self.remaining;
+        self.remaining = self.remaining.saturating_sub(taken);
+        self.hasher.update(piece);
+    }
+
+    /// Whether it took exactly the body's length.
+    fn complete(&self) -> bool {
+        self.remaining == 0 && !self.overrun
+    }
+
+    fn mac(self) -> String {
+        self.finish().1
+    }
+
+    /// Its holder, and the MAC it came to.
+    fn finish(self) -> (String, String) {
+        (self.holder, self.hasher.finalize().to_hex().to_string())
+    }
 }
 
 /// A host assertion that one request is the vault owner's own: tied to one
@@ -203,6 +306,20 @@ impl ManagedOwnerAction {
         }
     }
 
+    /// [`Self::sign_after_account_auth`] for a request whose body arrived in
+    /// pieces, once `transcript` took all of it; `None` when it took more or
+    /// fewer bytes than the length it began with. The same conditions bind
+    /// the supervisor: ONLY after it authenticates the named human account
+    /// as the vault's owner, on that person's own direct request.
+    #[must_use]
+    pub fn sign_transcript_after_account_auth(transcript: ManagedOwnerTranscript) -> Option<Self> {
+        if !transcript.complete() {
+            return None;
+        }
+        let (holder_ref, mac) = transcript.finish();
+        Some(Self { holder_ref, mac })
+    }
+
     /// Refuse a forwarded/caller-chosen header unless the supervisor signed
     /// this exact request for this vault and this holder.
     pub fn verify(
@@ -211,50 +328,57 @@ impl ManagedOwnerAction {
         vault: &str,
         request: &ManagedOwnerRequest<'_>,
     ) -> bool {
-        if self.holder_ref.len() != 32
-            || !self
-                .holder_ref
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            || self.mac.len() != 64
-            || !self
-                .mac
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        {
+        if !self.well_formed() {
             return false;
         }
         let expected = sign_owner(spawn_token, vault, &self.holder_ref, request);
         bool::from(self.mac.as_bytes().ct_eq(expected.as_bytes()))
     }
+
+    /// [`Self::verify`] for a request whose body arrived in pieces: true
+    /// only when `transcript` is this action's holder's, begun for the
+    /// vault and the request head it names, took exactly its body's length,
+    /// and comes to the MAC the supervisor signed.
+    #[must_use]
+    pub fn verify_transcript(&self, transcript: ManagedOwnerTranscript) -> bool {
+        if !self.well_formed() || transcript.holder != self.holder_ref || !transcript.complete() {
+            return false;
+        }
+        let expected = transcript.mac();
+        bool::from(self.mac.as_bytes().ct_eq(expected.as_bytes()))
+    }
+
+    /// Whether the holder is 32 and the MAC 64 lowercase hex characters.
+    fn well_formed(&self) -> bool {
+        self.holder_ref.len() == 32
+            && self
+                .holder_ref
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            && self.mac.len() == 64
+            && self
+                .mac
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    }
 }
 
+/// The MAC over a whole request: its transcript, fed the body at once.
 fn sign_owner(
     token: &TokenHex,
     vault: &str,
     holder: &str,
     request: &ManagedOwnerRequest<'_>,
 ) -> String {
-    let mut key = blake3::derive_key(OWNER_DOMAIN, token.expose().as_bytes());
-    let mut h = blake3::Hasher::new_keyed(&key);
-    let [room_turn, invocation, session] = request.headers;
-    for item in [
-        vault.as_bytes(),
-        holder.as_bytes(),
-        request.method.as_bytes(),
-        request.path.as_bytes(),
-        request.query.as_bytes(),
-        room_turn.as_bytes(),
-        invocation.as_bytes(),
-        session.as_bytes(),
-        request.body,
-    ] {
-        h.update(&(item.len() as u64).to_be_bytes());
-        h.update(item);
-    }
-    let mac = h.finalize().to_hex().to_string();
-    key.zeroize();
-    mac
+    let mut transcript = ManagedOwnerTranscript::new(
+        token,
+        vault,
+        holder,
+        &request.head(),
+        request.body.len() as u64,
+    );
+    transcript.update(request.body);
+    transcript.mac()
 }
 
 fn sign(token: &TokenHex, vault: &str, holder: &str, body: &[u8]) -> String {

@@ -187,9 +187,10 @@ impl Vault {
     /// the key to `key_owner`, a live vault owner. The request carries the
     /// edit's own act exactly as its stored entry signed it, whoever's it is
     /// (a holder who owns no vault, or an agent within its Grant): no proof,
-    /// and no act made for someone who did not act. The edit is one of its
-    /// parents. The fold judges its basis (CALLS "FIX 4704 derived key work
-    /// authority"); a request it did not admit refuses the transaction.
+    /// and no act made for someone who did not act. The edit is in its
+    /// causal past: the main-log heads it names carry it (FIX 4987). The fold
+    /// judges its basis (CALLS "FIX 4704 derived key work authority"); a
+    /// request it did not admit refuses the transaction.
     pub(crate) fn record_world_privacy_work_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -240,12 +241,11 @@ impl Vault {
             Ok(executor) => executor,
             Err(why) => return Ok(OwnerWorkReceipt::unassigned(kind, target, why)),
         };
-        let mut parents = fold.owner_work_request_parents(machine, executor, kind, target);
-        // The settings edit key work follows is its direct parent, so its
-        // ancestor, whatever the heads are by now.
-        if let Some(basis) = &privacy_basis {
-            parents.insert(basis.edit);
-        }
+        // The main-log heads alone (FIX 4987): the settings edit key work
+        // follows is a main-log row among them or their ancestors, and the
+        // fold judges its basis in the request's parent state
+        // (`privacy_key_work_basis_admits`).
+        let parents = fold.owner_work_parents();
         let request = OwnerWorkRequest {
             carrier: machine,
             act,

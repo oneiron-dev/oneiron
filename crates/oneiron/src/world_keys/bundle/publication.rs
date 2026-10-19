@@ -313,7 +313,7 @@ impl Vault {
             if !is_live_vault_owner_in_txn(self, txn, &owner)? {
                 return Ok(false);
             }
-            self.append_owner_work_result_in_txn(txn, request, me, OwnerWorkOutcome::Enacted)?;
+            self.append_owner_work_result_in_txn(txn, request, me, OwnerWorkOutcome::enacted())?;
             Ok(true)
         })
     }

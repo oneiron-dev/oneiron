@@ -9871,6 +9871,23 @@
       "openapi": true
     },
     {
+      "name": "vault.workflows.dispatch_bound",
+      "description": "A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run.",
+      "input": "crate::task_verb::sdk::WorkflowPersonDispatchRequest",
+      "output": "crate::task_verb::sdk::WorkflowRunView",
+      "call": "crate::task_verb::sdk::dispatch_workflow_bound_as_member(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.workflows.status",
       "description": "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result.",
       "input": "crate::task_verb::sdk::WorkflowRunRequest",

@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1085 code-mode rows (1060 host rows, 25 run rows), 3592 declarations.
-// Replies: 968 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3598 declarations.
+// Replies: 969 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2238,6 +2238,7 @@ declare namespace Sdk {
   type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref: EntityId; definition: AgentDefinitionSpec };
   type WorkflowStepRun = { ordinal: number; requested_agent_ref: EntityId; dispatched_agent_ref: EntityId; attempt_ref: EntityId; result_ref: string };
   type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] };
+  type WorkflowPersonDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId; cap_units: number; unit: string; shown_at_ms: number };
   type WorkflowRunRequest = { root_attempt_ref: EntityId };
   type TaskTypeNodeSpec = { node_id: string; parent?: string | null; name: string };
   type TaskTypeTreePin = { fork_ref: EntityId; tree_version: number; nodes: TaskTypeNodeSpec[]; project_ref?: EntityId | null };
@@ -3549,7 +3550,12 @@ declare namespace Sdk {
   type WorldPrivacySetOutput = { kind: "applied"; receipt: string } | { kind: "proposed"; proposal: string } | { kind: "asked"; ask: string; ask_seq?: number | null };
   type MemorySearchInput = { query: string; limit?: number | null };
   type MemorySearchHit = { id: EntityId; score: number };
-  type MemorySearchOutput = { results: MemorySearchHit[] };
+  type SessionHookPhase = "pre" | "post";
+  type SessionHookState = { kind: "applied"; outcome: string } | { kind: "refused"; outcome: string; reason?: string | null; fail_safe?: string | null } | { kind: "unavailable"; reason: string; consequence: string } | { kind: "unread"; reason: string };
+  type SessionHookNotKept = "budget_full" | "custody" | "no_retention" | "withheld_from_base";
+  type SessionHookReceipt = { kind: "kept"; id: string } | { kind: "not_kept"; why: SessionHookNotKept } | { kind: "no_run" };
+  type SessionHookDisposition = { hook?: string | null; phase: SessionHookPhase; state: SessionHookState; receipt: SessionHookReceipt };
+  type MemorySearchOutput = { results: MemorySearchHit[]; hooks?: SessionHookDisposition[] };
   type MemoryTimeRange = { start: number; end: number };
   type MemoryClaimInput = { id: string; predicate: string; subject: string; value: unknown; confidence?: number | null; occurred?: MemoryTimeRange | null; learnedAt?: number | null };
   type MemoryWriteOutput = { id: EntityId };
@@ -6294,6 +6300,8 @@ declare const vault: Sdk.VaultHost & {
   workflows: {
     /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
     dispatch(input: Sdk.WorkflowDispatchRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
+    /** A member binds one run of a saved workflow to an idle standard TASK they own, as themselves, under funding terms they accepted: its root spend scope names them as payer, and a retried intent key with the same terms returns the same run. */
+    dispatch_bound(input: Sdk.WorkflowPersonDispatchRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
     /** The owner reads one saved workflow, its steps, revision and fork lineage. */
     get(input: Sdk.WorkflowRequest): Promise<Sdk.WorkflowView | StoredResult>;
     /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */

@@ -1,6 +1,7 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
-//! A regular digest also carries the cleanup cron's after-notice (OF-449)
-//! and the NOTE tombstone review's open proposals (OF-073).
+//! A regular digest also carries the cleanup cron's after-notice (OF-449),
+//! the NOTE tombstone review's open proposals (OF-073) and the Dreamer's
+//! applied-maintenance after-notice (FIX 3226).
 use super::applied::{MaintenanceInverse, MaintenanceRevert};
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -9,6 +10,8 @@ use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+mod after_notice;
+pub use after_notice::{APPLIED_GROUP, APPLIED_VIEW, DigestApplied, DigestAppliedItem};
 const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
 const STATE: SideTable<(), DigestState, LegacyJson> =
@@ -225,6 +228,10 @@ pub struct ProactivityDigest {
     /// The NOTE tombstone line, on a regular digest with open proposals.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note_tombstones: Option<DigestNoteTombstones>,
+    /// The applied-maintenance after-notice, on a regular digest with
+    /// applied writes no digest carried yet (FIX 3226).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied: Option<DigestApplied>,
     /// The Coach's agent-health cards opened, updated or settled since the
     /// last regular digest (OF-568), concern first and newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -248,6 +255,9 @@ struct DigestState {
     /// NOTE tombstone proposals a digest already carried.
     #[serde(default)]
     note_tombstones_seen: std::collections::BTreeSet<String>,
+    /// Applied maintenance receipts a digest already carried.
+    #[serde(default)]
+    applied_seen: std::collections::BTreeSet<String>,
 }
 impl Vault {
     pub fn set_proactivity_cadence(
@@ -390,6 +400,7 @@ impl Vault {
             && unseen_offers(&offers, &state).is_empty()
             && unseen_cleanup(self, &txn, &state)?.is_none()
             && unseen_note_tombstones(self, &txn, &state)?.is_none()
+            && after_notice::unseen_in_txn(self, &txn, &state.applied_seen)?.is_none()
         {
             return Ok(None);
         }
@@ -535,6 +546,12 @@ impl Vault {
             } else {
                 None
             };
+            // So does the applied-maintenance after-notice.
+            let applied = if due {
+                after_notice::unseen_in_txn(self, &*txn, &state.applied_seen)?
+            } else {
+                None
+            };
             // So do the health cards: each one touched in the period.
             let health_cards: Vec<_> = if due {
                 let from = state.last_regular.unwrap_or(0);
@@ -556,6 +573,7 @@ impl Vault {
                 && offers.is_empty()
                 && cleanup.is_none()
                 && note_tombstones.is_none()
+                && applied.is_none()
             {
                 return Ok(None);
             }
@@ -624,6 +642,10 @@ impl Vault {
                     .note_tombstones_seen
                     .extend(line.proposals.iter().cloned());
             }
+            if let Some(line) = &applied {
+                line.render(&presentation, &mut rendered);
+                line.mark_seen(&mut state.applied_seen);
+            }
             if !health_cards.is_empty() {
                 let facet = super::agent_health::COACH_AGENT_HEALTH_FACET;
                 let group = presentation
@@ -656,6 +678,7 @@ impl Vault {
                 offers,
                 cleanup,
                 note_tombstones,
+                applied,
                 health_cards,
                 rendered,
                 voice_style: presentation.voice_style,
@@ -699,6 +722,7 @@ impl Vault {
                 || !digest.offers.is_empty()
                 || digest.cleanup.is_some()
                 || digest.note_tombstones.is_some()
+                || digest.applied.is_some()
             {
                 if due {
                     state.last_regular = Some(now);
@@ -760,9 +784,11 @@ impl Vault {
     }
 }
 
-/// The id a digest is stored under: the hash of what it shows.
+/// The id a digest is stored under: the hash of what it shows. One with no
+/// applied-maintenance line hashes as before it had one, so a digest stored
+/// earlier still verifies.
 fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
-    let identity = serde_json::to_vec(&(
+    let shown = (
         digest.created_at,
         digest.recipient,
         &digest.groups,
@@ -774,7 +800,11 @@ fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
         digest.urgent,
         &digest.rendered,
         &digest.voice_style,
-    ))
+    );
+    let identity = match &digest.applied {
+        None => serde_json::to_vec(&shown),
+        Some(applied) => serde_json::to_vec(&(shown, applied)),
+    }
     .map_err(|_| invalid())?;
     Ok(*blake3::hash(&identity).as_bytes())
 }
