@@ -24,7 +24,7 @@ use super::{CAPSULES, FORKS, ForkRow};
 use crate::compaction::output::OutputRef;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::provenance::body::release_body_in_txn;
-use crate::side_table::{SideKey, SideTableDbs};
+use crate::side_table::{Erased, ErasedForm, SideKey, SideTableDbs};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 
@@ -59,7 +59,7 @@ pub(crate) fn erase_capsule_actor_in_txn(
     for (key, capsule) in owned {
         let bodies = capsule_bodies(&key, &capsule, &answers);
         release_bodies_in_txn(vault, wtxn, capsule.run, &bodies)?;
-        CAPSULES.put(vault, wtxn, &key, &erased(capsule))?;
+        CAPSULES.put_erased(&vault.store, wtxn, &key, Erased::of(capsule)?)?;
     }
     Ok(())
 }
@@ -154,6 +154,14 @@ fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
         binding.prompt = None;
     }
     capsule
+}
+
+/// A capsule's erased form is [`erased`]'s: the scrub writes it past the
+/// side-row wall, so no wall ever fails an erase (FIX 5718).
+impl ErasedForm for StepReplayCapsule {
+    fn into_erased(self) -> Result<Self> {
+        Ok(erased(self))
+    }
 }
 
 /// Every fork answer the contribution rows keep, by the capsule its fork

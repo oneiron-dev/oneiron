@@ -1161,27 +1161,51 @@ pub(super) fn invalid(reason: &'static str) -> Error {
 pub(super) struct ByteBudget {
     held: usize,
     limit: usize,
+    /// Of `held`, the bytes only measured ([`Self::measure`]), which no
+    /// refusal answers for.
+    measured: usize,
 }
 
 impl ByteBudget {
     pub(super) const fn new(limit: usize) -> Self {
-        Self { held: 0, limit }
+        Self {
+            held: 0,
+            limit,
+            measured: 0,
+        }
     }
 
-    /// Admits `bytes` more, before they are copied.
+    /// Admits `bytes` more, before they are copied. Bytes only measured
+    /// never move the point where this refuses.
     pub(super) fn take(&mut self, bytes: usize) -> Result<()> {
         let held = self.held.saturating_add(bytes);
-        if held > self.limit {
+        let counted = held.saturating_sub(self.measured);
+        if counted > self.limit {
             return Err(ArtifactError::OverlayLimit {
-                required: held,
+                required: counted,
                 limit: self.limit,
             }
             .into());
         }
         self.held = held;
         #[cfg(test)]
-        held_bytes::note(held);
+        held_bytes::note(counted);
         Ok(())
+    }
+
+    /// Counts `bytes` no copy refuses on (Rule 5, FIX 6540): the measure
+    /// stays honest and the copy goes on. While the measure is past the
+    /// limit, the overrun is returned, typed, for its caller to report.
+    pub(super) fn measure(&mut self, bytes: usize) -> Option<ArtifactError> {
+        self.held = self.held.saturating_add(bytes);
+        self.measured = self.measured.saturating_add(bytes);
+        if self.held <= self.limit {
+            return None;
+        }
+        Some(ArtifactError::OverlayLimit {
+            required: self.held,
+            limit: self.limit,
+        })
     }
 }
 
