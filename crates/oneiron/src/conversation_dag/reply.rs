@@ -37,27 +37,48 @@ pub struct ReplyStrip {
     /// Target has been erased (rather than merely edited or not yet received).
     pub redacted: bool,
     /// Target's words sit in a private-thread turn the reader does not read
-    /// (FIX 5652): `text` is `None` though the target stands at its revision.
+    /// (FIX 5652), or, below the owner, in a turn its lane does not read (FIX
+    /// 5938): `text` is `None` though the target stands at its revision.
     pub withheld: bool,
 }
 
 impl Vault {
     /// Whether `read`'s caller reads the words of the row `id` under each
     /// private thread it sits in, turn by turn, the opener included (FIX
-    /// 5652): the one bound a door serving rows by record scope, the TURN
-    /// routes, holds what it serves to. None of `read`'s other gates is
-    /// asked; `read` reads this vault. A row with no record has no thread to
+    /// 5652): the one bound the TURN routes hold the owner's read to
+    /// ([`Self::turn_doors_owner`]). None of `read`'s other gates is asked;
+    /// `read` reads this vault. A row with no record has no thread to
     /// withhold it.
     pub fn private_threads_admit(&self, read: &ScopedRead<'_>, id: &EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         read.private_threads_admit_in(&txn, id)
     }
 
+    /// Whether the TURN doors serve `read`'s caller as the vault owner (FIX
+    /// 5938, 5939): his own key, a self-hosted root's or the dev mode's
+    /// acting as him, or a narrower credential of his while he is still the
+    /// bound owner (`ScopedReadActorKey::facets_owner_exempt_in`). He reads
+    /// and writes there as before, held to private threads alone; any other
+    /// caller reads and writes only what its own lane reads.
+    pub fn turn_doors_owner(&self, read: &ScopedRead<'_>) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        self.turn_doors_owner_in(read, &txn)
+    }
+
+    /// [`Self::turn_doors_owner`], judged in `txn`.
+    pub(crate) fn turn_doors_owner_in(
+        &self,
+        read: &ScopedRead<'_>,
+        txn: &RoTxn<'_>,
+    ) -> Result<bool> {
+        read.actor_key().facets_owner_exempt_in(self, txn)
+    }
+
     /// Projects a revision-bound reply strip for `read`'s caller. Never
     /// reconstructs or invents text. A reply the caller does not read
-    /// ([`Self::private_threads_admit`]) is not found; a target it does not
-    /// read keeps its place and revision, never its words, so one added to
-    /// a private thread from a later turn on reads a reply to a turn before
+    /// (`turn_doors_admit_in`) is not found; a target it does not read
+    /// keeps its place and revision, never its words, so one added to a
+    /// private thread from a later turn on reads a reply to a turn before
     /// its add without that turn's text (FIX 5652). Such a target is
     /// `withheld`, neither stale nor redacted.
     pub fn reply_strip(
@@ -67,7 +88,8 @@ impl Vault {
     ) -> Result<Option<ReplyStrip>> {
         let txn = self.store.env.read_txn()?;
         let bytes = require_type(&self.store, &txn, record, ENTITY_TYPE_TURN)?;
-        if !read.private_threads_admit_in(&txn, record)? {
+        let owner = self.turn_doors_owner_in(read, &txn)?;
+        if !turn_doors_admit_in(read, &txn, record, owner)? {
             return Err(Error::EntityNotFound);
         }
         let mut input = bytes.as_slice();
@@ -137,7 +159,7 @@ impl Vault {
                 }
                 if blake3::hash(&body).to_hex().as_str() != revision {
                     (None, true)
-                } else if !read.private_threads_admit_in(&txn, &target)? {
+                } else if !turn_doors_admit_in(read, &txn, &target, owner)? {
                     withheld = true;
                     (None, false)
                 } else {
@@ -163,6 +185,23 @@ impl Vault {
             redacted,
             withheld,
         }))
+    }
+}
+
+/// Whether the TURN doors serve the row `id` to `read`'s caller in `txn`:
+/// the owner's own read (`owner`, [`Vault::turn_doors_owner`]) under each
+/// private thread alone (FIX 5652), any other under its lane's whole row
+/// admission, private threads included (FIX 5938).
+fn turn_doors_admit_in(
+    read: &ScopedRead<'_>,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    owner: bool,
+) -> Result<bool> {
+    if owner {
+        read.private_threads_admit_in(txn, id)
+    } else {
+        read.is_entity_readable_in(txn, id)
     }
 }
 

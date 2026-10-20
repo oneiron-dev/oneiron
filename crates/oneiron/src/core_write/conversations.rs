@@ -11,8 +11,9 @@ use super::shape::{
     CoreWriteTextField, core_body_for_write, core_text_pairs, core_write_times, entity_id,
     stage_core_put, text_pairs, write_id,
 };
+use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::conversation::ConversationBody;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault, WriteActor};
 
@@ -138,14 +139,20 @@ impl Vault {
     }
 
     /// Puts one TURN, its text index and its checked ChildOf edge to the
-    /// conversation, in one batch. It wakes nothing: the served door that
-    /// calls it lands the turn.
+    /// conversation, in one batch, for `writer`'s caller. It wakes nothing:
+    /// the served door that calls it lands the turn. A caller the TURN doors
+    /// do not serve as the owner ([`Vault::turn_doors_owner`]) writes only
+    /// into a conversation its own lane reads, judged in the batch's own
+    /// writer (FIX 5939); the owner writes as before. Such a TURN sits in no
+    /// private thread: its thread keys are refused here, and its one edge is
+    /// to the conversation, which no thread holds.
     /// # Errors
-    /// A target that is no conversation, a bad id, interval or body, or
-    /// the batch's ChildOf refusal.
+    /// A target that is no conversation, a bad id, interval or body, a
+    /// conversation outside `writer`'s read, or the batch's ChildOf refusal.
     pub fn write_core_conversation_turn(
         &self,
         input: &ConversationTurnCreateInput,
+        writer: &ScopedRead<'_>,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
         let conversation = entity_id(&input.conversation, "conversation")?;
         match self.get_entity_type(&conversation)? {
@@ -172,7 +179,8 @@ impl Vault {
         }
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
-        stage_core_put(
+        let outside = std::cell::Cell::new(false);
+        let committed = stage_core_put(
             self.batch(),
             &id,
             ENTITY_TYPE_TURN,
@@ -181,7 +189,23 @@ impl Vault {
             input.text.as_deref().map(text_pairs),
         )?
         .edge_checked(&id, &conversation, 1.0)
-        .commit()?;
+        .commit_with_target_guard(|txn| {
+            if self.turn_doors_owner_in(writer, txn)?
+                || writer.is_entity_readable_in(txn, &conversation)?
+            {
+                return Ok(());
+            }
+            outside.set(true);
+            Err(crate::Error::EntityNotFound)
+        });
+        if outside.get() {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the conversation is outside this credential's read",
+                &["Write the turn into a conversation this credential reads."],
+            ));
+        }
+        committed?;
         Ok(CoreEntityWriteReceipt::new(
             id,
             ENTITY_TYPE_TURN,
@@ -204,13 +228,15 @@ impl Memory<'_> {
         self.vault().write_core_conversation(input, Some(actor))
     }
 
-    /// `vault.conversations.turns.create`: one TURN under a conversation.
+    /// `vault.conversations.turns.create`: one TURN under a conversation,
+    /// held to this handle's own read lane (FIX 5939).
     /// # Errors
     /// As [`Vault::write_core_conversation_turn`].
     pub fn conversations_turns_create(
         &self,
         input: &ConversationTurnCreateInput,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
-        self.vault().write_core_conversation_turn(input)
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        self.vault().write_core_conversation_turn(input, &lane)
     }
 }

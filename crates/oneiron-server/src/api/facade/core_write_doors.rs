@@ -25,25 +25,33 @@ use crate::server::SyncServer;
 /// whose type the write read to land it.
 pub(crate) async fn vault_conversations_turns_create(
     server: &Arc<SyncServer>,
-    _auth: &CoreAuth,
+    auth: &CoreAuth,
     input: ConversationTurnCreateInput,
 ) -> Listed<CoreEntityWriteReceipt> {
     let conversation = input.conversation.clone();
-    naming(write_core_turn(server, input).await, |receipt| {
+    naming(write_core_turn(server, auth, input).await, |receipt| {
         hex_rows([receipt.id.as_str(), conversation.as_str()])
     })
 }
 
-/// One TURN under a conversation, then its landing on the vault. Every
-/// caller runs this: the row's door and the REST route alike.
+/// One TURN under a conversation, held to the read `auth`'s credential
+/// reads under on every `/v1` door (FIX 5939), then its landing on the
+/// vault. Every caller runs this: the row's door and the REST route alike.
+/// A host credential that acts as no person gets its refusal.
 pub(crate) async fn write_core_turn(
     server: &Arc<SyncServer>,
+    auth: &CoreAuth,
     input: ConversationTurnCreateInput,
 ) -> MemoryResult<CoreEntityWriteReceipt> {
     let vault = Arc::clone(&server.vault);
-    let receipt = tokio::task::spawn_blocking(move || vault.write_core_conversation_turn(&input))
-        .await
-        .map_err(|_| internal("vault.conversations.turns.create"))??;
+    let auth = auth.clone();
+    let receipt = tokio::task::spawn_blocking(move || {
+        let writer = crate::api::scoped_read_for_core_auth(&vault, &auth)
+            .map_err(|refused| super::FacadeApiError::from(refused).into_memory_error())?;
+        vault.write_core_conversation_turn(&input, &writer)
+    })
+    .await
+    .map_err(|_| internal("vault.conversations.turns.create"))??;
     server
         .ai
         .turn_landed(server.vault(), WakeTurnSubject::Vault);
