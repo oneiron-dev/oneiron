@@ -15,12 +15,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
-use super::EmbedderLocality;
 use super::media::{
-    MediaEmbedReport, MediaEmbeddingInput, PendingMedia, asset_document_in, is_text_document_type,
-    text_document_of,
+    MediaEgressGate, MediaEmbedReport, MediaEmbeddingInput, PendingMedia, asset_document_in,
+    is_text_document_type, text_document_of,
 };
 use super::space::InputKind;
+use super::{EgressDecision, EgressPredicate, EmbedderLocality};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -126,9 +126,9 @@ impl SpaceProbe {
 pub trait SpaceProbeAuthor: Send + Sync {
     /// The model id a probe records as its author.
     fn author_id(&self) -> &str;
-    /// Where the model runs. Stored image and audio bytes never leave for a third party from
-    /// this door; a text document goes where the host's admitted call (the vault's inference
-    /// policy) lets it.
+    /// Where the model runs. Stored image and audio bytes leave for a third party only
+    /// through the host's media egress gate ([`Vault::author_space_probes_admitted`]); a text
+    /// document goes where the host's admitted call (the vault's inference policy) lets it.
     fn locality(&self) -> EmbedderLocality;
     /// One search query a person might type to find `document`, in other words than its own;
     /// `None` when the model writes none.
@@ -146,6 +146,8 @@ pub struct SpaceProbeReport {
     pub vanished: usize,
     /// Probes of the kind already held, before this pass.
     pub held: usize,
+    /// Documents the host's media egress gate kept from a third-party author, unsent.
+    pub withheld: usize,
 }
 
 pub(crate) fn space_probes_in_txn(
@@ -213,14 +215,43 @@ impl Vault {
         author: &dyn SpaceProbeAuthor,
         max_items: usize,
     ) -> Result<SpaceProbeReport> {
-        if author.locality() == EmbedderLocality::ThirdParty && kind != InputKind::Text {
-            return Err(Error::InvalidConfig(
-                "a third-party probe author has no egress grant for stored media".into(),
-            ));
-        }
+        self.author_space_probes_admitted(kind, author, max_items, None)
+    }
+
+    /// [`Self::author_space_probes`] with the host's media egress gate (FIX 6743): an author at
+    /// a third party writes image and audio probes only from the documents `egress` allows
+    /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
+    /// asked again right before its bytes go to the author; the rest stay unsent and are
+    /// counted [`SpaceProbeReport::withheld`]. A text author, or one on this device or the
+    /// owner's server, reads as it does without a gate.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::author_space_probes`]; a third-party media author with no gate is refused as
+    /// there.
+    pub fn author_space_probes_admitted(
+        &self,
+        kind: InputKind,
+        author: &dyn SpaceProbeAuthor,
+        max_items: usize,
+        egress: Option<&dyn EgressPredicate>,
+    ) -> Result<SpaceProbeReport> {
+        let gated = author.locality() == EmbedderLocality::ThirdParty && kind != InputKind::Text;
+        let egress = match egress {
+            _ if !gated => None,
+            Some(egress) => Some(egress),
+            None => {
+                return Err(Error::InvalidConfig(
+                    "a third-party probe author has no egress grant for stored media".into(),
+                ));
+            }
+        };
         let mut report = SpaceProbeReport::default();
         let documents = {
             let rtxn = self.store.env.read_txn()?;
+            let gate = egress
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .transpose()?;
             let probes: Vec<SpaceProbe> = space_probes_in_txn(&self.store, &rtxn)?
                 .into_iter()
                 .map(|(_, probe)| probe)
@@ -237,15 +268,24 @@ impl Vault {
                 // Each candidate's date cut, its bytes left unread until it is drawn.
                 let mut cohorts: BTreeMap<u64, Vec<(u64, EntityId)>> = BTreeMap::new();
                 let mut scan = MediaEmbedReport::default();
+                let mut withheld = 0;
                 self.scan_documents_in_txn(&rtxn, &kinds, &mut scan, |document| {
-                    if !families.contains(&document.id) {
-                        cohorts
-                            .entry(cohort_of(document.learned_at))
-                            .or_default()
-                            .push((document.learned_at, document.id));
+                    if families.contains(&document.id) {
+                        return Ok(true);
                     }
+                    if let Some(gate) = &gate
+                        && !gate.admits(&self.store, &rtxn, &document)?
+                    {
+                        withheld += 1;
+                        return Ok(true);
+                    }
+                    cohorts
+                        .entry(cohort_of(document.learned_at))
+                        .or_default()
+                        .push((document.learned_at, document.id));
                     Ok(true)
                 })?;
+                report.withheld += withheld;
                 let mut held: BTreeMap<u64, usize> = BTreeMap::new();
                 for cohort in probes.iter().filter_map(|probe| probe.cohort) {
                     *held.entry(cohort).or_default() += 1;
@@ -268,6 +308,13 @@ impl Vault {
         let mut written = Vec::new();
         for document in &documents {
             let input = document.input();
+            if let Some(egress) = egress
+                && (egress.decide_media(&input) != EgressDecision::Allow
+                    || !self.media_rows_may_leave(None, &[document.id])?)
+            {
+                report.withheld += 1;
+                continue;
+            }
             let Some(query) = author
                 .write_probe(&input)?
                 .map(|query| query.trim().to_owned())

@@ -455,7 +455,7 @@ impl Vault {
     /// or base with none: none is one a device-local world keeps (DEC-0005), or whose world
     /// cannot be read while one is flagged. Read under the flag lock right before the bytes
     /// go, and held across no send.
-    fn media_rows_may_leave(
+    pub(super) fn media_rows_may_leave(
         &self,
         session: Option<&OffRecordSession<'_>>,
         rows: &[EntityId],
