@@ -205,6 +205,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         };
         return replay_record(vault, authority, record, prepared, now_ms, transport);
     }
+    // FIX 6404: the transport's own target judges the new call again under
+    // this writer; a refusal records no decision.
+    transport.admit_in(&wtxn)?;
 
     let invite_admission = match &command {
         OutboundEffectCommand::New(prepared) | OutboundEffectCommand::Park(prepared) => {

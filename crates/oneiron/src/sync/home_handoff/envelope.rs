@@ -6,15 +6,22 @@
 //! the id and the target machine. The target opens and verifies all of it
 //! before any transaction, and signs an ack of the id, the sealed bytes'
 //! digest, the generation and itself.
+//!
+//! FIX 5932 (Rule 5): the manifest seals in pieces of at most
+//! [`MAX_PLAINTEXT_LEN`] bytes, one envelope each, back to back in order. Each
+//! piece's key id binds the handoff id, its index and the piece count, so a
+//! piece moved, dropped or added does not open. The target opens every piece
+//! and joins them before it verifies the whole manifest.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use getrandom::SysRng;
 use oneiron_crypto::{
-    Argon2Cost, Envelope, HybridPublicKey, OpenKey, OpenPolicy, Purpose, SealKey, SealParams,
-    SuiteId, WrapType, seal,
+    Argon2Cost, Envelope, Header, HybridPublicKey, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy, Purpose,
+    SealKey, SealParams, SuiteId, WrapType, seal,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use super::{HandoffId, HomeGeneration, HomeIdentity, HomeMove, refused};
 use crate::Vault;
@@ -190,30 +197,36 @@ pub(super) fn seal_handoff(
     };
     let signed = SignedHeader::sign(&header, key)?;
     let id = signed.id();
-    let plain = encode(&Manifest {
+    let plain = Zeroizing::new(encode(&Manifest {
         signed: signed.clone(),
         lineage,
         sections,
-    })?;
-    let params = SealParams {
-        suite: AEAD,
-        purpose: Purpose::HomeHandoff,
-        epoch: HANDOFF_EPOCH,
-        key_id: &id,
-        recipient: movement.target.machine.as_bytes(),
-        vault_id: &movement.vault_id,
-    };
-    let sealed = seal(
-        &params,
-        SealKey::Hybrid {
-            recipient: target,
-            kem_suite: KEM,
-        },
-        &plain,
-        &mut SysRng,
-    )
-    .map_err(|_| refused("sealing the handoff failed"))?
-    .to_bytes();
+    })?);
+    let pieces = plain.chunks(MAX_PLAINTEXT_LEN);
+    let count = piece_count(pieces.len())?;
+    let mut sealed = Vec::new();
+    for (index, piece) in (0u32..).zip(pieces) {
+        let key_id = piece_key_id(&id, index, count);
+        let params = SealParams {
+            suite: AEAD,
+            purpose: Purpose::HomeHandoff,
+            epoch: HANDOFF_EPOCH,
+            key_id: &key_id,
+            recipient: movement.target.machine.as_bytes(),
+            vault_id: &movement.vault_id,
+        };
+        let envelope = seal(
+            &params,
+            SealKey::Hybrid {
+                recipient: target,
+                kem_suite: KEM,
+            },
+            piece,
+            &mut SysRng,
+        )
+        .map_err(|_| refused("sealing the handoff failed"))?;
+        sealed.extend_from_slice(&envelope.to_bytes());
+    }
     let handoff = SealedHandoff {
         id,
         digest: *blake3::hash(&sealed).as_bytes(),
@@ -235,20 +248,27 @@ pub(crate) fn open_handoff(vault: &Vault, id: HandoffId, sealed: &[u8]) -> Resul
     let vault_id = fold
         .vault_id
         .ok_or_else(|| refused("the vault has no authority genesis yet"))?;
-    let policy = OpenPolicy {
-        purpose: Purpose::HomeHandoff,
-        vault_id: &vault_id,
-        recipient: secret.machine.as_bytes(),
-        key_id: &id,
-        wraps: &[WrapType::HybridCapsule],
-        aead_suites: &[AEAD],
-        kem_suites: &[KEM],
-        min_epoch: HANDOFF_EPOCH,
-        argon2_max: Argon2Cost::RFC9106_SECOND,
-    };
-    let plain = Envelope::parse(sealed)
-        .and_then(|envelope| envelope.open(OpenKey::Hybrid(&secret.secret), &policy))
-        .map_err(|_| refused("the handoff does not open for this machine"))?;
+    let pieces = split_pieces(sealed)?;
+    let count = piece_count(pieces.len())?;
+    let mut plain = Zeroizing::new(Vec::new());
+    for (index, piece) in (0u32..).zip(pieces) {
+        let key_id = piece_key_id(&id, index, count);
+        let policy = OpenPolicy {
+            purpose: Purpose::HomeHandoff,
+            vault_id: &vault_id,
+            recipient: secret.machine.as_bytes(),
+            key_id: &key_id,
+            wraps: &[WrapType::HybridCapsule],
+            aead_suites: &[AEAD],
+            kem_suites: &[KEM],
+            min_epoch: HANDOFF_EPOCH,
+            argon2_max: Argon2Cost::RFC9106_SECOND,
+        };
+        let opened = Envelope::parse(piece)
+            .and_then(|envelope| envelope.open(OpenKey::Hybrid(&secret.secret), &policy))
+            .map_err(|_| refused("the handoff does not open for this machine"))?;
+        plain.extend_from_slice(&opened);
+    }
     let manifest: Manifest = decode(&plain)?;
     if manifest.signed.id() != id {
         return Err(refused("the handoff's header is not the one its id names"));
@@ -354,6 +374,43 @@ fn ack_transcript(
     bytes.extend_from_slice(target.machine.as_bytes());
     bytes.extend_from_slice(&target.node_id.to_be_bytes());
     bytes
+}
+
+/// The key id of piece `index` of `count`: the handoff id, then the index
+/// and the count, big-endian.
+fn piece_key_id(id: &HandoffId, index: u32, count: u32) -> [u8; 40] {
+    let mut key_id = [0u8; 40];
+    key_id[..32].copy_from_slice(id);
+    key_id[32..36].copy_from_slice(&index.to_be_bytes());
+    key_id[36..].copy_from_slice(&count.to_be_bytes());
+    key_id
+}
+
+fn piece_count(pieces: usize) -> Result<u32> {
+    u32::try_from(pieces).map_err(|_| refused("a handoff has more pieces than an index holds"))
+}
+
+/// The envelopes `sealed` holds back to back, each as long as its own header
+/// says. Bytes that end inside an envelope are refused.
+fn split_pieces(sealed: &[u8]) -> Result<Vec<&[u8]>> {
+    let mut pieces = Vec::new();
+    let mut rest = sealed;
+    while !rest.is_empty() {
+        let (header, header_len) = Header::parse_prefix(rest)
+            .map_err(|_| refused("the handoff does not open for this machine"))?;
+        let end = usize::try_from(header.ciphertext_len)
+            .ok()
+            .and_then(|ciphertext| header_len.checked_add(ciphertext))
+            .filter(|end| *end <= rest.len())
+            .ok_or_else(|| refused("the handoff does not open for this machine"))?;
+        let (piece, after) = rest.split_at(end);
+        pieces.push(piece);
+        rest = after;
+    }
+    if pieces.is_empty() {
+        return Err(refused("the handoff does not open for this machine"));
+    }
+    Ok(pieces)
 }
 
 fn transcript(domain: &[u8], bytes: &[u8]) -> Vec<u8> {
