@@ -317,8 +317,8 @@ enum Target {
     Land(Box<(oneiron::Vault, AuthenticatedOwner, u64)>),
 }
 
-/// The vault's ledger for a dry run, opened read-only: the vault itself is
-/// never opened, so nothing in it is written, and a running `serve` is fine.
+/// The vault's ledger for a dry run, read-only (a sealed one with this device's
+/// seal): the vault is never opened, so nothing is written, and `serve` may run.
 fn open_snapshot(config: &ServeConfig) -> anyhow::Result<HistoryLedgerSnapshot> {
     let path = &config.vault_path;
     anyhow::ensure!(
@@ -326,7 +326,7 @@ fn open_snapshot(config: &ServeConfig) -> anyhow::Result<HistoryLedgerSnapshot> 
         "vault {} does not exist; `oneiron init` creates one",
         path.display()
     );
-    HistoryLedgerSnapshot::open(path)
+    HistoryLedgerSnapshot::open_with_seal(path, config.device_page_seal().as_ref())
         .map_err(|error| anyhow::anyhow!("read vault {}: {error}", path.display()))
 }
 
