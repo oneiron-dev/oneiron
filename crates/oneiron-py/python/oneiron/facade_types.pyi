@@ -15610,6 +15610,7 @@ class OfficeBodyArtifactRequest(TypedDict):
 class OfficeBodyReadRequest(TypedDict):
     artifact_ref: str
     at: NotRequired[list[int] | None]
+    why: NotRequired[str | None]
 class BodyBlockKindHeading(TypedDict):
     heading: int
 BodyBlockKind = Literal["paragraph", "table", "opaque"] | BodyBlockKindHeading
@@ -16539,6 +16540,7 @@ class DeckPreviewRequest(TypedDict):
     artifact_ref: str
     fork_ref: NotRequired[str | None]
     slides: list[int]
+    why: NotRequired[str | None]
 class DeckPreviewSlide(TypedDict):
     slide: int
     media_type: str

@@ -12409,7 +12409,7 @@ impl AgentVerb {
                 "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none."
             }
             Self::VaultArtifactsBodyRead => {
-                "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history."
+                "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history; an agent that gives why reads its lifted secrets whole once a grant covers their keys."
             }
             Self::VaultArtifactsBodyCommits => {
                 "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone."
@@ -12460,7 +12460,7 @@ impl AgentVerb {
                 "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened."
             }
             Self::VaultArtifactsBodyDeckPreview => {
-                "The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed."
+                "The asked slides of a deck's head or open fork's merge candidate, as this host's review renderer draws its export now: provisional images; nothing lands. A lifted deck draws for an agent that gives why once a grant covers its keys."
             }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."

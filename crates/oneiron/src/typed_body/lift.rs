@@ -246,10 +246,6 @@ impl Vault {
     /// snapshot the caller reads the projection it shows in, so the keys a
     /// read's sight judges ([`Vault::typed_body_sight`]) are the keys it
     /// shows.
-    #[allow(
-        dead_code,
-        reason = "L12-B wires vault.artifacts.body.deck.preview and vault.artifacts.body.read onto it"
-    )]
     pub(crate) fn typed_body_lifted_sources_in_txn(
         &self,
         txn: &RoTxn<'_>,

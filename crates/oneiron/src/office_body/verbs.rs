@@ -23,6 +23,7 @@ use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use crate::provenance::text_commit::TextCommitReceipt;
+use crate::secret_custody::SecretSight;
 use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
@@ -101,6 +102,11 @@ pub struct OfficeBodyReadRequest {
     pub artifact_ref: String,
     #[serde(default)]
     pub at: Option<Vec<u8>>,
+    /// Why an agent needs the lifted secrets the body's text holds: with
+    /// it, the body reads whole for that agent once a grant covers their
+    /// keys, for this read alone, and its ask goes to the owner otherwise.
+    #[serde(default)]
+    pub why: Option<String>,
 }
 
 /// One call's typed operations, in the body's format.
@@ -422,7 +428,9 @@ impl Memory<'_> {
         Ok(self.vault().office_body_head(&artifact)?)
     }
 
-    /// `vault.artifacts.body.read`: the body in its format.
+    /// `vault.artifacts.body.read`: the body in its format. An agent that
+    /// says `why` reads its lifted secrets whole once a grant covers their
+    /// keys (FIX 2941); every other reader but the owner reads their handles.
     pub fn artifacts_body_read(
         &self,
         input: &OfficeBodyReadRequest,
@@ -444,7 +452,37 @@ impl Memory<'_> {
                 body: self.vault().read_pptx_body(&artifact, at)?.into(),
             },
         };
+        if let Some(why) = input.why.as_deref()
+            && self.body_read_granted(&artifact, &view, why)?
+        {
+            return Ok(view);
+        }
         self.lifted_body_view(&artifact, view)
+    }
+
+    /// Whether this read of `artifact`'s body `view` reads it whole: a reader
+    /// masked from lifted keys, an agent that says `why`, once a grant covers
+    /// the keys the body's lifted texts hold and this read's receipts are
+    /// written; its ask is filed otherwise (OF-067, FIX 2941). The sight is
+    /// this read's alone.
+    fn body_read_granted(
+        &self,
+        artifact: &EntityId,
+        view: &OfficeBodyView,
+        why: &str,
+    ) -> MemoryResult<bool> {
+        if !self.reads_lifted_keys_masked()? {
+            return Ok(false);
+        }
+        let vault = self.vault();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let lifted = vault.typed_body_lifted_sources_in_txn(&txn, artifact)?;
+        drop(txn);
+        let shown = serde_json::to_vec(view)
+            .map_err(|_| crate::Error::InvariantViolation("an office body view did not encode"))?;
+        let fingerprint = blake3::derive_key("oneiron office body read view v1", &shown);
+        let sight = self.typed_body_read_sight(artifact, &fingerprint, &lifted, Some(why))?;
+        Ok(sight == SecretSight::Granted)
     }
 
     /// `view` of `artifact`'s body as the bound actor reads it: a reader

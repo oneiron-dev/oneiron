@@ -8,9 +8,14 @@
 //! a reason to open the gate. An embedded vault has no renderer, so it
 //! refuses.
 //!
-//! Drawn slides are kept by the vault, the export's memo key and the
-//! renderer ([`DRAWN`]): a call on an unchanged deck projects and converts
-//! nothing, and draws only the slides no earlier call drew.
+//! Drawn slides are kept by the vault, the export's memo key, the renderer
+//! and the draw's view ([`DRAWN`]): a call on an unchanged deck projects and
+//! converts nothing, and draws only the slides no earlier call drew.
+//!
+//! A deck whose text holds a lifted secret draws for the vault owner, and for
+//! an agent that says `why` once a grant covers its keys, judged on every
+//! read, a kept drawing's included (OF-067, FIX 2941). Every other reader is
+//! refused, any ask its read filed kept.
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -29,6 +34,8 @@ use crate::gate::record_references::admit_row_references;
 use crate::memory::{
     MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
+use crate::secret_custody::SecretSight;
+use crate::typed_body::LiftedSources;
 use oneiron_docedit::deck::DeckView;
 use oneiron_docedit::edit::transaction::{AssetRef, Assets};
 use oneiron_docedit::graphic::AssetRecord;
@@ -50,9 +57,21 @@ const DRAWN_BYTES: usize = 64 << 20;
 /// them (CALLS "OF-510 deck preview cache").
 const DRAWN_IDLE: Duration = Duration::from_secs(30 * 60);
 
-/// The drawn slides of one vault's export under one renderer: the vault's
-/// id, the export's memo key hash and the renderer's name.
-type Slot = ([u8; 32], [u8; 32], String);
+/// The drawn slides of one vault's export under one renderer, for one view:
+/// the vault's id, the export's memo key hash, the renderer's name and the
+/// [`DrawView`].
+type Slot = ([u8; 32], [u8; 32], String, DrawView);
+
+/// Whom a drawing is kept for (FIX 2941). A reader masked from lifted keys
+/// never selects a drawing made for the owner or a granted agent; the view
+/// separates output only, and grants nothing: each read is judged first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DrawView {
+    /// Drawn for the owner, or for an agent a grant covers on this read.
+    Raw,
+    /// Drawn for a reader masked from lifted keys: a deck that holds none.
+    Masked,
+}
 
 /// The slides previews drew, by [`Slot`]. Held in memory only: a restart
 /// draws again.
@@ -72,6 +91,11 @@ pub struct DeckPreviewRequest {
     #[serde(default)]
     pub fork_ref: Option<String>,
     pub slides: Vec<u64>,
+    /// Why an agent needs a deck whose text holds a lifted secret drawn:
+    /// with it, the deck draws for that agent once a grant covers its keys,
+    /// for this read alone, and its ask goes to the owner otherwise.
+    #[serde(default)]
+    pub why: Option<String>,
 }
 
 /// The slides a deck preview drew, and the projection they show.
@@ -107,7 +131,10 @@ impl Memory<'_> {
     /// `vault.artifacts.body.deck.preview`: draw the asked slides of the
     /// deck's head, or of a fork's merge candidate, with the host's review
     /// renderer, `None` where there is none. Slides an earlier call drew of
-    /// the same export are not drawn again.
+    /// the same export for the same view are not drawn again. A deck whose
+    /// text holds a lifted secret draws for the owner, and for an agent that
+    /// says `why` once a grant covers its keys on this read; it is refused to
+    /// every other reader, any ask the read filed kept (FIX 2941).
     pub fn artifacts_body_deck_preview(
         &self,
         input: &DeckPreviewRequest,
@@ -134,21 +161,38 @@ impl Memory<'_> {
             .map(|fork| self.body_ref(fork))
             .transpose()?;
         // A drawn slide cannot show a lifted key as its handle: a deck that
-        // holds one draws for the owner alone (OF-067).
-        if self.reads_lifted_keys_masked()?
-            && !self.vault().typed_body_lifted_keys(&artifact)?.is_empty()
-        {
-            return Err(MemoryError::bad_request(format!(
-                "{ROW} draws a deck whose text holds a lifted secret for the vault owner only"
-            )));
+        // holds one draws for the owner, or for an agent a grant covers that
+        // says why (OF-067, FIX 2941).
+        let masked = self.reads_lifted_keys_masked()?;
+        let held_back = masked && !self.vault().typed_body_lifted_keys(&artifact)?.is_empty();
+        if held_back && input.why.is_none() {
+            return Err(lifted_refusal());
         }
         let vault = self.vault();
         let projection = vault.deck_projection(&artifact, fork.as_ref())?;
         let key = projection.key.hash();
+        // Judged on this read, over the keys of the snapshot drawn, before a
+        // kept drawing is read or one drawn.
+        let view = if !masked {
+            DrawView::Raw
+        } else if !held_back {
+            DrawView::Masked
+        } else if self.typed_body_read_sight(
+            &artifact,
+            &key,
+            &projection.lifted,
+            input.why.as_deref(),
+        )? == SecretSight::Granted
+        {
+            DrawView::Raw
+        } else {
+            return Err(lifted_refusal());
+        };
         let slot: Slot = (
             *vault.vault_id().as_bytes(),
             key,
             renderer.name().to_owned(),
+            view,
         );
         let held = DRAWN.lock().unwrap_or_else(PoisonError::into_inner).held(
             &slot,
@@ -253,6 +297,9 @@ struct Projection {
     /// The rows `package` was read as: its retained or imported version's
     /// CLAIM and ASSET (FIX 5455).
     rows: Vec<EntityId>,
+    /// The keys the deck's lifted texts hold, read in the snapshot the deck
+    /// was (FIX 2941).
+    lifted: LiftedSources,
 }
 
 impl Vault {
@@ -262,8 +309,9 @@ impl Vault {
         let source = self
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
-        let (head, body, candidate) = {
+        let (head, body, candidate, lifted) = {
             let txn = self.store.env.read_txn()?;
+            let lifted = self.typed_body_lifted_sources_in_txn(&txn, artifact)?;
             let (head, body) = self.deck_head(&txn, artifact)?;
             let candidate = match fork {
                 Some(fork) => {
@@ -274,7 +322,7 @@ impl Vault {
                 }
                 None => None,
             };
-            (head, body, candidate)
+            (head, body, candidate, lifted)
         };
         let (bytes, rows) = self.deck_source_listing(artifact, &source, body.retained)?;
         let package = Package::open(&bytes, self.docedit_package_limits()?)
@@ -293,6 +341,7 @@ impl Vault {
             package,
             key,
             rows,
+            lifted,
         })
     }
 
@@ -441,6 +490,13 @@ impl Drawn {
             }
         }
     }
+}
+
+/// A lifted deck read by a reader no grant opens it to on this read.
+fn lifted_refusal() -> MemoryError {
+    MemoryError::bad_request(format!(
+        "{ROW} draws a deck whose text holds a lifted secret for the vault owner, or for an agent that says why once a grant covers its keys"
+    ))
 }
 
 fn failed(reason: &str) -> MemoryError {

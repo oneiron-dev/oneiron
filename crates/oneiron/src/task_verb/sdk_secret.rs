@@ -426,10 +426,6 @@ impl Memory<'_> {
     /// ([`crate::Vault::typed_body_sight`]). The sight is this read's alone:
     /// [`Memory::secret_sight`] and [`Memory::reads_lifted_keys_masked`] do
     /// not change.
-    #[allow(
-        dead_code,
-        reason = "L12-B wires vault.artifacts.body.deck.preview and vault.artifacts.body.read onto it"
-    )]
     pub(crate) fn typed_body_read_sight(
         &self,
         artifact: &EntityId,
