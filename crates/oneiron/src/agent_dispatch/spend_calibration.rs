@@ -140,8 +140,9 @@ pub struct UsdUnitPrice {
 
 /// The host's USD quote for one launch target in one native unit, read in
 /// the caller's transaction. `None` when the price, its currency, the
-/// target's route or the unit is unknown or ambiguous; never a guess. A rate
-/// is the [`DollarBasis::UpperBoundRate`]: the model's highest catalog rate.
+/// target's route or the unit is unknown or ambiguous; never a guess. An
+/// error prices nothing, as `None` does. A rate is the
+/// [`DollarBasis::UpperBoundRate`]: the model's highest catalog rate.
 /// An implementation must not hold the vault it is installed on.
 pub trait LaunchUsdPrices: Send + Sync {
     fn quote(
@@ -201,16 +202,17 @@ impl ExpectedSpend {
     }
 
     /// Prices these native units at the vault's USD quote for `target`.
-    /// With no quote the dollar figure stays unknown.
+    /// With no quote, or a quote that fails, the dollar figure stays
+    /// unknown: a price never fails the statement.
     fn priced(
         mut self,
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
         target: UsdPriceTarget<'_>,
         unit: &LeaseUnit,
-    ) -> Result<Self> {
+    ) -> Self {
         let rate = match vault.launch_usd_prices.get() {
-            Some(prices) => prices.quote(vault, txn, target, unit)?,
+            Some(prices) => prices.quote(vault, txn, target, unit).ok().flatten(),
             None => None,
         };
         if let Some(rate) = rate.filter(|rate| rate.per_units != 0) {
@@ -225,7 +227,7 @@ impl ExpectedSpend {
                 DollarBasis::IncompleteOrOverflow
             };
         }
-        Ok(self)
+        self
     }
 
     /// The expected spend as a statement states it: dollars and their
@@ -334,12 +336,12 @@ impl AgentDispatcher<'_> {
             txn,
             &calibration_key(&agent, unit),
         )?);
-        expected.priced(
+        Ok(expected.priced(
             self.vault,
             txn,
             UsdPriceTarget::Agent { agent, model },
             unit,
-        )
+        ))
     }
 
     /// One consult's expected spend in `unit` when delivered to `peer`: its
@@ -365,7 +367,7 @@ impl AgentDispatcher<'_> {
             txn,
             &consult_calibration_key(&peer, unit),
         )?);
-        expected.priced(self.vault, txn, UsdPriceTarget::PeerConsult(peer), unit)
+        Ok(expected.priced(self.vault, txn, UsdPriceTarget::PeerConsult(peer), unit))
     }
 
     /// Folds one settled launch's spend into its agent's calibration.

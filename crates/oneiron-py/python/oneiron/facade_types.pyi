@@ -1731,6 +1731,8 @@ class FanoutStatement(TypedDict):
     task_count: int
     per_peer: list[PeerCount]
     expected: ExpectedSpend
+    priced_subtotal_usd_micros: NotRequired[int | None]
+    unpriced_parts: list[str]
     unit: LeaseUnit
     cap: NotRequired[SpendCapView | None]
     over_available: bool
