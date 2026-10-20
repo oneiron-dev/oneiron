@@ -16,6 +16,7 @@ use super::paths::{
     DOOR_BLOB_TOO_LARGE, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
     ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
+use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::credential_door::{CredentialDoorService, DoorScanVerdict, PushedBlob};
@@ -34,7 +35,8 @@ pub enum DoorWindowVerdict {
     /// detector code, or one proposed ref name this origin will not land; no
     /// matched line and no value bytes ever appear here.
     Rejected {
-        /// One printable reason per offending blob or refused ref.
+        /// One printable reason per offending blob or refused ref, the first
+        /// eight met, then `omitted_reasons=K` when `K` more were (FIX 5942).
         reasons: Vec<String>,
     },
 }
@@ -294,11 +296,13 @@ fn scan_window(
                 &lfs_pointers,
                 &ref_lfs_pointers,
             )
-            .unwrap_or_else(|_| vec![InputRefused::Unverified.reason().to_owned()]);
+            .unwrap_or_else(|_| {
+                RetainedReasons::one(InputRefused::Unverified.reason().to_owned())
+            });
     }
     let verdict = match scan {
         _ if !unlandable.is_empty() => DoorWindowVerdict::Rejected {
-            reasons: unlandable,
+            reasons: unlandable.into_reasons(),
         },
         Some(scan) => scan.verdict(),
         None => DoorWindowVerdict::Rejected {
@@ -429,7 +433,7 @@ fn read_framed_stream(
 struct BlobScan<'a> {
     hook: &'a dyn DoorHook,
     repo: &'a RepoRef,
-    reasons: Vec<String>,
+    reasons: RetainedReasons,
     failed: bool,
 }
 
@@ -438,7 +442,7 @@ impl<'a> BlobScan<'a> {
         Self {
             hook,
             repo,
-            reasons: Vec::new(),
+            reasons: RetainedReasons::default(),
             failed: false,
         }
     }
@@ -452,11 +456,12 @@ impl<'a> BlobScan<'a> {
             .pre_receive_scan(self.repo, std::slice::from_ref(blob))
         {
             Ok(DoorScanVerdict::Clean) => {}
-            Ok(DoorScanVerdict::Rejected { proposals }) => self.reasons.extend(
-                proposals
-                    .iter()
-                    .map(|proposal| format!("{}: {}", proposal.path, proposal.reason)),
-            ),
+            Ok(DoorScanVerdict::Rejected { proposals }) => {
+                for proposal in &proposals {
+                    let reason = || format!("{}: {}", proposal.path, proposal.reason);
+                    self.reasons.push_with(reason);
+                }
+            }
             Err(_) => self.failed = true,
         }
     }
@@ -470,7 +475,7 @@ impl<'a> BlobScan<'a> {
             DoorWindowVerdict::Clean
         } else {
             DoorWindowVerdict::Rejected {
-                reasons: self.reasons,
+                reasons: self.reasons.into_reasons(),
             }
         }
     }
@@ -481,7 +486,7 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
         DoorWindowVerdict::Clean => DOOR_VERDICT_OK.to_owned(),
         DoorWindowVerdict::NotInvoked => "oneiron door: no request".to_owned(),
         DoorWindowVerdict::Rejected { reasons } => {
-            format!("oneiron door refused this push: {}", reasons.join("; "))
+            bounded_verdict_line("oneiron door refused this push: ", reasons)
         }
     }
 }
@@ -509,21 +514,22 @@ fn verdict_line(verdict: &DoorWindowVerdict) -> String {
 ///   outcome per name.
 ///
 /// How many refs a push moves is never a reason (rule 5): the landing
-/// publishes them one at a time.
-pub(super) fn unlandable_ref_reasons(updates: &[RefUpdate]) -> Vec<String> {
-    let mut reasons = Vec::new();
+/// publishes them one at a time. Every name is checked; only the first
+/// reasons are kept as text ([`RetainedReasons`]).
+pub(super) fn unlandable_ref_reasons(updates: &[RefUpdate]) -> RetainedReasons {
+    let mut reasons = RetainedReasons::default();
     let mut seen = std::collections::HashSet::with_capacity(updates.len());
     for update in updates {
-        let name = printable_ref_name(&update.name);
-        if update.name.starts_with(ORIGIN_REFUSED_REF_PREFIX) {
-            reasons.push(format!(
-                "{name}: this origin never serves a replacement ref"
-            ));
+        let why = if update.name.starts_with(ORIGIN_REFUSED_REF_PREFIX) {
+            "this origin never serves a replacement ref"
         } else if GitRefName::parse_full(update.name.clone()).is_err() {
-            reasons.push(format!("{name}: not a ref name this origin can journal"));
+            "not a ref name this origin can journal"
         } else if !seen.insert(update.name.as_str()) {
-            reasons.push(format!("{name}: proposed twice in one push"));
-        }
+            "proposed twice in one push"
+        } else {
+            continue;
+        };
+        reasons.push_with(|| format!("{}: {why}", printable_ref_name(&update.name)));
     }
     reasons
 }
