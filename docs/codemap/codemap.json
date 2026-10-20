@@ -81827,7 +81827,7 @@
      "path": "src/auth/machine_proof.rs",
      "purpose": "The machine a request names",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -81837,7 +81837,7 @@
      "path": "src/auth/managed_request.rs",
      "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 19
      }
     },
     {
