@@ -19,7 +19,8 @@ use super::chart_labels;
 use super::conversion::Conversion;
 use super::held::{self, C, DGM, children};
 use super::pptx::{
-    ChartKind, ChartSeries, ChartSource, HeldMedia, NodePayload, SmartArtNode, WRITTEN_FRAME,
+    ChartKind, ChartSeries, ChartSource, HeldMedia, NodeId, NodePayload, SmartArtNode,
+    WRITTEN_FRAME,
 };
 use super::reshape::{self, frame_of};
 use super::svg_fallback;
@@ -29,7 +30,7 @@ use crate::edit::xml::{self, A, P, R, next_part};
 use crate::native_patch::insert_frame;
 use crate::ooxml::{XmlTree, escape_text};
 use crate::retained_opc::Package;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The drawing part namespace of a SmartArt's cached shapes.
 pub(super) const DSP: &str = "http://schemas.microsoft.com/office/drawing/2008/diagram";
@@ -46,23 +47,30 @@ pub(crate) const HELD_MEDIA: &str =
 
 /// A chart payload's plots as the reader lists them: its series' families
 /// in runs, after an empty first plot when the chart's family is not its
-/// first series'.
-fn held_plots(was: &NodePayload) -> Vec<(ChartKind, usize)> {
+/// first series'; and the plot each series is drawn in, by its identity.
+fn held_plots(was: &NodePayload) -> (Vec<(ChartKind, usize)>, BTreeMap<NodeId, usize>) {
     let NodePayload::Chart { family, series, .. } = was else {
-        return Vec::new();
+        return (Vec::new(), BTreeMap::new());
     };
     let mut runs: Vec<(ChartKind, usize)> = Vec::new();
+    let mut own = BTreeMap::new();
     for line in series {
         let kind = line.family.unwrap_or(*family);
         match runs.last_mut() {
             Some((last, count)) if *last == kind => *count += 1,
             _ => runs.push((kind, 1)),
         }
+        if let Some(id) = line.id {
+            own.entry(id).or_insert(runs.len() - 1);
+        }
     }
     if runs.first().is_none_or(|(first, _)| first != family) {
         runs.insert(0, (*family, 0));
+        for plot in own.values_mut() {
+            *plot += 1;
+        }
     }
-    runs
+    (runs, own)
 }
 
 /// Categories as x values: their numbers when every one is a number, else
@@ -112,9 +120,16 @@ pub(super) fn settle_chart(
     else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
-    let (plots, was) = match held {
-        None => (vec![(reshape::seed_family(wanted), series.len())], None),
-        Some(was @ NodePayload::Chart { .. }) => (held_plots(was), Some(was)),
+    let (plots, own, was) = match held {
+        None => (
+            vec![(reshape::seed_family(wanted), series.len())],
+            BTreeMap::new(),
+            None,
+        ),
+        Some(was @ NodePayload::Chart { .. }) => {
+            let (plots, own) = held_plots(was);
+            (plots, own, Some(was))
+        }
         Some(_) => return Err(LiveError::Invalid(WRITTEN_FRAME)),
     };
     let mut done = Vec::new();
@@ -122,7 +137,13 @@ pub(super) fn settle_chart(
         .iter()
         .map(|line| line.family.unwrap_or(*family))
         .collect();
-    let (targets, assign) = reshape::plot_plan(&plots, *family, &resolved);
+    // A held series stays in the plot that drew it while it draws its
+    // family.
+    let own: Vec<Option<usize>> = series
+        .iter()
+        .map(|line| line.id.and_then(|id| own.get(&id).copied()))
+        .collect();
+    let (targets, assign) = reshape::plot_plan(&plots, *family, &resolved, &own);
     if was.is_some() {
         for target in &targets {
             match target.held {
