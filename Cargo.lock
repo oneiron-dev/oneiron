@@ -7953,6 +7953,8 @@ dependencies = [
  "loro",
  "oneiron",
  "oneiron-llm-openai",
+ "oneiron-llm-own-server",
+ "oneiron-remote",
  "oneiron-server",
  "parking_lot",
  "rand 0.8.8",
