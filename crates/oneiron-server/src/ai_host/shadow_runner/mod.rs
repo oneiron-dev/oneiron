@@ -38,7 +38,8 @@ use oneiron::code_run::shadow_runner::{
     ShadowRequestDigest, ShadowRunFuture, ShadowRunRequest, ShadowRunResult, ShadowRunner,
     ShadowSandboxBinding, ShadowScope, ShadowSource, ShadowSourceHold, ShadowStatus,
     ShadowStepIdentity, ShadowStepRun, ShadowTarget, ShadowUnavailable,
-    ShadowUnavailableReason as Reason, prepare_shadow_step_source, shadow_source_gone,
+    ShadowUnavailableReason as Reason, admit_published_inline, prepare_shadow_step_source,
+    shadow_source_gone,
 };
 use oneiron::code_run::{ExecutorStepStart, step_replay_capsules};
 use oneiron::compaction::output::OutputRef;
@@ -199,12 +200,27 @@ struct Arm {
 }
 
 impl Arm {
-    /// The arm's run, to its result.
+    /// The arm's run, to its result, its inline prompt and wait copies
+    /// admitted under its source vault's custody (FIX 5718 part 3).
     async fn run(self, request: ShadowRunRequest) -> Result<ShadowRunResult> {
         let not_run = ShadowUnavailable::new(Reason::SourceMissing, "not_run");
         let mut result = ShadowRunResult::unavailable(&request, not_run);
         result.status = self.run_into(&request, &mut result).await?;
-        Ok(result)
+        let Some(server) = self.server.upgrade() else {
+            return Ok(result);
+        };
+        let vault = Arc::clone(server.vault());
+        let published = tokio::task::spawn_blocking(move || {
+            // Each copy is of a row its source admitted: one the wall cannot
+            // admit now is published as it was, never at the cost of the
+            // arm's receipts.
+            if let Err(error) = admit_published_inline(&vault, &mut result) {
+                tracing::debug!(kind = ?error.kind(), "a shadow arm's inline copies were not admitted");
+            }
+            result
+        })
+        .await;
+        published.map_err(|error| Error::InvalidConfig(format!("shadow arm publish: {error}")))
     }
 
     /// Runs `request`, filling `result` as each part lands: its final
@@ -249,9 +265,9 @@ impl Arm {
         }
         let lease = ShadowArmLease::mint();
         let source_actor = prepared.source_actor();
-        let arm = self
-            .arms
-            .open_arm(lease, source_actor, source_hold(&vault, source_actor))?;
+        let source = (source_actor, prepared.step().run);
+        let hold = source_hold(&vault, source_actor);
+        let arm = self.arms.open_arm(lease, source, hold, &vault)?;
         result.lease = Some(lease);
         let gateway = Gateway {
             server: &server,
