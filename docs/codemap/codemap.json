@@ -6595,8 +6595,25 @@
      "path": "src/blob_artifact/esign/delivery_capability.rs",
      "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
      "surface": {
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignDeliveryEndReason",
+      "EsignDeliveryReceipt"
+     ],
+     "path": "src/blob_artifact/esign/delivery_settlement.rs",
+     "purpose": "An ended delivery settles (OF-415, FIX 6363, Engine ruling 10-20)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -6723,7 +6740,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -6768,7 +6785,7 @@
      "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -6786,6 +6803,16 @@
      "surface": {
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/notice_scope.rs",
+     "purpose": "FIX 6220: a world-, facet- or record-scoped credential sends its own e-sign notices…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -28034,6 +28061,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/effect/admitted_approval.rs",
+     "purpose": "The owner's one-send press a send's admission records on its ledger row (FIX 6362; an L12-B seam the Engine…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/effect/effect_consent.rs",
      "purpose": "Pure DEC-0006 consent constructors over gate input",
      "surface": {
@@ -28067,7 +28104,7 @@
      "path": "src/gate/effect/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 18
      }
     },
     {
@@ -39858,7 +39895,7 @@
      "path": "src/outbound/dispatch_pipeline/esign_delivery.rs",
      "purpose": "E-sign delivery authority (FIX 5238 option 3; an L02 seam that changes no existing body)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -40724,6 +40761,16 @@
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/store/approval.rs",
+     "purpose": "The typed owner approval a ledger row may carry (moved out of `validate_record`; FIX 6362, an L12-B seam the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -52118,7 +52165,7 @@
      "path": "src/store/key_custody/platform.rs",
      "purpose": "The one platform seam of key custody's files (KS-2A, Engine 10-20 04:1x): every open, directory sync, lock…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -52152,7 +52199,7 @@
       "const": 1,
       "crate-vis": 11,
       "enum": 8,
-      "fn": 22,
+      "fn": 23,
       "re-export": 2,
       "struct": 9,
       "trait": 3
@@ -52195,7 +52242,7 @@
      "path": "src/store/key_custody/targets.rs",
      "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -53090,7 +53137,7 @@
      "path": "src/sweep/compact.rs",
      "purpose": "Window shallow-snapshot compaction and erased-id scrub",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -53110,7 +53157,17 @@
      "path": "src/sweep/mod.rs",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sweep/owed.rs",
+     "purpose": "Window compactions an erase owes (FIX 6387)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -53607,7 +53664,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/client/residence/custody.rs",
@@ -55015,7 +55072,7 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -64289,7 +64346,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 65,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64842,7 +64899,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 142,
+     "files": 143,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65122,7 +65179,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65521,7 +65578,7 @@
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)"
     },
     "sweep": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65726,7 +65783,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4094,
+   "source_files": 4099,
    "test_files": 902
   },
   "oneiron-android": {
@@ -78152,7 +78209,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer/unverifiable.rs",
-     "purpose": "The check's outcome when the promise cannot be read (FIX 6265): `unverifiable_unpriced_cache`",
+     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317)",
      "surface": {
       "crate-vis": 3
      }
@@ -88314,7 +88371,7 @@
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
       "crate-vis": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -90845,6 +90902,8 @@
       "EscalationTrigger",
       "EsignAuditActor",
       "EsignCreateRequest",
+      "EsignDeliveryEndReason",
+      "EsignDeliveryReceipt",
       "EsignDispatchRequest",
       "EsignDispatchView",
       "EsignDocument",
@@ -93360,8 +93419,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 876,
-      "struct": 2776
+      "enum": 877,
+      "struct": 2777
      }
     },
     {
