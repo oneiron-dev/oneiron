@@ -5,16 +5,19 @@
 //! opener stays erased goes on restore, as the erase deletes it.
 //!
 //! The document rows ([`documents`]) and fork snapshots are Loro bytes whose
-//! birth and commit messages name their actors, which no split takes out of
-//! the history: they stay under the vault-wide seal, named with the owner
-//! they join. Nothing calls this until KS7-5, and only once
-//! CHECKPOINT_PAYLOADS_ENABLED is on.
+//! birth and commit messages name their actors (FIX 6072): a full history
+//! splits through the shared Loro projection (`loro`), its join writing the
+//! same history back with every actor that did not open erased. A shallow
+//! history, a pending fork's snapshot and a NOTE document stay under the
+//! vault-wide seal, named with the owner they join. Nothing calls this until
+//! KS7-5, and only once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
 mod documents;
+mod loro;
 mod proposal;
 
 use std::collections::BTreeMap;
@@ -32,6 +35,7 @@ use super::storage::ENTITY_DOC_HEAD;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
+use crate::store::checkpoint_payload::Subtype;
 use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
     Unresolved,
@@ -39,10 +43,6 @@ use crate::store::checkpoint_payload::rows::{
 
 /// The field a row's one actor fills.
 const ACTOR: &str = "actor";
-
-/// The carrier an entity document's Loro bytes are: its birth and every
-/// commit message name an actor.
-const ENTITY_DOC_ACTORS: &str = "entity document birth and commit messages name actors";
 
 /// An id in its one canonical spelling.
 fn hex_id(hex: &str) -> Option<EntityId> {
@@ -117,39 +117,45 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
 }
 
 /// Each fork under the entity its record names, and each fork snapshot
-/// named with its fork's entity.
+/// under its fork's entity (`loro::capture_fork_snapshot`); a snapshot no
+/// record names has no owner.
 fn capture_forks(dbs: &impl ManifestDbs, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
-    let mut entities = BTreeMap::new();
+    let mut forks = BTreeMap::new();
     for row in rows::typed_rows(dbs, txn, ENTITY_DOC_FORK, out)? {
         let Some(entity) = hex_id(&row.value.entity) else {
             out.unclassified(row.at, None, Unresolved::NoOwner);
             continue;
         };
+        let fork = (entity, row.value.status, row.value.base.clone());
+        forks.insert(row.key.clone(), fork);
         let owner = OwnerRef::entity(&entity);
-        entities.insert(row.key.clone(), owner);
         rows::split_actors(out, owner, ENTITY_DOC_FORK, row, |fork| {
             take_actor(&mut fork.actor)
         })?;
     }
     for row in rows::typed_rows(dbs, txn, ENTITY_DOC_FORK_SNAPSHOT, out)? {
-        let owner = entities.get(&row.key).copied();
-        out.unclassified(row.at, owner, Unresolved::ActorSplit(ENTITY_DOC_ACTORS));
+        match forks.get(&row.key) {
+            Some((entity, status, base)) => {
+                loro::capture_fork_snapshot(out, *entity, *status, base, row);
+            }
+            None => out.unclassified(row.at, None, Unresolved::NoOwner),
+        }
     }
     Ok(())
 }
 
 fn owns(at: &RowLocator) -> bool {
-    [
+    let decls = [
         ENTITY_DOC_HEAD.decl(),
         ENTITY_DOC_CITATION_FLOOR.decl(),
         ENTITY_DOC_FORK.decl(),
+        ENTITY_DOC_FORK_SNAPSHOT.decl(),
         ENTITY_DOC_PIN.decl(),
         ENTITY_DOC_PURGE_RECEIPT.decl(),
         ENTITY_DOC_RECEIPT.decl(),
         ENTITY_DOC_PROPOSAL_BUNDLE.decl(),
-    ]
-    .into_iter()
-    .any(|decl| at.in_table(decl))
+    ];
+    documents::owns(at) || decls.into_iter().any(|decl| at.in_table(decl))
 }
 
 /// The bundle framing of `rows`' entity-document parts.
@@ -172,6 +178,11 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         rows::check_row(ENTITY_DOC_RECEIPT, at, value)
     } else if at.in_table(ENTITY_DOC_PROPOSAL_BUNDLE.decl()) {
         rows::check_row(ENTITY_DOC_PROPOSAL_BUNDLE, at, value)
+    } else if at.in_table(ENTITY_DOC_FORK_SNAPSHOT.decl()) {
+        rows::check_row(ENTITY_DOC_FORK_SNAPSHOT, at, value)?;
+        loro::check_snapshot(value, None)
+    } else if documents::owns(at) {
+        documents::check(at, value)
     } else {
         Err(rows::bad_part())
     }
@@ -179,14 +190,20 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 
 /// A no-one-form row with its opened actors back. A pending fork whose
 /// opener did not open goes, as the erase deletes it; every other row stays,
-/// naming no one where its actor did not open.
+/// naming no one where its actor did not open. A fork snapshot's history is
+/// rebuilt the same, its birth naming `opened`'s entity.
 fn join(
     dbs: &impl ManifestDbs,
     view: &RoTxn<'_>,
+    opened: &OpenedOwnerRows,
     at: &RowLocator,
     value: &[u8],
     parts: &[&ActorPart],
 ) -> Result<Option<Vec<u8>>> {
+    if at.in_table(ENTITY_DOC_FORK_SNAPSHOT.decl()) {
+        let entity = tree_entity(opened)?;
+        return loro::join_fork_snapshot(&entity, value, parts).map(Some);
+    }
     if at.in_table(ENTITY_DOC_FORK.decl()) {
         let fork = rows::join_actors(ENTITY_DOC_FORK, value, parts, |fork, field, actor| {
             put_actor(&mut fork.actor, field, actor)
@@ -228,14 +245,29 @@ fn join(
 }
 
 /// Puts `opened`'s entity-document rows back: exact rows as they are, each
-/// actor that opened back in its row, and each proposal fragment merged into
-/// the bundle the owners restored so far hold.
+/// actor that opened back in its row, each document slot rebuilt as one
+/// group before any row is written ([`documents::join`]), and each proposal
+/// fragment merged into the bundle the owners restored so far hold.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
+    let rebuilt = documents::join(&opened)?;
     rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
-        join(dbs, view, at, value, parts)
+        if documents::owns(at) {
+            let row = rebuilt.get(at).cloned();
+            return row.map(Some).ok_or_else(rows::bad_part);
+        }
+        join(dbs, view, &opened, at, value, parts)
     })
+}
+
+/// The entity whose tree `opened` is.
+fn tree_entity(opened: &OpenedOwnerRows) -> Result<EntityId> {
+    let id = opened.owner32.first_chunk::<16>().copied();
+    match (opened.subtype, id) {
+        (Subtype::EntityTree, Some(id)) => EntityId::from_bytes(id),
+        _ => Err(rows::bad_part()),
+    }
 }

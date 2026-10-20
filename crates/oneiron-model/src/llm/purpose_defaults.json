@@ -50,7 +50,8 @@
   "voice_precedence": "nested_narrowing",
   "extraction_max_locality": "on_device",
   "self_compaction": {
-    "source": "retained_turns",
+    "source": "auto",
+    "cheap_model": "deepseek/deepseek-flash@1017",
     "locality": "third_party"
   }
 }

@@ -602,8 +602,9 @@ pub struct AgentDefinition {
     /// owner's words on when (FIX 4472). Empty: its one house-routed model.
     /// A dial, not identity: deliberately NOT in the freeze-set.
     pub models: Vec<AgentModel>,
-    /// The model that compacts the agent's window; absent takes the house's.
-    /// It need not be listed; resolve through
+    /// The model that compacts the agent's window; absent takes the default
+    /// its host supplies (for a `self` writer, the self-compaction row's
+    /// cheap model, FIX 6029). It need not be listed; resolve through
     /// [`super::resolve_compaction_model`].
     pub compaction_model: Option<ModelId>,
 }

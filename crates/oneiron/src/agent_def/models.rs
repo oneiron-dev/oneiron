@@ -172,11 +172,15 @@ pub(super) fn validate_agent_models(def: &AgentDefinition) -> Result<()> {
 }
 
 /// The model that compacts `agent`'s window: its own when it names one, else
-/// `house`, the host's concrete compaction model. It need not be on the
+/// `fallback`, the default its host supplies (for a `self` writer, the
+/// self-compaction row's cheap model, FIX 6029). It need not be on the
 /// agent's list.
 #[must_use]
-pub fn resolve_compaction_model<'a>(agent: &'a AgentDefinition, house: &'a ModelId) -> &'a ModelId {
-    agent.compaction_model.as_ref().unwrap_or(house)
+pub fn resolve_compaction_model<'a>(
+    agent: &'a AgentDefinition,
+    fallback: &'a ModelId,
+) -> &'a ModelId {
+    agent.compaction_model.as_ref().unwrap_or(fallback)
 }
 
 /// Holds a run to `agent`'s list: any model when the agent lists none (its
