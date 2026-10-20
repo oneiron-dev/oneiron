@@ -12,8 +12,6 @@
     <string>serve</string>
     <string>--vault-path</string>
     <string>__HOME__/.local/share/oneiron/default</string>
-    <string>--config</string>
-    <string>__HOME__/.config/oneiron/oneiron.toml</string>
   </array>
 
   <!-- launchd binds the daemon's socket and passes it in. The auth secret
