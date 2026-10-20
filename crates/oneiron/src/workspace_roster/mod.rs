@@ -178,6 +178,7 @@ pub(crate) use project::{
 mod rooms;
 pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
+pub(crate) use rooms::notify_thread_members_in_txn;
 pub(crate) use rooms::{
     AUDIENCE_EDIT_BOUND, erase_audience_actor_in_txn, erase_audience_edit,
     reject_audience_edit_delete, reject_audience_edit_unlink, scrub_room_audience,
@@ -192,12 +193,13 @@ pub(crate) use rooms::{
 };
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomMessagesRequest, RoomPage,
-    RoomSpeakingRole, RoomStanding, RoomThread, RoomThreadList, RoomThreadPage, RoomThreadPolicy,
-    RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
+    RoomSpeakingRole, RoomStanding, RoomThread, RoomThreadAudienceEvent, RoomThreadAudienceOp,
+    RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk,
+    RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
 };
 pub use rooms::{
-    ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
-    ThreadAudienceRemoveRequest,
+    ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceOpenFullHistoryRequest,
+    ThreadAudienceReceipt, ThreadAudienceRemoveRequest, ThreadNotice,
 };
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{

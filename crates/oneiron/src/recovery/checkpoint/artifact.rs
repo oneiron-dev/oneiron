@@ -61,6 +61,10 @@ use serde::{Deserialize, Serialize};
 
 use self::sink::Sealer;
 pub(super) use self::sink::{ArtifactBody, write_artifact};
+use super::admission::{
+    RestoreAdmissionError, RestoreAdmissionReason, RestoreDestinationState, RestorePhase,
+    SourceExpectation,
+};
 use super::commitment::{self, CheckpointSigner, Trust};
 use super::payload::PayloadSection;
 use crate::world_keys::{
@@ -100,6 +104,9 @@ pub struct CheckpointKey {
     /// restored from the artifact ([`Self::restored_page_seal`]); `None` for
     /// the key an open vault gives.
     opened: Option<OpenedDataKey>,
+    /// What a cold managed restore's plan expects of the artifact, for the
+    /// key [`CheckpointKey::from_delivered`] made; `None` for every other.
+    expected: Option<Box<SourceExpectation>>,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -153,7 +160,54 @@ impl CheckpointKey {
             custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
             trust: Trust::Nobody,
             opened: Some(opened),
+            expected: None,
         })
+    }
+
+    /// The key of a cold managed restore (LC FIX 5384/5385), from the data
+    /// key `dek` its supervisor delivered: copied into guarded storage, its
+    /// commitment under the plan's source vault id checked against the
+    /// plan's, and trusting the plan's external signer pins alone. It opens
+    /// the artifact as the SOURCE vault's: its page seal is a fresh
+    /// incarnation under that vault id and key, never a new vault, and
+    /// nothing leaves as bytes or is rekeyed.
+    /// [`Vault::restore_checkpoint_admitted`] checks the artifact against
+    /// `expected` before it opens.
+    ///
+    /// # Errors
+    /// `data_key_mismatch` when the delivered key is not the one the plan
+    /// names.
+    pub fn from_delivered(
+        dek: &[u8; 32],
+        expected: &SourceExpectation,
+    ) -> std::result::Result<Self, RestoreAdmissionError> {
+        let opened = OpenedDataKey::delivered(expected.engine_vault_id, dek);
+        if opened.commitment() != expected.data_key_commitment {
+            return Err(RestoreAdmissionError::new(
+                RestoreAdmissionReason::DataKeyMismatch,
+                RestorePhase::SourceCheck,
+                RestoreDestinationState::Removed,
+                refused("the delivered key is not the data key the restore plan names"),
+            ));
+        }
+        Ok(Self {
+            vault_id: expected.engine_vault_id,
+            kek: Kek::from_zeroizing(opened.subkey(SEAL_CONTEXT)),
+            custody_wrap: opened.subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT),
+            trust: Trust::Pinned(expected.signer_pins.clone()),
+            opened: Some(opened),
+            expected: Some(Box::new(expected.clone())),
+        })
+    }
+
+    /// The plan's expectation, for a key [`Self::from_delivered`] made.
+    pub(super) fn expected(&self) -> Option<&SourceExpectation> {
+        self.expected.as_deref()
+    }
+
+    /// The data key a delivered or carried wrap's key came from, opaque.
+    pub(super) fn opened(&self) -> Option<&OpenedDataKey> {
+        self.opened.as_ref()
     }
 
     /// [`CheckpointKey::unlock`] with this install's keystore at the platform
@@ -215,6 +269,7 @@ impl Vault {
             custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
+            expected: None,
         })
     }
 
@@ -233,6 +288,7 @@ impl Vault {
                 custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
                 trust: Trust::Nobody,
                 opened: None,
+                expected: None,
             },
         ))
     }
@@ -319,6 +375,8 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) image: Vec<u8>,
     /// BLAKE3 of the image: the checkpoint id.
     pub(super) image_id: [u8; 32],
+    /// BLAKE3 of the signed commitment's exact bytes.
+    pub(super) commitment_digest: [u8; 32],
     pub(super) created_at: u64,
     pub(super) bodies: SealedBodies<'k>,
     /// The manifest's custody requirement (KS-4).
@@ -341,7 +399,16 @@ pub(super) struct SealedBodies<'k> {
 /// clear head, the complete set of frames, and the image, before any of the
 /// image is decoded. Refuses another vault's artifact before anything opens.
 pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<OpenedArtifact<'k>> {
-    let mut file = File::open(path)?;
+    open_artifact_file(File::open(path)?, key)
+}
+
+/// [`open_artifact`] on a file already open: a cold managed restore opens
+/// the very file it inspected, never its path again.
+pub(super) fn open_artifact_file(
+    mut file: File,
+    key: &CheckpointKey,
+) -> Result<OpenedArtifact<'_>> {
+    file.seek(SeekFrom::Start(0))?;
     let prelude = Prelude::read(&mut file)?;
     if prelude.vault_id != key.vault_id {
         return Err(refused("the checkpoint is another vault's"));
@@ -376,10 +443,11 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
     if end != footer_at {
         return Err(codec());
     }
+    let commitment_bytes = read_at(&mut file, signed_at + 4, commitment_len)?;
     let commitment = commitment::verify(
         &key.trust,
         &key.vault_id,
-        &read_at(&mut file, signed_at + 4, commitment_len)?,
+        &commitment_bytes,
         &read_at(&mut file, record_at + 4, record_len)?,
     )?;
     if commitment.kind != prelude.kind.code()
@@ -478,6 +546,7 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
     Ok(OpenedArtifact {
         image,
         image_id: manifest.image.digest,
+        commitment_digest: oneiron_crypto::backup::commitment_digest(&commitment_bytes),
         created_at: manifest.created_at,
         bodies: SealedBodies {
             file,

@@ -213,6 +213,9 @@ impl Mirror {
 pub(crate) struct OpenedDataKey {
     vault_id: [u8; 32],
     key: Arc<VaultDataKey>,
+    /// The key a managed node's supervisor delivered for a cold restore
+    /// (LC FIX 5384/5385), not one a carried wrap opened.
+    delivered: bool,
 }
 
 impl OpenedDataKey {
@@ -220,7 +223,29 @@ impl OpenedDataKey {
         Self {
             vault_id,
             key: Arc::new(key),
+            delivered: false,
         }
+    }
+
+    /// The data key a managed node's supervisor delivered for the source
+    /// vault `vault_id`, copied into guarded storage: no wrap opened it, so
+    /// its commitment is the caller's to check ([`Self::commitment`]).
+    pub(crate) fn delivered(vault_id: [u8; 32], dek: &[u8; 32]) -> Self {
+        Self {
+            vault_id,
+            key: Arc::new(VaultDataKey::delivered(dek)),
+            delivered: true,
+        }
+    }
+
+    /// The commitment naming this key under its vault id.
+    pub(crate) fn commitment(&self) -> [u8; 32] {
+        self.key.commitment(&self.vault_id)
+    }
+
+    /// The key itself, for the restored vault that holds it.
+    pub(super) fn data_key(&self) -> &Arc<VaultDataKey> {
+        &self.key
     }
 
     /// The key for `context` of this data key (FIX 5348: a restore opens the
@@ -232,7 +257,9 @@ impl OpenedDataKey {
     /// A seal for a vault restored from the artifact: its vault id and data
     /// key under a fresh incarnation. It creates the restored vault, whose
     /// rows carry the key's wraps; its second open checks the key against
-    /// their commitment.
+    /// their commitment. Under a delivered key it is a delivered seal, so
+    /// its mirror is written before the vault's first wrap, as a managed
+    /// vault's is; never a new vault id.
     pub(crate) fn restored_page_seal(&self) -> Result<VaultPageSeal> {
         let mut incarnation = [0u8; 32];
         os_fill(&mut incarnation)?;
@@ -240,7 +267,11 @@ impl OpenedDataKey {
             self.vault_id,
             incarnation,
             Arc::clone(&self.key),
-            SealOrigin::New,
+            if self.delivered {
+                SealOrigin::Delivered { new: true }
+            } else {
+                SealOrigin::New
+            },
         ))
     }
 }

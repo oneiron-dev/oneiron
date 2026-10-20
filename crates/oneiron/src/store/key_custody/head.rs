@@ -29,6 +29,7 @@ use crate::error::{Error, Result};
 
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
 use super::log::{AEAD, CRYPTO_EPOCH, Control, CustodyPosition, POSITION_LEN, open_sym, seal_sym};
+use super::recipients::RecipientRetirement;
 
 const HEAD_MAGIC: &[u8; 4] = b"OCHD";
 const HEAD_VERSION: u16 = 1;
@@ -132,6 +133,9 @@ pub(crate) struct OpenedHead {
     pub(super) live: BTreeMap<CustodyId, CustodySecret>,
     pub(super) retired: BTreeSet<CustodyId>,
     pub(super) unopened: BTreeSet<CompartmentScope>,
+    /// The released escrow recipients the lineage retired (LC FIX
+    /// 5384/5385), from the control compartment.
+    pub(super) recipients: Vec<RecipientRetirement>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -170,6 +174,10 @@ struct BodyWire {
     digests: Vec<[u8; 32]>,
     live: Vec<EntryWire>,
     retired: Vec<FactWire>,
+    /// The control compartment's: every released escrow recipient the
+    /// lineage retired, public facts only (LC FIX 5384/5385).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    recipients: Vec<RecipientRetirement>,
 }
 
 impl Drop for BodyWire {
@@ -346,14 +354,16 @@ fn seal_compartment(
     })
 }
 
-/// Seals a head at `position` holding `entries` and the retirement facts
-/// `retired`, wrapped to `recipients`. The bytes are key-bearing: they go
-/// only to a custody target, never to a log, error or receipt.
+/// Seals a head at `position` holding `entries`, the retirement facts
+/// `retired` and the released escrow recipients `released` retired, wrapped
+/// to `recipients`. The bytes are key-bearing: they go only to a custody
+/// target, never to a log, error or receipt.
 pub(super) fn seal_head(
     position: &CustodyPosition,
     control: &Control,
     entries: Vec<HeadEntry>,
     retired: Vec<CustodyId>,
+    released: Vec<RecipientRetirement>,
     recipients: &CustodyRecipients,
 ) -> Result<Zeroizing<Vec<u8>>> {
     // Each scope's entries go in as many compartments as they fill, each
@@ -409,6 +419,7 @@ pub(super) fn seal_head(
         digests,
         live: Vec::new(),
         retired: Vec::new(),
+        recipients: released,
     };
     compartments.insert(
         0,
@@ -519,7 +530,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     let key = unwrap_key(&position, &control_id, None, &first.wraps, opener).ok_or_else(|| {
         crate::world_keys::refused("the custody head does not open with this key or kit")
     })?;
-    let control = open_body(&position, &control_id, &key, &first.sealed)?;
+    let mut control = open_body(&position, &control_id, &key, &first.sealed)?;
     let secret = Zeroizing::new(control.control.ok_or_else(head_corrupt)?);
     if control.digests.len() != rest.len()
         || rest
@@ -535,6 +546,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         live: BTreeMap::new(),
         retired: BTreeSet::new(),
         unopened: BTreeSet::new(),
+        recipients: std::mem::take(&mut control.recipients),
     };
     // A scope's compartments follow one another, scopes in order: one
     // canonical layout, which the control compartment's digests fix.
@@ -552,6 +564,9 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
             continue;
         };
         let mut body = open_body(&position, &id, &key, &compartment.sealed)?;
+        if !body.recipients.is_empty() {
+            return Err(head_corrupt());
+        }
         for mut entry in std::mem::take(&mut body.live) {
             let id = typed(&position, entry.kind, &entry.item, entry.generation, scope)?;
             let secret = std::mem::take(&mut entry.secret);
