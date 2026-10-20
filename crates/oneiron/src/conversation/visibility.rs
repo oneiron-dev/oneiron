@@ -74,20 +74,25 @@ impl AudienceCache {
     /// the roster. No other member's window binds it; a room it is not on,
     /// or whose ledger keeps no window for it, and the room's own record add
     /// nothing. A record whose header, sources or room roster cannot be read
-    /// omits this row; one that is gone is the other gates' to refuse.
+    /// omits this row; one that is gone is the other gates' to refuse. The
+    /// records and their ancestry are read through `dbs` as well as base
+    /// (FIX 6487): a session's composed view, so a source or ancestor a
+    /// stretch staged in its overlay meets the same window, and an overlay
+    /// row never stands in for the base one.
     pub(crate) fn own_entry_readable_raw(
         &self,
         vault: &Vault,
+        dbs: &crate::store::StoreRead<'_>,
         txn: &heed::RoTxn<'_>,
         id: EntityId,
         raw: &[u8],
         reader: EntityId,
     ) -> Result<bool> {
         let mut pending = vec![(id, raw.to_vec())];
-        if let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
-            && live.as_slice() != raw
-        {
-            pending.push((id, live));
+        for live in base_and_view_rows_in(vault, dbs, txn, id)? {
+            if live.as_slice() != raw {
+                pending.push((id, live));
+            }
         }
         let mut seen = BTreeSet::from([id]);
         while let Some((id, bytes)) = pending.pop() {
@@ -95,7 +100,7 @@ impl AudienceCache {
                 return Ok(false);
             };
             // The room's own record is the room, not its history.
-            for room in rooms_of_revision_in(vault, txn, id, &bytes)? {
+            for room in rooms_of_revision_in(vault, dbs, txn, id, &bytes)? {
                 if room == id {
                     continue;
                 }
@@ -118,11 +123,10 @@ impl AudienceCache {
                 sources.extend(covers);
             }
             for source in sources {
-                if seen.insert(source)
-                    && let Some(bytes) =
-                        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &source)?
-                {
-                    pending.push((source, bytes));
+                if seen.insert(source) {
+                    for bytes in base_and_view_rows_in(vault, dbs, txn, source)? {
+                        pending.push((source, bytes));
+                    }
                 }
             }
         }
@@ -602,27 +606,20 @@ fn room_for_revision_in(
 /// Every room the revision `raw` of `record` sits in (FIX 5861), up the
 /// edges and claim subjects [`room_for_revision_in`] walks: an ancestor that
 /// is gone is passed over, never a refusal, and a record that reaches two
-/// rooms sits in both.
+/// rooms sits in both. Each ancestor and edge is read on base and through
+/// `dbs`, a session's composed view (FIX 6487).
 fn rooms_of_revision_in(
     vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
     txn: &heed::RoTxn<'_>,
     record: EntityId,
     raw: &[u8],
 ) -> Result<BTreeSet<EntityId>> {
-    let mut pending = vec![(record, Some(raw.to_vec()))];
-    let mut seen = BTreeSet::new();
+    let union = crate::store::ManifestDbs::is_union(dbs);
+    let mut pending = vec![(record, raw.to_vec())];
+    let mut seen = BTreeSet::from([record]);
     let mut rooms = BTreeSet::new();
-    while let Some((id, revision)) = pending.pop() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let bytes = match revision {
-            Some(bytes) => bytes,
-            None => match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? {
-                Some(bytes) => bytes,
-                None => continue,
-            },
-        };
+    while let Some((id, bytes)) = pending.pop() {
         let Some(h) = EntityMetadataHeader::parse(&bytes) else {
             continue;
         };
@@ -630,6 +627,7 @@ fn rooms_of_revision_in(
             rooms.insert(id);
             continue;
         }
+        let mut next = Vec::new();
         for kind in [
             EdgeKind::ChildOf,
             EdgeKind::PartOf,
@@ -638,18 +636,55 @@ fn rooms_of_revision_in(
             EdgeKind::SpawnedBy,
             EdgeKind::BelongsTo,
         ] {
-            let next = edge_ids(&vault.store, txn, &id, kind, false, MAX_ANCESTOR_DEPTH)?;
-            pending.extend(next.into_iter().map(|id| (id, None)));
+            next.extend(edge_ids(
+                &vault.store,
+                txn,
+                &id,
+                kind,
+                false,
+                MAX_ANCESTOR_DEPTH,
+            )?);
+            if union {
+                next.extend(edge_ids(dbs, txn, &id, kind, false, MAX_ANCESTOR_DEPTH)?);
+            }
         }
         if h.entity_type == ENTITY_TYPE_CLAIM
             && let Some(body) = bytes.get(ENTITY_METADATA_HEADER_LEN..)
             && let Ok(claim) = crate::claim::decode_claim_body(body, true)
             && let crate::claim::ClaimSubject::Entity(subject) = claim.subject
         {
-            pending.push((subject, None));
+            next.push(subject);
+        }
+        for ancestor in next {
+            if seen.insert(ancestor) {
+                for bytes in base_and_view_rows_in(vault, dbs, txn, ancestor)? {
+                    pending.push((ancestor, bytes));
+                }
+            }
         }
     }
     Ok(rooms)
+}
+/// The rows `id` holds on base and, when `dbs` composes a session's view
+/// over it, in that view, each once (FIX 6487): an overlay row is read
+/// beside the base one, never in its place. None for a record neither holds.
+fn base_and_view_rows_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Vec<Vec<u8>>> {
+    let mut rows = Vec::new();
+    if let Some(base) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? {
+        rows.push(base);
+    }
+    if crate::store::ManifestDbs::is_union(dbs)
+        && let Some(view) = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)?
+        && !rows.contains(&view)
+    {
+        rows.push(view);
+    }
+    Ok(rows)
 }
 impl Vault {
     /// The room audience is membership, never runtime presence.

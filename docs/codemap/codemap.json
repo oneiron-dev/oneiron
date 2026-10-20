@@ -18745,7 +18745,7 @@
      "purpose": "Dispatch-time resolution of a `ContextSpec` against live vault state",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 3
      }
@@ -62868,6 +62868,7 @@
      "path": "src/workspace_roster/rooms/audience_doors.rs",
      "purpose": "The doors that edit a private thread's audience (FIX 5545): an add and a remove, each one audience edit TURN…",
      "surface": {
+      "const": 1,
       "crate-vis": 8,
       "fn": 2,
       "struct": 3
