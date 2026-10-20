@@ -14,26 +14,28 @@
 //! Only the one-shot digest moves. The action requirement every Grant is
 //! matched on, the grant echo, budgets, connector settings and the consent
 //! precedence never read the target, and an effect that carries none (mail,
-//! code waits, artifact publish, brief share, task cancel, failure-signal
-//! batches until FIX 6679, and the families FIX 6424's second part pins)
-//! composes exactly the digest it composed before. No target names a
-//! provider id the send has not been given yet.
+//! code waits, artifact publish, brief share, task cancel, and the families
+//! FIX 6424's second part pins) composes exactly the digest it composed
+//! before. No target names a provider id the send has not been given yet. A
+//! failure-signal batch pins once the next pass carries a held batch's ref
+//! and content (FIX 6679).
 
 use crate::calendar::CalendarInvitePayload;
 use crate::entity_id::EntityId;
 
 /// The BLAKE3 domain of the target pin.
 const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once.target.v1";
-/// The connector whose admitted press is recomposed from its frozen ledger
+/// A connector whose admitted press is recomposed from its frozen ledger
 /// bytes, so its press pins its send's stable logical identity.
 const ESIGN_CONNECTOR: &str = "esign";
-/// The failure-signal connector: each delivery pass mints a fresh batch and
-/// send ref, so a press pinned to a held batch would never be spent.
+/// The failure-signal connector: a batch the Gate holds is carried into the
+/// next pass under its own send ref and recomposed from its frozen ledger
+/// bytes like an e-sign send's (FIX 6679).
 const FAILURE_SIGNALS_CONNECTOR: &str = "failure_signals";
-/// Whether a failure-signal batch pins its target (CALLS `FIX 6424
-/// failure-signal batches keep the unpinned digest`). Off until the next
-/// pass carries the held batch's ref and content (FIX 6679), so the press
-/// the owner made today is still spent by the next batch.
+/// Whether a failure-signal batch pins its target (CALLS `FIX 6679 held
+/// failure-signal batch carries over`, superseding `FIX 6424 failure-signal
+/// batches keep the unpinned digest`): the next pass carries a held batch's
+/// ref and content, so the owner's press is spent by exactly that batch.
 const FAILURE_SIGNAL_BATCHES_PIN: bool = false;
 
 /// The facts one non-mail send's approve-once press pins, per family. Every
@@ -151,19 +153,14 @@ impl ApprovalTarget {
         Some(target)
     }
 
-    /// Whether this family's admitted press is recomposed from its frozen
-    /// ledger bytes (an e-sign send's or reminder's proof, FIX 6362), so its
-    /// frozen payload carries the send ref the press pins.
-    pub(crate) const fn freezes_send_ref(&self) -> bool {
-        matches!(self, Self::Esign { .. })
-    }
-
-    /// [`Self::freezes_send_ref`] for a send on `connector`, before its
-    /// target is built: such a press pins the send's stable logical
+    /// Whether a send on `connector` has its admitted press recomposed from
+    /// its frozen ledger bytes (an e-sign send's or reminder's proof, FIX
+    /// 6362; a failure-signal batch's, FIX 6679), so its frozen payload
+    /// carries the send ref the press pins: the send's stable logical
     /// identity, the one its ledger row and every retry keep (Engine 10-20
     /// 20:4x).
     pub(crate) fn freezes_send_ref_of(connector: &str) -> bool {
-        connector == ESIGN_CONNECTOR
+        connector == ESIGN_CONNECTOR || connector == FAILURE_SIGNALS_CONNECTOR
     }
 
     /// `operation_kind` named by this one send, the shape native mail's

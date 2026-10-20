@@ -49,8 +49,8 @@ pub(super) struct FrozenOutboundPayload<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) native_mail_logical_ref: Option<&'a str>,
     /// FIX 6424: the logical send ref a non-mail press pins, for a family
-    /// whose admitted press is recomposed from these bytes (e-sign); elided
-    /// for every other send.
+    /// whose admitted press is recomposed from these bytes (e-sign, and a
+    /// failure-signal batch, FIX 6679); elided for every other send.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) approval_send_ref: Option<&'a str>,
     pub(super) has_opted_in: bool,
