@@ -136,7 +136,7 @@ pub(super) async fn read_by_deadline(
     + Send
     + 'static,
 ) -> Result<ScopedSearchResponse, ApiError> {
-    let job = admit_deadline_job(&server, &auth)?;
+    let job = deadline_job(&server, &auth);
     let (publish, ready) = std::sync::mpsc::sync_channel(1);
     let task = tokio::task::spawn_blocking(move || {
         let _job = job;
@@ -170,26 +170,14 @@ const DEADLINE_CALLER: &[u8] = b"oneiron-server.search.deadline-caller.v1";
 /// `auth`'s place among its caller's running deadline jobs (SCAN C030), the
 /// caller keyed as its read-shape questions are: held by the read until it
 /// ends, its door's answer past. Past `limits.deadline_jobs_per_caller` the
-/// search is refused, typed `INVALID_STATE` with the row named.
-fn admit_deadline_job(
-    server: &SyncServer,
-    auth: &CoreAuth,
-) -> Result<oneiron::store::DeadlineJob, ApiError> {
+/// search runs on and raises the row's `deadline_jobs_high` check; it is
+/// never refused. A key no id can hold counts nothing.
+fn deadline_job(server: &SyncServer, auth: &CoreAuth) -> Option<oneiron::store::DeadlineJob> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(DEADLINE_CALLER);
     hasher.update(query_caller(auth).as_bytes());
     let mut key = [0; 16];
     key.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
-    let caller = oneiron::EntityId::from_bytes(key)
-        .map_err(|_| ApiError::internal_server_error("search caller key"))?;
-    let row = oneiron::limit_ask::EngineLimit::DeadlineJobsPerCaller.key();
-    server.vault.admit_deadline_job(caller).map_err(|refusal| {
-        ApiError::new(
-            refusal.message,
-            crate::error::ApiErrorDetails::InvalidState {
-                state: Some(row.to_owned()),
-            },
-            refusal.suggestions,
-        )
-    })
+    let caller = oneiron::EntityId::from_bytes(key).ok()?;
+    Some(server.vault.admit_deadline_job(caller))
 }

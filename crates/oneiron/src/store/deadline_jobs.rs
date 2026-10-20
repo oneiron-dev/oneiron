@@ -1,20 +1,46 @@
 //! Deadline jobs (SCAN C030): the recalls and searches a door answers at
 //! their deadline, counted per caller on the vault while their work runs, the
 //! work left after the door answered included. Past
-//! `limits.deadline_jobs_per_caller` a new one is refused, typed and naming
-//! the row; none is queued or dropped.
+//! `limits.deadline_jobs_per_caller` the job runs on, and its caller raises
+//! the typed `deadline_jobs_high` check, once per caller per window: never a
+//! refusal, a queue or a drop (rule 5).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
-use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 
-/// The deadline jobs each caller has running on one vault.
+/// The typed check a caller past `limits.deadline_jobs_per_caller` raises.
+pub const DEADLINE_JOBS_CHECK_KIND: &str = "deadline_jobs_high";
+
+/// How long one caller's check stands before the same caller raises it again:
+/// the window a `[limits]` question counts its crossings in.
+pub(crate) const DEADLINE_JOBS_CHECK_WINDOW: Duration = Duration::from_secs(60);
+
+/// The deadline jobs each caller has running on one vault, and when each
+/// caller last raised its check.
 #[derive(Default)]
-pub(crate) struct DeadlineJobs(Arc<Mutex<BTreeMap<EntityId, u64>>>);
+pub(crate) struct DeadlineJobs {
+    running: Arc<Mutex<BTreeMap<EntityId, u64>>>,
+    checked: Mutex<BTreeMap<EntityId, Instant>>,
+}
+
+impl DeadlineJobs {
+    /// Whether `caller` raises its check at `now`: it raised none in the
+    /// window. Checks past the window are let go.
+    fn check_due(&self, caller: EntityId, now: Instant) -> bool {
+        let mut checked = lock(&self.checked);
+        checked.retain(|_, at| now.saturating_duration_since(*at) < DEADLINE_JOBS_CHECK_WINDOW);
+        if checked.contains_key(&caller) {
+            return false;
+        }
+        checked.insert(caller, now);
+        true
+    }
+}
 
 /// One running deadline job's place among its caller's: held by the job's
 /// work until it ends, and freed when dropped.
@@ -41,34 +67,38 @@ impl Vault {
     /// door answers at its deadline and may leave its work running past the
     /// answer. Hold it in the job's work until that work ends.
     ///
-    /// # Errors
-    ///
-    /// `INVALID_STATE` naming `limits.deadline_jobs_per_caller` when `caller`
-    /// already runs as many as the row is set to; the row asks first.
-    pub fn admit_deadline_job(&self, caller: EntityId) -> MemoryResult<DeadlineJob> {
-        let jobs = &self.store.deadline_jobs.0;
-        let mut running = lock(jobs);
-        let held = running.get(&caller).copied().unwrap_or(0);
-        let measured = held.saturating_add(1);
-        if let Some(bound) = self.measure_limit(EngineLimit::DeadlineJobsPerCaller, measured) {
-            return Err(deadline_jobs_refused(bound));
+    /// The job always runs. Past `limits.deadline_jobs_per_caller` it raises
+    /// the typed `deadline_jobs_high` check, once per caller per
+    /// `DEADLINE_JOBS_CHECK_WINDOW`: the row's question through the
+    /// vault's limit port, which keeps the row and the count, and one log
+    /// line naming the row, the caller and the count.
+    pub fn admit_deadline_job(&self, caller: EntityId) -> DeadlineJob {
+        let jobs = &self.store.deadline_jobs;
+        let held = {
+            let mut running = lock(&jobs.running);
+            let held = running.entry(caller).or_default();
+            *held = held.saturating_add(1);
+            *held
+        };
+        let row = EngineLimit::DeadlineJobsPerCaller;
+        if held > self.limit_watch().bound(row)
+            && jobs.check_due(caller, Instant::now())
+            && let Some(bound) = self.measure_limit(row, held)
+        {
+            tracing::warn!(
+                kind = DEADLINE_JOBS_CHECK_KIND,
+                row = row.key(),
+                caller = %caller.to_hex(),
+                count = held,
+                bound,
+                "a caller's deadline jobs passed their row and run on; is everything okay?"
+            );
         }
-        running.insert(caller, measured);
-        Ok(DeadlineJob {
+        DeadlineJob {
             caller,
-            running: Arc::clone(jobs),
-        })
+            running: Arc::clone(&jobs.running),
+        }
     }
-}
-
-/// The refusal of a deadline job past its caller's row.
-fn deadline_jobs_refused(bound: u64) -> MemoryError {
-    let row = EngineLimit::DeadlineJobsPerCaller.key();
-    MemoryError::new(
-        MEMORY_CODE_INVALID_STATE,
-        format!("{row}: this caller already runs {bound} deadline jobs"),
-        &["Retry once an earlier recall or search under a deadline has ended, or raise the row."],
-    )
 }
 
 /// The counts change in one step each, so a holder that panicked left them

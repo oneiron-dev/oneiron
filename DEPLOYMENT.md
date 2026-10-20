@@ -262,7 +262,7 @@ seal_structural_work = 8000000    # tokens one structural pass of the seal lexes
 seal_revisions = 32               # revisions in the xref chain of a PDF the seal reads; past it every revision is followed and the row asks
 seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision chain parses, summed over its revisions; past it every prefix is parsed and the row asks
 seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (one stream still decodes to at most 256 MiB)
-deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the row asks and the new one is refused (INVALID_STATE naming this row)
+deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the job runs on and the row asks (the deadline_jobs_high check, naming the caller and the count, once per caller per minute)
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

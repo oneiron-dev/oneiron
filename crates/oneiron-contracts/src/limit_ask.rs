@@ -294,9 +294,10 @@ pub enum EngineLimit {
     SealDssDecodeBytes,
     /// Deadline jobs one caller has running at once: the recalls and searches
     /// a door answers at their deadline, each counted until its work ends,
-    /// after its answer too (SCAN C030). The one row whose crossing refuses:
-    /// past it the row asks and the new job is refused, typed and naming the
-    /// row, never queued or dropped.
+    /// after its answer too (SCAN C030). Past it the job runs on and the row
+    /// asks, as the typed `deadline_jobs_high` check naming the caller and the
+    /// count, once per caller per window; nothing is refused, queued or
+    /// dropped.
     DeadlineJobsPerCaller,
 }
 

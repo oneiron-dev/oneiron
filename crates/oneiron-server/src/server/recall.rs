@@ -344,11 +344,10 @@ impl SyncServer {
             let ready = CutSlot::default();
             let publish = ready.clone();
             let server = Arc::clone(self);
-            // SCAN C030: a recall its door answers at the deadline holds one
-            // of its caller's deadline-job places until its work ends.
-            let job = budget
-                .map(|_| self.vault.admit_deadline_job(actor))
-                .transpose()?;
+            // SCAN C030: a recall its door answers at the deadline counts
+            // among its caller's deadline jobs until its work ends; past the
+            // row it runs on and raises the row's check.
+            let job = budget.map(|_| self.vault.admit_deadline_job(actor));
             let task = tokio::task::spawn_blocking(move || {
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
@@ -456,9 +455,9 @@ impl SyncServer {
         let vault = Arc::clone(&self.vault);
         let listing = Arc::clone(producers);
         let (sender, answer) = std::sync::mpsc::sync_channel(1);
-        // SCAN C030: the read holds one of its caller's deadline-job places
-        // until it ends, past the door's answer too.
-        let job = self.vault.admit_deadline_job(actor)?;
+        // SCAN C030: the read counts among its caller's deadline jobs until
+        // it ends, past the door's answer too; past the row it runs on.
+        let job = self.vault.admit_deadline_job(actor);
         std::thread::Builder::new()
             .name("oneiron-recall".to_owned())
             .spawn(move || {
