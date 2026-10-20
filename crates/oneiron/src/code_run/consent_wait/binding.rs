@@ -2,11 +2,13 @@
 //! sealed with the parked checkpoint (1b, `replay.rs`); read by the answer
 //! and by the effect's own gate.
 
+use std::collections::BTreeSet;
+
 use crate::Vault;
 use crate::code_run::storage::derived_executor_id;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 
 use super::types::{
@@ -52,6 +54,30 @@ pub(crate) fn read_code_consent_wait_in_txn(
     wait_id: EntityId,
 ) -> Result<Option<CodeConsentWaitRow>> {
     WAITS.get(&vault.store, txn, &wait_id)
+}
+
+/// The waits bound to one of `runs`, by wait id (FIX 5718): each one's
+/// settled reply that run alone holds, as only its own run parks on a bound
+/// wait. A row that does not decode binds none.
+pub(crate) fn code_consent_waits_bound_to_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    runs: &BTreeSet<EntityId>,
+) -> Result<Vec<EntityId>> {
+    let mut bound = Vec::new();
+    for row in WAITS.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, bytes) = row?;
+        let Some(wait) = <EntityId as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if WAITS
+            .decode_value(&bytes)
+            .is_ok_and(|row| runs.contains(&row.binding.run_id))
+        {
+            bound.push(wait);
+        }
+    }
+    Ok(bound)
 }
 
 /// Writes one wait's row at its next revision.

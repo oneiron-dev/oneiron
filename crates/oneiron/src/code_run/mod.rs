@@ -126,7 +126,8 @@ pub(crate) use self::storage::{
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
-    RESPONSE_ERASED, replay_carriage, replay_owners, retire_actor_responses_in_txn,
+    RESPONSE_ERASED, WaitReply, erase_settled_reply_of_erased_run_in_txn, replay_carriage,
+    replay_owners, response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,

@@ -743,7 +743,11 @@ impl Vault {
             }
             // An actor with no id-local state may still be named in the rows
             // that record it (its turn programs among them), so the purge's
-            // actor sweep runs here too, marker or not (FIX 5737).
+            // actor sweep runs here too, marker or not (FIX 5737). Its code
+            // runs' replies retire first, as the provenance door's erase
+            // retires them, read before the sweep releases them (FIX 5718).
+            #[cfg(unix)]
+            crate::code_run::retire_actor_responses_in_txn(&self.store, &mut wtxn, id)?;
             crate::deletion::actor_fields::erase_actor_fields_in_txn(self, &mut wtxn, id)?;
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()

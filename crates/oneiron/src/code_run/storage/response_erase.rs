@@ -19,9 +19,15 @@
 //! ([`fence_replay_in_txn`]): a record whose owner row is erased, or whose
 //! actor is gone, is written in its erased form, and the reply bodies it
 //! names are released.
+//!
+//! The same scrub reaches the replies the actor's runs were delivered by
+//! their waits (part 2, Engine ruling 2, `wait_holders`): the runs a wait's
+//! membership names as the actor's join its scope, so the reply bodies they
+//! resumed with are released here and retired by the hard erase, an
+//! instance another holder keeps waiting on that holder's release.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayRecord, ResultOccurrence};
 use super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, REPLAY_RECORDS};
@@ -30,9 +36,10 @@ use super::replay_capsule::{actor_gone_in_txn, capsule_bodies_in_txn, names_no_a
 use super::response_owners::{
     ResponseOwner, mark_response_erased_in_txn, owner_rows_of_in_txn, response_owner_in_txn,
 };
+use super::wait_holders::{erase_actor_wait_holds_in_txn, wait_holder_runs_in_txn};
 use crate::engine_executor::holds_reply_content;
 use crate::provenance::body::{owned_body_in_txn, release_body_in_txn};
-use crate::side_table::SideKey;
+use crate::side_table::{Erased, SideKey};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 
@@ -41,11 +48,14 @@ type Occurrence = (EntityId, String, String);
 
 /// The actor scrub of `actor` over its runs' reply content, in the erase's
 /// own writer: each replay record whose replies are `actor`'s (its owner
-/// rows, a live run binding or a turn program's attempt naming it, and the
-/// runs of its capsules, `runs`) is put back in its erased form, the reply
-/// bodies it names are released, and its owner row says Erased. A record
-/// that does not decode keeps its row as it is, and erasing an erased one
-/// again changes nothing. Nothing retires here: a soft delete runs this too.
+/// rows, a live run binding or a turn program's attempt naming it, the runs
+/// of its capsules, `runs`, and the runs a wait's membership names as its)
+/// is put back in its erased form, past the side-row wall, the reply bodies
+/// it names are released, and its owner row says Erased; then the wait
+/// replies those runs were delivered take their erased form (FIX 5718 part
+/// 2). A record that does not decode keeps its row as it is, and erasing an
+/// erased one again changes nothing. Nothing retires here: a soft delete
+/// runs this too.
 ///
 /// # Errors
 ///
@@ -57,15 +67,21 @@ pub(crate) fn erase_actor_responses_in_txn(
     runs: &[EntityId],
 ) -> Result<()> {
     let store = &vault.store;
-    for (record_id, run) in actor_records_in_txn(store, wtxn, actor, runs)? {
-        if let Some(mut record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
+    let mut scope = runs.to_vec();
+    scope.extend(wait_holder_runs_in_txn(store, wtxn, actor)?);
+    let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
+    for (&record_id, &run) in &records {
+        if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
             release_reply_outputs_in_txn(store, wtxn, record.run_id, &record.outputs)?;
-            erase_replies(&mut record)?;
-            REPLAY_RECORDS.put(vault, wtxn, &record_id, &record)?;
+            REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         }
         mark_response_erased_in_txn(store, wtxn, record_id, run)?;
     }
-    Ok(())
+    let held: BTreeSet<EntityId> = records
+        .into_iter()
+        .flat_map(|(id, run)| [id, run])
+        .collect();
+    erase_actor_wait_holds_in_txn(vault, wtxn, actor, &held)
 }
 
 /// `record` as its writer may put it, read in that writer (FIX 5718): as
@@ -149,7 +165,10 @@ pub(crate) fn retire_actor_responses_in_txn(
         return Ok(());
     }
     let capsules = capsule_bodies_in_txn(store, wtxn, actor)?;
-    let runs: Vec<EntityId> = capsules.iter().map(|(run, _, _)| *run).collect();
+    let mut runs: Vec<EntityId> = capsules.iter().map(|(run, _, _)| *run).collect();
+    // The runs a wait's reply was delivered to as `actor`'s: the bodies they
+    // resumed with retire beside their other replies (FIX 5718 part 2).
+    runs.extend(wait_holder_runs_in_txn(store, wtxn, actor)?);
     let mut held: Vec<Occurrence> = capsules
         .into_iter()
         .map(|(run, body, path)| (run, path, CodeRunRawOutput::of_ref(body).handle))

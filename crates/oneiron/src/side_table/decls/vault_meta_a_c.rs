@@ -555,6 +555,11 @@ side_tables! {
     /// The reply one parked code-run wait was answered with, and when (JSON). Key: id16(run) +
     /// id16(wait) + be64(generation).
     CODE_RUN_WAIT_DELIVERY: VaultMeta b"code_run:wait_delivery:v1:" Raw Authored;
+    /// Who held each code-run wait's reply (FIX 5718): one row per run delivered a reply of the
+    /// wait, at the generation it parked, naming the actor its run's replies are, or Erased once
+    /// that actor's erase took them. It outlives the wait's waiter and delivery rows. The capsule
+    /// table's scrub erases it. Key: id16(wait) + id16(run) + be64(generation).
+    CODE_RUN_WAIT_HOLDER: VaultMeta b"code_run:wait_holder:v1:" Named Engine;
     /// The code runs parked on a wait (`p` + id16(wait) + id16(run), value be64(generation)) and
     /// the reply the wait settled with (`s` + id16(wait), value JSON). Key: u8 tag + id16 [+ id16].
     CODE_RUN_WAIT_INDEX: VaultMeta b"code_run:wait_index:v1:" Raw Authored;

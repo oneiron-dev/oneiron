@@ -22,13 +22,21 @@ use crate::code_run::wait_rows::keep_erased_answer_rows;
 use crate::code_run::{CodeRunReplayRecord, SelfDispatchOutcome, SelfFailedResult};
 use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
-use crate::error::Result;
-use crate::side_table::SideTableDbs;
+use crate::error::{CodeError, Error, Result};
+use crate::side_table::{ErasedForm, SideTableDbs};
 use crate::store::ResponseCarriage;
 use crate::task_verb::TaskAskStatus;
 
 /// The error a call whose outcome an erase took replays with.
 pub(crate) const RESPONSE_ERASED: &str = "response_erased";
+
+/// The typed unavailable a run's read of reply content an erase of its actor
+/// took answers with (FIX 5718; `ErrorKind::ResponseErased`): a replayed
+/// call's, a wait's delivered or settled reply, a consent wait's resume.
+/// `what` names the read. Nothing is sent again.
+pub(crate) fn response_erased_error(what: &'static str) -> Error {
+    Error::Code(CodeError::ResponseErased(what))
+}
 
 /// The preview text of a result whose record an erase retired.
 const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
@@ -135,6 +143,16 @@ pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A replay record's erased form is [`erase_replies`]'s (FIX 5718): the
+/// actor scrub writes it past the side-row wall, so no wall ever fails an
+/// erase.
+impl ErasedForm for CodeRunReplayRecord {
+    fn into_erased(mut self) -> Result<Self> {
+        erase_replies(&mut self)?;
+        Ok(self)
+    }
 }
 
 /// Whether a recorded outcome holds reply content an erase of its run's

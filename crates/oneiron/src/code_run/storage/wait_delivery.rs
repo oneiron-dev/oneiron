@@ -11,16 +11,25 @@
 //! no wakeup is lost either way round. A canonical host may bind a C9 trap to
 //! a parked wait, which the delivering commit wakes; a room binds none, and
 //! its host re-enters by running the run again.
+//!
+//! Each run a reply is delivered to joins the wait's holders
+//! (`wait_holders`, FIX 5718): once an erase of its actor took its replies,
+//! it is delivered the reply's erased form, parks on nothing and reads a
+//! typed unavailable, while every other holder reads the reply as before.
 
 use std::cell::Cell;
 
 use serde::{Deserialize, Serialize};
 
+use super::replay_bodies::response_erased_error;
 use super::routing::SessionBinding;
+use super::wait_holders::{holder_erased_in_txn, join_wait_in_txn};
 use crate::code_run::ExecutorStorage;
 use crate::llm::{DreamerTrapKind, TrapRef};
 use crate::off_record::OffRecordSession;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideCodec, SideKey, SideTable};
+use crate::side_table::{
+    self, CodecError, Erased, ErasedForm, Raw, RawValue, SideCodec, SideKey, SideTable,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 /// One parked wait of one run. `generation` counts how many times the run
@@ -53,6 +62,23 @@ pub struct WaitDelivery {
     /// its settler listed none: the reply then adds no row to its run's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_rows: Option<Vec<EntityId>>,
+    /// Whether an erase of its holder's actor took the reply (FIX 5718):
+    /// its text is gone, and when it came and its rows stay.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub erased: bool,
+}
+
+/// A delivery's erased form (FIX 5718): when it came and the rows its reply
+/// was derived from stay, its reply goes. An erase writes it past the
+/// side-row wall.
+impl ErasedForm for WaitDelivery {
+    fn into_erased(self) -> Result<Self> {
+        Ok(Self {
+            reply: String::new(),
+            erased: true,
+            ..self
+        })
+    }
 }
 
 impl RawValue for WaitDelivery {
@@ -100,16 +126,16 @@ impl RawValue for TrapRef {
 const WAITER_TAG: [u8; 1] = *b"p";
 
 /// Leads a wait's settled row: `s` + wait → the reply it settled with.
-const SETTLED_TAG: [u8; 1] = *b"s";
+pub(super) const SETTLED_TAG: [u8; 1] = *b"s";
 
-const DELIVERIES: SideTable<(EntityId, EntityId, u64), WaitDelivery, Raw> =
+pub(super) const DELIVERIES: SideTable<(EntityId, EntityId, u64), WaitDelivery, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_DELIVERY);
 
 const WAITERS: SideTable<([u8; 1], EntityId, EntityId), u64, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
 
 /// The wait's first reply, kept as the delivery every later waiter gets.
-const SETTLED: SideTable<([u8; 1], EntityId), WaitDelivery, Raw> =
+pub(super) const SETTLED: SideTable<([u8; 1], EntityId), WaitDelivery, Raw> =
     SideTable::new(&side_table::CODE_RUN_WAIT_INDEX);
 
 const TRAPS: SideTable<(EntityId, EntityId, u64), TrapRef, Raw> =
@@ -157,6 +183,7 @@ pub(crate) fn deliver_wait_listing_in_txn(
                 reply: reply_text(reply)?,
                 delivered_at_ms: now_ms,
                 source_rows: rows.map(<[EntityId]>::to_vec),
+                erased: false,
             };
             SETTLED.admit(vault, txn, &(SETTLED_TAG, wait_id), &mut settled)?;
             SETTLED.put(&vault.store, txn, &(SETTLED_TAG, wait_id), &settled)?;
@@ -181,19 +208,22 @@ pub(crate) fn deliver_wait_listing_in_txn(
 
 /// The reply `wait_id` settled with, read in the caller's transaction, as the
 /// side-row wall stored it and as every waiter parked on it is delivered it.
+/// One an erase took is a typed unavailable, never a digest's input.
 pub(crate) fn settled_wait_reply_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     wait_id: EntityId,
 ) -> Result<Option<String>> {
-    Ok(SETTLED
-        .get(&vault.store, txn, &(SETTLED_TAG, wait_id))?
-        .map(|settled| settled.reply))
+    match SETTLED.get(&vault.store, txn, &(SETTLED_TAG, wait_id))? {
+        Some(settled) if settled.erased => Err(response_erased_error("a wait's settled reply")),
+        settled => Ok(settled.map(|settled| settled.reply)),
+    }
 }
 
 /// Whether `key`'s wait has a reply at `txn`'s revision: delivered to it, or
 /// settled for every waiter on it. A held turn program resumes on this alone
-/// (DOOR-141 PR3b).
+/// (DOOR-141 PR3b). A reply an erase took still came (FIX 5718): the resumed
+/// entry meets the erase, typed, and the wait never reads as unsettled.
 pub(crate) fn wait_delivered_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -204,7 +234,9 @@ pub(crate) fn wait_delivered_in_txn(
 }
 
 /// Writes one waiter's delivery unless it has one, and wakes the trap bound
-/// to it in the same transaction; `true` when this call delivered.
+/// to it in the same transaction; `true` when this call delivered. The run
+/// joins the wait's holders (FIX 5718); one an erase of its actor took the
+/// replies of is delivered the reply's erased form, which it never reads.
 fn deliver_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -214,7 +246,12 @@ fn deliver_in_txn(
     if DELIVERIES.contains(&vault.store, txn, &key.row())? {
         return Ok(false);
     }
-    DELIVERIES.put(&vault.store, txn, &key.row(), settled)?;
+    if join_wait_in_txn(vault, txn, key)?.erased() || settled.erased {
+        let erased = Erased::of(settled.clone())?;
+        DELIVERIES.put_erased(&vault.store, txn, &key.row(), erased)?;
+    } else {
+        DELIVERIES.put(&vault.store, txn, &key.row(), settled)?;
+    }
     if let Some(trap) = TRAPS.get(&vault.store, txn, &key.row())? {
         crate::llm::wake_trap_in_txn(vault, txn, &trap, settled.delivered_at_ms)?;
     }
@@ -308,6 +345,7 @@ impl ExecutorStorage<'_> {
                     reply: reply_text(reply)?,
                     delivered_at_ms: now_ms,
                     source_rows: rows.map(<[EntityId]>::to_vec),
+                    erased: false,
                 };
                 put_if_absent_routed(binding, &SETTLED, &(SETTLED_TAG, wait_id), &fresh)?;
                 let settled = binding
@@ -344,10 +382,15 @@ impl ExecutorStorage<'_> {
     /// result of a delegated TASK that already finished, the change of an
     /// ask voided since the run last looked (OF-533) and a world-privacy
     /// request's terminal state (FIX 4706), and answers `true` whenever a
-    /// reply is delivered to `key`.
+    /// reply is delivered to `key`. A canonical run an erase of its actor
+    /// took the replies of parks on nothing: a typed unavailable, never a
+    /// park that waits again (FIX 5718).
     pub(crate) fn park_wait(&self, key: &WaitKey) -> Result<bool> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
+                if holder_erased_in_txn(vault, txn, key)? {
+                    return Err(response_erased_error("a parked wait's reply"));
+                }
                 WAITERS.put(&vault.store, txn, &key.waiter(), &key.generation)?;
                 crate::task_verb::deliver_task_result_in_txn(vault, txn, key.wait_id)?;
                 crate::task_verb::deliver_ask_change_in_txn(vault, txn, key.wait_id)?;
@@ -381,12 +424,22 @@ impl ExecutorStorage<'_> {
         }
     }
 
-    /// The reply delivered to `key`'s wait, if one was.
+    /// The reply delivered to `key`'s wait, if one was. Once an erase of a
+    /// canonical run's actor took its replies, a typed unavailable (FIX
+    /// 5718): never the reply, never none.
     pub(crate) fn wait_delivery(&self, key: &WaitKey) -> Result<Option<WaitDelivery>> {
         match self {
             Self::Canonical(vault) => {
                 let txn = vault.store.env.read_txn()?;
-                DELIVERIES.get(&vault.store, &txn, &key.row())
+                if holder_erased_in_txn(vault, &txn, key)? {
+                    return Err(response_erased_error("a wait's delivered reply"));
+                }
+                match DELIVERIES.get(&vault.store, &txn, &key.row())? {
+                    Some(delivery) if delivery.erased => {
+                        Err(response_erased_error("a wait's delivered reply"))
+                    }
+                    delivery => Ok(delivery),
+                }
             }
             Self::Session(binding) => {
                 binding.answered(|| binding.session.side_table_get(&DELIVERIES, &key.row()))
@@ -482,11 +535,17 @@ impl WaitDeliveries<'_> {
     /// parked on it: what a caller with no parked run reads of a wait a
     /// settler answered (FIX 2279). A room's settled rows ride its route; the
     /// connector settler answers canonical waits only, so a room reads none.
+    /// A settled row an erase took is a typed unavailable (FIX 5718).
     pub fn settled(&self, wait_id: EntityId) -> Result<Option<WaitDelivery>> {
         match &self.storage {
             ExecutorStorage::Canonical(vault) => {
                 let txn = vault.store.env.read_txn()?;
-                SETTLED.get(&vault.store, &txn, &(SETTLED_TAG, wait_id))
+                match SETTLED.get(&vault.store, &txn, &(SETTLED_TAG, wait_id))? {
+                    Some(settled) if settled.erased => {
+                        Err(response_erased_error("a wait's settled reply"))
+                    }
+                    settled => Ok(settled),
+                }
             }
             ExecutorStorage::Session(_) => Ok(None),
         }
@@ -604,6 +663,7 @@ pub(crate) fn deliver_changed_wait_in_txn(
         reply: reply_text(reply)?,
         delivered_at_ms: now_ms,
         source_rows: None,
+        erased: false,
     };
     let mut delivered = 0;
     for ((_, _, run), parked) in WAITERS.scan_from(&vault.store, txn, &waiter_prefix(wait_id))? {
@@ -630,8 +690,9 @@ impl ExecutorStorage<'_> {
     /// bound code consent wait's settlement is consumed in it (DOOR-079 1b):
     /// its reply must be delivered and verify, or the record does not
     /// commit. Retiring the wait's rows afterwards consumes nothing and
-    /// deletes no consumption. A room's record commits as any other append
-    /// does.
+    /// deletes no consumption. Once an erase of the run's actor took its
+    /// replies, nothing commits and nothing is consumed: a typed unavailable
+    /// (FIX 5718). A room's record commits as any other append does.
     pub(crate) fn put_code_run_wait_resume_record(
         &self,
         record: &crate::code_run::CodeRunReplayRecord,
@@ -646,7 +707,13 @@ impl ExecutorStorage<'_> {
                 expected,
                 None,
                 |txn| {
+                    if holder_erased_in_txn(vault, txn, key)? {
+                        return Err(response_erased_error("a resumed wait's reply"));
+                    }
                     let delivery = DELIVERIES.get(&vault.store, txn, &key.row())?;
+                    if delivery.as_ref().is_some_and(|delivery| delivery.erased) {
+                        return Err(response_erased_error("a resumed wait's reply"));
+                    }
                     let resume = crate::code_run::CodeConsentResume {
                         record,
                         key: *key,

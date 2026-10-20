@@ -425,6 +425,14 @@ pub(crate) fn settle_code_consent_wait_listing_in_txn(
         Error::InvariantViolation("a settled code consent wait kept no reply"),
     )?;
     let reply_digest = *blake3::hash(delivered.as_bytes()).as_bytes();
+    // A settle after an erase of the bound run's actor keeps its outcome,
+    // receipt and digest, and no copy of the reply (FIX 5718).
+    crate::code_run::erase_settled_reply_of_erased_run_in_txn(
+        vault,
+        txn,
+        wait_id,
+        row.binding.run_id,
+    )?;
     let receipt_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
     let links = CodeWaitReceiptLinks {
         wait_id,

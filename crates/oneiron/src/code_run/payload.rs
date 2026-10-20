@@ -655,12 +655,12 @@ pub(super) fn replay_denied_trap_error(result: &SelfDeniedResult) -> Error {
 }
 
 /// The trap a replayed failed call raises. A call whose reply an erase of
-/// its run's actor took (FIX 5718) traps as `response_erased`, never as a
-/// write that failed before it ran: its effect ran, and it is never made
-/// again.
+/// its run's actor took (FIX 5718) traps as `ErrorKind::ResponseErased`,
+/// never as a write that failed before it ran: its effect ran, and it is
+/// never made again.
 pub(super) fn replay_failed_trap_error(result: &SelfFailedResult) -> Error {
     if result.error == super::storage::RESPONSE_ERASED {
-        return invalid_code_run_replay(super::storage::RESPONSE_ERASED);
+        return super::storage::response_erased_error("a replayed call's reply");
     }
     invalid_code_run_replay("replayed failed self trap")
 }
