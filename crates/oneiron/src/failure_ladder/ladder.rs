@@ -252,22 +252,26 @@ impl<'a> FailureLadder<'a> {
         routing: HealerRouting,
         turn: Option<&Arc<TaskWorkTurn>>,
     ) -> Result<FailureLadderOutcome> {
-        let mut txn = self.vault.store.env.write_txn()?;
-        let failed_attempt = fail_once_in_txn(self.vault, &mut txn, input, turn)?;
-        let case = HealerCase {
-            case_ref: failure_case_ref(failed_attempt.id),
-            scope: policy.scope.clone(),
-            failure_class: routing.failure_class,
-            failing_attempt_id: failed_attempt.id,
-            task_ref: failed_attempt.task_ref.clone(),
-            evidence_ref: require_evidence_ref(routing.evidence_ref)?.to_hex(),
-            blocked_reports: context.blocked_reports.clone(),
-            pre_fail_checkpoint_ref: context.pre_fail_checkpoint_ref.to_hex(),
-            qa_thread_ref: context.qa_thread_ref.to_hex(),
-            consecutive_transients: routing.consecutive_transients,
-        };
-        super::healer_case::record_in_txn(self.vault, &mut txn, &case)?;
-        txn.commit()?;
+        // The grouped write door, as `fail_once` (FIX 6323, FIX 6378): a TASK
+        // this final failure settles wakes its peer-result waiters once the
+        // failure and its healer case commit.
+        let (failed_attempt, case) = self.vault.with_write_txn_grouped(|txn| {
+            let failed_attempt = fail_once_in_txn(self.vault, txn, input, turn)?;
+            let case = HealerCase {
+                case_ref: failure_case_ref(failed_attempt.id),
+                scope: policy.scope.clone(),
+                failure_class: routing.failure_class,
+                failing_attempt_id: failed_attempt.id,
+                task_ref: failed_attempt.task_ref.clone(),
+                evidence_ref: require_evidence_ref(routing.evidence_ref)?.to_hex(),
+                blocked_reports: context.blocked_reports.clone(),
+                pre_fail_checkpoint_ref: context.pre_fail_checkpoint_ref.to_hex(),
+                qa_thread_ref: context.qa_thread_ref.to_hex(),
+                consecutive_transients: routing.consecutive_transients,
+            };
+            super::healer_case::record_in_txn(self.vault, txn, &case)?;
+            Ok((failed_attempt, case))
+        })?;
         let dispatched = AgentDispatcher::new(self.vault).dispatch_healer_slot(DispatchHealer {
             slot: policy.healer_slot.clone(),
             case: case.clone(),

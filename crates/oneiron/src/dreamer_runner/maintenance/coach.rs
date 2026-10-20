@@ -72,7 +72,9 @@ pub const COACH_TRAINING_RUN_FACET: &str = "coach.training_run";
 /// once, and each offer whose check date came queues its promise check.
 pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
 /// Autoresearch (OF-351): one selection round for each bound campaign whose
-/// measured evidence moved, under the campaign's lease.
+/// measured evidence moved, under the campaign's lease. It runs on the host
+/// (FIX 1331), whose judge tells each round whether the campaign's goal is
+/// verified met, through [`Vault::run_coach_research_select`].
 pub const COACH_RESEARCH_SELECT_FACET: &str = "coach.research_select";
 /// Autoresearch execution (FIX 886): each campaign bound with an execution
 /// spec has its host continuations advanced through
@@ -139,7 +141,7 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 13] = [
+const HOST_FACETS: [&str; 14] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -153,14 +155,14 @@ const HOST_FACETS: [&str; 13] = [
     COACH_ATTRIBUTION_AUDITS_FACET,
     COACH_JUDGE_LABEL_RECHECKS_FACET,
     COACH_WEAVE_DIGEST_SETTINGS_FACET,
+    COACH_RESEARCH_SELECT_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 10] = [
+const MAINTENANCE_FACETS: [&str; 9] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
     COACH_TRAINING_OFFERS_FACET,
-    COACH_RESEARCH_SELECT_FACET,
     COACH_LEARNING_SWEEP_FACET,
     COACH_CONTRIBUTION_CHECK_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
@@ -265,30 +267,6 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(COACH_HOST_QUEUE_KIND, input)
-    }
-
-    /// Queues the host's research job, keyed as the nightly host jobs are: an
-    /// unleased one absorbs the next request.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors; the queue's own enqueue errors.
-    pub fn enqueue_coach_research_run(&self, now: u64) -> Result<()> {
-        self.vault.with_write_txn_grouped(|txn| {
-            self.enqueue_kind_in_txn(
-                txn,
-                COACH_HOST_QUEUE_KIND,
-                DreamerAttemptPayload {
-                    attempt_type: COACH_RESEARCH_RUN_FACET.into(),
-                    input: Value::Nil,
-                    parent_attempt: None,
-                },
-                Some(COACH_RESEARCH_RUN_FACET.into()),
-                None,
-                now,
-            )?;
-            Ok(())
-        })
     }
 }
 
@@ -507,18 +485,6 @@ impl Vault {
             skill,
             plan,
             inventory,
-            now,
-        )
-    }
-
-    /// Advances the autoresearch host continuations as the Coach, under a
-    /// leased `coach.research_run` attempt. Selection stays the nightly
-    /// `coach.research_select` job's.
-    pub fn run_coach_research(&self, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
-        self.require_coach_attempt(attempt, COACH_RESEARCH_RUN_FACET)?;
-        crate::autoreason_campaign::research::advance_research_continuations(
-            self,
-            attempt.status.attempt.id,
             now,
         )
     }
@@ -752,28 +718,6 @@ pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
     })?;
     crate::task_verb::issue_training_offer_asks(vault, now);
     crate::task_verb::issue_training_swap_asks(vault, now);
-    Ok(())
-}
-
-/// The autoresearch tick: one selection round for each bound campaign the
-/// loop's own record says is due. The round reads the campaign's lease and
-/// pauses, never fails, on an empty budget. A campaign whose round errs is
-/// left for the next night; the others still run.
-pub(super) fn run_research_select(vault: &Vault, now: u64) -> Result<()> {
-    use crate::autoreason_campaign::research;
-    for root in research::bound_research_roots(vault)? {
-        if !research::research_round_due(vault, root)? {
-            continue;
-        }
-        if let Err(error) = research::select_next(
-            vault,
-            root,
-            crate::autoreason_campaign::selection::OracleSignal::NoSignal,
-            now,
-        ) {
-            tracing::warn!(kind = ?error.kind(), "autoresearch round did not run");
-        }
-    }
     Ok(())
 }
 

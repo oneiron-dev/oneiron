@@ -364,6 +364,47 @@ impl Vault {
         })
     }
 
+    /// [`Self::update_agent_definition_at_version_as`] in the caller's
+    /// writer, for a patch of the ceiling alone (FIX 1786): the definition
+    /// standing at `expected_version` is cloned and only its ceiling and its
+    /// version change; grants, scopes, connectors, instructions and manifest
+    /// stay as they are. The proof is rechecked here and the id pin moves to
+    /// the new ceiling, as the owner's edit does, so the caller's receipt
+    /// commits with the effect. Returns the definition as written.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::update_agent_definition_at_version_as`].
+    pub(crate) fn patch_agent_ceiling_at_version_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_version: &str,
+        ceiling: super::types::AgentCeiling,
+        learned_at: u64,
+    ) -> Result<AgentDefinition> {
+        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let existing = self.read_agent_definition_in_txn(txn, id)?;
+        if expected_version != existing.version {
+            return Err(Error::ConcurrentWrite("agent definition revision changed"));
+        }
+        let mut patched = existing.clone();
+        patched.ceiling = ceiling;
+        let seed = serde_json::to_vec(&(&existing.version, ceiling.as_str()))
+            .map_err(|_| Error::InvariantViolation("ceiling patch version encode"))?;
+        patched.version = format!("ceiling-{}", blake3::hash(&seed).to_hex());
+        validate_agent_definition_update(&existing, &patched)?;
+        super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, &patched)?;
+        let data = encode_agent_definition(&patched)?;
+        let occurred = TimeRange {
+            start: learned_at,
+            end: learned_at,
+        };
+        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)?;
+        Ok(patched)
+    }
+
     /// Creates an inert custom definition as the authenticated owner. An
     /// occupied id is never an implicit edit, including another entity kind.
     pub fn create_agent_definition_as(

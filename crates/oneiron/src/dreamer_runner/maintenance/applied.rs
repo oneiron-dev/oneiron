@@ -8,14 +8,16 @@
 //! receipt name the mention's ask key. A project's team-shape fork the Coach
 //! put in force (OF-420) lands no finding either: its row and receipt name
 //! the project and the fork, and its revert takes the fork off the project.
-//! The Coach's other findings and the Healer's keep the run tray. A curator
+//! An action-mode finding's ceiling patch the owner applied (FIX 1786) keeps
+//! the finding's row, which takes the patch's inverse under the owner's
+//! receipt. The Coach's other findings and the Healer's keep the run tray. A curator
 //! rung the owner approved in the run tray applies once, as the Dreamer, with
 //! its row and receipt here too (FIX 3223).
 //!
 //! A kind is one `MaintenanceInverse` variant carrying the before-state its
 //! effect changed, one arm in `MaintenanceInverse::label` and one arm in
 //! `MaintenanceInverse::revert_in_txn` calling the kind's own inverse.
-use super::{curator, digest, identity, invalid, stewardship};
+use super::{action_mode, curator, digest, identity, invalid, stewardship};
 use crate::attempt_queue::AttemptId;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
@@ -24,6 +26,9 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
+
+mod action_mode_row;
+pub(super) use action_mode_row::{action_mode_applied_in_txn, record_action_mode_in_txn};
 
 const APPLIED: SideTable<MaintenanceTarget, AppliedRow, Named> =
     SideTable::new(&side_table::DREAMER_MAINTENANCE_APPLIED);
@@ -152,6 +157,16 @@ pub(super) enum MaintenanceInverse {
     /// A project's team-shape fork put in force: the revert takes it off the
     /// project's skill forks, and the fork's record stays.
     ProjectTreeFork { project: EntityId, fork: EntityId },
+    /// An action-mode finding's ceiling patch the owner applied (FIX 1786):
+    /// the agent's ceiling before it, the ceiling and definition revision
+    /// the apply wrote. The revert restores the ceiling while that revision
+    /// still stands.
+    ActionMode {
+        agent: EntityId,
+        before_ceiling: action_mode::ActionModeCeiling,
+        applied_ceiling: action_mode::ActionModeCeiling,
+        applied_version: String,
+    },
 }
 
 impl MaintenanceInverse {
@@ -166,16 +181,19 @@ impl MaintenanceInverse {
             Self::IdentityProvisional(_) => "identity_provisional",
             Self::IdentitySettle(_) => "identity_settle",
             Self::ProjectTreeFork { .. } => "project_tree_fork",
+            Self::ActionMode { .. } => "action_mode",
         }
     }
 
-    /// Undoes the effect, in the revert's transaction, as `owner`. Each kind
+    /// Undoes the effect, in the revert's transaction, as `owner`, whose
+    /// proof a kind that writes through an owner's door rechecks. Each kind
     /// leaves alone what a later write changed and lists it in `out`.
     fn revert_in_txn(
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         owner: WriteActor,
+        proof: &AuthenticatedOwner,
         now: u64,
         out: &mut MaintenanceRevert,
     ) -> Result<()> {
@@ -195,6 +213,21 @@ impl MaintenanceInverse {
             Self::ProjectTreeFork { project, fork } => {
                 revert_project_tree_fork_in_txn(vault, txn, *project, *fork, now, out)
             }
+            Self::ActionMode {
+                agent,
+                before_ceiling,
+                applied_version,
+                ..
+            } => action_mode::revert_in_txn(
+                vault,
+                txn,
+                proof,
+                *agent,
+                *before_ceiling,
+                applied_version,
+                now,
+                out,
+            ),
         }
     }
 }
@@ -243,8 +276,8 @@ struct AppliedRow {
 pub struct AppliedMaintenance {
     pub target: MaintenanceTarget,
     /// `finding`, `curator`, `proactivity_policy`, `reach_out`,
-    /// `representation_plan`, `identity_provisional`, `identity_settle` or
-    /// `project_tree_fork`.
+    /// `representation_plan`, `identity_provisional`, `identity_settle`,
+    /// `project_tree_fork` or `action_mode`.
     pub kind: &'static str,
     pub facet: String,
     /// The attempt that wrote it, as 32 hex; none for an identity abstention
@@ -685,7 +718,7 @@ impl Vault {
                 parent: None,
             };
             row.inverse
-                .revert_in_txn(self, txn, owner_actor, now, &mut out)?;
+                .revert_in_txn(self, txn, owner_actor, owner, now, &mut out)?;
             if let Some(finding) = target.finding()
                 && self
                     .get_claim_in_txn(&*txn, &finding)?

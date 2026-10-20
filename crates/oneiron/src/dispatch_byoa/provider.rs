@@ -1,4 +1,5 @@
 //! Named propose-only Dreamer runners over the existing foreign CLI sandbox.
+use super::official_seats::OfficialSeatStamp;
 use super::{ByoaConnectorSpec, ByoaError, ByoaResult, CliSandboxSpec};
 use crate::{checkout::CheckoutId, code_sandbox::SandboxCredentialHandle};
 use std::{collections::BTreeMap, sync::Arc};
@@ -10,11 +11,19 @@ pub struct DreamerProviderInput {
     pub egress_profile_ref: String,
     pub credential_handles: Vec<SandboxCredentialHandle>,
 }
-/// Produces only a connector. Execution returns exhaust through ByoaDispatcher;
-/// no method carries a Vault, Gate permit, or write authority.
+/// Produces only a connector, and for an approved official seat the stamp
+/// its runs carry. Execution returns exhaust through ByoaDispatcher; no
+/// method carries a Vault, Gate permit, or write authority.
 pub trait DreamerProviderAdapter: Send + Sync {
     fn name(&self) -> &'static str;
     fn connector(&self, input: DreamerProviderInput) -> ByoaResult<ByoaConnectorSpec>;
+    /// The official seat stamp whose vendor approvals this adapter's runs
+    /// carry through dispatch, fallback and execution alike (FIX 5104), so
+    /// their placement reads the vendor's table. `None`, the default, keeps
+    /// a run on the generic login rule.
+    fn placement_context(&self) -> Option<OfficialSeatStamp> {
+        None
+    }
 }
 #[derive(Default)]
 pub struct ProviderAdapterRegistry {

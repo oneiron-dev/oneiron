@@ -147,6 +147,16 @@ impl Vault {
                 require_kind(self, &txn, *id, ENTITY_TYPE_AGENT_DEF)?;
             }
         }
+        drop(txn);
+        // Presence is forgotten on restart; who was here is not (FIX 2015):
+        // each one joins the sitting's speakers under its name as it stands.
+        // A sitting with no lifecycle record keeps none, and a failed write
+        // never fails the presence.
+        if !ids.is_empty()
+            && let Err(error) = self.bind_session_participants(session, &ids)
+        {
+            tracing::warn!(kind = ?error.kind(), "a sitting's participants were not recorded");
+        }
         let mut presence = self
             .conversation_presence
             .lock()

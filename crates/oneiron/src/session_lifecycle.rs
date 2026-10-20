@@ -54,6 +54,10 @@ use crate::temporal::TimeRange;
 
 pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
+mod speakers;
+pub(crate) use speakers::erase_session_speaker_actor_in_txn;
+pub use speakers::{SessionParticipant, SessionSpeakers};
+
 /// Open pointers keyed by actor and machine; values are session ids.
 const OPEN_POINTER: SideTable<(EntityId, EntityId), EntityId, Raw> =
     SideTable::new(&side_table::SESSION_LIFECYCLE_OPEN);
@@ -152,6 +156,11 @@ pub struct SessionLifecycleRecord {
     /// when one tried: no hook keeps a sitting open, so it closed anyway.
     #[serde(default)]
     pub close_hook_stop: Option<String>,
+    /// Who spoke in the sitting (FIX 2015): its answering agents and its
+    /// participants with their names as bound. Empty on a sitting recorded
+    /// before them.
+    #[serde(default)]
+    pub speakers: SessionSpeakers,
 }
 
 /// The currently open session, if any.
@@ -429,6 +438,7 @@ impl Vault {
             activity_periods: Vec::new(),
             explicit_end_hint: None,
             close_hook_stop: None,
+            speakers: SessionSpeakers::default(),
         };
         let mut body = Vec::new();
         rmpv::encode::write_value(
@@ -589,33 +599,49 @@ impl Vault {
         session: &EntityId,
         admission_time: u64,
     ) -> Result<Vec<EntityId>> {
+        Ok(self
+            .member_turns_in_txn(txn, session, |header, body| {
+                header.learned_at <= admission_time && {
+                    let facts = crate::dreamer_consolidation::decode_turn_body(body);
+                    let role = crate::dreamer_runner::dreamer_turn_role(
+                        facts.speaker.as_deref(),
+                        &self.config.assistant_display_names,
+                    );
+                    crate::dreamer_runner::dreamer_extraction_role_admissible(role)
+                }
+            })?
+            .unwrap_or_default())
+    }
+
+    /// The TURNs `session`'s membership rows name that `keep` admits (read
+    /// with each one's header and body), by `(learned_at, id)`; `None` when
+    /// the sitting has no membership row at all, as one recorded before
+    /// them has none.
+    fn member_turns_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        session: &EntityId,
+        mut keep: impl FnMut(&crate::batch::EntityMetadataHeader, &[u8]) -> bool,
+    ) -> Result<Option<Vec<EntityId>>> {
+        let mut any = false;
         let mut turns = Vec::new();
         for row in SESSION_TURNS.iter_from(&self.store, txn, session.as_bytes())? {
             let ((_, turn), _) = row?;
+            any = true;
             let Some(raw) = self.get_raw_in(txn, &turn)? else {
                 continue;
             };
             let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw) else {
                 continue;
             };
-            if header.entity_type != crate::registry::ENTITY_TYPE_TURN
-                || header.learned_at > admission_time
+            if header.entity_type == crate::registry::ENTITY_TYPE_TURN
+                && keep(&header, &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
             {
-                continue;
-            }
-            let facts = crate::dreamer_consolidation::decode_turn_body(
-                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            );
-            let role = crate::dreamer_runner::dreamer_turn_role(
-                facts.speaker.as_deref(),
-                &self.config.assistant_display_names,
-            );
-            if crate::dreamer_runner::dreamer_extraction_role_admissible(role) {
                 turns.push((header.learned_at, turn));
             }
         }
         turns.sort_unstable();
-        Ok(turns.into_iter().map(|(_, turn)| turn).collect())
+        Ok(any.then(|| turns.into_iter().map(|(_, turn)| turn).collect()))
     }
 
     pub(crate) fn plan_session_end_wake_in_txn(

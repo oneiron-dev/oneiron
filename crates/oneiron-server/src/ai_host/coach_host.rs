@@ -2,8 +2,9 @@
 //! `coach.host` queue, where the Timer wake puts each Coach job that needs
 //! the host's model or rules, and runs the `Vault::run_coach_*` door its
 //! facet names. The session distill drafts craft notes on the generative
-//! seat; skill discovery classifies each finished attempt's use of the skills
-//! it loaded; the person-threshold tune reads each case where a person changed
+//! seat, naming each speaker as its sitting bound them ([`resolve_speaker`]);
+//! skill discovery classifies each finished attempt's use of the skills it
+//! loaded; the person-threshold tune reads each case where a person changed
 //! the ladder's answer and files a proposed row; the training offer prices
 //! each busy seat's options and asks whether one is worth raising, and the
 //! offer check reads the meter against an approved offer's promise. The
@@ -11,10 +12,15 @@
 //! judge that did not produce the result ([`seal_checks`]). Type-tree upkeep
 //! names each new split type on the Coach's seat ([`type_tree_upkeep`]), and
 //! the project fork pass lends the replay judge that scores each project's
-//! own team-shape fork against the head ([`fork_promote`]).
-//! The research job, queued each round while a campaign has host work,
-//! advances its autoresearch continuations (FIX 886). An owner-authorized
-//! training run trains on its own thread, then scores ([`super::training_pack`]).
+//! own team-shape fork against the head ([`fork_promote`]). The digest
+//! settings job drafts each owner's digest rhythm or lead step on the Coach's
+//! model and files it (`coach.weave_digest_settings`, FIX 5609,
+//! [`weave_digest_settings`]). The research selection runs one autoresearch
+//! round for each due campaign, told by the replay judge whether its goal is
+//! verified met (`coach.research_select`, FIX 1331, [`research_oracle`]); the
+//! research job, queued each round while a campaign has host work, advances
+//! its autoresearch continuations (FIX 886). An owner-authorized training run
+//! trains on its own thread, then scores ([`super::training_pack`]).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,26 +33,29 @@ use oneiron::autoreason_campaign::research::research_work_pending;
 use oneiron::dreamer_runner::maintenance::coach::{
     COACH_ATTRIBUTION_AUDITS_FACET, COACH_EVAL_AUTHORING_FACET, COACH_FORK_PROMOTE_FACET,
     COACH_JUDGE_LABEL_RECHECKS_FACET, COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET,
-    COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET, COACH_SEAL_CHECKS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
-    COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET,
-    COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
+    COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET,
+    COACH_SEAL_CHECKS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
+    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold};
-use oneiron::{EntityId, Error, LlmMessageRole};
+use oneiron::session_lifecycle::SessionSpeakers;
+use oneiron::{EntityId, Error, LlmMessageRole, Vault};
 use serde::Deserialize;
 
 use super::coach_heal::{LEASE_OWNER, settle};
 use super::coach_health::coach_role;
-use super::code_fix::{HostModels, clip, message};
+use super::code_fix::{HostModels, message};
 use crate::server::SyncServer;
 
 mod attribution_audits;
 mod fork_promote;
 mod judge_label_rechecks;
+mod research_oracle;
 mod seal_checks;
 mod type_tree_upkeep;
 mod weave_digest_settings;
@@ -63,13 +72,10 @@ const ROUND: usize = 4;
 const DISTILL_SESSIONS: usize = 8;
 /// What one distill job's calls may spend.
 const DISTILL_BUDGET_UNITS: u64 = 1 << 20;
-/// Most bytes of one utterance, and of one sitting, the distill call reads.
-const UTTERANCE_BYTES: usize = 4 * 1024;
-const SITTING_BYTES: usize = 64 * 1024;
-/// Most notes one sitting yields.
-const MAX_NOTES: usize = 8;
 /// The speaker label the core turn door writes for the vault's person.
 const OWNER_SPEAKER: &str = "user";
+/// The speaker label of the sitting's answering agent.
+const ASSISTANT_SPEAKER: &str = "assistant";
 /// Override records one tune reads.
 const THRESHOLD_BATCH: usize = 256;
 /// How far one tune lowers the person threshold, and where it stops. Canon
@@ -174,6 +180,7 @@ fn run_one(
         COACH_TYPE_TREE_UPKEEP_FACET => type_tree_upkeep::run(server, admitted, now),
         COACH_FORK_PROMOTE_FACET => fork_promote::run(server, admitted, now),
         COACH_WEAVE_DIGEST_SETTINGS_FACET => weave_digest_settings::run(server, admitted, now),
+        COACH_RESEARCH_SELECT_FACET => research_oracle::run(server, admitted, now),
         COACH_RESEARCH_RUN_FACET => vault.run_coach_research(admitted, now),
         COACH_TRADEOFF_ROUTE_FACET => {
             let report = vault.run_coach_tradeoff_route(admitted, now)?;
@@ -223,6 +230,7 @@ fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::R
             ACTOR_DISTILL_CALL_PURPOSE_NAME,
             DISTILL_BUDGET_UNITS,
         )?,
+        vault,
         owner: vault.ensure_embedded_owner_actor().ok(),
     };
     let drain = vault.run_coach_skill_distill(admitted, DISTILL_SESSIONS, &distiller)?;
@@ -240,41 +248,65 @@ fn distill(server: &SyncServer, admitted: &DreamerAdmittedAttempt) -> oneiron::R
 /// took the call, or the answer held no notes object.
 struct HostDistiller<'a> {
     models: HostModels<'a>,
+    /// The vault whose sittings' bound speakers it reads.
+    vault: &'a Vault,
     /// The vault's person, whom the core turn door names [`OWNER_SPEAKER`].
     owner: Option<EntityId>,
 }
 
-impl HostDistiller<'_> {
-    /// The actor a speaker label names: an entity id, or the vault's person.
-    fn actor(&self, label: &str) -> Option<EntityId> {
-        if label == OWNER_SPEAKER {
-            return self.owner;
-        }
-        EntityId::from_hex(label).ok()
+/// The actor a speaker label names in one sitting (FIX 2015), from what the
+/// sitting bound as it ran, never from the vault's current agent or from live
+/// presence. [`OWNER_SPEAKER`] is the vault's person and an entity id names
+/// itself, as before; [`ASSISTANT_SPEAKER`] is the sitting's one bound
+/// answerer; any other label is the one participant bound under exactly that
+/// name. A label more than one could be names no one, and nor does any
+/// binding of a sitting an erase took one from: the erased one may have spoken
+/// under it. An unresolved label loses only its own notes.
+fn resolve_speaker(
+    label: &str,
+    owner: Option<EntityId>,
+    speakers: &SessionSpeakers,
+) -> Option<EntityId> {
+    if label == OWNER_SPEAKER {
+        return owner;
     }
+    if let Ok(id) = EntityId::from_hex(label) {
+        return Some(id);
+    }
+    if speakers.erased > 0 {
+        return None;
+    }
+    if label == ASSISTANT_SPEAKER {
+        return match speakers.agents.as_slice() {
+            [agent] => Some(*agent),
+            _ => None,
+        };
+    }
+    let mut named = speakers
+        .participants
+        .iter()
+        .filter(|participant| participant.display_name == label)
+        .map(|participant| participant.actor);
+    let first = named.next()?;
+    named.all(|actor| actor == first).then_some(first)
 }
 
 impl SessionActorDistiller for HostDistiller<'_> {
     fn distill(&self, brief: &SessionDistillBrief) -> oneiron::Result<Vec<ActorNote>> {
+        let speakers = self.vault.session_speakers(&brief.session)?;
         let mut actors = BTreeMap::new();
         let mut turns = Vec::with_capacity(brief.turns.len());
-        let mut left = SITTING_BYTES;
+        let mut sitting_bytes = 0_usize;
         for turn in &brief.turns {
-            if left == 0 {
-                break;
-            }
             let mut said = Vec::with_capacity(turn.said.len());
             for utterance in &turn.said {
                 if let Some(label) = utterance.speaker.as_deref()
-                    && let Some(actor) = self.actor(label)
+                    && let Some(actor) = resolve_speaker(label, self.owner, &speakers)
                 {
                     actors.insert(label, actor);
                 }
-                let text = clip(
-                    utterance.text.as_deref().unwrap_or_default(),
-                    UTTERANCE_BYTES.min(left),
-                );
-                left -= text.len();
+                let text = utterance.text.as_deref().unwrap_or_default();
+                sitting_bytes = sitting_bytes.saturating_add(text.len());
                 said.push(serde_json::json!({ "speaker": utterance.speaker, "text": text }));
             }
             turns.push(said);
@@ -283,10 +315,13 @@ impl SessionActorDistiller for HostDistiller<'_> {
         if actors.is_empty() {
             return Ok(Vec::new());
         }
+        // The sitting goes to the model whole; its size is measured (Rule 5).
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, sitting_bytes as u64);
         let data = serde_json::json!({
             "speakers": actors.keys().collect::<Vec<_>>(),
             "turns": turns,
-            "cut": left == 0,
         });
         let text = self
             .models
@@ -301,7 +336,7 @@ impl SessionActorDistiller for HostDistiller<'_> {
         let wire = parse_notes(&text).ok_or_else(|| {
             Error::InvalidConfig("the Coach's distill answer holds no notes".into())
         })?;
-        Ok(wire
+        let notes: Vec<ActorNote> = wire
             .notes
             .into_iter()
             .filter_map(|note| {
@@ -321,8 +356,12 @@ impl SessionActorDistiller for HostDistiller<'_> {
                     text: text.to_owned(),
                 })
             })
-            .take(MAX_NOTES)
-            .collect())
+            .collect();
+        // Every note is kept; how many is measured (Rule 5).
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceRowItems, notes.len() as u64);
+        Ok(notes)
     }
 }
 

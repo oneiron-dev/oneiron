@@ -14,6 +14,8 @@ pub mod coach;
 pub mod coach_heal;
 pub mod coach_learning;
 mod coach_repair;
+mod coach_research;
+pub use coach_research::ResearchGoalOracle;
 pub mod code_fix;
 pub mod compaction_check;
 pub use compaction_check::COMPACTION_CHECK_FACET;
@@ -236,9 +238,6 @@ pub(crate) fn execute(
         }
         coach::COACH_TRAINING_OFFERS_FACET => {
             coach::run_training_offers(ctx.vault, ctx.now_ms / 1000)?;
-        }
-        coach::COACH_RESEARCH_SELECT_FACET => {
-            coach::run_research_select(ctx.vault, ctx.now_ms / 1000)?;
         }
         coach::COACH_LEARNING_SWEEP_FACET => {
             coach::run_learning_sweep(ctx.vault, ctx.now_ms / 1000)?;

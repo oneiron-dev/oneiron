@@ -36,19 +36,13 @@ use crate::learning::TypeRef;
 use crate::learning_setting::{
     CREDIT_CHECK_EVERY_HOP, CREDIT_DEPTH_CAP, CREDIT_ENABLED, SettingSpec, setting_value_scoped,
 };
+use crate::limit_ask::EngineLimit;
 use crate::llm::decision::{DecisionProvider, HeldLadder, ProviderPin};
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
 
 /// The role a run outside any team plays.
 const SOLO_ROLE: &str = "solo";
-
-/// Hops of stored lineage the close witness follows above a run's own
-/// derivations when the run's credit sets no depth cap.
-const WITNESS_MAX_HOPS: u32 = 64;
-
-/// Used edges one run's receipt carries at most; the lineage walk stops there.
-pub(super) const WITNESS_MAX_EDGES: usize = 1024;
 
 /// The role a team run's member plays.
 const MEMBER_ROLE: &str = "member";
@@ -190,9 +184,6 @@ pub fn witness_agent_run_close(
     let mut batch = vault.batch_in();
     let mut new_edges = false;
     for node in &derived {
-        if fields.used_edges.len() >= WITNESS_MAX_EDGES {
-            break;
-        }
         if !stored.contains(node) {
             batch = batch.edge(&output, EdgeKind::DerivedFrom, node, 1.0);
             new_edges = true;
@@ -209,6 +200,11 @@ pub fn witness_agent_run_close(
         batch.apply(&mut txn)?;
     }
     witness_lineage_in_txn(vault, &txn, &mut fields, &mut seen, output)?;
+    // The whole chain is kept; its length is measured (Rule 5).
+    let _ = vault.measure_limit(
+        EngineLimit::AttemptManifestEntries,
+        fields.used_edges.len() as u64,
+    );
     fields.output = Some(output);
     crate::receipt::put_attempt_pack_attribution_in_txn(
         &vault.store,
@@ -223,7 +219,8 @@ pub fn witness_agent_run_close(
 /// Appends the stored lineage above the run's own derivations to `fields`'
 /// used chain: hop 1 is the output to a derivation, hop 2 the run's own
 /// edge, so the stored walk starts at hop 3 and stops at the run's credit
-/// depth.
+/// depth. A run whose credit sets no depth walks the whole stored lineage,
+/// each node once.
 fn witness_lineage_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -231,11 +228,7 @@ fn witness_lineage_in_txn(
     seen: &mut BTreeSet<(EntityId, EntityId)>,
     output: EntityId,
 ) -> Result<()> {
-    let hops = fields
-        .credit
-        .depth_cap
-        .unwrap_or(WITNESS_MAX_HOPS)
-        .min(WITNESS_MAX_HOPS);
+    let depth = fields.credit.depth_cap;
     let mut queue: VecDeque<(EntityId, u32)> = fields
         .used_edges
         .iter()
@@ -244,7 +237,7 @@ fn witness_lineage_in_txn(
         .collect();
     let mut walked = BTreeSet::new();
     while let Some((node, hop)) = queue.pop_front() {
-        if hop > hops || !walked.insert(node) {
+        if depth.is_some_and(|depth| hop > depth) || !walked.insert(node) {
             continue;
         }
         for edge in vault.port_edge_neighbors(
@@ -254,9 +247,6 @@ fn witness_lineage_in_txn(
             Some(EdgeKind::DerivedFrom),
             usize::MAX,
         )? {
-            if fields.used_edges.len() >= WITNESS_MAX_EDGES {
-                return Ok(());
-            }
             if edge.target != node && seen.insert((node, edge.target)) {
                 fields.used_edges.push(UsedProvenanceEdge {
                     derived: node,

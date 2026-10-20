@@ -196,10 +196,6 @@ pub use tradeoff::{
     settle_skill_tradeoff_ask_as_agent, skill_tradeoff_ask, skill_tradeoff_asks_for,
     skill_tradeoff_preferences,
 };
-pub(crate) use tradeoff::{
-    settle_skill_tradeoff_ask_as_in_txn, settle_skill_tradeoff_ask_in_txn,
-    skill_tradeoff_ask_in_txn,
-};
 pub use verdict::{
     HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,
 };

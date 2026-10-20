@@ -22,7 +22,7 @@ use super::connector::ByoaConnectorSpec;
 use super::error::{ByoaError, ByoaResult, ERR_SEAT_SPEC, invalid};
 use super::official_seats::{
     OfficialSeatAdapter, OfficialSeatInput, OfficialSeatRegistry, OfficialSeatRoute,
-    OfficialSeatSpec,
+    OfficialSeatSpec, OfficialSeatStamp,
 };
 use super::provider::{DreamerProviderAdapter, DreamerProviderInput, ProviderAdapterRegistry};
 
@@ -80,6 +80,18 @@ impl DreamerProviderAdapter for OfficialSeatDreamerProvider {
                 base_url: self.base_url.clone(),
             },
         )
+    }
+
+    /// The seat's stamp, only on the two OpenAI plan routes and only once
+    /// the owner recorded OpenAI's hosted-plan approval (FIX 5104): that
+    /// approval then rides each run. Every other route keeps the generic
+    /// rule, so no SDK approval or binary check reaches a self-hosted run.
+    fn placement_context(&self) -> Option<OfficialSeatStamp> {
+        (matches!(
+            self.seat.route,
+            OfficialSeatRoute::CodexAppServerChatGptPlan | OfficialSeatRoute::SignInWithChatGpt
+        ) && self.seat.approvals.openai_hosted_plan)
+            .then(|| self.seat.stamp())
     }
 }
 
