@@ -386,8 +386,12 @@ destroyed only after every offer of an erase reads `removed`. Requests start at
 64 KiB) makes them smaller for the rest of the process, a `429` or `503` waits
 what the intake names, and no reply waits 30 s doubling to 15 minutes, without
 end. Nothing is dropped or cut short, and a restart starts the waits afresh.
-Turning "Learn from my conversations" off pauses uploads; withdrawals and
-receipts go on.
+Stopping the server cuts a request in flight at once; the next start sends the
+same window again. Turning "Learn from my conversations" off pauses uploads;
+withdrawals and receipts go on. A released offer whose files are missing or no
+longer match their manifest ships nothing and is read again every pass; until
+its files ship, the owner's training receipts show it as `files_problem`
+(`missing` or `mismatched`, with `files_problem_since`).
 
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with

@@ -58,6 +58,65 @@ pub(crate) fn private_threads_readable_with_read_in(
     viewers: &[EntityId],
     current: bool,
 ) -> Result<bool> {
+    let Some(ThreadWalk { placed, reached }) = thread_walk_in(vault, dbs, txn, id, raw)? else {
+        return Ok(false);
+    };
+    for (root, turn) in placed {
+        let readable = if current {
+            crate::workspace_roster::thread_root_readable_with_read_in(
+                vault, dbs, txn, root, viewers,
+            )?
+        } else {
+            crate::workspace_roster::thread_turn_readable_with_read_in(
+                vault, dbs, txn, root, turn, viewers,
+            )?
+        };
+        if !readable {
+            return Ok(false);
+        }
+    }
+    for root in reached {
+        if !crate::workspace_roster::thread_root_readable_with_read_in(
+            vault, dbs, txn, root, viewers,
+        )? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// The private thread turns the revision `raw` of `id`, or its current
+/// row, draws its words from, as [`private_threads_readable_raw_in`] walks
+/// them (FIX 6411): each turn read for its words, with its thread's root,
+/// which a viewer reads under the CONTENT rule. `None` where that walk
+/// denies every viewer: a TASK binding whose turn is gone, or an epoch
+/// summary whose sources do not read. The roots reached as a place alone
+/// are not listed; a read meets them under the CURRENT rule, as they stand.
+pub(crate) fn private_thread_word_turns_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<BTreeSet<(EntityId, EntityId)>>> {
+    Ok(thread_walk_in(vault, &vault.store.read(), txn, id, raw)?.map(|walk| walk.placed))
+}
+
+/// What one walk of a record's ancestry found: each private thread turn
+/// read for its words, by its root, and each root reached as a place alone.
+struct ThreadWalk {
+    placed: BTreeSet<(EntityId, EntityId)>,
+    reached: BTreeSet<EntityId>,
+}
+
+/// The walk [`private_threads_readable_with_read_in`] judges, through
+/// `dbs`; `None` where it denies every viewer.
+fn thread_walk_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<ThreadWalk>> {
     // Each pending record is walked as a source of the words read (`true`)
     // or as a place alone (`false`).
     let mut pending = vec![(id, Some(raw.to_vec()), true)];
@@ -104,12 +163,12 @@ pub(crate) fn private_threads_readable_with_read_in(
         if h.entity_type == ENTITY_TYPE_TASK {
             let bound = match crate::workspace_roster::task_binding_turns_in(vault, txn, id) {
                 Ok(turns) => turns,
-                Err(Error::EntityNotFound) => return Ok(false),
+                Err(Error::EntityNotFound) => return Ok(None),
                 Err(e) => return Err(e),
             };
             for turn in bound {
                 if !crate::vault::live_entity_row_in_txn(dbs, txn, &turn)?.is_live() {
-                    return Ok(false);
+                    return Ok(None);
                 }
                 pending.push((turn, None, source));
             }
@@ -180,7 +239,7 @@ pub(crate) fn private_threads_readable_with_read_in(
                 }
                 Ok(_) => {}
                 // A walk that cannot read them omits this row alone.
-                Err(_) => return Ok(false),
+                Err(_) => return Ok(None),
             }
         }
         // A cover that does not resolve names no root here; the audience
@@ -189,26 +248,5 @@ pub(crate) fn private_threads_readable_with_read_in(
             pending.extend(covered.into_iter().map(|id| (id, None, source)));
         }
     }
-    for (root, turn) in placed {
-        let readable = if current {
-            crate::workspace_roster::thread_root_readable_with_read_in(
-                vault, dbs, txn, root, viewers,
-            )?
-        } else {
-            crate::workspace_roster::thread_turn_readable_with_read_in(
-                vault, dbs, txn, root, turn, viewers,
-            )?
-        };
-        if !readable {
-            return Ok(false);
-        }
-    }
-    for root in reached {
-        if !crate::workspace_roster::thread_root_readable_with_read_in(
-            vault, dbs, txn, root, viewers,
-        )? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    Ok(Some(ThreadWalk { placed, reached }))
 }
