@@ -648,3 +648,37 @@ fn dag_parent_in_txn(
     }
     Ok(cursor)
 }
+
+/// Erasing `actor` from the room turn rows (FIX 6543): each turn row it
+/// spoke or edited an audience in keeps its links, time, messages, tasks,
+/// quotes and history, and names no one as its actor, in the erased form
+/// the roster rows write ([`crate::receipt::ERASED_CALL_IDENTITY`]), as its
+/// TURN body's editor already does (FIX 5639). One-way, in the erase's own
+/// transaction; every turn row is read, however many (rule 5). An id whose
+/// entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a turn row that cannot be read.
+pub(crate) fn erase_turn_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::workspace_roster::join_receipt::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let named = actor.to_hex();
+    let mut erased = Vec::new();
+    for row in TURNS.iter_from(&vault.store, wtxn, &[])? {
+        let (id, mut turn) = row?;
+        if turn.actor == named {
+            turn.actor = crate::receipt::ERASED_CALL_IDENTITY.to_owned();
+            erased.push((id, turn));
+        }
+    }
+    for (id, turn) in &erased {
+        TURNS.put(&vault.store, wtxn, id, turn)?;
+    }
+    Ok(())
+}
