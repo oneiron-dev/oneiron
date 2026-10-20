@@ -16,7 +16,7 @@ use crate::handlers::{AskHandlers, in_handler};
 use crate::host::OrganHost;
 use crate::mesh::{self, ORGAN_ALPN, PeerError};
 use crate::outcome::OrganOutcome;
-use crate::spec::{LentInput, OrganCall, OrganInput};
+use crate::spec::{LentInput, OrganCall, OrganInput, SightedInput};
 
 /// How long a node has to answer the dial and say what it offers.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -319,19 +319,21 @@ fn cannot_here(err: &HostError) -> bool {
     )
 }
 
-/// Reads the call's vault inputs here, under the caller's own reach, so
-/// the node that runs it needs nothing of this vault: vault inputs first,
-/// each with the version it is, then the lent bytes.
+/// Reads the call's vault inputs here, under the caller's own reach and
+/// each as its caller's sight reads it (FIX 6508), so the node that runs it
+/// needs nothing of this vault and judges no input again: vault inputs
+/// first, each with the version it is, then the lent bytes.
 fn read_inputs(
     vault: &Vault,
     call: &OrganCall,
     lent: Vec<LentInput>,
 ) -> Result<Vec<(Option<OrganInput>, LentInput)>, HostError> {
     let mut inputs = Vec::with_capacity(call.inputs.len() + lent.len());
-    for input in &call.inputs {
+    for &SightedInput { input, sight } in &call.inputs {
         let read = vault.lend_blob_artifact_version(
             &input.artifact,
             input.version,
+            sight,
             |record, bytes| -> Result<LentInput, HostError> {
                 Ok(LentInput {
                     media_type: record.export_media_type.clone(),
@@ -345,7 +347,7 @@ fn read_inputs(
                 version: input.version,
             })
         })?;
-        inputs.push((Some(*input), read));
+        inputs.push((Some(input), read));
     }
     inputs.extend(lent.into_iter().map(|input| (None, input)));
     Ok(inputs)

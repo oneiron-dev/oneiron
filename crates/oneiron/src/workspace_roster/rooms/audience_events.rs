@@ -322,6 +322,38 @@ pub(super) fn live_edit_in(
         .map(|binding| (binding, event)))
 }
 
+/// Whether `row` is a live TURN carrying an audience edit (FIX 6544): told
+/// by its decoded edit body, never by its room row naming no message, as a
+/// spoken turn may name none too.
+pub(crate) fn is_audience_edit_row(row: &LiveEntityRow) -> bool {
+    matches!(
+        row,
+        LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            body,
+        } if audience_event(body).ok().flatten().is_some()
+    )
+}
+
+/// The audience edits among the thread replies `turns` (FIX 6544): the
+/// turns a thread's last message and last reply leave out, as before their
+/// rows were filed (FIX 5637), while its history, indexes and replies keep
+/// them. A trunk turn is no thread's reply and is not read.
+pub(super) fn audience_edit_turns_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    turns: &[RoomTurn],
+) -> Result<BTreeSet<EntityId>> {
+    let mut edits = BTreeSet::new();
+    for turn in turns.iter().filter(|turn| turn.thread_of.is_some()) {
+        let id = EntityId::from_hex(&turn.turn_id)?;
+        if is_audience_edit_row(&live_entity_row_in_txn(&vault.store, txn, &id)?) {
+            edits.insert(id);
+        }
+    }
+    Ok(edits)
+}
+
 /// The audience edit a TURN's MessagePack `body` carries; `None` for a body
 /// that carries none, or is no map. An edit that does not decode, an add
 /// naming no history or any other edit naming one, and a cited request on

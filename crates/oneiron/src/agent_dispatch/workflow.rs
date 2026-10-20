@@ -18,6 +18,22 @@ use crate::error::Result;
 mod member_context;
 mod workflow_task;
 
+/// `input` and `spawn` as their admitted `intent` reads them (FIX 2314):
+/// each field the intent carries from them takes the handles the wall
+/// placed, so the leaves, frozen steps and wrapper are derived from what
+/// the record stores, never from a secret it masked.
+fn as_admitted(
+    mut input: DispatchAgent,
+    mut spawn: AgentSpawnContext,
+    intent: &WorkflowIntent,
+) -> (DispatchAgent, AgentSpawnContext) {
+    input.run_id.clone_from(&intent.run_id);
+    spawn.context_spec.clone_from(&intent.context_spec);
+    spawn.type_ref.clone_from(&intent.type_ref);
+    spawn.objectives.clone_from(&intent.objectives);
+    (input, spawn)
+}
+
 impl AgentDispatcher<'_> {
     pub(super) fn dispatch_workflow(
         &self,
@@ -35,13 +51,19 @@ impl AgentDispatcher<'_> {
         };
         if let Some(key) = input.dedupe_key.as_deref() {
             let txn = self.vault.store.env.read_txn()?;
-            if let Some(id) = DEDUPE.get(&self.vault.store, &txn, &dedupe_key_hash(key))? {
+            let first = DEDUPE.get(&self.vault.store, &txn, &dedupe_key_hash(key))?;
+            if let Some(id) = first {
                 let row = AttemptQueue::new(self.vault)
                     .get_in_txn(&txn, id)?
                     .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
                 let record = self.read_workflow(&txn, &row)?;
                 let (_, expected) = self.workflow_intent(&txn, &input, &spawn)?;
-                if record.intent != expected {
+                drop(txn);
+                // A first run whose record the wall masked answers the same
+                // request, read as the wall stores it (FIX 2314).
+                if record.intent != expected
+                    && record.intent != self.admitted_workflow_intent(expected)?
+                {
                     return Err(invalid("workflow dedupe key names a different intent"));
                 }
                 return Ok(AgentDispatchOutcome::WorkflowExisting(Box::new(
@@ -131,6 +153,12 @@ impl AgentDispatcher<'_> {
     ) -> Result<AgentDispatchOutcome> {
         let (definition, mut intent) = self.workflow_intent(txn, &input, &spawn)?;
         intent.task = task.cloned();
+        // FIX 2314: the request as the side-row wall stores it, before any
+        // compare, frozen step, wrapper payload or status is derived from
+        // it, so its record masks a secret rather than refusing it.
+        let raw = intent.clone();
+        let intent = self.admitted_workflow_intent_in(txn, intent)?;
+        let (input, spawn) = as_admitted(input, spawn, &intent);
         if let Some(parent) = input.parent_attempt {
             let parent_input = self
                 .parent_dispatch_input_in_txn(txn, parent)?
@@ -164,7 +192,7 @@ impl AgentDispatcher<'_> {
                 .get_in_write_txn(txn, root)?
                 .ok_or_else(|| invalid("workflow dedupe root is missing"))?;
             let record = self.read_workflow(txn, &row)?;
-            if record.intent != intent {
+            if record.intent != intent && record.intent != raw {
                 return Err(invalid("workflow dedupe key names a different intent"));
             }
             return Ok(AgentDispatchOutcome::WorkflowExisting(Box::new(
@@ -259,7 +287,8 @@ impl AgentDispatcher<'_> {
             0,
             input.now,
         )?;
-        RECORD.put(&self.vault.store, txn, &root.id, &record)?;
+        RECORD.admit(self.vault, txn, &root.id, &mut record)?;
+        RECORD.put(self.vault, txn, &root.id, &record)?;
         if let Some(key) = input.dedupe_key.as_deref() {
             DEDUPE.put(&self.vault.store, txn, &dedupe_key_hash(key), &root.id)?;
         }
