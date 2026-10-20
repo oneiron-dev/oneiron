@@ -53,52 +53,115 @@ fn fail_reply(pipe: &Pipe, prefix: &[u8], why: &str) -> bool {
     true
 }
 
-/// The number the first top-level `"id"` key in `prefix` holds: the
-/// reply's id. None when the prefix ends before one, as an event's does.
+/// The reply id `prefix` names: the value of its root object's `"id"` key,
+/// read in key position, when it is a whole unsigned integer that a `,` or
+/// `}` ends within the prefix. None for anything else (a non-object root, a
+/// value that reads "id", a fraction, an integer the prefix cuts): an event,
+/// or a message whose id is not proved.
 fn reply_id(prefix: &[u8]) -> Option<u64> {
-    let mut depth = 0usize;
-    // The string being read, from its first byte, and the top-level key
-    // just read while only its colon may follow.
-    let mut string: Option<usize> = None;
-    let mut escaped = false;
-    let mut key: Option<&[u8]> = None;
-    for (at, &byte) in prefix.iter().enumerate() {
-        if let Some(start) = string {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == b'"' {
-                string = None;
-                key = if depth == 1 {
-                    Some(&prefix[start..at])
-                } else {
-                    None
-                };
-            }
-            continue;
+    let mut at = blank(prefix, 0);
+    if prefix.get(at) != Some(&b'{') {
+        return None;
+    }
+    at += 1;
+    loop {
+        let (key, end) = string(prefix, blank(prefix, at))?;
+        at = blank(prefix, end);
+        if prefix.get(at) != Some(&b':') {
+            return None;
         }
-        match byte {
-            b'"' => string = Some(at + 1),
-            b':' if key == Some(b"id".as_slice()) => return digits(&prefix[at + 1..]),
-            b' ' | b'\t' | b'\r' | b'\n' => {}
-            b'{' | b'[' => {
-                depth += 1;
-                key = None;
-            }
-            b'}' | b']' => {
-                depth = depth.saturating_sub(1);
-                key = None;
-            }
-            _ => key = None,
+        at = blank(prefix, at + 1);
+        if key == b"id" {
+            return integer(prefix, at);
+        }
+        at = blank(prefix, past_value(prefix, at)?);
+        if prefix.get(at) != Some(&b',') {
+            return None;
+        }
+        at += 1;
+    }
+}
+
+/// Past the blanks JSON allows at `at`.
+fn blank(bytes: &[u8], at: usize) -> usize {
+    let blanks = bytes.get(at..).map_or(0, |rest| {
+        rest.iter()
+            .take_while(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+            .count()
+    });
+    at + blanks
+}
+
+/// The string whose quote is at `at`: its raw bytes, and where it ends.
+fn string(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
+    if bytes.get(at) != Some(&b'"') {
+        return None;
+    }
+    let mut escaped = false;
+    for (offset, &byte) in bytes.get(at + 1..)?.iter().enumerate() {
+        if escaped {
+            escaped = false;
+        } else if byte == b'\\' {
+            escaped = true;
+        } else if byte == b'"' {
+            let close = at + 1 + offset;
+            return Some((&bytes[at + 1..close], close + 1));
         }
     }
     None
 }
 
-/// The number `rest` starts with, past any blank, when it ends within it.
-fn digits(rest: &[u8]) -> Option<u64> {
-    let rest = rest.trim_ascii_start();
-    let end = rest.iter().position(|byte| !byte.is_ascii_digit())?;
-    std::str::from_utf8(&rest[..end]).ok()?.parse().ok()
+/// Where the value at `at` ends: a string; an object or an array, through
+/// its closing bracket; or a number or literal, up to the `,`, `}` or blank
+/// after it. None when the prefix ends first.
+fn past_value(bytes: &[u8], at: usize) -> Option<usize> {
+    match bytes.get(at)? {
+        b'"' => string(bytes, at).map(|(_, end)| end),
+        b'{' | b'[' => {
+            let mut depth = 0usize;
+            let mut next = at;
+            while let Some(&byte) = bytes.get(next) {
+                match byte {
+                    b'"' => {
+                        next = string(bytes, next)?.1;
+                        continue;
+                    }
+                    b'{' | b'[' => depth += 1,
+                    b'}' | b']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return Some(next + 1);
+                        }
+                    }
+                    _ => {}
+                }
+                next += 1;
+            }
+            None
+        }
+        _ => {
+            let end = bytes[at..]
+                .iter()
+                .position(|byte| matches!(byte, b',' | b'}' | b' ' | b'\t' | b'\r' | b'\n'))?;
+            (end > 0).then_some(at + end)
+        }
+    }
+}
+
+/// The whole unsigned JSON integer at `at`, when blanks and a `,` or `}`
+/// follow it within `bytes`.
+fn integer(bytes: &[u8], at: usize) -> Option<u64> {
+    let digits = bytes
+        .get(at..)?
+        .iter()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if digits == 0 || (digits > 1 && bytes[at] == b'0') {
+        return None;
+    }
+    let end = at + digits;
+    if !matches!(bytes.get(blank(bytes, end)), Some(b',' | b'}')) {
+        return None;
+    }
+    std::str::from_utf8(&bytes[at..end]).ok()?.parse().ok()
 }

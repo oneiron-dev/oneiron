@@ -11,9 +11,9 @@
 //! it is discarded the same way. Every other frame goes on as it came, and
 //! tungstenite judges it by its own bounds, unchanged.
 //!
-//! The gate starts at the first byte after the upgrade's answer, a frame's
-//! head: no call goes out before the pipe exists, so the browser sends no
-//! frame before then.
+//! The gate starts at the first byte past the upgrade's answer, a frame's
+//! head: the upgrade hands tungstenite that answer's head alone, and every
+//! byte past it, read with the head or after, goes through the gate.
 
 use crate::cdp::MAX_MESSAGE;
 use crate::cdp::overrun::PREFIX;
@@ -164,6 +164,19 @@ impl Gate {
             return;
         };
         if !message.over {
+            // Its room grows exactly, at most doubling, never past the
+            // bound (its payload so far never passes it).
+            let needed = message.body.len() + chunk.len();
+            if needed > message.body.capacity() {
+                let bound = usize::try_from(MAX_MESSAGE).unwrap_or(usize::MAX);
+                let room = message
+                    .body
+                    .capacity()
+                    .saturating_mul(2)
+                    .min(bound)
+                    .max(needed);
+                message.body.reserve_exact(room - message.body.len());
+            }
             message.body.extend_from_slice(chunk);
         } else if !message.told {
             let room = PREFIX.saturating_sub(message.body.len()).min(chunk.len());
