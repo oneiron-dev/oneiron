@@ -11,6 +11,7 @@ use crate::registry::{
     ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
 };
 use crate::side_table::{self, Raw, SideTable};
+use record::require_room_policy;
 use rmpv::Value;
 
 /// A host-local erasure fence, keyed by `(room, person)`: a completed sweep
