@@ -1,0 +1,216 @@
+//! The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the
+//! exterior custody a world key's erasable half moves into.
+//!
+//! A pad is one subject per key: kind `WorldPad`, item `world (16) | the
+//! key's mint id (16)`, generation 0, the pad's 32 bytes its secret. Until
+//! the owner's other machines can take a pad from custody (an L03 pad
+//! hydration channel), a pad row still carries its pad and replicates as
+//! before, and custody holds a mirror: the writer that mints a key publishes
+//! its pad here, the binding pinned in the same transaction, synced and its
+//! Mint journaled before the row commits. A reader prefers the row's pad and
+//! falls back to custody. The mirror sits in the custody head's
+//! host-readable compartment (CALLS WORLD_PAD_HEAD_SCOPE).
+//!
+//! A world erase stages one erase intent for every pad of the world custody
+//! holds here, a row or none, in the purge's own transaction, and the
+//! finisher retires them after the commit once the world's destroyed fact
+//! stands. A world delete retires nothing.
+
+use heed::{RoTxn, RwTxn};
+use zeroize::Zeroizing;
+
+use crate::entity_id::EntityId;
+use crate::error::{Error, Result};
+use crate::store::Store;
+use crate::store::key_custody::{
+    CustodyBinding, CustodyKind, CustodySecret, CustodySubject, EntryState, RetireCause,
+    RetirementIntent, custody_present, stage_retirement_in_txn,
+};
+
+/// A pad's custody item: its world (16) then its key's mint id (16).
+pub(crate) type WorldPadItem = [u8; 32];
+
+fn pad_subject(binding: &CustodyBinding, item: &WorldPadItem) -> Result<CustodySubject> {
+    binding.subject(CustodyKind::WorldPad, item)
+}
+
+/// A pad's bytes, copied out of a custody secret: exactly 32.
+fn copy_pad(secret: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+    let mut pad = Zeroizing::new([0; 32]);
+    if secret.len() != pad.len() {
+        return Err(CustodyKind::WorldPad.corrupt());
+    }
+    pad.copy_from_slice(secret);
+    Ok(pad)
+}
+
+/// The world a pad item files under.
+fn item_world(item: &[u8]) -> Result<EntityId> {
+    item.get(..16)
+        .and_then(|raw| <[u8; 16]>::try_from(raw).ok())
+        .and_then(|raw| EntityId::from_bytes(raw).ok())
+        .ok_or_else(|| CustodyKind::WorldPad.corrupt())
+}
+
+impl Store {
+    /// Publishes `pad` as the custody entry `item`, in `wtxn`'s writer, the
+    /// binding pinned in the same transaction: synced, and its Mint
+    /// journaled, before the row it mirrors commits. An entry already live
+    /// there must hold the same bytes; a retired one is never published
+    /// again. An archived vault publishes none: its custody is its
+    /// replacement's.
+    ///
+    /// # Errors
+    ///
+    /// A retired or different entry, and custody faults.
+    pub(crate) fn publish_world_pad_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        item: &WorldPadItem,
+        pad: &[u8; 32],
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Ok(());
+        }
+        self.core.key_custody.pin_in_txn(self, wtxn)?;
+        let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
+        let id = pad_subject(custody.binding(), item)?.at(0);
+        let secret = CustodySecret::from_bytes(Zeroizing::new(pad.to_vec()));
+        match custody.state(&id)? {
+            EntryState::Missing => custody.publish_minted(&id, &secret),
+            EntryState::Live => custody.publish(&id, &secret),
+            EntryState::Retired => Err(CustodyKind::WorldPad.corrupt()),
+        }
+    }
+
+    /// The pad `item` names, from current custody: `None` when no custody
+    /// is bound here, or its entry is retired or missing. A damaged entry is
+    /// an error. It takes no custody guard, so a writer may ask; a
+    /// retirement that races the read reads as retired.
+    ///
+    /// # Errors
+    ///
+    /// Custody faults.
+    pub(crate) fn world_pad_in_custody(
+        &self,
+        item: &WorldPadItem,
+    ) -> Result<Option<Zeroizing<[u8; 32]>>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(None);
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(None);
+        }
+        let id = pad_subject(custody.binding(), item)?.at(0);
+        if custody.state(&id)? != EntryState::Live {
+            return Ok(None);
+        }
+        match custody.read(&id) {
+            Ok(secret) => copy_pad(secret.expose()).map(Some),
+            Err(_) if custody.state(&id)? != EntryState::Live => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Every pad of `world` custody holds here with its state, one no row
+    /// names included. None when no custody is bound.
+    fn world_pad_subjects(&self, world: &EntityId) -> Result<Vec<(CustodySubject, EntryState)>> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(Vec::new());
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(Vec::new());
+        }
+        custody
+            .subjects_with_prefix(CustodyKind::WorldPad, world.as_bytes())?
+            .into_iter()
+            .map(|subject| {
+                let state = custody.state(&subject.at(0))?;
+                Ok((subject, state))
+            })
+            .collect()
+    }
+
+    /// Whether custody here still holds a pad of `world` no retirement
+    /// reached: part of the world's delete scope, with or without a row
+    /// (FIX 349).
+    ///
+    /// # Errors
+    ///
+    /// Custody faults.
+    pub(crate) fn world_pad_custody_held(&self, world: &EntityId) -> Result<bool> {
+        Ok(self
+            .world_pad_subjects(world)?
+            .iter()
+            .any(|(_, state)| *state != EntryState::Retired))
+    }
+
+    /// Stages an erase's retirement of every pad of `world` custody holds
+    /// here that no marker retires yet, in `wtxn`, the purge's own
+    /// transaction: a row or none, a pad an aborted writer published
+    /// included. [`Self::finish_world_pad_retirements`] carries them out
+    /// after the commit. An archived vault stages none: its custody is its
+    /// replacement's.
+    ///
+    /// # Errors
+    ///
+    /// Custody and storage faults.
+    pub(crate) fn stage_world_pad_erase_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        world: &EntityId,
+    ) -> Result<()> {
+        if self.core.gate_custody_archived() {
+            return Ok(());
+        }
+        for (subject, state) in self.world_pad_subjects(world)? {
+            if state == EntryState::Retired {
+                continue;
+            }
+            let intent = RetirementIntent {
+                subject,
+                through: 0,
+                cause: RetireCause::Erase,
+            };
+            stage_retirement_in_txn(self, wtxn, &intent)?;
+        }
+        Ok(())
+    }
+
+    /// Carries out every staged world pad retirement, an interrupted
+    /// process's included, in the custody finisher's order (marker, unlink,
+    /// directory sync), then hands each to the custody journal. Only an
+    /// erase's intent runs, for a world whose keys were destroyed here;
+    /// anything else is refused by name.
+    ///
+    /// # Errors
+    ///
+    /// An archived vault with a retirement standing, the rule's refusals,
+    /// and custody faults.
+    pub(crate) fn finish_world_pad_retirements(&self) -> Result<()> {
+        self.finish_custody_retirements(CustodyKind::WorldPad, |txn, intent| {
+            world_pad_retirement_ready(self, txn, intent)
+        })
+    }
+}
+
+/// The pad client's rule for the custody finisher: see
+/// [`Store::finish_world_pad_retirements`].
+fn world_pad_retirement_ready(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    intent: &RetirementIntent,
+) -> Result<bool> {
+    if intent.cause != RetireCause::Erase {
+        return Err(Error::CorruptedIndex(
+            "world key pads retire for an erase only",
+        ));
+    }
+    let world = item_world(intent.subject.item())?;
+    if !crate::world_keys::world_keys_destroyed_in_txn(store, txn, world)? {
+        return Err(Error::CorruptedIndex(
+            "retiring world key pads have no erase",
+        ));
+    }
+    Ok(true)
+}

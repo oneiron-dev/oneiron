@@ -116,7 +116,9 @@ impl Store {
     /// sealed manifest stays one frame however many bodies a vault keeps.
     /// Nor is the known-value index's master or history (KS-3): an image's
     /// references name each one it needs, which a restore requires the same
-    /// way, and an entry no reference names is never needed.
+    /// way, and an entry no reference names is never needed. Nor is a world
+    /// pad (KS-5): a restore lands its row when current custody holds it and
+    /// names its world unavailable when not, never refused.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -137,6 +139,7 @@ impl Store {
                             CustodyKind::BodyInstance
                                 | CustodyKind::KnownValueIndex
                                 | CustodyKind::KnownValueEntry
+                                | CustodyKind::WorldPad
                         )
                 })
                 .map(|(id, _)| RequiredId {

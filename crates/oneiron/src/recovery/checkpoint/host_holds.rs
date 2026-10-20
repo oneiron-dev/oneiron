@@ -14,6 +14,12 @@
 //!
 //! A backup holds every record its image carries, so while any hold stands,
 //! customer or host order, none expires ([`Vault::legal_hold_keeps_backups`]).
+//! An expiry that unlinks reads the holds under the LMDB writer and unlinks
+//! inside it ([`Vault::with_backup_hold_exclusion`]): a hold placed meanwhile
+//! commits before the read or after the unlink, never between (FIX 1488).
+//! Each committed release, and each maintenance pass, bumps one content-free
+//! counter ([`Vault::backup_hold_rechecks`]), so a delete a hold deferred
+//! asks again.
 
 use serde::{Deserialize, Serialize};
 
@@ -84,9 +90,7 @@ impl Vault {
     /// that expires a backup asks first, and keeps them all while it does.
     pub fn legal_hold_keeps_backups(&self) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        Ok(crate::store::legal_hold::holds_in_txn(&self.store, &txn)?
-            .iter()
-            .any(crate::deletion::LegalHold::stands))
+        Ok(backup_holds_in_txn(self, &txn)?.keeps_backups())
     }
 
     /// How many legal holds stand on this vault, customer and host order
@@ -95,10 +99,72 @@ impl Vault {
     /// hold.
     pub fn standing_legal_holds(&self) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
-        let standing = crate::store::legal_hold::holds_in_txn(&self.store, &txn)?
-            .iter()
-            .filter(|hold| hold.stands())
-            .count();
-        Ok(u64::try_from(standing).unwrap_or(u64::MAX))
+        Ok(backup_holds_in_txn(self, &txn)?.standing)
     }
+
+    /// Runs `expire` with the standing holds that keep this vault's backups,
+    /// read as [`Self::legal_hold_keeps_backups`] reads them, while this
+    /// call holds the LMDB writer (FIX 1488). A hold writer commits before
+    /// the read or after `expire` returns, never between, so an expiry that
+    /// unlinks and syncs its directory inside `expire` never destroys a copy
+    /// a hold placed meanwhile keeps. Nothing is written: the transaction is
+    /// dropped. `expire` must not open a write transaction on this vault.
+    ///
+    /// # Errors
+    ///
+    /// The writer or the holds could not be read; `expire` did not run.
+    pub fn with_backup_hold_exclusion<R>(
+        &self,
+        expire: impl FnOnce(&BackupHolds) -> R,
+    ) -> Result<R> {
+        let wtxn = self.store.env.write_txn()?;
+        let holds = backup_holds_in_txn(self, &wtxn)?;
+        let expired = expire(&holds);
+        drop(wtxn);
+        Ok(expired)
+    }
+
+    /// A content-free counter that moves after each committed legal-hold
+    /// release and each hold maintenance pass on this open vault: a delete a
+    /// standing hold deferred asks [`Self::with_backup_hold_exclusion`] again
+    /// when it moves (FIX 1488).
+    #[must_use]
+    pub fn backup_hold_rechecks(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.store.backup_hold_rechecks.subscribe()
+    }
+
+    /// Moves [`Self::backup_hold_rechecks`]; only after a release or a
+    /// maintenance pass has committed.
+    pub(crate) fn note_backup_hold_recheck(&self) {
+        self.store.backup_hold_rechecks.send_modify(|generation| {
+            *generation = generation.wrapping_add(1);
+        });
+    }
+}
+
+/// The holds that keep this vault's backups, as an expiry reads them: every
+/// standing legal hold, customer and host order alike. A count, nothing of
+/// any hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BackupHolds {
+    /// How many legal holds stand.
+    pub standing: u64,
+}
+
+impl BackupHolds {
+    /// Whether a standing hold keeps every backup: none may expire.
+    #[must_use]
+    pub fn keeps_backups(&self) -> bool {
+        self.standing > 0
+    }
+}
+
+fn backup_holds_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<BackupHolds> {
+    let standing = crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
+        .iter()
+        .filter(|hold| hold.stands())
+        .count();
+    Ok(BackupHolds {
+        standing: u64::try_from(standing).unwrap_or(u64::MAX),
+    })
 }

@@ -30,10 +30,11 @@ use serde::{Deserialize, Serialize};
 
 use super::doors::world_recovery_state_in;
 use super::page_seal::WrapTransition;
+use super::state::world_pad_availability_in;
 use super::{
     ActivatedRoot, KitConfirmation, OwnerWorkReceipt, OwnerWorkStatus, PreparedRoot, RecoveryRoot,
     RecoveryRootId, RecoveryRootSeed, RootRestore, VaultKeyStatus, VaultKeyWrapInfo,
-    WorldRecoveryState, refused,
+    WorldPadAvailability, WorldRecoveryState, refused,
 };
 use crate::authority::{AuthorityEntryHash, EditOrigin};
 use crate::consent::AuthenticatedOwner;
@@ -167,6 +168,9 @@ pub struct WorldKitStatus {
     /// current key has a wrap to the pin; saved pieces and placement are the
     /// kits' own facts.
     pub worlds: Vec<(EntityId, WorldRecoveryState)>,
+    /// Whether each of those worlds' current pad is on this machine, in the
+    /// same order (FIX 348): a covered world may still miss its pad here.
+    pub pads: Vec<(EntityId, WorldPadAvailability)>,
     /// Where the root request that issued each such kit stands, as the fold
     /// of this snapshot derives its receipt (FIX 5585), in kit order.
     pub issuing: Vec<IssuingRequest>,
@@ -542,10 +546,11 @@ impl Vault {
     }
 
     /// Every kit this vault issued, the current one, each private world's
-    /// no-kit state on this install, and where each kit's issuing root
-    /// request stands, from one snapshot.
+    /// no-kit state and pad availability on this install, and where each
+    /// kit's issuing root request stands, from one snapshot read under the
+    /// custody guard.
     pub fn world_kit_status(&self) -> Result<WorldKitStatus> {
-        let txn = self.store.env.read_txn()?;
+        let txn = self.store.custody_snapshot()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let kits: Vec<StoredKit> = KITS
             .scan(&self.store, &txn)?
@@ -568,10 +573,19 @@ impl Vault {
             .copied()
             .chain(fold.all_world_keys().map(|key| key.id.world))
             .collect();
-        let worlds = worlds
+        let worlds: Vec<(EntityId, WorldRecoveryState)> = worlds
             .into_iter()
             .map(|world| (world, world_recovery_state_in(&fold, world)))
             .filter(|(_, state)| *state != WorldRecoveryState::NotPrivate)
+            .collect();
+        let pads = worlds
+            .iter()
+            .map(|(world, _)| {
+                (
+                    *world,
+                    world_pad_availability_in(&self.store, &txn, &fold, *world),
+                )
+            })
             .collect();
         // The receipt's precedence: a result stands over a later cancel or
         // newer request, which close only a request with none.
@@ -593,6 +607,7 @@ impl Vault {
             current,
             kits,
             worlds,
+            pads,
             issuing,
         })
     }

@@ -991,7 +991,7 @@ impl Vault {
             let mut stored = 0;
             for (key, pad, learned_at) in &pads.entries {
                 if fold.world_key(key).is_none()
-                    || pad_in_txn(&self.store, txn, key)?.is_some()
+                    || pad_row_in_txn(&self.store, txn, key)?.is_some()
                     || world_keys_destroyed_in_txn(&self.store, txn, key.world)?
                 {
                     continue;
@@ -1049,7 +1049,8 @@ impl Vault {
 
     /// Kit restore: every section of `opened` whose key is wrapped to the kit's
     /// root, opened with that key's pad from `pads`, the pad object of the
-    /// bundle's generation. This vault's authority must already hold the bundle's
+    /// bundle's generation, or else this machine's own, from its row or its
+    /// custody (FIX 346). This vault's authority must already hold the bundle's
     /// base and the world capsules the kit opens, which carry the root's wraps.
     pub fn open_vault_bundle_sections_with_kit(
         &self,
@@ -1065,9 +1066,19 @@ impl Vault {
                 .vault_id
                 .ok_or_else(|| refused("the vault has no authority genesis yet"))?;
             let root = WrapRecipient::RecoveryRoot(seed.public(&vault_id)?.id);
-            fold.all_world_keys()
-                .filter_map(|key| open_counted(&fold, key, root, &secret, &pads.pad(&key.id)?))
-                .collect()
+            let mut keys = Vec::new();
+            for key in fold.all_world_keys() {
+                let pad = match pads.pad(&key.id) {
+                    Some(pad) => Some(pad),
+                    None => pad_in_txn(&self.store, &txn, &key.id)?,
+                };
+                if let Some(world_key) =
+                    pad.and_then(|pad| open_counted(&fold, key, root, &secret, &pad))
+                {
+                    keys.push(world_key);
+                }
+            }
+            keys
         };
         open_sections(opened, &keys)
     }

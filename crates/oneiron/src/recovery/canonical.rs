@@ -921,6 +921,20 @@ pub(crate) fn capture_canonical_window_within(
         }
     }
     snapshot.entity_blobs.sort_by_key(|row| row.id);
+    // FIX 5023: a copied origin claim names no actor this vault erased, in
+    // the form every export carries, before the peer digests read its bytes.
+    // It replaces a copy already counted, and never refuses on its size.
+    #[cfg(feature = "sync")]
+    for entity in &mut snapshot.entity_blobs {
+        if let Some(blob) = crate::origin::actor_erase::canonical_origin_claim_in_txn(
+            vault,
+            &txn,
+            &id(entity.id)?,
+            &entity.blob,
+        )? {
+            entity.blob = blob;
+        }
+    }
     // FIX 4550: the peer origins of the final rows, with their final bytes.
     peer_origins::capture(doc, &mut snapshot, budget)?;
     // Only a TASK row carries a refusal: a forged fact may name any id as its

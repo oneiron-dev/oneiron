@@ -76,7 +76,7 @@ pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,
     pad_body_world, pad_world_in_body, reject_held_pad_world_in_txn, validate_pad_put_in_txn,
-    world_keys_destroyed_in_txn, world_pad_windows_in_txn,
+    world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn, world_pad_windows_in_txn,
 };
 pub(crate) use self::page_seal::{
     OpenedDataKey, admit_new_vault, page_seal_open_error, read_sealed, seal_read_only,
@@ -93,7 +93,7 @@ pub use self::root_issue::PreparedRoot;
 pub use self::root_work::{RootMaterial, RootSecret, RootWorkDone};
 pub use self::session::WorldKeyFrontierCheck;
 pub(crate) use self::session::{CountersignStage, WorldKeySession};
-pub use self::state::{WorldRecoveryState, recovery_state};
+pub use self::state::{WorldPadAvailability, WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::IssuedVaultKeyKit;
 pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};

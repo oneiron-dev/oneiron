@@ -155,6 +155,7 @@ mod structural_kind_registry;
 mod sync_responses;
 mod training_link;
 pub(crate) mod turn_missing;
+mod world_pad_custody;
 mod writer_lease;
 
 #[cfg(test)]

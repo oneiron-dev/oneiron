@@ -60,7 +60,7 @@ impl CustodyVaultId {
 /// | `0x02` | `BodyInstance`      | body instances (KS-2A)                   |
 /// | `0x03` | `KnownValueIndex`   | the known-value index's master key (KS-3) |
 /// | `0x04` | `KnownValueEntry`   | known-value history entries, by holder (KS-3) |
-/// | `0x05` | `WorldPad`          | reserved: KS-5 world pads                |
+/// | `0x05` | `WorldPad`          | world key pads (KS-5, FIX 346)           |
 /// | `0x06` | `CredentialValue`   | reserved: KS-6 credential values         |
 /// | `0x07` | `CheckpointPayload` | KS-7 checkpoint payload compartments     |
 /// | `0x08` | `TrainingLink`      | the vault's training link key K (TRAINING-LINK = C) |
@@ -86,6 +86,11 @@ pub(crate) enum CustodyKind {
     /// = the holder's entry slot; secret = the index's 44-byte entry, `len
     /// (u32be) | tag (8) | fingerprint (32)`.
     KnownValueEntry,
+    /// One world key's pad (KS-5, FIX 346): item = the world's id (16 bytes)
+    /// then an instance (16), the key's random mint id, so a world erase
+    /// finds every pad of the world by its directory names; generation 0;
+    /// secret = the pad (32 bytes).
+    WorldPad,
     /// One owner's compartment of a checkpoint's ordinary payload (KS-7):
     /// item = subtype (1) | canonical owner (32) | incarnation (16), secret
     /// = the compartment's sealing key (32 bytes).
@@ -104,6 +109,7 @@ impl CustodyKind {
             Self::BodyInstance => 0x02,
             Self::KnownValueIndex => 0x03,
             Self::KnownValueEntry => 0x04,
+            Self::WorldPad => 0x05,
             Self::CheckpointPayload => 0x07,
             Self::TrainingLink => 0x08,
         }
@@ -115,6 +121,7 @@ impl CustodyKind {
             0x02 => Some(Self::BodyInstance),
             0x03 => Some(Self::KnownValueIndex),
             0x04 => Some(Self::KnownValueEntry),
+            0x05 => Some(Self::WorldPad),
             0x07 => Some(Self::CheckpointPayload),
             0x08 => Some(Self::TrainingLink),
             _ => None,
@@ -127,6 +134,7 @@ impl CustodyKind {
             Self::ClaimDecision => 16,
             Self::BodyInstance => 17,
             Self::KnownValueEntry => 16,
+            Self::WorldPad => 32,
             Self::CheckpointPayload => 49,
             Self::KnownValueIndex | Self::TrainingLink => 0,
         }
@@ -139,6 +147,7 @@ impl CustodyKind {
             Self::ClaimDecision
             | Self::BodyInstance
             | Self::KnownValueIndex
+            | Self::WorldPad
             | Self::CheckpointPayload
             | Self::TrainingLink => 32,
             Self::KnownValueEntry => 44,
@@ -153,6 +162,7 @@ impl CustodyKind {
             Self::BodyInstance => Error::CorruptedIndex("body file key custody"),
             Self::KnownValueIndex => Error::CorruptedIndex("known-value index key custody"),
             Self::KnownValueEntry => Error::CorruptedIndex("known-value history custody"),
+            Self::WorldPad => Error::CorruptedIndex("world key pad custody"),
             Self::CheckpointPayload => Error::CorruptedIndex("checkpoint payload custody"),
             Self::TrainingLink => Error::CorruptedIndex("training link key"),
         }

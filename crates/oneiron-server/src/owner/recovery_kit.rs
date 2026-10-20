@@ -6,7 +6,9 @@
 //! 5585). No piece, passphrase, seed or key passes through here.
 
 use oneiron::recovery::{KitCoverage, KitId, KitSecretKind, PieceHome};
-use oneiron::world_keys::{OwnerWorkStatus, StoredCost, StoredKit, WorldRecoveryState};
+use oneiron::world_keys::{
+    OwnerWorkStatus, StoredCost, StoredKit, WorldPadAvailability, WorldRecoveryState,
+};
 use serde::Serialize;
 
 use super::stamp::rfc3339_secs;
@@ -66,6 +68,9 @@ pub(crate) struct WorldView {
     pub(crate) world: String,
     /// `covered` means its current key has a wrap to the pinned root, no more.
     pub(crate) state: WorldRecoveryState,
+    /// Whether its current key's pad is on this machine (FIX 348): a covered
+    /// world may still miss it here.
+    pub(crate) pad: WorldPadAvailability,
 }
 
 /// The vault's kits and what they cover here.
@@ -114,6 +119,11 @@ pub(crate) fn report(vault: &oneiron::Vault) -> oneiron::Result<KitStatusView> {
             .map(|(world, state)| WorldView {
                 world: world.to_hex(),
                 state,
+                pad: status
+                    .pads
+                    .iter()
+                    .find(|(of, _)| *of == world)
+                    .map_or(WorldPadAvailability::Unavailable, |(_, pad)| *pad),
             })
             .collect(),
         checkpoint_pin,

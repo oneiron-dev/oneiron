@@ -13,12 +13,20 @@
 //! the world's windows (`PROMOTED_WORLD_PAD_SET`). A pad alone is noise, and
 //! so is an opened wrap without it.
 //!
+//! The pad is also published into exterior key custody when its key is minted
+//! here (KS-5, FIX 346: `crate::store` world pad custody), and a reader falls
+//! back to that custody when the row is not here. The row keeps its pad until
+//! the owner's other machines can take a pad from custody (an L03 pad
+//! hydration channel); then the row names its custody entry alone.
+//!
 //! Erasing a world (a hard purge, a batch delete, or a peer's hard tombstone)
 //! purges every pad of the world on each replica that applies the erase, and
 //! queues a hard tombstone for each, so every wrap of every generation, old root
 //! and old machine stops opening. The erase also leaves a permanent destroyed
 //! fact: it refuses a late pad for the world, a new key and an open, and carries
-//! the receipt, ids only. It also purges the world's sealing mirrors here
+//! the receipt, ids only. It stages the retirement of every pad of the world
+//! custody holds here, a row or none (FIX 346), carried out after it commits.
+//! It also purges the world's sealing mirrors here
 //! (`content`), and each machine of the owner's strips the world's pads from
 //! every pad object the sealed cloud bundle keeps. Old offline backups and a key
 //! a caller already holds are outside what the erasure reaches. A legal hold
@@ -152,6 +160,15 @@ pub(crate) fn pad_row_id(key: &WorldKeyId) -> Result<EntityId> {
     )
 }
 
+/// The custody item `key`'s pad rests under: its world, then its mint id
+/// (KS-5, FIX 346).
+fn pad_item(key: &WorldKeyId) -> [u8; 32] {
+    let mut item = [0u8; 32];
+    item[..16].copy_from_slice(key.world.as_bytes());
+    item[16..].copy_from_slice(&key.mint);
+    item
+}
+
 fn encode_pad_body(key: &WorldKeyId, pad: &WorldKeyPad) -> Vec<u8> {
     let mut body = Vec::with_capacity(PAD_BODY_LEN);
     body.extend_from_slice(PAD_LABEL);
@@ -280,13 +297,21 @@ pub(crate) fn late_pad_in_txn(store: &Store, txn: &heed::RoTxn<'_>, raw: &[u8]) 
     }
 }
 
-/// `key`'s pad on this replica, if its row is here.
+/// `key`'s pad on this replica: its row's, or else the one current custody
+/// holds for it (FIX 346). Custody's is never read for a world whose keys
+/// were destroyed here: its retirement may still be finishing.
 pub(crate) fn pad_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     key: &WorldKeyId,
 ) -> Result<Option<WorldKeyPad>> {
-    Ok(pad_row_in_txn(store, txn, key)?.map(|(pad, _)| pad))
+    if let Some((pad, _)) = pad_row_in_txn(store, txn, key)? {
+        return Ok(Some(pad));
+    }
+    if world_keys_destroyed_in_txn(store, txn, key.world)? {
+        return Ok(None);
+    }
+    Ok(store.world_pad_in_custody(&pad_item(key))?.map(WorldKeyPad))
 }
 
 /// [`pad_in_txn`] with the time its row was learned, which files it in its
@@ -376,6 +401,31 @@ fn world_pad_rows_in_txn(
         }
     }
     Ok(out)
+}
+
+/// Whether `world` has a pad here an erase of it would take (FIX 349): a pad
+/// row whose body names the world, or a pad of the world custody still
+/// holds, with or without a row. Both headerless delete probes read it, so a
+/// world whose WORLD row is gone still reaches its pads. A pad row that does
+/// not read names no world here.
+pub(crate) fn world_pad_scope_exists_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: &EntityId,
+) -> Result<bool> {
+    for id in store.port_entity_ids_by_type(txn, ENTITY_TYPE_WORLD_KEY_PAD, None)? {
+        let id = id?;
+        let named = store
+            .port_entity_with_raw(txn, &id, |raw| {
+                Ok(raw.len() > ENTITY_METADATA_HEADER_LEN
+                    && matches!(pad_body_world(raw), Some(Ok(of)) if of == *world))
+            })?
+            .unwrap_or(false);
+        if named {
+            return Ok(true);
+        }
+    }
+    store.world_pad_custody_held(world)
 }
 
 /// The window each pad row of `world` on this replica rides: an erase stages
@@ -522,7 +572,12 @@ pub(crate) fn destroy_world_keys_in_txn(
     let rows = world_pad_rows_in_txn(store, wtxn, target)?;
     let fact = HexId(target);
     let existing = DESTROYED.get(store, wtxn, &fact)?;
-    if !is_world && rows.is_empty() && existing.is_none() {
+    // A pad custody holds with no row naming it is the world's too (FIX 349).
+    if !is_world
+        && rows.is_empty()
+        && existing.is_none()
+        && !store.world_pad_custody_held(&target)?
+    {
         return Ok(None);
     }
     // Destroyed once already, only a late pad is left to purge.
@@ -543,6 +598,9 @@ pub(crate) fn destroy_world_keys_in_txn(
         crate::batch::queue_pad_tombstone_window(store, wtxn, window);
     }
     super::content::purge_world_mirrors_in_txn(store, wtxn, target)?;
+    // Every pad of the world custody holds retires once this commits, a row
+    // or none, a late one too (FIX 346).
+    store.stage_world_pad_erase_in_txn(wtxn, &target)?;
     if let Some(existing) = existing {
         return Ok(Some(existing));
     }
@@ -638,7 +696,10 @@ impl Vault {
 impl Vault {
     /// Stages `key`'s pad row, learned at `learned_at`, in the caller's
     /// transaction: a fresh pad beside the key's first wraps, or a kit-restored
-    /// one at the time its row was first learned (FIX 3790).
+    /// one at the time its row was first learned (FIX 3790). The pad is
+    /// published into custody first, synced and journaled before the row
+    /// commits (FIX 346); while the row still carries its pad, a custody
+    /// fault is warned and the row lands as before.
     pub(super) fn put_pad_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -646,6 +707,15 @@ impl Vault {
         pad: &WorldKeyPad,
         learned_at: u64,
     ) -> Result<()> {
+        if let Err(error) = self
+            .store
+            .publish_world_pad_in_txn(txn, &pad_item(key), pad.bytes())
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a world key's pad was not mirrored into key custody; its row carries it"
+            );
+        }
         let ops = vec![BatchOp::Put {
             id: pad_row_id(key)?,
             entity_type: ENTITY_TYPE_WORLD_KEY_PAD,

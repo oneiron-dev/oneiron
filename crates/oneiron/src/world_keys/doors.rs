@@ -21,8 +21,8 @@ pub(crate) use self::append::SequenceCounter;
 pub(crate) use self::frontier::{ChainHead, Parents, WrapPlanInput};
 use super::pads::{WorldKeyPad, require_pad_in_txn};
 use super::{
-    FIRST_GENERATION, WorldKey, WorldKeyBinding, WorldKeyId, WorldRecoveryState, WrapRecipient,
-    machine_secret, open_world_key, recovery_state, refused,
+    FIRST_GENERATION, WorldKey, WorldKeyBinding, WorldKeyId, WorldPadAvailability,
+    WorldRecoveryState, WrapRecipient, machine_secret, open_world_key, recovery_state, refused,
 };
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, Destination, EffectiveRead, FoldedWorldKey, RecoveryRootId,
@@ -400,6 +400,19 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(world_recovery_state_in(&fold, world))
+    }
+
+    /// Whether the pad `world`'s current key needs is on this machine (FIX
+    /// 348), read under the custody guard: kit coverage aside.
+    pub fn world_pad_availability(&self, world: EntityId) -> Result<WorldPadAvailability> {
+        let txn = self.store.custody_snapshot()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(super::state::world_pad_availability_in(
+            &self.store,
+            &txn,
+            &fold,
+            world,
+        ))
     }
 
     /// This install's pinned root as a wrap recipient, read from its stored
