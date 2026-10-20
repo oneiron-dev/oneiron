@@ -100,7 +100,9 @@ class CommitmentIndexOutcomeIndexed(TypedDict):
 class CommitmentIndexOutcomeStoredRrule(TypedDict):
     outcome: Literal["stored_rrule"]
     route: str
-CommitmentIndexOutcome = CommitmentIndexOutcomeIndexed | CommitmentIndexOutcomeStoredRrule
+class CommitmentIndexOutcomeStoredAwaitingApproval(TypedDict):
+    outcome: Literal["stored_awaiting_approval"]
+CommitmentIndexOutcome = CommitmentIndexOutcomeIndexed | CommitmentIndexOutcomeStoredRrule | CommitmentIndexOutcomeStoredAwaitingApproval
 class CommitmentCreateReceipt(TypedDict):
     commitment: CommitmentView
     index: CommitmentIndexOutcome
