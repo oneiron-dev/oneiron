@@ -1127,7 +1127,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/records.rs` | src | m | 2 struct · 8 fn · 21 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/records/admitted.rs` | src | s | 4 crate-vis | — | A run's reply bodies masked at write (FIX 5718 part 3, Engine rulings 3 and 4) |
 | `src/code_run/storage/records/bodies.rs` | src | m | 3 fn · 24 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
-| `src/code_run/storage/replay_bodies.rs` | src | s | 5 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
+| `src/code_run/storage/replay_bodies.rs` | src | s | 6 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
 | `src/code_run/storage/replay_capsule.rs` | src | s | 1 fn · 12 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
 | `src/code_run/storage/replay_capsule/admit.rs` | src | m | 2 crate-vis | — | A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the… |
 | `src/code_run/storage/replay_capsule/erase.rs` | src | s | 4 crate-vis | — | The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer |
@@ -3527,7 +3527,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/test_hooks.rs` | src | s | 5 crate-vis | — | Test hooks that fail or panic a restore at a chosen step |
 | `src/recovery/checkpoint/tests.rs` | test | XL | — | — | — |
 | `src/recovery/checkpoint/tiers.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | StorageTier | Snapshot classification |
-| `src/recovery/checkpoint/watermark.rs` | src | s | 2 struct · 7 fn · 1 type · 1 const · 1 re-export · 7 crate-vis | BackupSnapshotReceipt, BackupWatermark | The backup watermark: where a vault stood when a backup was taken, and where it stands now, so a host backs… |
+| `src/recovery/checkpoint/watermark.rs` | src | m | 3 struct · 13 fn · 1 type · 1 const · 1 re-export · 7 crate-vis | BackupMarker, BackupSnapshotReceipt, BackupWatermark | The backup watermark: where a vault stood when a backup was taken, and where it stands now, so a host backs… |
 | `src/recovery/checkpoint/write_budget.rs` | src | s | 1 struct · 1 trait · 1 fn · 10 crate-vis | AtWriteFloor, RecoveryWriteBudget | The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX… |
 | `src/recovery/checkpoint/write_estimate.rs` | src | s | 4 crate-vis | — | The bound a restore's copy claims ahead for what it writes past its bodies and rows (FIX 5613), worked out… |
 | `src/recovery/document.rs` | src | m | 3 struct · 1 fn · 14 crate-vis | CanonicalDocument, CanonicalHead, CanonicalHeadMove | Canonical entity-local documents and their bound workflows |
