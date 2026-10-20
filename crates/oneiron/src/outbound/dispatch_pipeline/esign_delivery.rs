@@ -136,8 +136,29 @@ pub(crate) fn esign_approval_digest_from_frozen_payload(
     payload: &[u8],
     tool: &str,
 ) -> Option<crate::consent::EffectDigest> {
+    pressed_send_digest(payload, "esign", tool)
+}
+
+/// [`esign_approval_digest_from_frozen_payload`] for a failure-signal batch
+/// (FIX 6679): the digest an owner's press on the batch frozen in `payload`
+/// approves, over its actor, act and channel, and its endpoint, content ref
+/// and frozen send ref. `None` for a payload that is no frozen batch.
+pub(crate) fn failure_signals_approval_digest_from_frozen_payload(
+    payload: &[u8],
+) -> Option<crate::consent::EffectDigest> {
+    use crate::failure_signals::{FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB};
+    pressed_send_digest(payload, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB)
+}
+
+/// The gate's approve-once composer over the `channel` `tool` call frozen in
+/// `payload`, as the gate built it for the send.
+fn pressed_send_digest(
+    payload: &[u8],
+    channel: &str,
+    tool: &str,
+) -> Option<crate::consent::EffectDigest> {
     let frozen: FrozenCall = serde_json::from_slice(payload).ok()?;
-    if frozen.channel != "esign" || frozen.verb != tool {
+    if frozen.channel != channel || frozen.verb != tool {
         return None;
     }
     let call = frozen_call(frozen, None).ok()?;

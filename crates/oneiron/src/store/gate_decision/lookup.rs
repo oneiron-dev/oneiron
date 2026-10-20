@@ -60,6 +60,29 @@ impl Store {
         Ok(None)
     }
 
+    /// [`Self::find_gate_decision_id_in_txn`] over the decisions recorded
+    /// after `after` only (FIX 6679: an owner's answer to a held send): every
+    /// later row is decoded and checked against its key; no match scans to
+    /// the end of the ledger.
+    pub(crate) fn find_gate_decision_after_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        after: GateDecisionId,
+        mut matches: impl FnMut(&GateDecisionRecord) -> bool,
+    ) -> Result<Option<GateDecisionId>> {
+        for row in LEDGER.iter_range(self, txn, Bound::Excluded(&after), Bound::Unbounded)? {
+            let (decision_id, raw) = row?;
+            let record = self.decode_gate_decision_value(decision_id, &raw)?;
+            if record.decision_id != decision_id {
+                return Err(Error::CorruptedIndex("gate decision ledger"));
+            }
+            if matches(&record) {
+                return Ok(Some(decision_id));
+            }
+        }
+        Ok(None)
+    }
+
     /// The newest decision about `claim_id` among the `scan` newest ledger
     /// rows: the id [`Store::gate_decisions`] filtered to that claim ranks
     /// first.

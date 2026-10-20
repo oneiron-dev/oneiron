@@ -12,7 +12,9 @@ use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 mod code_fix;
+mod count_delivery;
 mod delivery;
+mod held;
 mod live;
 pub(crate) mod policy;
 mod verbatim;
@@ -34,6 +36,7 @@ pub use delivery::{
     FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport,
     FailureSignalTransportRequest,
 };
+pub(crate) use held::erase_held_batch_actor_in_txn;
 pub use live::DispatchFailure;
 pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};
 pub use witness::Tier1Observation;
@@ -202,6 +205,9 @@ pub(crate) struct FailureSignalCounts {
     key: [u8; 32],
     witnesses: Mutex<BTreeMap<EntityId, WitnessEntry>>,
     collect_at: AtomicUsize,
+    /// Held for one whole delivery pass, so two passes on this open vault
+    /// never carry, send or settle one batch twice (FIX 6679).
+    delivery: Mutex<()>,
 }
 
 impl Default for FailureSignalCounts {
@@ -212,6 +218,7 @@ impl Default for FailureSignalCounts {
             key,
             witnesses: Mutex::default(),
             collect_at: AtomicUsize::new(WITNESS_COLLECTION_FLOOR),
+            delivery: Mutex::default(),
         }
     }
 }
@@ -568,45 +575,6 @@ impl crate::Vault {
             observed_at,
             &detector_id,
         )
-    }
-
-    /// Export this vault's current content-free tier-1 aggregate: every
-    /// count not yet delivered, kept across restarts.
-    pub fn export_tier1_failure_counts(&self) -> Result<Vec<Tier1FailureCount>> {
-        if !self.config.failure_signals.exports() {
-            return Ok(Vec::new());
-        }
-        let txn = self.store.env.read_txn()?;
-        let mut counts = COUNTS
-            .iter_from(&self.store, &txn, &[])?
-            .map(|row| decode_count(&row?.1))
-            .collect::<Result<Vec<_>>>()?;
-        counts.sort_by(|a, b| a.dimensions.cmp(&b.dimensions));
-        Ok(counts)
-    }
-
-    /// Takes counts the host delivered out of the aggregate, so the next
-    /// export carries only what was counted since. A count recorded between
-    /// the export and this ack stays for the next one.
-    pub fn ack_tier1_failure_counts(&self, delivered: &[Tier1FailureCount]) -> Result<()> {
-        let keys = delivered
-            .iter()
-            .map(|row| -> Result<_> { Ok((count_key(&row.dimensions)?, row.count)) })
-            .collect::<Result<Vec<_>>>()?;
-        self.with_write_txn_grouped(|txn| {
-            for ((key, json), delivered) in &keys {
-                let Some(value) = COUNTS.get(&self.store, &*txn, key)? else {
-                    continue;
-                };
-                let left = decode_count(&value)?.count.saturating_sub(*delivered);
-                if left == 0 {
-                    COUNTS.delete(&self.store, txn, key)?;
-                } else {
-                    COUNTS.put(&self.store, txn, key, &count_value(left, json))?;
-                }
-            }
-            Ok(())
-        })
     }
 
     /// Registers a producer's witness. Once the map has doubled since the

@@ -60,8 +60,9 @@ pub(super) fn approval_target(request: &OutboundDispatchRequest) -> Option<Appro
 
 /// FIX 6424 (Engine 10-20 20:4x): the logical send ref a press on `request`
 /// pins. A family whose press is recomposed from its frozen ledger bytes
-/// (e-sign) pins its send's stable identity: the logical send a schedule's
-/// ask names, else `ledger_identity_ref.unwrap_or(intent_ref)`, so a retry
+/// (e-sign, failure-signal batches) pins its send's stable identity: the
+/// logical send a schedule's ask names, else
+/// `ledger_identity_ref.unwrap_or(intent_ref)`, so a retry
 /// that keeps its ledger identity under a new caller-facing intent ref
 /// still matches its frozen payload and its press, and a scheduled ask pins
 /// the send its executor spends. Every other family pins its intent ref,
@@ -96,17 +97,33 @@ pub fn outbound_approve_once_digest(
     vault: &Vault,
     request: &OutboundDispatchRequest,
 ) -> Result<Option<EffectDigest>, OutboundDispatchError> {
+    Ok(pinned_approval_digest(&outbound_gate_effect(
+        vault, request,
+    )?))
+}
+
+/// FIX 6679: `request`'s Gate input as the dispatch pipeline prepares it,
+/// the one its approve-once digest and the Gate's decisions on it are
+/// composed over, so a caller can tell the Gate's own decisions on exactly
+/// this send ([`crate::gate::external_effect_decision_on`]). It reads and
+/// records nothing else.
+/// # Errors
+/// As [`outbound_approve_once_digest`].
+pub(crate) fn outbound_gate_effect(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+) -> Result<ExternalEffectGateInput, OutboundDispatchError> {
     let prepared = super::request_binding::PreparedOutboundDispatch::prepare(
         vault,
         request.clone(),
         None,
         None,
     )?;
-    Ok(pinned_approval_digest(&gate_input(
+    Ok(gate_input(
         &prepared.request,
         prepared.verb_contract,
         prepared.policy_risk,
-    )))
+    ))
 }
 
 /// FIX 6424: the approve-once digest a held `effect` names, 64 lower-hex,
@@ -124,10 +141,9 @@ fn pinned_approval_digest(effect: &ExternalEffectGateInput) -> Option<EffectDige
 /// FIX 6424: the send ref `request`'s frozen payload carries, for a family
 /// whose admitted press is recomposed from those bytes, so the ledger's
 /// proof check, a retry and a delivery's link mint recompose the digest the
-/// press approved. `None` for every other send.
+/// press approved; a failure-signal batch freezes it whether or not it pins
+/// (FIX 6679). `None` for every other send.
 pub(super) fn frozen_approval_send_ref(request: &OutboundDispatchRequest) -> Option<&str> {
     let connector = normalize_key(&request.intent.channel);
-    approval_target(request)
-        .is_some_and(|target| target.freezes_send_ref())
-        .then(|| approval_send_ref(request, &connector))
+    ApprovalTarget::freezes_send_ref_of(&connector).then(|| approval_send_ref(request, &connector))
 }
