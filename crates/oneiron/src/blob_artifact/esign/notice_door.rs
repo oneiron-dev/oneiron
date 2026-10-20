@@ -14,6 +14,7 @@ use super::notice_dispatch::{
     ScopedNotice, claim_notice_in_txn, notice_lease_prefix, principal_notices,
     recover_notice_in_txn,
 };
+use super::notice_scope::NoticeScope;
 use crate::EntityId;
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -105,14 +106,16 @@ impl Memory<'_> {
         let vault = self.vault();
         let (actor, class) = (self.actor(), self.actor_class());
         crate::memory::verify_actor_binding(vault, actor, class)?;
+        let scope = self.notice_scope()?;
         {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            scope.admit_in(&txn, document)?;
             super::ledger::read_in(vault, &txn, document)?;
         }
         let rows = principal_notices(vault, document, actor)?;
         let mut recovered = 0;
         for row in rows.iter().filter(|row| row.state.is_running()) {
-            if self.with_verified_actor_write_txn(|txn| {
+            if scope.write(self, document, |txn| {
                 Ok(recover_notice_in_txn(vault, txn, row.id, document, actor)?)
             })? {
                 recovered += 1;
@@ -126,7 +129,7 @@ impl Memory<'_> {
         let mut notices = Vec::with_capacity(rows.len());
         for row in &rows {
             let attempt_ref = crate::entity_id::bytes_to_hex_lower(row.id.as_bytes());
-            let claimed = self.with_verified_actor_write_txn(|txn| {
+            let claimed = scope.write(self, document, |txn| {
                 Ok(claim_notice_in_txn(
                     vault,
                     txn,
@@ -137,9 +140,14 @@ impl Memory<'_> {
                 )?)
             })?;
             let outcome = match claimed {
-                ScopedNotice::Claimed(attempt, notice) => {
-                    self.dispatch_claimed_notice(attempt_ref, &attempt, &notice, &lease_owner)
-                }
+                ScopedNotice::Claimed(attempt, notice) => self.dispatch_claimed_notice(
+                    &scope,
+                    document,
+                    attempt_ref,
+                    &attempt,
+                    &notice,
+                    &lease_owner,
+                ),
                 ScopedNotice::NotDue(notice) => {
                     EsignNoticeOutcome::door(attempt_ref, &notice, "not_due")
                 }
@@ -163,6 +171,8 @@ impl Memory<'_> {
     /// already crossed.
     fn dispatch_claimed_notice(
         &self,
+        scope: &NoticeScope<'_>,
+        document: EntityId,
         attempt_ref: String,
         attempt: &AttemptRecord,
         notice: &EsignNotice,
@@ -171,8 +181,8 @@ impl Memory<'_> {
         let vault = self.vault();
         let dispatched = notice_request(attempt, notice, self.actor(), self.actor_class())
             .and_then(|request| {
-                vault
-                    .dispatch_esign_notice(attempt, request)
+                scope
+                    .dispatch(vault, document, attempt, request)
                     .map_err(crate::memory::facade_error_from_outbound_dispatch)
             });
         match dispatched {
@@ -184,7 +194,7 @@ impl Memory<'_> {
                 ..EsignNoticeOutcome::door(attempt_ref, notice, "")
             },
             Err(error) => {
-                if let Err(release) = self.with_verified_actor_write_txn(|txn| {
+                if let Err(release) = scope.write(self, document, |txn| {
                     let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
                     Ok(AttemptQueue::new(vault).release_lease_in_txn(
                         txn,

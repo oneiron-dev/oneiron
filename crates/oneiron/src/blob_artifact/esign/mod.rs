@@ -6,6 +6,7 @@ mod lifecycle;
 mod model;
 mod notice_dispatch;
 mod notice_door;
+mod notice_scope;
 pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
 pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
