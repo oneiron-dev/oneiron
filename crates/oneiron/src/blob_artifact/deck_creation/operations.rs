@@ -42,16 +42,43 @@ fn outline_sources(bytes: &[u8]) -> MemoryResult<Vec<EntityId>> {
     Ok(sources)
 }
 
+fn sources_readable(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    sources: &[EntityId],
+) -> MemoryResult<bool> {
+    Ok(!lane
+        .get_entities_parts_in_txn(txn, sources)?
+        .iter()
+        .any(Option::is_none))
+}
+
+/// A kept outline goes out only when every frozen source it cites still reads
+/// under this credential; otherwise it is omitted with a reason, never refused.
+fn readable_keep(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    kept: Option<KeptOutline>,
+) -> MemoryResult<(Option<KeptOutline>, Option<KeptOutlineOmissionReason>)> {
+    let Some(kept) = kept else {
+        return Ok((None, None));
+    };
+    let Ok(sources) = outline_sources(&kept.bytes) else {
+        return Ok((None, Some(KeptOutlineOmissionReason::InvalidFrozenOutline)));
+    };
+    if sources_readable(lane, txn, &sources)? {
+        Ok((Some(kept), None))
+    } else {
+        Ok((None, Some(KeptOutlineOmissionReason::SourcesUnreadable)))
+    }
+}
+
 fn require_sources(
     lane: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     sources: &[EntityId],
 ) -> MemoryResult<()> {
-    if lane
-        .get_entities_parts_in_txn(txn, sources)?
-        .iter()
-        .any(Option::is_none)
-    {
+    if !sources_readable(lane, txn, sources)? {
         return Err(MemoryError::not_found(
             "deck input does not resolve under this credential",
         ));
@@ -89,7 +116,11 @@ impl Memory<'_> {
         let document = crate::note::deck_outline_document_in_txn(self.vault(), &txn, note)?;
         let bytes = outline_bytes(&document.markdown)?;
         require_sources(&lane, &txn, &outline_sources(&bytes)?)?;
-        let kept = self.vault().kept_deck_outline_in_txn(&txn, note)?;
+        let (kept, kept_omission) = readable_keep(
+            &lane,
+            &txn,
+            self.vault().kept_deck_outline_in_txn(&txn, note)?,
+        )?;
         let freshness = self
             .vault()
             .deck_outline_freshness_in_txn(&txn, note)
@@ -102,6 +133,7 @@ impl Memory<'_> {
             outline,
             kept,
             freshness,
+            kept_omission,
         })
     }
 
