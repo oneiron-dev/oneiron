@@ -36,6 +36,15 @@ const SKILL_CONTENT_ANCHOR_ID_DOMAIN: &[u8] = b"oneiron:skill-scan-content-ancho
 /// generous for ordinary clock drift and useless as a pin.
 const SCAN_TIMESTAMP_FUTURE_SKEW_SECS: u64 = 300;
 
+/// FIX 5995: the static pass re-scans when its whole input changed, not only
+/// its tree: the encoded record and capability surface it reads ride the
+/// receipt as `staticInputHash`. `false` skips on any static receipt for the
+/// tree, as before.
+const RESCAN_RECORD_CHANGES: bool = true;
+
+/// The internal receipt field carrying the static pass's input digest.
+const STATIC_INPUT_HASH_KEY: &str = "staticInputHash";
+
 /// Independent scanner verdict axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanVerdict {
@@ -139,6 +148,9 @@ pub struct SkillScanReceipt {
     pub risk_level: ScanRiskLevel,
     pub completeness: ScanCompleteness,
     pub governance: SkillGovernance,
+    /// The static producer's input digest (FIX 5995); internal, never a
+    /// provider's to declare.
+    static_input_hash: Option<String>,
 }
 
 impl SkillScanReceipt {
@@ -158,6 +170,7 @@ impl SkillScanReceipt {
             risk_level,
             completeness,
             governance,
+            static_input_hash: None,
         };
         validate_text(
             &receipt.provider,
@@ -295,6 +308,12 @@ impl Vault {
                 Value::from(receipt.scanned_at),
             ));
         }
+        if let Some(hash) = &receipt.static_input_hash {
+            value.push((
+                Value::from(STATIC_INPUT_HASH_KEY),
+                Value::from(hash.as_str()),
+            ));
+        }
         let mut body = ClaimBody::new(
             PREDICATE_SKILL_SCAN_VERDICT,
             ClaimSubject::Entity(anchor),
@@ -343,6 +362,8 @@ impl Vault {
     /// churn with no new evidence in it. That also means a second hub alias
     /// over known bytes adds no verdict, while bytes first seen through a
     /// non-hub birth path get scanned the moment they arrive at this door.
+    /// The content is the pass's whole input: a record or capability change
+    /// over the same tree re-scans and supersedes (FIX 5995).
     pub(super) fn scan_and_ingest_on_import_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -352,17 +373,24 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        let input_hash = static_input_hash(content_hash, package)?;
         let already_scanned = self
             .skill_scan_verdicts_for_content_hash_in_txn(&*wtxn, content_hash)?
             .iter()
             .any(|body| {
                 map_text(&body.value, "provider")
                     == Some(crate::skill_scan::SCAN_PROVIDER_STATIC_V1)
+                    && (!RESCAN_RECORD_CHANGES
+                        || map_text(&body.value, STATIC_INPUT_HASH_KEY)
+                            == Some(input_hash.as_str()))
             });
         if already_scanned {
             return Ok(());
         }
-        let receipt = crate::skill_scan::run_static_skill_scan(package, learned_at)?;
+        let receipt = SkillScanReceipt {
+            static_input_hash: Some(input_hash),
+            ..crate::skill_scan::run_static_skill_scan(package, learned_at)?
+        };
         self.ingest_skill_scan_verdict_in_txn(
             wtxn,
             entity,
@@ -657,4 +685,26 @@ fn validate_skill_scan_receipt(receipt: &SkillScanReceipt) -> Result<()> {
         MAX_HUB_TEXT_BYTES,
         "scan provider must be non-empty",
     )
+}
+
+/// FIX 5995: the static pass's whole input as one hex digest: the canonical
+/// tree hash, the encoded record and the capability surface it reads, each
+/// length-prefixed so two splits of the same bytes never collide.
+fn static_input_hash(content_hash: SkillContentHash, package: &HubPackage) -> Result<String> {
+    let surface = &package.capabilities;
+    let capabilities = rmp_serde::to_vec(&(
+        &surface.bins,
+        &surface.env,
+        &surface.mcp,
+        &surface.allowed_tools,
+    ))
+    .map_err(|_| Error::InvariantViolation("skill capability surface did not encode"))?;
+    let tree = content_hash.to_hex();
+    let record = crate::skill::encode_skill_record(&package.record)?;
+    let mut hasher = Sha256::new();
+    for part in [tree.as_bytes(), record.as_slice(), capabilities.as_slice()] {
+        hasher.update(u64::try_from(part.len()).unwrap_or(u64::MAX).to_be_bytes());
+        hasher.update(part);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }

@@ -84,6 +84,21 @@ impl Vault {
         self.inject_admitted(wtxn, id, &rec, &secret_ref, effector, apply)
     }
 
+    /// [`Vault::inject_secret_at_door`] in a write transaction the caller
+    /// opened and already checked its own row in, so that check and the
+    /// value copy are one instant (FIX 6011). The door consumes `wtxn` and
+    /// releases it before `apply`, as every T0 door does.
+    pub(crate) fn inject_secret_at_door_in_txn(
+        &self,
+        wtxn: heed::RwTxn<'_>,
+        secret_ref: &str,
+        effector: &str,
+        apply: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
+        let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, secret_ref)?;
+        self.inject_admitted(wtxn, &id, &rec, secret_ref, effector, apply)
+    }
+
     /// The one T0 body both doors share: admission under the live floor and
     /// the door policy, the value read through the bound door, the write
     /// transaction released, then `apply`.

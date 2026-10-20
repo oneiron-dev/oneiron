@@ -9,8 +9,11 @@
 //! publisher supplied, pinned by the operator, is replayed against the same
 //! failure beside it; one pinned after a failure settled is replayed against
 //! it once, in a catch-up over past work after the host starts. The host's
-//! model drafts and
-//! replays with no tools; every judgment (the failure's class, does a replay
+//! model drafts and replays with no tool run. A replay sends the request the
+//! failing call sent when the vault kept it (FIX 1662), its tool
+//! declarations kept, and rebuilds the call from the failure's text only
+//! when it did not or the host cannot send it; each candidate's run says
+//! which. Every judgment (the failure's class, does a replay
 //! fail the same way, did the candidate fix it, may the example leave) is a
 //! typed question on the host's decision ladder. The export doors in
 //! `failure_signals` decide what leaves, and the failure's work row keeps
@@ -37,9 +40,10 @@ use crate::dreamer_runner::{
 };
 use crate::failure_ladder::{BlockedReportRef, HealerCase, healer_case_in_txn};
 use crate::failure_signals::{
-    CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber,
-    FailureClassV1, FailureSource, FixOutcome, InventedExampleDraft, InventedMessage, InventedRole,
-    ReplayRun, ScrubRun, SealedCodeFix, Sealing, ShadowRun, code_fix_subject_in, failed_case_in,
+    CandidateFix, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld,
+    ExactReplayRequest, ExportScrubber, FailureClassV1, FailureSource, FixOutcome,
+    InventedExampleDraft, InventedMessage, InventedRole, ReplayFidelity, ReplayRun, ScrubRun,
+    SealedCodeFix, Sealing, ShadowRun, code_fix_subject_in, exact_replay_request, failed_case_in,
     queue_sealed_in_txn,
 };
 use crate::limit_ask::EngineLimit;
@@ -49,7 +53,7 @@ use crate::llm::decision::{
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Result, Vault};
+use crate::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Result, Vault};
 
 /// Key: [`work_key`].
 const WORK: SideTable<EntityId, CodeFixWork, Named> =
@@ -119,6 +123,11 @@ pub struct CandidateRun {
     /// `None` when the replay could not run, or did not fail before the fix.
     pub outcome: Option<FixOutcome>,
     pub export: CodeFixVerdict,
+    /// How the replay ran the real failure (FIX 1662): the request the
+    /// failing call sent, or a call rebuilt from its text. `None` when it
+    /// could not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<ReplayFidelity>,
 }
 
 /// A candidate's run and the record it sealed, queued in the write that
@@ -174,6 +183,13 @@ pub trait CodeFixHost {
     /// One turn of the failing agent with no tools, so nothing it says can
     /// act: `system`, then `conversation`. `Ok(None)` when no model runs it.
     fn reply(&self, system: &str, conversation: &[InventedMessage]) -> Result<Option<String>>;
+    /// The failing agent's call sent again as the vault kept it (FIX 1662):
+    /// `request` whole, its tool declarations kept and no tool its answer
+    /// names run, so nothing it says can act. `Ok(None)` when no model sends
+    /// it as kept; the replay then rebuilds the call from the failure's text.
+    fn reply_exact(&self, _request: &ExactReplayRequest) -> Result<Option<String>> {
+        Ok(None)
+    }
     /// The publisher's pinned candidates, each replayed against every case.
     fn publisher_candidates(&self) -> &[PublisherCandidate] {
         &[]
@@ -255,8 +271,9 @@ impl CodeFixDecisions<'_> {
     }
 }
 
-/// The Coach's in-vault replay of one job: the failing agent's call rebuilt
-/// from the real failure, run with no tools, judged on the ladder.
+/// The Coach's in-vault replay of one job: the failing agent's call as the
+/// vault kept it, or rebuilt from the real failure, run with no tool run,
+/// judged on the ladder.
 struct CoachReplay<'a> {
     /// Where the texts its questions read whole are measured.
     vault: &'a Vault,
@@ -266,9 +283,19 @@ struct CoachReplay<'a> {
     evidence: &'a [EntityId],
     /// Each candidate's id and the instruction it adds.
     candidates: Vec<(String, String)>,
+    /// The request the failing call sent, as the vault kept it (FIX 1662).
+    exact: Option<ExactReplayRequest>,
     /// The real failing call and the agent's reply to it, once a replay
     /// reproduced the failure; `None` when it did not, or could not run.
-    baseline: OnceCell<Option<(Vec<InventedMessage>, String)>>,
+    baseline: OnceCell<Option<Baseline>>,
+}
+
+/// The real failing call replayed: the conversation its questions read, the
+/// agent's reply, and how the call was sent.
+struct Baseline {
+    conversation: Vec<InventedMessage>,
+    before: String,
+    fidelity: ReplayFidelity,
 }
 
 impl CoachReplay<'_> {
@@ -326,21 +353,63 @@ impl CoachReplay<'_> {
         })
     }
 
-    /// The real failing call replayed once for every candidate. A failure the
+    /// The real failing call replayed once for every candidate: the request
+    /// it sent, when the vault kept it and the host sends it as kept, else
+    /// the call rebuilt from the failure's text (FIX 1662). A failure the
     /// replay does not reproduce cannot say whether a candidate fixed it.
-    fn baseline(&self) -> Result<Option<&(Vec<InventedMessage>, String)>> {
+    fn baseline(&self) -> Result<Option<&Baseline>> {
         if let Some(baseline) = self.baseline.get() {
             return Ok(baseline.as_ref());
         }
-        let ran = match self.real_conversation() {
-            None => None,
-            Some(conversation) => self
-                .host
-                .reply(&self.job.source.instructions, &conversation)?
-                .filter(|before| self.fails(None, &conversation, before) == Some(true))
-                .map(|before| (conversation, before)),
+        let ran = match self.exact_baseline()? {
+            Some(ran) => Some(ran),
+            None => self.rebuilt_baseline()?,
         };
         Ok(self.baseline.get_or_init(|| ran).as_ref())
+    }
+
+    /// The kept request sent again, when it reproduces the failure.
+    fn exact_baseline(&self) -> Result<Option<Baseline>> {
+        let Some(exact) = &self.exact else {
+            return Ok(None);
+        };
+        let Some(before) = self.host.reply_exact(exact)? else {
+            return Ok(None);
+        };
+        let conversation = request_conversation(&exact.request);
+        if self.fails(None, &conversation, &before) != Some(true) {
+            return Ok(None);
+        }
+        Ok(Some(Baseline {
+            conversation,
+            before,
+            fidelity: exact.fidelity(),
+        }))
+    }
+
+    /// The call rebuilt from the failure's text, when it reproduces the
+    /// failure.
+    fn rebuilt_baseline(&self) -> Result<Option<Baseline>> {
+        let Some(conversation) = self.real_conversation() else {
+            return Ok(None);
+        };
+        Ok(self
+            .host
+            .reply(&self.job.source.instructions, &conversation)?
+            .filter(|before| self.fails(None, &conversation, before) == Some(true))
+            .map(|before| Baseline {
+                conversation,
+                before,
+                fidelity: ReplayFidelity::Rebuilt,
+            }))
+    }
+
+    /// How the baseline ran, once one reproduced the failure.
+    fn fidelity(&self) -> Option<ReplayFidelity> {
+        self.baseline
+            .get()
+            .and_then(Option::as_ref)
+            .map(|baseline| baseline.fidelity)
     }
 }
 
@@ -378,16 +447,27 @@ impl CodeFixReplay for CoachReplay<'_> {
         let Some((_, fix)) = self.candidates.iter().find(|(id, _)| id == candidate_id) else {
             return Ok(ShadowRun::Unavailable);
         };
-        let Some((conversation, before)) = self.baseline()? else {
+        let Some(baseline) = self.baseline()? else {
             return Ok(ShadowRun::Unavailable);
         };
-        let instructions = &self.job.source.instructions;
-        let system = [instructions.as_str(), fix.as_str()]
-            .into_iter()
-            .filter(|text| !text.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let Some(after) = self.host.reply(&system, conversation)? else {
+        let (conversation, before) = (&baseline.conversation, &baseline.before);
+        // The fix runs the way the failure was replayed: on the kept request
+        // when that reproduced it (FIX 1662), else on the rebuilt call.
+        let after = match (&self.exact, baseline.fidelity) {
+            (Some(exact), ReplayFidelity::Exact | ReplayFidelity::ExactMasked) => {
+                self.host.reply_exact(&with_fix(exact, fix))?
+            }
+            _ => {
+                let instructions = &self.job.source.instructions;
+                let system = [instructions.as_str(), fix.as_str()]
+                    .into_iter()
+                    .filter(|text| !text.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                self.host.reply(&system, conversation)?
+            }
+        };
+        let Some(after) = after else {
             return Ok(ShadowRun::Unavailable);
         };
         self.measure(conversation, before.len().max(after.len()));
@@ -603,6 +683,7 @@ fn not_run(candidates: &[(String, String)], reason: CodeFixWithheld) -> Vec<Seal
                 candidate_id: candidate_id.clone(),
                 outcome: None,
                 export: CodeFixVerdict::Withheld { reason },
+                replay: None,
             };
             (run, None)
         })
@@ -866,6 +947,7 @@ impl Vault {
             Ok(read) => read,
             Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
+        let exact = exact_replay_request(self, source)?;
         let case = subject.case.as_ref();
         let (evidence, reports) = failure_context(self, case, &subject.reports)?;
         // A blocked report with no case has no ladder class and names no
@@ -927,6 +1009,7 @@ impl Vault {
             decisions,
             evidence: &evidence,
             candidates,
+            exact,
             baseline: OnceCell::new(),
         };
         let scrubber = CoachScrubber {
@@ -985,6 +1068,7 @@ impl Vault {
             Ok(read) => read,
             Err(reason) => return Ok(not_run(missing, reason)),
         };
+        let exact = exact_replay_request(self, source)?;
         let (evidence, reports) = failure_context(self, subject.case.as_ref(), &subject.reports)?;
         let job = CodeFixJob {
             origin: source.clone(),
@@ -1000,6 +1084,7 @@ impl Vault {
             decisions,
             evidence: &evidence,
             candidates: missing.to_vec(),
+            exact,
             baseline: OnceCell::new(),
         };
         self.replay_candidates(source, &replay, &settled.example)
@@ -1039,6 +1124,7 @@ impl Vault {
                 candidate_id: candidate_id.clone(),
                 outcome,
                 export,
+                replay: outcome.and(replay.fidelity()),
             };
             candidates.push((run, sealed));
         }
@@ -1059,6 +1145,57 @@ const fn class_name(class: FailureClassV1) -> &'static str {
         FailureClassV1::SilentDegradation => "silent_degradation",
         FailureClassV1::Other => "other",
     }
+}
+
+/// The kept request's messages as its questions read them, every part whole:
+/// text as written, any other part as its JSON.
+fn request_conversation(request: &LlmRequest) -> Vec<InventedMessage> {
+    request
+        .messages
+        .iter()
+        .map(|message| InventedMessage {
+            role: match message.role {
+                LlmMessageRole::System => InventedRole::System,
+                LlmMessageRole::User => InventedRole::User,
+                LlmMessageRole::Assistant => InventedRole::Assistant,
+                LlmMessageRole::Tool => InventedRole::Tool,
+            },
+            text: message
+                .content
+                .iter()
+                .map(|part| match part {
+                    ContentPart::Text { text } => text.clone(),
+                    other => serde_json::to_string(other).unwrap_or_default(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        })
+        .collect()
+}
+
+/// `exact` with a candidate's `fix` added to the agent's instructions: one
+/// system message after those the request leads with. A blank fix adds
+/// nothing.
+fn with_fix(exact: &ExactReplayRequest, fix: &str) -> ExactReplayRequest {
+    let mut exact = exact.clone();
+    if !fix.trim().is_empty() {
+        let at = exact
+            .request
+            .messages
+            .iter()
+            .take_while(|message| message.role == LlmMessageRole::System)
+            .count();
+        exact.request.messages.insert(
+            at,
+            LlmMessage {
+                role: LlmMessageRole::System,
+                content: vec![ContentPart::Text {
+                    text: fix.to_owned(),
+                }],
+            },
+        );
+    }
+    exact
 }
 
 fn conversation_state(conversation: &[InventedMessage]) -> Vec<serde_json::Value> {

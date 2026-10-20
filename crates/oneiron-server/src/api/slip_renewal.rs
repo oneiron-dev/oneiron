@@ -12,7 +12,8 @@
 //! owner device's request at all (the development hatch, a host root, an
 //! agent, a managed vault's attested owner with no slip of his own) and
 //! hands the rest over raw. On a managed vault the device's own forwarded
-//! slip and machine proof renew it as anywhere else (FIX 5126). An engine
+//! slip and machine proof renew it as anywhere else (FIX 5126), as the
+//! binding door admitted them, never read again (FIX 4559). An engine
 //! refusal names its reason (FIX 4651, `super::pairing::with_issuer`): a
 //! credential that may not renew, or no standing own-device Grant and
 //! enrolled machine, is a 403 for the owner-device scope; a stale or
@@ -56,22 +57,26 @@ pub(super) async fn renew(
         .into());
     }
     let headers = &parts.headers;
-    // On a managed vault the request's one caller, at owner grade, as the
-    // legacy gate takes it anywhere else.
-    let auth = match crate::auth::CoreAuth::for_managed_request(
+    // On a managed vault the caller its binding door admitted, with the
+    // machine proof it kept there (FIX 4559), at owner grade, as the legacy
+    // gate takes it anywhere else.
+    let (auth, kept) = match crate::auth::CoreAuth::for_managed_renewal(
         headers,
         &parts.extensions,
         crate::auth::request_path(&parts),
         &server,
     ) {
-        Some(auth) => {
-            let auth = auth?;
+        Some(caller) => {
+            let (auth, kept) = caller?;
             if !auth.is_owner_grade() {
                 return Err(ApiError::unauthorized().into());
             }
-            auth
+            (auth, Some(kept))
         }
-        None => crate::auth::require_owner_auth(headers, &server.config, server.vault().as_ref())?,
+        None => (
+            crate::auth::require_owner_auth(headers, &server.config, server.vault().as_ref())?,
+            None,
+        ),
     };
     // Only a verified human slip naming its holder is a device's own
     // credential: not the development hatch, a host root, an agent or an
@@ -80,7 +85,12 @@ pub(super) async fn renew(
         .verified_slip()
         .filter(|_| auth.actor_class() == Some("human") && auth.principal_ref().is_some())
         .ok_or_else(refused)?;
-    let device = crate::auth::required_machine_proof(headers)?;
+    // A managed caller's machine proof is the one its binding door kept;
+    // anywhere else the request's own headers carry it.
+    let device = match kept {
+        Some(kept) => kept.ok_or_else(ApiError::unauthorized)?,
+        None => crate::auth::required_machine_proof(headers)?,
+    };
     let renewed = super::pairing::with_issuer(&server, |issuer| {
         server
             .vault()

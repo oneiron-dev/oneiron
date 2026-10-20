@@ -1231,7 +1231,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // `[device_sync]` or its enrolment, is a device of that home and never
     // claims the MACRO home. A startup error below drops `ai`, which tells
     // its workers to stop.
-    let device = crate::device_sync::dials_home(&config, &vault);
+    let device = crate::device_sync::dials_home_managed(&config, &vault);
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     // The Dreamer's passes are admitted like a served write, and refused
@@ -1582,10 +1582,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = builtin_host.await;
     coach_host.abort();
     let _ = coach_host.await;
-    if let Some(failure_signals) = failure_signals {
-        failure_signals.abort();
-        let _ = failure_signals.await;
-    }
+    failure_signals.abort();
+    let _ = failure_signals.await;
     for worker in ladder_workers {
         worker.abort();
         let _ = worker.await;

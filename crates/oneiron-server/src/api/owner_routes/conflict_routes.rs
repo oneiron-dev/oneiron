@@ -6,7 +6,9 @@
 //! holds its review on one subject or the whole vault, releases the hold,
 //! and reverts any settlement it made. A candidate the marker's round
 //! dropped is listed apart from the stored members, as retained on the
-//! marker; keeping it by its id lands it (FIX 496).
+//! marker; keeping it by its id lands it (FIX 496). Keeping one from
+//! imported words stages it in its import's review instead: the reply names
+//! the staged claim and the review, and the conflict stays open (FIX 5754).
 
 use std::sync::Arc;
 
@@ -17,7 +19,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
 use oneiron::dreamer_consolidation::{
-    ConflictReviewScope, ConflictSettlement, OpenConflict, SettledAnswer,
+    ConflictReviewScope, ConflictSettleOutcome, ConflictSettlement, OpenConflict, SettledAnswer,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -157,9 +159,27 @@ struct ReviewHeld {
 struct ConflictSettled {
     marker: String,
     settlement: &'static str,
-    resolved: String,
+    /// The answering `conflict.resolved`; absent while a kept alternative
+    /// waits in its import's review.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved: Option<String>,
     superseded: Vec<String>,
+    /// A kept alternative from imported words, staged in its import's
+    /// review: the conflict stays open (FIX 5754).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pending_review: Option<PendingReviewView>,
     receipt_ref: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PendingReviewView {
+    /// The retained alternative the Keep named.
+    kept: String,
+    /// The claim staged Proposed in the review.
+    staged: String,
+    /// The import review it waits in; absent when it waits with its round.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review: Option<String>,
 }
 
 fn view(vault: &oneiron::Vault, conflict: OpenConflict) -> OwnerResult<ConflictView> {
@@ -262,17 +282,35 @@ async fn settle(
             });
         let vault = server.vault();
         let actor = owner.revalidate(vault)?;
-        let receipt = vault
+        let outcome = vault
             .memory(actor, EdgeActorClass::Human)
             .at(locality)
             .settle_conflict(Some(&owner), marker, settlement, now)
             .map_err(memory_refused)?;
-        Ok(ConflictSettled {
-            marker: receipt.marker.to_hex(),
-            settlement: receipt.settlement.label(),
-            resolved: receipt.resolved.to_hex(),
-            superseded: receipt.superseded.iter().map(|id| id.to_hex()).collect(),
-            receipt_ref: receipt.receipt_ref,
+        Ok(match outcome {
+            ConflictSettleOutcome::Settled(receipt) => ConflictSettled {
+                marker: receipt.marker.to_hex(),
+                settlement: receipt.settlement.label(),
+                resolved: Some(receipt.resolved.to_hex()),
+                superseded: receipt.superseded.iter().map(|id| id.to_hex()).collect(),
+                pending_review: None,
+                receipt_ref: receipt.receipt_ref,
+            },
+            ConflictSettleOutcome::ImportReviewPending {
+                staged,
+                receipt_ref,
+            } => ConflictSettled {
+                marker: staged.marker.to_hex(),
+                settlement: settlement.label(),
+                resolved: None,
+                superseded: Vec::new(),
+                pending_review: Some(PendingReviewView {
+                    kept: staged.alternative.to_hex(),
+                    staged: staged.staged.to_hex(),
+                    review: staged.review,
+                }),
+                receipt_ref,
+            },
         })
     })
     .await?;
