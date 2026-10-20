@@ -130,7 +130,13 @@ pub enum CtlRequest {
     /// `null` or absent for the first. A read: it writes no hold and changes
     /// no reap state. Build floor: as the restore input's `host_holds`; a v3
     /// vault built before it answers it as an unknown request
-    /// (`Ok { ok: false }`), which is never a family.
+    /// (`Ok { ok: false }`), which is never a family. A `cursor` at the
+    /// family's end is the confirm (FIX 6820): the supervisor's last call
+    /// before it sends the restore input, with the source still frozen,
+    /// answered with no bytes while the family is still the cursor's and
+    /// `export_changed` once it is not. It has its own build floor
+    /// ([`CONTRACT_VERSION`](crate::CONTRACT_VERSION)): a v3 vault built
+    /// before it answers a confirm `cursor_invalid`, which confirms nothing.
     HostOrderHolds {
         identity: ManagedRestoreIdentity,
         source: HostHoldsSource,
@@ -647,7 +653,9 @@ pub enum CtlResponse {
     /// above, {idle_reap} included, and it carries no `ok` for the reason
     /// `Slim` carries none. A supervisor parses this shape alone for the
     /// request it sent and runs [`CtlResponse::validate`]: any other answer
-    /// is not proven, never an empty family.
+    /// is not proven, never an empty family. A confirm's `exported` answer
+    /// carries no bytes: it confirms the pages before it and is never an
+    /// empty family.
     HostOrderHolds {
         host_order_holds: HostOrderHoldsExport,
     },
