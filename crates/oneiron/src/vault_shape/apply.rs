@@ -848,9 +848,11 @@ impl Vault {
                     },
                 )?;
                 if !released.identity_retiring {
+                    // FIX 6424 part 3: a hold names its approve-once press.
                     return Err(invalid(format!(
-                        "the release did not take: {}",
-                        released.owner_visible_state
+                        "the release did not take: {}{}",
+                        released.owner_visible_state,
+                        released.held_approval_note()
                     )));
                 }
                 Ok(released.receipt_id)
