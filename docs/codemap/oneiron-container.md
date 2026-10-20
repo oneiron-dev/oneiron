@@ -11,16 +11,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `src/bin/oneiron-browser-relay.rs` | src | s | — | — | Fenced stdio carrier for a browser that speaks CDP only over TCP |
 | `src/bin/oneiron-fence.rs` | src | s | — | — | Engine-mounted Linux fence launcher, not a development runner |
-| `src/egress.rs` | src | s | 2 struct · 1 trait | EgressRelay, HttpRequest, HttpResponse | Host-owned transport |
+| `src/egress.rs` | src | s | 3 struct · 2 enum · 1 trait · 2 fn | EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal, LoopbackRefusalReason | Host-owned transport |
 | `src/host_net_floor.rs` | src | s | 2 struct · 1 trait · 4 fn · 2 const | HostNetFloor, HostNetPermit, UnmeteredFloor | The host's floor for a guest's network work (FIX 5978, FIX 5979) |
 | `src/launcher.rs` | src | m | 1 fn | — | Unprivileged in-container launcher and syscall-argument broker |
+| `src/launcher/loopback.rs` | src | s | 2 crate-vis | — | The launcher's half of the guest's virtual loopback (FIX 6680) |
 | `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 6 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
 | `src/linux.rs` | src | m | 12 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
 | `src/relay_protocol.rs` | src | s | 1 struct · 1 enum · 2 fn | RelayReply, RelayRequest | Bounded host/guest network transport over the no-NIC VM's private vsock |
 | `src/socket_lifetime.rs` | src | s | 3 crate-vis | — | The launcher's inventory of the socket inodes its guest still holds (FIX 5978) |
 | `src/supervisor.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
 | `src/supervisor/lifetime.rs` | src | s | 4 crate-vis | — | A guest socket's host entry lives as long as the guest holds the socket (FIX 5978) |
+| `src/supervisor/loopback.rs` | src | m | 8 crate-vis | — | The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own… |
 | `src/supervisor/relay_workers.rs` | src | s | 3 crate-vis | — | Bounded relay workers for a guest's datagrams (FIX 5979) |
+| `src/supervisor/sockets.rs` | src | s | 1 crate-vis | — | A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix pair, which the notification's ADDFD… |
 | `src/transport.rs` | src | s | 1 struct · 1 trait · 1 fn | SessionLease, SessionTransport | A selected backend's private duplex transport and lifetime custody |
-| `src/wire.rs` | src | s | 11 crate-vis | — | Private, bounded launcher/supervisor protocol |
+| `src/wire.rs` | src | s | 12 crate-vis | — | Private, bounded launcher/supervisor protocol |
