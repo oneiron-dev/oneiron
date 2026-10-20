@@ -540,10 +540,19 @@ fn verify(
         _ => return Err(diverged("the shallow root appeared or vanished")),
     }
 
+    // Loro may keep an older id in the latest state when a write left the
+    // value unchanged, so the latest state is compared by value; the ids are
+    // proven by the history and the shallow root above and below.
     let (_, latest) = store_entries(&raw.latest, "the latest state")?;
+    let values = |entries: Entries| -> Entries {
+        entries
+            .into_iter()
+            .map(|(slot, (_, _, value))| (slot, (0, 0, value)))
+            .collect()
+    };
     compare_entries(
-        &latest,
-        &winner_entries(skeleton, &skeleton.latest, opened),
+        &values(latest),
+        &values(winner_entries(skeleton, &skeleton.latest, opened)),
         "the latest state",
     )?;
 

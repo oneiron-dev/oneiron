@@ -144,7 +144,8 @@ pub struct Skeleton {
     pub frontiers: Vec<(PeerID, Counter)>,
     /// Root maps present in the latest state, empty ones included.
     pub latest_maps: Vec<u32>,
-    /// Every latest-state map entry, deleted keys included.
+    /// Each key's latest winner: the greatest (lamport, peer) among its
+    /// retained ops and its shallow-root winner. Deleted keys included.
     pub latest: Vec<Winner>,
     /// The retained history in lamport order.
     pub changes: Vec<SkelChange>,
@@ -180,9 +181,11 @@ pub struct Joined {
 pub struct JoinReport {
     /// Every survivor op keeps its id, lamport, timestamp, deps, message, key
     /// and value; every erased value is a delete at its original id; every
-    /// map winner keeps its peer and lamport; the latest and shallow version
-    /// vectors and frontiers are unchanged. A join that cannot prove this
-    /// returns [`CheckpointError::Diverged`] instead, so this is true.
+    /// shallow-root winner keeps its peer, lamport and opened value; the
+    /// latest state holds the skeleton's latest winners' opened values; the
+    /// latest and shallow version vectors and frontiers are unchanged. A join
+    /// that cannot prove this returns [`CheckpointError::Diverged`] instead,
+    /// so this is true.
     pub equivalent: bool,
     pub changes: usize,
     pub ops: usize,

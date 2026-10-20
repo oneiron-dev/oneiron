@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use loro_common::{
     check_root_container_name, parse_mergeable_marker, ContainerID, ContainerType, Counter,
     InternalString, Lamport, LoroValue, PeerID, ID,
@@ -58,9 +60,10 @@ pub(super) fn read_raw(doc: &LoroDoc) -> Result<Raw, Unsupported> {
 
     let oplog = doc.oplog.lock();
     let mut state = doc.state.lock();
+    // An open auto-commit transaction is fine once it is empty: the check above
+    // covers uncommitted ops.
     if oplog.batch_importing
         || !oplog.pending_changes.version_range().is_empty()
-        || state.is_in_txn()
         || &state.frontiers != oplog.frontiers()
     {
         return Err(Unsupported::NonQuiescent);
@@ -217,44 +220,52 @@ impl<'f> Builder<'f> {
             None => None,
         };
 
+        // Each key's latest winner is the greatest (lamport, peer) among its
+        // retained ops and its shallow-root winner, as Loro's history cache
+        // resolves it. Loro may keep an older id in state when a write did not
+        // change the value, so the latest state is checked by value only.
+        let mut latest_winners: BTreeMap<(u32, String), Winner> = BTreeMap::new();
+        for winner in shallow.iter().flat_map(|root| root.winners.iter()) {
+            latest_winners.insert((winner.root, winner.key.clone()), winner.clone());
+        }
+        for (&(peer, lamport), (root, key, value)) in &self.ops {
+            let slot = (*root, key.clone());
+            if latest_winners
+                .get(&slot)
+                .is_some_and(|winner| (winner.lamport, winner.peer) >= (lamport, peer))
+            {
+                continue;
+            }
+            let winner = Winner {
+                root: *root,
+                key: key.clone(),
+                peer,
+                lamport,
+                value: *value,
+            };
+            latest_winners.insert(slot, winner);
+        }
+
         sort_maps(&mut latest);
         let mut latest_maps = Vec::with_capacity(latest.len());
-        let mut latest_winners = Vec::new();
-        let root_winners: FxHashMap<(u32, &str), &Winner> = shallow
-            .iter()
-            .flat_map(|root| root.winners.iter())
-            .map(|winner| ((winner.root, winner.key.as_str()), winner))
-            .collect();
+        let mut checked = 0;
         for map in &latest {
             let root = self.root(map.cid.as_ref())?;
             latest_maps.push(root);
             for (key, entry) in map.entries.as_ref().ok_or(Unsupported::Shape)? {
-                self.key(c, root, key)?;
-                // A latest winner is a retained op or an untouched shallow-root winner.
-                let value = match self.retained(root, key, entry)? {
-                    Some(value) => value,
-                    None => match root_winners.get(&(root, key.as_str())) {
-                        Some(winner)
-                            if winner.peer == entry.peer
-                                && winner.lamport == entry.lamp
-                                && self.same(winner.value, &entry.value) =>
-                        {
-                            winner.value
-                        }
-                        _ => return Err(Unsupported::Shape),
-                    },
-                };
-                latest_winners.push(Winner {
-                    root,
-                    key: key.to_string(),
-                    peer: entry.peer,
-                    lamport: entry.lamp,
-                    value,
-                });
+                let winner = latest_winners
+                    .get(&(root, key.to_string()))
+                    .ok_or(Unsupported::Shape)?;
+                if !self.same(winner.value, &entry.value) {
+                    return Err(Unsupported::Shape);
+                }
+                checked += 1;
             }
         }
+        if checked != latest_winners.len() {
+            return Err(Unsupported::Shape);
+        }
 
-        drop(root_winners);
         let Builder {
             roots,
             slots,
@@ -268,7 +279,7 @@ impl<'f> Builder<'f> {
                 vv,
                 frontiers,
                 latest_maps,
-                latest: latest_winners,
+                latest: latest_winners.into_values().collect(),
                 changes: skeleton_changes,
                 slots,
             },
