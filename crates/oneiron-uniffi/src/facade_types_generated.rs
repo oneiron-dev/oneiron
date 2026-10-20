@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1082 facade rows, 3684 generated types.
+// UniFFI census: 1082 facade rows, 3689 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1034.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -56200,6 +56200,15 @@ pub struct TabSwitch {
     pub why: TabSwitchCause,
 }
 
+/// `oneiron_browser::engine::BrowserEngine`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BrowserEngine {
+    #[serde(rename = "lightpanda")]
+    Lightpanda,
+    #[serde(rename = "chromium")]
+    Chromium,
+}
+
 /// `oneiron_browser::observation::RowSplice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RowSplice {
@@ -56271,6 +56280,74 @@ pub enum ReceiptEvidence {
     },
 }
 
+/// `oneiron_browser::fact::ViewportPoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ViewportPoint {
+    #[serde(rename = "x")]
+    pub x: f64,
+    #[serde(rename = "y")]
+    pub y: f64,
+}
+
+/// `oneiron_browser::fact::ActionTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ActionTarget {
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub r#ref: Option<String>,
+    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(rename = "locator", default, skip_serializing_if = "Option::is_none")]
+    pub locator: Option<String>,
+    #[serde(rename = "point", default, skip_serializing_if = "Option::is_none")]
+    pub point: Option<ViewportPoint>,
+}
+
+/// `oneiron_browser::fact::NoEffectReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum NoEffectReason {
+    #[serde(rename = "no_observable_change")]
+    NoObservableChange,
+}
+
+/// `oneiron_browser::fact::ActionFact`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ActionFact {
+    #[serde(rename = "click_no_effect")]
+    ClickNoEffect {
+        #[serde(rename = "engine")]
+        engine: BrowserEngine,
+        #[serde(rename = "target")]
+        target: ActionTarget,
+        #[serde(rename = "reason")]
+        reason: NoEffectReason,
+        #[serde(rename = "window_ms")]
+        window_ms: u64,
+    },
+    #[serde(rename = "type_no_effect")]
+    TypeNoEffect {
+        #[serde(rename = "engine")]
+        engine: BrowserEngine,
+        #[serde(rename = "target")]
+        target: ActionTarget,
+        #[serde(rename = "reason")]
+        reason: NoEffectReason,
+        #[serde(rename = "window_ms")]
+        window_ms: u64,
+    },
+    #[serde(rename = "navigate_no_effect")]
+    NavigateNoEffect {
+        #[serde(rename = "engine")]
+        engine: BrowserEngine,
+        #[serde(rename = "url")]
+        url: String,
+        #[serde(rename = "reason")]
+        reason: NoEffectReason,
+        #[serde(rename = "window_ms")]
+        window_ms: u64,
+    },
+}
+
 /// `oneiron_browser::EffectReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EffectReceipt {
@@ -56324,6 +56401,10 @@ pub struct EffectReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub screenshot_evidence: Option<ReceiptEvidence>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
+    #[serde(rename = "fact", default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<ActionFact>,
 }
 
 /// `oneiron_browser::library::LibraryCard`.
@@ -56389,6 +56470,8 @@ pub struct Observation2 {
     pub walk_next: Option<String>,
     #[serde(rename = "rebound", default, skip_serializing_if = "Option::is_none")]
     pub rebound: Option<Rebound>,
+    #[serde(rename = "fact", default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<ActionFact>,
 }
 
 /// `oneiron_browser::ObservationPage`.
@@ -56407,6 +56490,8 @@ pub struct BrowserAnswerObservationPage {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: ObservationPage,
 }
@@ -56485,6 +56570,8 @@ pub struct BrowserAnswerFindOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: FindOutput,
 }
@@ -56639,6 +56726,8 @@ pub struct BrowserAnswerWaitForOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: WaitForOutput,
 }
@@ -56693,6 +56782,8 @@ pub struct BrowserAnswerExpectOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: ExpectOutput,
 }
@@ -56772,6 +56863,8 @@ pub struct BrowserAnswerScreenshotOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: ScreenshotOutput,
 }
@@ -56818,6 +56911,8 @@ pub struct BrowserAnswerImageOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: ImageOutput,
 }
@@ -57091,6 +57186,8 @@ pub struct BrowserAnswerBatchOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: BatchOutput,
 }
@@ -57131,6 +57228,8 @@ pub struct BrowserAnswerLibraryFindOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: LibraryFindOutput,
 }
@@ -57196,6 +57295,8 @@ pub struct BrowserAnswerProposeOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: ProposeOutput,
 }
@@ -57234,6 +57335,8 @@ pub struct BrowserAnswerLibraryRetireOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: LibraryRetireOutput,
 }
@@ -57283,6 +57386,8 @@ pub struct BrowserAnswerLibraryRetiredOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: LibraryRetiredOutput,
 }
@@ -57329,6 +57434,8 @@ pub struct BrowserAnswerLibraryRunOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: LibraryRunOutput,
 }
@@ -57367,6 +57474,8 @@ pub struct BrowserAnswerHandoverOutput {
     pub takeover: Option<TakeoverRecord>,
     #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: HandoverOutput,
 }

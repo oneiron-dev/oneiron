@@ -29,6 +29,8 @@ mod cdp;
 mod desktop;
 #[cfg(feature = "driver")]
 mod driver;
+mod engine;
+mod fact;
 mod library;
 #[cfg(feature = "driver")]
 mod mcp;
@@ -43,6 +45,8 @@ mod session;
 pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause};
 #[cfg(feature = "driver")]
 pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover};
+pub use engine::BrowserEngine;
+pub use fact::{ActionFact, ActionTarget, NoEffectReason, ViewportPoint};
 pub use library::{
     LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, ProposeInput,
@@ -133,6 +137,12 @@ pub struct Observation {
     /// its locator names now; or its locator named several rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebound: Option<Rebound>,
+    /// What the act proved about its effect: on a page that showed no
+    /// change at all within the driver's change window, the act answers at
+    /// once with this fact (FIX 6680). Absent when the page changed, and
+    /// whenever a read could not prove it did not.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<ActionFact>,
 }
 
 /// Where a desktop window's tree walk stopped short of its end (Rule 5):
@@ -215,6 +225,13 @@ pub struct EffectReceipt {
     pub capture_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot_evidence: Option<ReceiptEvidence>,
+    /// The engine the effect ran on (FIX 6680); absent on a desktop, which
+    /// has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
+    /// The act's own fact about its effect, as its observation carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<ActionFact>,
 }
 
 /// Observes the page: as an edit of `base`, or, with none named, of the last
