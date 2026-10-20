@@ -91,6 +91,7 @@ impl RestoreWriteEstimate {
             projections: landed.saturating_mul(PROJECTION_GENERATIONS),
             copies: staged.saturating_add(vault_meta),
             epoch: layout.page(),
+            payload: 0,
         }
     }
 

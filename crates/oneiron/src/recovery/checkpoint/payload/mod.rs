@@ -307,7 +307,7 @@ impl ImageFilter {
             if parts.is_empty() {
                 continue;
             }
-            let held: BTreeSet<&RowLocator> = parts.iter().map(|part| part.at()).collect();
+            let held: BTreeSet<&RowLocator> = parts.iter().copied().map(RowPart::at).collect();
             let owner = kept.owner(rows.owner());
             owner.occurrence_hint = rows.occurrence_hint;
             owner.rows = parts.into_iter().cloned().collect();

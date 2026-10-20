@@ -329,8 +329,8 @@ families! {
         ESIGN_SEAL_RESULT ESIGN_SEALED_DOCUMENT ESIGN_SIGNATURE_IMAGE_BINDING EXPORT_RECEIPT
         EXPRESSION_ARCHIVE_BINDING;
     // side_table/decls/vault_meta_f_l.rs
-    Class::Owner(Getter::Batch) => BATCH_PHONETIC_INDEX_SOURCE;
-    Class::Owner(Getter::Bm25) => INDEX_SOURCE_TEXT;
+    Class::Owner(Getter::PhoneticSource) => BATCH_PHONETIC_INDEX_SOURCE;
+    Class::Owner(Getter::TextSource) => INDEX_SOURCE_TEXT;
     Class::Structure => HOME_HANDOFF_HEAD HOME_HANDOFF_RECEIPT HOME_HANDOFF_TRANSFER
         KEY_CUSTODY_BINDING KEY_CUSTODY_RETIRE_PENDING;
     Class::Other(Client::Sealed(CustodyKind::ClaimDecision)) => GATE_DECISION_LEDGER;
@@ -381,7 +381,7 @@ families! {
         NOTE_RECEIPT NOTE_SEAL;
     Class::Owner(Getter::OfficeBody) => OFFICE_BODY_EXPORT OFFICE_BODY_FORK
         OFFICE_BODY_FORK_PROPOSAL OFFICE_BODY_HEAD OFFICE_BODY_ORACLE OFFICE_BODY_PROPOSAL;
-    Class::Owner(Getter::OutboundIntentLedger) => OUTBOUND_INTENT_ATTEMPT_INDEX
+    Class::Owner(Getter::OutboundCall) => OUTBOUND_INTENT_ATTEMPT_INDEX
         OUTBOUND_INTENT_LEDGER_RECORD;
     Class::Owner(Getter::ProvenanceBirth) => PROVENANCE_BIRTH_BY_TRIGGER PROVENANCE_ROW_BIRTH;
     Class::Owner(Getter::ProvenanceBody) => PROVENANCE_BODY PROVENANCE_BODY_DIGEST;
