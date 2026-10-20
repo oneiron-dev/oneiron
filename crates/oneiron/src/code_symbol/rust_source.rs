@@ -1,6 +1,6 @@
 //! tree-sitter Rust parsing: definition extraction, identifier references and the derived symbol graph.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
 use crate::codebase::RepoRef;
@@ -24,6 +24,35 @@ pub fn derive_code_symbol_graph_from_sources<'a>(
     commit_hash: Option<String>,
     sources: impl IntoIterator<Item = CodeSymbolSource<'a>>,
 ) -> Result<CodeSymbolGraph> {
+    let prepared: PreparedCodeSymbolGraph<'a> =
+        prepare_code_symbol_graph(repo_ref, commit_hash, sources)?;
+    let mut edges = Vec::new();
+    prepared.emit_mentions(&mut |edge| {
+        edges.push(edge);
+        Ok(())
+    })?;
+    edges.extend(prepared.attached);
+    CodeSymbolGraph::new(prepared.manifest, edges)
+}
+
+/// A parsed source set's manifest and Attached edges, with what its Mentions
+/// edges are read from, so a writer can take them a working batch at a time
+/// (FIX 5955) instead of holding the whole same-name product.
+pub(crate) struct PreparedCodeSymbolGraph<'a> {
+    pub(super) manifest: CodeSymbolManifest,
+    pub(super) attached: Vec<CodeSymbolGraphEdge>,
+    /// Each symbol's byte range and its name's, by extraction index.
+    spans: Vec<(usize, usize, usize, usize)>,
+    parsed_sources: Vec<ParsedRustSource<'a>>,
+    symbol_ids: Vec<EntityId>,
+    symbols_by_name: HashMap<String, Vec<usize>>,
+}
+
+pub(crate) fn prepare_code_symbol_graph<'a>(
+    repo_ref: RepoRef,
+    commit_hash: Option<String>,
+    sources: impl IntoIterator<Item = CodeSymbolSource<'a>>,
+) -> Result<PreparedCodeSymbolGraph<'a>> {
     let mut sources = sources.into_iter().collect::<Vec<_>>();
     sources.sort_by(|left, right| left.path.cmp(right.path));
 
@@ -82,50 +111,15 @@ pub fn derive_code_symbol_graph_from_sources<'a>(
         .iter()
         .map(|symbol| code_symbol_entity_id(&repo_ref, &symbol.revision))
         .collect::<Result<Vec<_>>>()?;
-    let mut edges = Vec::new();
-    let mut mention_pairs = BTreeSet::<(EntityId, EntityId)>::new();
-
-    for source in &parsed_sources {
-        let root = source.tree.root_node();
-        for &source_index in &source.symbol_indexes {
-            let symbol = &extracted[source_index];
-            let mut refs = Vec::new();
-            collect_identifier_refs_in_range(
-                root,
-                symbol.start_byte,
-                symbol.end_byte,
-                Some((symbol.name_start_byte, symbol.name_end_byte)),
-                source.text.as_bytes(),
-                &mut refs,
-            )?;
-            let mut seen_names = HashSet::new();
-            for name in refs {
-                if !seen_names.insert(name.clone()) {
-                    continue;
-                }
-                let Some(target_indexes) = symbols_by_name.get(&name) else {
-                    continue;
-                };
-                for &target_index in target_indexes {
-                    if target_index == source_index {
-                        continue;
-                    }
-                    let source_id = symbol_ids[source_index];
-                    let target_id = symbol_ids[target_index];
-                    if mention_pairs.insert((source_id, target_id)) {
-                        edges.push(CodeSymbolGraphEdge::new(
-                            source_id,
-                            EdgeKind::Mentions,
-                            target_id,
-                            EdgeKind::Mentions.default_weight().unwrap_or(0.6),
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    add_same_file_contiguity_edges(&extracted, &symbol_ids, &mut edges);
+    let mut attached = Vec::new();
+    add_same_file_contiguity_edges(&extracted, &symbol_ids, &mut attached);
+    let spans = extracted
+        .iter()
+        .map(|symbol| {
+            let (start, end) = (symbol.start_byte, symbol.end_byte);
+            (start, end, symbol.name_start_byte, symbol.name_end_byte)
+        })
+        .collect();
 
     let manifest = CodeSymbolManifest::new(
         repo_ref,
@@ -141,7 +135,61 @@ pub fn derive_code_symbol_graph_from_sources<'a>(
             })
             .collect(),
     )?;
-    CodeSymbolGraph::new(manifest, edges)
+    Ok(PreparedCodeSymbolGraph {
+        manifest,
+        attached,
+        spans,
+        parsed_sources,
+        symbol_ids,
+        symbols_by_name,
+    })
+}
+
+impl PreparedCodeSymbolGraph<'_> {
+    /// Hands `sink` every Mentions edge, a symbol to each other symbol named
+    /// in its body: names repeat once per source symbol, and nothing outside
+    /// one symbol's own reference list is kept.
+    pub(super) fn emit_mentions(
+        &self,
+        sink: &mut dyn FnMut(CodeSymbolGraphEdge) -> Result<()>,
+    ) -> Result<()> {
+        for source in &self.parsed_sources {
+            let root = source.tree.root_node();
+            for &source_index in &source.symbol_indexes {
+                let (start, end, name_start, name_end) = self.spans[source_index];
+                let mut refs = Vec::new();
+                collect_identifier_refs_in_range(
+                    root,
+                    start,
+                    end,
+                    Some((name_start, name_end)),
+                    source.text.as_bytes(),
+                    &mut refs,
+                )?;
+                let mut seen_names = HashSet::new();
+                for name in refs {
+                    if !seen_names.insert(name.clone()) {
+                        continue;
+                    }
+                    let Some(target_indexes) = self.symbols_by_name.get(&name) else {
+                        continue;
+                    };
+                    for &target_index in target_indexes {
+                        if target_index == source_index {
+                            continue;
+                        }
+                        sink(CodeSymbolGraphEdge::new(
+                            self.symbol_ids[source_index],
+                            EdgeKind::Mentions,
+                            self.symbol_ids[target_index],
+                            EdgeKind::Mentions.default_weight().unwrap_or(0.6),
+                        ))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]

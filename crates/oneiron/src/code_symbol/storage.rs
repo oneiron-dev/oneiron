@@ -25,16 +25,23 @@ use super::keys::{
     MANIFEST, REVISION_INDEX, code_symbol_entity_id, code_symbol_revision_index_key,
     code_symbol_revision_index_prefix, delete_index_rows_for_id, id_from_index_key,
 };
+use super::rust_source::PreparedCodeSymbolGraph;
 use super::text_diff::symbol_line_range;
 use super::types::{
     CODE_SYMBOL_FINGERPRINT_LEN, CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk, CodeEmbeddingVector,
-    CodeSymbolBlame, CodeSymbolDefinition, CodeSymbolGraph, CodeSymbolManifest, CodeSymbolRevision,
+    CodeSymbolBlame, CodeSymbolDefinition, CodeSymbolGraph, CodeSymbolGraphEdge,
+    CodeSymbolManifest, CodeSymbolRevision,
 };
 use super::validate::{
     scan_code_symbol_manifest_metadata, validate_code_symbol_graph_edge,
     validate_code_symbol_manifest, validate_manifest_path, validate_text,
 };
 use crate::error::CodeError;
+
+/// How many edges a graph writer holds before it applies them (FIX 5955;
+/// CALLS: CODE_SYMBOL_EDGE_BATCH = 1,024): a working buffer that bounds
+/// memory, never a cap. Every edge is written.
+const CODE_SYMBOL_EDGE_BATCH: usize = 1024;
 
 impl Vault {
     pub fn put_code_symbol_manifest(
@@ -86,27 +93,66 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        validate_code_symbol_manifest(&graph.manifest)?;
-        scan_code_symbol_manifest_metadata(&graph.manifest)?;
-        validate_code_artifact_target(
-            &self.store,
+        self.put_code_symbol_rows_in_txn(
             wtxn,
             code_artifact_id,
-            &graph.manifest.repo_ref,
-        )?;
+            &graph.manifest,
+            occurred,
+            learned_at,
+            |sink| graph.edges.iter().try_for_each(|edge| sink(edge.clone())),
+        )
+    }
+
+    /// Ingest's graph write: the prepared graph's edges go straight from the
+    /// parse to the store a working batch at a time (FIX 5955).
+    pub(crate) fn put_prepared_code_symbol_graph_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        code_artifact_id: &EntityId,
+        prepared: &PreparedCodeSymbolGraph<'_>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.put_code_symbol_rows_in_txn(
+            wtxn,
+            code_artifact_id,
+            &prepared.manifest,
+            occurred,
+            learned_at,
+            |sink| {
+                prepared
+                    .attached
+                    .iter()
+                    .try_for_each(|edge| sink(edge.clone()))?;
+                prepared.emit_mentions(sink)
+            },
+        )
+    }
+
+    /// Writes `manifest`'s symbol rows, then every edge `edges` hands its
+    /// sink, in batches of [`CODE_SYMBOL_EDGE_BATCH`], all in `wtxn`: an error
+    /// at any point fails the caller's whole write.
+    fn put_code_symbol_rows_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        code_artifact_id: &EntityId,
+        manifest: &CodeSymbolManifest,
+        occurred: TimeRange,
+        learned_at: u64,
+        edges: impl FnOnce(&mut dyn FnMut(CodeSymbolGraphEdge) -> Result<()>) -> Result<()>,
+    ) -> Result<()> {
+        validate_code_symbol_manifest(manifest)?;
+        scan_code_symbol_manifest_metadata(manifest)?;
+        validate_code_artifact_target(&self.store, wtxn, code_artifact_id, &manifest.repo_ref)?;
 
         let mut batch = self.batch_in();
         let mut symbol_ids = BTreeSet::new();
-        for symbol in &graph.manifest.symbols {
-            let symbol_id = code_symbol_entity_id(&graph.manifest.repo_ref, symbol)?;
+        for symbol in &manifest.symbols {
+            let symbol_id = code_symbol_entity_id(&manifest.repo_ref, symbol)?;
             symbol_ids.insert(symbol_id);
-            let (start_line, end_line) = symbol_line_range(symbol, &graph.manifest.chunks)?;
-            let body = encode_code_symbol_entity_body(
-                &graph.manifest.repo_ref,
-                symbol,
-                start_line,
-                end_line,
-            )?;
+            let (start_line, end_line) = symbol_line_range(symbol, &manifest.chunks)?;
+            let body =
+                encode_code_symbol_entity_body(&manifest.repo_ref, symbol, start_line, end_line)?;
             batch = batch
                 .put(
                     &symbol_id,
@@ -117,20 +163,27 @@ impl Vault {
                 )
                 .edge(&symbol_id, EdgeKind::PartOf, code_artifact_id, 1.0);
         }
-        for edge in &graph.edges {
-            validate_code_symbol_graph_edge(edge)?;
-            if symbol_ids.contains(&edge.source) && symbol_ids.contains(&edge.target) {
-                batch = batch.edge(&edge.source, edge.kind, &edge.target, edge.weight);
-            }
-        }
         batch.apply(wtxn)?;
-        MANIFEST.encode_value(&graph.manifest)?;
-        let manifest = keep_erased_actors(&self.store, wtxn, code_artifact_id, &graph.manifest)?;
+        let mut pending = Vec::with_capacity(CODE_SYMBOL_EDGE_BATCH);
+        let mut sink = |edge: CodeSymbolGraphEdge| -> Result<()> {
+            validate_code_symbol_graph_edge(&edge)?;
+            if symbol_ids.contains(&edge.source) && symbol_ids.contains(&edge.target) {
+                pending.push(edge);
+            }
+            if pending.len() < CODE_SYMBOL_EDGE_BATCH {
+                return Ok(());
+            }
+            self.put_code_symbol_edges_in_txn(wtxn, &mut pending)
+        };
+        edges(&mut sink)?;
+        self.put_code_symbol_edges_in_txn(wtxn, &mut pending)?;
+        MANIFEST.encode_value(manifest)?;
+        let kept = keep_erased_actors(&self.store, wtxn, code_artifact_id, manifest)?;
         delete_code_symbol_manifest_in_txn(&self.store, wtxn, code_artifact_id)?;
-        MANIFEST.put(&self.store, wtxn, code_artifact_id, &manifest)?;
-        for symbol in &graph.manifest.symbols {
+        MANIFEST.put(&self.store, wtxn, code_artifact_id, &kept)?;
+        for symbol in &manifest.symbols {
             let key = code_symbol_revision_index_key(
-                &graph.manifest.repo_ref,
+                &manifest.repo_ref,
                 &symbol.path,
                 &symbol.name,
                 &symbol.fingerprint,
@@ -139,6 +192,22 @@ impl Vault {
             REVISION_INDEX.put(&self.store, wtxn, &key, &())?;
         }
         Ok(())
+    }
+
+    /// Applies and empties one working batch of graph edges.
+    fn put_code_symbol_edges_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        pending: &mut Vec<CodeSymbolGraphEdge>,
+    ) -> Result<()> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let mut batch = self.batch_in();
+        for edge in pending.drain(..) {
+            batch = batch.edge(&edge.source, edge.kind, &edge.target, edge.weight);
+        }
+        batch.apply(wtxn)
     }
 
     pub fn put_code_symbol_embedding_vectors(

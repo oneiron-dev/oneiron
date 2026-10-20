@@ -12,8 +12,9 @@ use serde_json::{Value, json};
 
 use super::bundle::{PartSource, fetch_generation};
 use crate::sync::residence::{
-    KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KitBundleFetch, SealedBundleObject,
-    kit_bundle_fetch_origin, sealed_digest_hex, sealed_generation_hex,
+    KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KitBundleFetch,
+    SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject, kit_bundle_fetch_origin, sealed_digest_hex,
+    sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
@@ -25,6 +26,13 @@ const KIT_BUNDLE_CONNECT_TIMEOUT_SECS: u64 = 12;
 /// How long one slice request may take, its answer's body included, before
 /// the restore gives up on a home that stopped answering.
 const KIT_BUNDLE_PART_TIMEOUT_SECS: u64 = 300;
+/// The most bytes one slice's answer may hold (FIX 5953; CALLS:
+/// KIT_BUNDLE_PART_REPLY_MAX = 349,769): the largest read part in base64,
+/// `4 * SEALED_BUNDLE_READ_PART_MAX.div_ceil(3)` = 349,528, plus the 241 bytes
+/// the home's compact `KitBundlePartResponse` adds around it (48-hex
+/// generation, `bundle`, two 20-digit `u64`s, 64-hex digest, `false`, keys
+/// and punctuation).
+const KIT_BUNDLE_PART_REPLY_MAX: usize = 4 * SEALED_BUNDLE_READ_PART_MAX.div_ceil(3) + 241;
 
 /// The home's kit door, and what each request to it is signed with.
 pub(super) struct KitHome {
@@ -41,7 +49,8 @@ impl KitHome {
     /// One slice of a kept object from `offset`, as the home sends it:
     /// `generation` names one, `None` the newest named for the kit's root. A
     /// refused or missing slice is `InvalidPayload`; a body that fails to
-    /// arrive is `Storage`.
+    /// arrive is `Storage`; a body past [`KIT_BUNDLE_PART_REPLY_MAX`] is
+    /// `FrameTooLarge`.
     pub(super) async fn part(
         &self,
         generation: Option<SealedBundleGeneration>,
@@ -66,7 +75,7 @@ impl KitHome {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect();
-        let response = self
+        let mut response = self
             .client
             .post(self.url.clone())
             .json(&json!({
@@ -91,10 +100,32 @@ impl KitHome {
         // connection, is a failed transport, not a missing slice (FIX 4297;
         // CALLS: KIT_BUNDLE_BODY_READ_FAILURE, TransportError). A body that
         // arrived and does not decode stays `InvalidPayload`.
-        let body = response
-            .bytes()
+        // The body is counted as it arrives and refused once it passes the
+        // largest answer a slice has (FIX 5953); a stated length may refuse it
+        // sooner but never stands in for the count.
+        if let Some(size) = response.content_length()
+            && size > KIT_BUNDLE_PART_REPLY_MAX as u64
+        {
+            return Err(TransportError::FrameTooLarge {
+                size: usize::try_from(size).unwrap_or(usize::MAX),
+                max: KIT_BUNDLE_PART_REPLY_MAX,
+            });
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?;
+            .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?
+        {
+            let size = body.len().checked_add(chunk.len()).unwrap_or(usize::MAX);
+            if size > KIT_BUNDLE_PART_REPLY_MAX {
+                return Err(TransportError::FrameTooLarge {
+                    size,
+                    max: KIT_BUNDLE_PART_REPLY_MAX,
+                });
+            }
+            body.extend_from_slice(&chunk);
+        }
         serde_json::from_slice(&body)
             .map_err(|_| TransportError::InvalidPayload("the kit fetch answer does not decode"))
     }

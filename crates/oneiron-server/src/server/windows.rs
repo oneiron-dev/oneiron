@@ -94,26 +94,29 @@ impl SyncServer {
 
     /// Persists an imported client update to sync_state
     /// (Observer-A-equivalent — MUST run synchronously, before the update is
-    /// broadcast to other devices).
+    /// broadcast to other devices). `auth`, the Write credential a promoted
+    /// window's update passed, is rechecked in the committing transaction
+    /// (FIX 5999); a full-window socket's update has none, as before.
     pub(crate) fn persist_imported_update(
         &self,
         key: &WindowKey,
         update_bytes: &[u8],
+        auth: Option<&crate::auth::CoreAuth>,
     ) -> Result<u32, oneiron::Error> {
-        server_state::persist_imported_window_update(&self.vault, key, update_bytes)
+        server_state::persist_admitted_window_update(&self.vault, key, update_bytes, |txn| {
+            auth.is_none_or(|auth| auth.credential_is_live_in_write_txn(&self.vault, txn))
+        })
     }
 
     /// Evicts a window doc from the live manager registry.
     ///
-    /// Used when the durable append of an imported update fails: the UPDATE
-    /// arm imports into the loaded doc BEFORE persisting (that order is
-    /// deliberate — persisting raw bytes that then fail `import_with` would
-    /// durably append an undecodable `u:w:` row, and window load is
-    /// fail-closed on pending updates, bricking the window at boot). On
-    /// persist failure the loaded doc therefore holds state a restart would
-    /// lose; evicting it forces the next access to reload from durable
-    /// `d:w:` + `u:w:` state, so the manager can never serve state a restart
-    /// loses.
+    /// Used when an accepted update fails to import into the loaded doc: the
+    /// UPDATE arm persists BEFORE that import, once admission has imported
+    /// the bytes into a fork (persisting bytes that then fail `import_with`
+    /// would durably append an undecodable `u:w:` row, and window load is
+    /// fail-closed on pending updates, bricking the window at boot). The
+    /// loaded doc then lacks durable state; evicting it forces the next
+    /// access to reload from durable `d:w:` + `u:w:` state.
     pub(crate) async fn evict_window(&self, key: &WindowKey) {
         self.reassert_manager.discard_window(key);
     }

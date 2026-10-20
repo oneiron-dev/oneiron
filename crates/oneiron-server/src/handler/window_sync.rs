@@ -312,6 +312,7 @@ pub(super) async fn handle_window_sync(
                 }
                 return Err(map_update_admission_err(error));
             }
+            let mut write_auth = None;
             if protocol::is_residence_version(conn_state.protocol_version) {
                 let selector = conn_state
                     .promoted_windows
@@ -330,38 +331,30 @@ pub(super) async fn handle_window_sync(
                     update,
                 )
                 .map_err(map_selector_filter_err)?;
+                write_auth = Some(auth);
             }
+            // Durability BEFORE the observed import and fan-out (ARCH-0023b
+            // Observer A duty: "MUST persist synchronously"; FIX 5999).
+            // `subscribe_local_update` does not fire for imports, so the update
+            // bytes, already imported into a fork by admission above, are
+            // appended to sync_state (u:w:*) explicitly, in the transaction
+            // that rechecks the Write credential. A refused or failed append
+            // closes the connection with nothing imported, applied or relayed.
+            let before = doc.oplog_vv();
+            server
+                .persist_imported_update(&key, update, write_auth)
+                .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             // Client sending Loro update bytes — import with origin for echo suppression
             let origin = format!("conn:{conn_id}");
-            let before = doc.oplog_vv();
-            let imported = doc
-                .import_with(update, &origin)
-                .map_err(|e| ProtocolError::LoroImport(format!("{e}")))?;
-            // Durability BEFORE fan-out (ARCH-0023b Observer A duty: "MUST
-            // persist synchronously"). `subscribe_local_update` does not fire
-            // for imports, so the imported update bytes are appended to
-            // sync_state (u:w:*) explicitly. A persistence failure closes the
-            // connection without broadcasting: the server must never relay an
-            // update — tombstones included — that it cannot replay after a
-            // restart.
-            let persist_result = server.persist_imported_update(&key, update);
-            if let Err(e) = persist_result {
-                // The cached doc already imported this update (import runs
-                // before the durable append), so it now holds state a restart
-                // would lose. Left cached, a later VV_REQUEST would serve the
-                // unpersisted update, the origin client would VV-confirm and
-                // clear its local queue, and the next server restart would
-                // drop the update — tombstones included — fleet-wide. Evict
-                // the window so the next access reloads from durable
-                // d:w:/u:w: state. Known residual: connections already
-                // holding a reference-clone of the evicted doc can still
-                // export it until their next fetch (generation/poison flag =
-                // follow-up).
-                server.evict_window(&key).await;
-                return Err(ProtocolError::Persistence(format!(
-                    "update persist failed: {e}"
-                )));
-            }
+            let imported = match doc.import_with(update, &origin) {
+                Ok(imported) => imported,
+                Err(e) => {
+                    // The accepted update stays durable: the window reloads
+                    // from d:w:/u:w: state on its next access.
+                    server.evict_window(&key).await;
+                    return Err(ProtocolError::LoroImport(format!("{e}")));
+                }
+            };
 
             // Each socket's delivery judges the update for the machine it
             // serves, so a private world's window reaches only the machines

@@ -14,7 +14,7 @@ use super::snapshot::{
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::code_artifact::{CodeArtifactBody, CodeArtifactClass, decode_code_artifact_body};
-use crate::code_symbol::{CodeSymbolSource, derive_code_symbol_graph_from_sources};
+use crate::code_symbol::{CodeSymbolSource, prepare_code_symbol_graph};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, CodeError, Error, Result};
 use crate::ports::EntityStoreRead;
@@ -493,12 +493,13 @@ impl Vault {
                     Some(CodeSymbolSource::new(blob.path.as_str(), text))
                 })
                 .collect::<Vec<_>>();
-            let symbol_graph = derive_code_symbol_graph_from_sources(
+            // Symbol rows first, then every edge a working batch at a time.
+            let symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),
                 Some(commit_hash.clone()),
                 symbol_sources,
             )?;
-            self.put_code_symbol_graph_in_txn(
+            self.put_prepared_code_symbol_graph_in_txn(
                 wtxn,
                 &code_artifact_id,
                 &symbol_graph,

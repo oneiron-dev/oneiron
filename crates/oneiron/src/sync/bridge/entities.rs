@@ -10,8 +10,8 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::sync::ingest::{
-    IngestCtx, Residence, authority_parent_order, ingest_entity_in_savepoint, is_authority_row,
-    note_born, note_delivered_in_txn, waits_for_sibling_row, watches,
+    IngestCtx, Residence, TaskComponents, authority_parent_order, ingest_rows_in_savepoint,
+    is_authority_row, note_born, note_delivered_in_txn, waits_for_sibling_row, watches,
 };
 use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
@@ -114,6 +114,19 @@ pub(super) fn materialize_entities_with_changes(
             },
         );
         let carriers = doc.get_map("entities");
+        // FIX 5998: TASK rows whose roles change together land as one batch.
+        let mut components = TaskComponents::find(
+            vault,
+            wtxn,
+            updates.iter().filter_map(|&(key, value)| match value {
+                Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob)))
+                    if !carrier_superseded(&carriers, key.as_ref(), &blob[..]) =>
+                {
+                    Some((&**key, &blob[..]))
+                }
+                _ => None,
+            }),
+        )?;
         for (key, new_val) in updates {
             let value = match new_val {
                 Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(blob))) => {
@@ -135,19 +148,41 @@ pub(super) fn materialize_entities_with_changes(
             {
                 continue;
             }
-            let previous_revision = EntityId::from_hex(key.as_ref())
-                .ok()
-                .map(|id| revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live))
-                .transpose()?
-                .flatten();
-            let unborn = match EntityId::from_hex(key.as_ref()) {
-                Ok(id) if watches(vault, &id) => {
-                    !crate::ports::EntityStoreRead::port_entity_present(&vault.store, wtxn, &id)?
-                }
-                _ => false,
+            let component = components.take(key.as_ref());
+            let rows: Vec<(&str, Option<&[u8]>)> = match &component {
+                Some(rows) if rows.is_empty() => continue,
+                Some(rows) => rows
+                    .iter()
+                    .map(|(key, blob)| (key.as_str(), Some(&blob[..])))
+                    .collect(),
+                None => vec![(&**key, value)],
             };
-            let step = ingest_entity_in_savepoint(&ingest, wtxn, key.as_ref(), value)?;
-            if let (Some(id), Some(blob)) = (step.written(), value) {
+            let mut before = Vec::with_capacity(rows.len());
+            for &(key, _) in &rows {
+                let previous_revision = EntityId::from_hex(key)
+                    .ok()
+                    .map(|id| revision_for_mode_in_txn(&vault.store, wtxn, &id, ReadMode::Live))
+                    .transpose()?
+                    .flatten();
+                let unborn = match EntityId::from_hex(key) {
+                    Ok(id) if watches(vault, &id) => {
+                        !crate::ports::EntityStoreRead::port_entity_present(
+                            &vault.store,
+                            wtxn,
+                            &id,
+                        )?
+                    }
+                    _ => false,
+                };
+                before.push((previous_revision, unborn));
+            }
+            let steps = ingest_rows_in_savepoint(&ingest, wtxn, &rows)?;
+            for ((&(_, value), step), (previous_revision, unborn)) in
+                rows.iter().zip(&steps).zip(before)
+            {
+                let (Some(id), Some(blob)) = (step.written(), value) else {
+                    continue;
+                };
                 if unborn {
                     born.push((id, blob.to_vec()));
                 }
