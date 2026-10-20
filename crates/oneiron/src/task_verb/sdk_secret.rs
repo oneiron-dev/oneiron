@@ -27,6 +27,7 @@ use crate::secret_custody::{
     HandleReveal, RevealAsker, SecretHandleCard, SecretRevealDecision, SecretRevealReceipt,
     SecretSight,
 };
+use crate::typed_body::LiftedSources;
 
 /// `reveal`'s input: the handle, and why the agent needs the value.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -412,6 +413,42 @@ impl Memory<'_> {
         // FIX 4513: once, after custody read the stored bytes.
         file.bytes = vault.resolve_docx_authors(std::mem::take(&mut file.bytes))?;
         Ok(Some(file))
+    }
+
+    /// How this caller reads one projection of `artifact`'s typed body (a
+    /// deck's export, a body's view) that `projection_fingerprint` names,
+    /// whose lifted texts name `lifted`, read in the projection's snapshot
+    /// ([`crate::Vault::typed_body_lifted_sources_in_txn`]) (OF-067, FIX
+    /// 2941). The owner, a body whose texts name no key, and a reader that is
+    /// no agent or says no `why` read as [`Memory::secret_sight`] says. An
+    /// agent that says `why` reads it whole once a grant covers its keys and
+    /// this read's receipts are written, and masked otherwise, its ask filed
+    /// ([`crate::Vault::typed_body_sight`]). The sight is this read's alone:
+    /// [`Memory::secret_sight`] and [`Memory::reads_lifted_keys_masked`] do
+    /// not change.
+    #[allow(
+        dead_code,
+        reason = "L12-B wires vault.artifacts.body.deck.preview and vault.artifacts.body.read onto it"
+    )]
+    pub(crate) fn typed_body_read_sight(
+        &self,
+        artifact: &EntityId,
+        projection_fingerprint: &[u8; 32],
+        lifted: &LiftedSources,
+        why: Option<&str>,
+    ) -> MemoryResult<SecretSight> {
+        let sight = self.secret_sight()?;
+        let Some(why) = why.filter(|_| {
+            sight == SecretSight::Masked
+                && !lifted.is_empty()
+                && self.actor_class() == EdgeActorClass::Agent
+        }) else {
+            return Ok(sight);
+        };
+        let asker = self.reveal_asker()?;
+        Ok(self
+            .vault()
+            .typed_body_sight(&asker, artifact, projection_fingerprint, lifted, why)?)
     }
 
     /// The asker of a reveal: the calling agent, and the project and run its

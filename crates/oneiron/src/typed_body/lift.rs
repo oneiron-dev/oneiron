@@ -20,6 +20,7 @@ use crate::batch::secret_scan::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::secret_custody::masked_file_in_txn;
 use crate::side_table::{self, SideTableDecl};
 use crate::store::Store;
 
@@ -196,19 +197,78 @@ pub(super) fn remark_typed_body_in_txn(
     Ok(())
 }
 
+/// Each text of `entity`'s typed body, read in `txn`: its live body's and
+/// each open fork's.
+fn body_texts_in_txn(store: &Store, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Vec<String>> {
+    let mut texts = Vec::new();
+    if let Some(doc) = body_in_txn(store, txn, TypedBodyRows::Doc, entity.as_bytes())? {
+        texts.extend(state_of(&doc)?.1);
+    }
+    for row in FORK_DOCS.iter_from(store, txn, entity.as_bytes())? {
+        let (_, bytes) = row?;
+        texts.extend(state_of(&load(Some(bytes), None)?)?.1);
+    }
+    Ok(texts)
+}
+
+/// The custody records the marks of a typed body's lifted texts name: each
+/// key once, in custody-id order. Only
+/// [`Vault::typed_body_lifted_sources_in_txn`] makes one, so a read's sight
+/// ([`Vault::typed_body_sight`]) is judged over the keys the body holds,
+/// never over keys a caller names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LiftedSources(Vec<EntityId>);
+
+impl LiftedSources {
+    /// Whether the body's texts name no key: every reader reads it alike.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The keys, each once, in custody-id order.
+    pub(crate) fn keys(&self) -> &[EntityId] {
+        &self.0
+    }
+}
+
 impl Vault {
     /// The keys the lifted texts of `entity`'s typed body hold, its live
     /// body's and each open fork's.
     pub(crate) fn typed_body_lifted_keys(&self, entity: &EntityId) -> Result<LiftedKeys> {
         let txn = self.store.env.read_txn()?;
-        let mut texts = Vec::new();
-        if let Some(doc) = body_in_txn(&self.store, &txn, TypedBodyRows::Doc, entity.as_bytes())? {
-            texts.extend(state_of(&doc)?.1);
-        }
-        for row in FORK_DOCS.iter_from(&self.store, &txn, entity.as_bytes())? {
-            let (_, bytes) = row?;
-            texts.extend(state_of(&load(Some(bytes), None)?)?.1);
-        }
+        let texts = body_texts_in_txn(&self.store, &txn, entity)?;
         LiftedKeys::of_in_txn(&self.store, &txn, texts)
+    }
+
+    /// The custody records the marks of `entity`'s typed body texts name,
+    /// its live body's and each open fork's, as [`Self::typed_body_lifted_keys`]
+    /// reads them (a key in a marked member included), read in `txn`: the
+    /// snapshot the caller reads the projection it shows in, so the keys a
+    /// read's sight judges ([`Vault::typed_body_sight`]) are the keys it
+    /// shows.
+    #[allow(
+        dead_code,
+        reason = "L12-B wires vault.artifacts.body.deck.preview and vault.artifacts.body.read onto it"
+    )]
+    pub(crate) fn typed_body_lifted_sources_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<LiftedSources> {
+        let mut keys = Vec::new();
+        for text in body_texts_in_txn(&self.store, txn, entity)? {
+            let hash = blake3::hash(text.as_bytes());
+            let Some(mark) = masked_file_in_txn(&self.store, txn, hash.as_bytes())? else {
+                continue;
+            };
+            let marked = mark
+                .keys
+                .iter()
+                .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
+            keys.extend(marked.map(|key| key.custody));
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(LiftedSources(keys))
     }
 }
