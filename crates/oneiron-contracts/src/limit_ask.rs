@@ -293,7 +293,7 @@ pub enum EngineLimit {
     SealPrefixBytes,
     /// Bytes one extraction of a PDF's DSS validation material decodes,
     /// across its Certs, CRLs and OCSPs. Past it the row asks and the
-    /// material is read whole; one stream still decodes to at most 256 MiB.
+    /// material is read whole, each stream decoded whole.
     SealDssDecodeBytes,
     /// Signing-identity asks (`seal.identity`) one seal call makes. Past it the
     /// row asks and the pinned identity is answered again.
@@ -322,8 +322,36 @@ pub enum EngineLimit {
     SealReportJsonBytes,
     /// Bytes the largest object stream of a prepared PDF decodes to, read where
     /// the engine writes its signature revisions. Past it the row asks and the
-    /// PDF is read whole; one stream still decodes to at most 256 MiB.
+    /// PDF is read whole, each stream decoded whole.
     SealPreparedStreamBytes,
+    /// Bytes the largest single stream a seal reads decodes to: an object or
+    /// xref stream its loader decodes, or one DSS entry. Past it the row asks
+    /// and the stream is decoded whole.
+    SealStreamDecodeBytes,
+    /// Tokens the seal lexes in one stream dictionary to find its `/Length`.
+    /// Past it the row asks and the header is lexed to its `stream` keyword.
+    SealStreamHeaderTokens,
+    /// Nesting depth of one PDF value the seal lexes: literal-string
+    /// parentheses, or arrays and dictionaries. Past it the row asks and the
+    /// value is read whole.
+    SealPdfDepth,
+    /// Reference links behind one security-checked name (`/Type`, `/FT`,
+    /// `/S`) the seal resolves. Past it the row asks and the chain is followed
+    /// to its name.
+    SealSecurityNameHops,
+    /// Reference links of one other chain the seal follows. Past it the row
+    /// asks and the chain is followed to its object.
+    SealReferenceHops,
+    /// Reference steps one measurement of a PDF's DSS coverage takes over all
+    /// its chains. Past it the row asks and every chain is followed.
+    SealDssReferenceWork,
+    /// Nodes one descent of a PDF's AcroForm field tree visits. Past it the row
+    /// asks and the tree is walked whole.
+    SealFieldTreeWork,
+    /// DER bytes of the largest CMS or timestamp token one seal writes into a
+    /// signature hole. Past it the row asks; a revision the seal writes grows
+    /// its hole to hold it.
+    SealContentsBytes,
     /// Asks of every verb one organ call makes, against its install grant's own
     /// count, or this row's for a grant that keeps the factory one. Past it the
     /// row asks and each granted ask is answered.
