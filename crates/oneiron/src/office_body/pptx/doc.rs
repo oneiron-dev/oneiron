@@ -26,6 +26,7 @@
 //! deck with the fewest container writes, so an edit read against an older
 //! frontier merges with the head unit by unit.
 
+mod node;
 mod order;
 mod table;
 
@@ -36,10 +37,10 @@ use loro::{
     LoroValue, StyleConfig, StyleConfigMap, TextDelta, TreeParentId, UpdateOptions,
     ValueOrContainer,
 };
+use node::{node_of, root, sync_meta};
 use oneiron_docedit::edit::transaction::IdMarks;
 use oneiron_docedit::live::{
-    DeckNode, DeckOp, GeometryProps, LiveDeck, LiveError, NodeId, NodeKind, NodePayload, Paragraph,
-    Run, TextBody,
+    DeckOp, LiveDeck, LiveError, NodeId, NodeKind, NodePayload, Paragraph, Run, TextBody,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -408,24 +409,6 @@ fn sync_tree(tree: &LoroTree, target: &LiveDeck) -> Result<()> {
     Ok(())
 }
 
-fn sync_meta(meta: &LoroMap, id: NodeId, node: &DeckNode) -> Result<()> {
-    put(meta, ID, id.0.to_string())?;
-    put_json(meta, KIND, &node.kind)?;
-    put_json(meta, NAME, &node.name)?;
-    put_json(meta, BINDING, &node.binding)?;
-    put_json(meta, PLACEHOLDER, &node.placeholder)?;
-    put_json(meta, PRESET, &node.preset)?;
-    match &node.payload {
-        Some(NodePayload::Table(_)) => put(meta, PAYLOAD, table::MARK.to_owned())?,
-        payload => put_json(meta, PAYLOAD, payload)?,
-    }
-    put_json(meta, OFFSET, &node.geometry.offset)?;
-    put_json(meta, EXTENT, &node.geometry.extent)?;
-    put_json(meta, ROTATION, &node.geometry.rotation)?;
-    put_json(meta, FLIP_H, &node.geometry.flip_h)?;
-    put_json(meta, FLIP_V, &node.geometry.flip_v)
-}
-
 fn sync_texts(map: &LoroMap, target: &LiveDeck) -> Result<()> {
     for key in keys(map) {
         if node_id(&key).map_or(true, |id| !target.texts.contains_key(&id)) {
@@ -564,50 +547,6 @@ fn configure(doc: &LoroDoc) {
         styles.insert(key.into(), StyleConfig { expand: EXPAND });
     }
     doc.config_text_style(styles);
-}
-
-fn root() -> DeckNode {
-    DeckNode {
-        kind: NodeKind::Root,
-        parent: None,
-        children: Vec::new(),
-        name: None,
-        binding: None,
-        geometry: GeometryProps::default(),
-        placeholder: None,
-        preset: None,
-        payload: None,
-    }
-}
-
-/// A tree node's model identity and node; a table frame's table is its
-/// `tables` entry.
-fn node_of(meta: &LoroMap, parent: NodeId, tables: &LoroMap) -> Result<(NodeId, DeckNode)> {
-    let id = identity(meta)?;
-    let payload = match string(meta, PAYLOAD).as_deref() {
-        Some(table::MARK) => Some(NodePayload::Table(table::read(tables, id)?)),
-        _ => json(meta, PAYLOAD)?,
-    };
-    Ok((
-        id,
-        DeckNode {
-            kind: json(meta, KIND)?,
-            parent: Some(parent),
-            children: Vec::new(),
-            name: json(meta, NAME)?,
-            binding: json(meta, BINDING)?,
-            geometry: GeometryProps {
-                offset: json(meta, OFFSET)?,
-                extent: json(meta, EXTENT)?,
-                rotation: json(meta, ROTATION)?,
-                flip_h: json(meta, FLIP_H)?,
-                flip_v: json(meta, FLIP_V)?,
-            },
-            placeholder: json(meta, PLACEHOLDER)?,
-            preset: json(meta, PRESET)?,
-            payload,
-        },
-    ))
 }
 
 /// A tree node's model identity; the implicit root is never a tree node.
