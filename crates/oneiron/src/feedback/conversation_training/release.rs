@@ -188,8 +188,10 @@ impl Vault {
     /// pass ends by handing `sink` the vault's scopes.
     ///
     /// The caller judged that offers may be written at all: an intake key in
-    /// the outbox and, for a self-hosted vault, an account binding. A filter
-    /// that cannot run stops the pass with nothing of that source sent.
+    /// the outbox and, for a self-hosted vault, its self-host shipper on, the
+    /// anonymous training window its offers leave through (TL-6), which
+    /// installs that key from the intake's public descriptor. A filter that
+    /// cannot run stops the pass with nothing of that source sent.
     ///
     /// # Errors
     /// Storage faults, a rule read that fails, a training link key that is
@@ -356,10 +358,10 @@ impl Vault {
     /// Holds one submission in local custody: a new one under a new id, the
     /// next number of the private order and, in the month of `now` and the
     /// current link generation (its key made live first), the next ordinal
-    /// of that pair's scope; a retry of one still held under its own id,
-    /// order, month, generation, ordinal and first preparation time. A held
-    /// one it supersedes is withheld in the same write. `None` while a purge
-    /// stands: nothing is held.
+    /// of that pair's scope and its piece code, C (TL-6); a retry of one
+    /// still held under its own id, order, month, generation, ordinal, first
+    /// preparation time and C. A held one it supersedes is withheld in the
+    /// same write. `None` while a purge stands: nothing is held.
     fn hold_submission(
         &self,
         (reuse, superseded): (
@@ -383,7 +385,8 @@ impl Vault {
                 row.state = SubmissionState::Withheld;
                 put_submission_in(self, txn, old, &row)?;
             }
-            let (local_seq, placed) = match reuse {
+            let (local_seq, placed, piece) = match reuse {
+                // A retry keeps its C as it was made, never made again.
                 Some((id, held)) => (
                     held.local_seq,
                     Placed {
@@ -394,6 +397,7 @@ impl Vault {
                         scope_seq: held.scope_seq,
                         prepared_at: held.prepared_at,
                     },
+                    held.piece,
                 ),
                 None => {
                     let local_seq = custody::next_local_seq_in(self, txn)?;
@@ -402,6 +406,12 @@ impl Vault {
                     let (scope, scope_seq) =
                         custody::next_scope_seq_in(self, txn, &month, generation)?;
                     let id = TrainingSubmissionId(random_id());
+                    // C, made once here under K at the generation it was
+                    // placed in; the zeroized K drops with this arm.
+                    let piece = {
+                        let key = link::training_link_key(self, txn, generation)?;
+                        link::piece_code(&key, &id.0, &month)
+                    };
                     let placed = Placed {
                         id,
                         month,
@@ -410,7 +420,7 @@ impl Vault {
                         scope_seq,
                         prepared_at: now,
                     };
-                    (local_seq, placed)
+                    (local_seq, placed, piece)
                 }
             };
             let row = SubmissionCustody {
@@ -427,6 +437,7 @@ impl Vault {
                 generation: placed.generation,
                 scope_seq: placed.scope_seq,
                 prepared_at: placed.prepared_at,
+                piece,
                 published_at: None,
                 state: SubmissionState::Held,
                 files: true,

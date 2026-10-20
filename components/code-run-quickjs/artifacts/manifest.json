@@ -16,24 +16,24 @@
   "sources": {
     "guest.c": "d173555616c5e4d04972bdf204fe1bb1fa20c3f27a2b5c3145efe6a9ae6bdb64",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "f263d09770837ed427675dba72cc9d9015979bdb1791b41099da29d6dc85748d",
+    "bootstrap.js": "8e68cfdadbf4053b9de335a2f86a2472162755c6950b602386248be6c76d00db",
     "reader_forks.js": "8ffd9d1da2ef4731abd26122c4094e28b2a3f1115259f354deef8a556cdc7093",
     "diff.js": "928816d75a92bb0e98c21216c2728044c9095d2c6bc75cd38aee2c08981fcf1f",
     "hook_guest.c": "7e65ba8fce7db9d63991003b9430f3bd451669ab10daaf07788a797ac74d3816",
     "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
     "generate_bridge.py": "5bd6af632512ba4814536b3e994b249916b27d6de28d10d534db512f74a48370",
-    "build.py": "af4a69a153d398f43395d73cfecd267b40b6900fda039cc2c28eb51d96168061"
+    "build.py": "9a91f060f757413cdf44e9450aa5fa037579a0bfb6cdefde9d37c3761cc7dc56"
   },
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "ce5affa0f8eb691fdccf99b68cf783a48c63a907c3164d745fbd3670b1dc8d2a",
-      "bytes": 1086220
+      "sha256": "487a311f44ca6fb7c85516cccc01c710a6433715644cf3e927c4bd51f1c22999",
+      "bytes": 1086268
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "40e6909db38d5135add6156a3947949756feef80821bab0ef1290fbb820a0ea6",
-      "bytes": 1081323
+      "sha256": "b5a075fa996365bdc43fdad9e8439ae1db2acaa9475b48d9a44c65494bfd2e55",
+      "bytes": 1081371
     },
     "hook": {
       "file": "quickjs-hook.wasm",

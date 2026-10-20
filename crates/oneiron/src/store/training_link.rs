@@ -52,10 +52,6 @@ pub(in crate::store) fn require_live_link_key(
     plan: &mut CustodyPlan,
     bound: &CustodyBinding,
 ) -> Result<()> {
-    if cfg!(not(unix)) {
-        // No exterior custody exists here, so no K can either.
-        return Ok(());
-    }
     for (id, state) in LocalCustody::at(bound).census()? {
         if id.kind() == CustodyKind::TrainingLink && state == EntryState::Live {
             plan.require(&id)?;
@@ -146,10 +142,6 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         generation: u32,
     ) -> Result<()> {
-        if cfg!(not(unix)) {
-            // No exterior custody exists here, so no K can either.
-            return Ok(());
-        }
         if self.core.gate_custody_archived() {
             return Err(Error::Store(StoreError::ArchivedVault));
         }
