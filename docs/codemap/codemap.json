@@ -47417,7 +47417,7 @@
      "path": "src/secret_custody/reveal/file.rs",
      "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -58781,7 +58781,7 @@
      "path": "src/task_verb/sdk_secret.rs",
      "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret or person's value by its handle…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 7,
       "struct": 8
@@ -60431,7 +60431,7 @@
      "path": "src/typed_body/lift.rs",
      "purpose": "Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -67778,6 +67778,126 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/args.rs",
+     "purpose": "`infer run` and `infer summarize` flags, parsed by hand like the other subcommands: every flag takes one…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/arms.rs",
+     "purpose": "The two production paths a call takes, each an `LlmBackend` the measurement loop drives the same way",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/cases.rs",
+     "purpose": "Case packets, read at run time from a JSONL file outside the source tree",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/config.rs",
+     "purpose": "The `--models-toml` file as the server reads its `[models]` section",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/engine.rs",
+     "purpose": "An engine the bench starts itself (`--engine-cmd`), in its own process group, with stdout and stderr…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/measure.rs",
+     "purpose": "One call driven through `LlmBackend::stream`, timed with `Instant`",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/mod.rs",
+     "purpose": "`infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/request.rs",
+     "purpose": "The request one case sends, and what of it the row records",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/rows.rs",
+     "purpose": "Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/scoring.rs",
+     "purpose": "The quality check: does the reply keep the Dreamer's reply contract, and how much of the case's gold does it…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/summary.rs",
+     "purpose": "One summary line per arm: the `ok` rows grouped by (arm_id, config_digest), as a markdown table and as…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/vram.rs",
+     "purpose": "GPU memory, sampled: one `nvidia-smi -lms` child streams `memory.used, memory.total, name, uuid` for one…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67902,7 +68022,7 @@
      "path": "src/load/mod.rs",
      "purpose": "`load` subcommand — the engine's load bench on the shipped server binary",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -67932,7 +68052,7 @@
      "path": "src/load/server.rs",
      "purpose": "The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 20
      }
     },
     {
@@ -68436,6 +68556,13 @@
      "layout": "dir",
      "purpose": "Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts"
     },
+    "infer": {
+     "files": 12,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "`infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an…"
+    },
     "interface_bench": {
      "files": 9,
      "impl_vault": false,
@@ -68509,7 +68636,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 110,
+   "source_files": 122,
    "test_files": 18
   },
   "oneiron-broker": {
