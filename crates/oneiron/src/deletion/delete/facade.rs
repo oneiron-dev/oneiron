@@ -422,6 +422,13 @@ impl Vault {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }
             let mut changed = vec![*id];
+            // A delete takes its quotes out of the NOTEs that cite it, in
+            // this writer; their history keeps them (C050).
+            if existed && reason == DeleteReason::UserDelete {
+                changed.extend(crate::note::scrub_deleted_citations_in_txn(
+                    self, &mut wtxn, id,
+                )?);
+            }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
             if existed && let Some(captured) = &captured {
