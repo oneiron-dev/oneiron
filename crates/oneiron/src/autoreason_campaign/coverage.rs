@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use crate::llm::decision::{DecisionQuestion, TypedDecision};
 use crate::skill_optimize::{
     GoalAxisKind, GoalAxisScore, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
-    HonestyReplay, SkillOptimizeDecisions, SkillReplayPair,
+    HonestyReplay, SkillOptimizeDecisions, SkillReplayResponses,
 };
 use crate::workspace_roster::GoalRecord;
 use crate::{EntityId, Error, Result};
@@ -223,8 +223,8 @@ impl HeldOutReplayNotes for CoverageFloorScorer<'_> {
         }))
     }
 
-    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
-        self.inner.blind_pairs(task, receipts)
+    fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        self.inner.replay_responses(receipts)
     }
 
     fn record_decision(

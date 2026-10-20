@@ -162,7 +162,9 @@ pub use self::brief::{
     SkillFailureContext, SkillFailureReport, SkillOptimizeAuthor, SkillOptimizeBrief,
     optimize_brief, optimize_brief_for_principal_at, skill_optimize_call_purpose,
 };
-pub use self::decisions::{SkillOptimizeDecisions, SkillReplayPair, judgment_kind};
+pub use self::decisions::{
+    SkillOptimizeDecisions, SkillReplayResponse, SkillReplayResponses, judgment_kind,
+};
 pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,

@@ -1,12 +1,19 @@
 //! The `[skills]` section: how the skill-edit gate's live slice is funded at
 //! this server, and the skills a project conversation runs. It holds the pull
 //! budget of one live goal-axis measurement (OF-495), which the Coach and the
-//! owner's measure route read, and the drafting and goal-intake skills of a
-//! project conversation (OF-501).
+//! owner's measure route read, the drafting and goal-intake skills of a
+//! project conversation (OF-501), and the serve replay judge's wording
+//! (FIX 1091).
 
 use oneiron::EntityId;
 use oneiron::agent_dispatch::ProjectConversationSkills;
 use serde::Deserialize;
+
+use self::replay_judge::{ReplayJudgeWordingOverride, lookup_replay_judge_override};
+
+mod replay_judge;
+
+pub use self::replay_judge::ReplayJudgeWording;
 
 /// The least budget a live slice can compare two arms on.
 const MIN_LIVE_PULLS: u32 = 2;
@@ -30,6 +37,10 @@ pub struct SkillsConfig {
     /// "mint", justification} | {kind:"merge_into", existing, rationale}}.
     /// Unset means selected-message conversion is unavailable, never a fallback prompt.
     pub conversion_prompt: Option<String>,
+    /// `[skills.replay_judge]`: the serve replay judge's wording, each key
+    /// the shipped text until a layer sets it. Always resolved: no key turns
+    /// replay judging off.
+    pub replay_judge: ReplayJudgeWording,
 }
 
 impl SkillsConfig {
@@ -45,6 +56,9 @@ impl SkillsConfig {
         }
         if let Some(value) = over.conversion_prompt {
             self.conversion_prompt = Some(value);
+        }
+        if let Some(value) = over.replay_judge {
+            self.replay_judge.apply_override(value);
         }
     }
 
@@ -67,7 +81,7 @@ impl SkillsConfig {
         {
             anyhow::bail!("skills.conversion_prompt must not be empty");
         }
-        Ok(())
+        self.replay_judge.validate()
     }
 
     /// The skills a project conversation runs (OF-501): this server's
@@ -104,6 +118,7 @@ pub(super) struct SkillsConfigOverride {
     pub(super) project_proposal_draft_skill: Option<String>,
     pub(super) goal_intake_skill: Option<String>,
     pub(super) conversion_prompt: Option<String>,
+    pub(super) replay_judge: Option<ReplayJudgeWordingOverride>,
 }
 
 pub(super) fn lookup_skills_override(
@@ -121,11 +136,13 @@ pub(super) fn lookup_skills_override(
     let project_proposal_draft_skill = lookup("ONEIRON_SKILLS_PROJECT_PROPOSAL_DRAFT_SKILL");
     let goal_intake_skill = lookup("ONEIRON_SKILLS_GOAL_INTAKE_SKILL");
     let conversion_prompt = lookup("ONEIRON_SKILLS_CONVERSION_PROMPT");
+    let replay_judge = lookup_replay_judge_override(lookup);
     let over = SkillsConfigOverride {
         live_pulls_per_axis,
         project_proposal_draft_skill,
         goal_intake_skill,
         conversion_prompt,
+        replay_judge,
     };
     Ok((over != SkillsConfigOverride::default()).then_some(over))
 }

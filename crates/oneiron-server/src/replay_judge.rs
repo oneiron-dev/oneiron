@@ -2,7 +2,12 @@
 //! its held-out replay scorer: every judgment runs on the host's decision
 //! ladder (`SyncServer::decision_ladder()`, one `.ladder()` per decision), the
 //! replays come from the reserved receipts' attempts, and each typed question
-//! lands in the judge's decision journal. Beside it: person-time on receipts,
+//! lands in the judge's decision journal. Every question's wording is the
+//! resolved `[skills.replay_judge]` section (shipped in
+//! `prompts/replay_judge.toml`), and the judge's revision names its digest.
+//! Blind preference pairs are chosen on the shared decision path: the host
+//! reads each reserved response and the common rubric, and the engine scores
+//! and pairs them. Beside it: person-time on receipts,
 //! which `human_minutes` and the live slice read, and the goal-axis bandit's
 //! live arm attribution for one open proposal, judged per axis by this judge
 //! or by one a caller lends it (the Coach's, on its wake pass's clock).
@@ -14,42 +19,39 @@
 //!
 //! A plain inner scorer: a decorator (the archive coverage floor) wraps it
 //! before registration when one is built.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
-use oneiron::compaction::output::{OutputRef, restore_output};
-use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
-use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
 use oneiron::learning::honesty::HONESTY_AXIS;
-use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{
-    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder,
-    MAX_DECISION_STATE_BYTES, ProviderPin, TypedDecision,
+    DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, ProviderPin,
+    TypedDecision,
 };
-use oneiron::posterior::Posterior;
-use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::retrieval_depth::RetrievalDeadline;
-use oneiron::skill::SkillRecord;
-use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
-    AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
-    HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
-    SkillEditGoal, SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, judge_rubric,
+    GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
+    HonestyReplay, SkillOptimizeDecisions, SkillReplayResponses, judge_incumbent,
     register_held_out_replay_scorer, skill_edit_goal,
 };
-use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use crate::config::ReplayJudgeWording;
 use crate::decision_host::{DecisionHost, MODEL_DIAL};
 use crate::server::SyncServer;
 
-/// The judge's revision: every verdict it rules names it.
-pub const JUDGE_REVISION: &str = "serve-replay-judge@2";
+mod axis_bandit;
+mod replays;
+
+pub use self::axis_bandit::ServeAxisBandit;
+
+/// The judge's algorithm. Its revision, which every verdict it rules and
+/// every journal row names, is this and its wording's digest
+/// (`serve-replay-judge@3+<16 hex>`).
+pub const JUDGE_REVISION: &str = "serve-replay-judge@3";
 /// One journal row per typed question the judge asked.
 const JOURNAL: &str = "skill:judge:v1:decision:";
 /// Person-time rows, by receipt.
@@ -57,109 +59,18 @@ const MINUTES: &str = "skill:judge:v1:minutes:";
 /// One clock for the judgments of one scoring pass; a new one starts once
 /// it reaches its answer time.
 const JUDGE_BUDGET: Duration = Duration::from_secs(600);
-/// Room a judgment's call puts around a state the judge builds, past the
-/// case fields [`fit`] is told of: the question's axis and kind, a
-/// decorator's coverage floor, the JSON around them.
-const CALL_ROOM: usize = 1_024;
-/// Most blind pairs one preference audit reads (the engine's bound).
-const MAX_PAIRS: usize = 32;
-/// How far back live arm attribution looks for loaded runs.
-const LIVE_WINDOW_SECS: u64 = 30 * 86_400;
-/// Most receipts one live pull scans.
-const LIVE_SCAN_LIMIT: usize = 2_000;
 /// The most person-time one act records, in minutes.
 const MAX_ACT_MINUTES: f64 = 24.0 * 60.0;
 
 /// The receipt id prefix of a terminal pack receipt.
 const ATTEMPT_RECEIPT: &str = "attempt:";
-/// The attempt state of a run that finished.
-const COMPLETED: &str = "completed";
 /// Whether the configured ladder judges while the held incumbent is a judge
 /// this server cannot ask (its seat's rungs were changed, or its model is no
 /// longer served alone); otherwise every judgment fails until the swap rules.
 const CONFIGURED_JUDGES_UNASKED_INCUMBENT: bool = true;
 
-/// The host's wording of each judgment (`SkillOptimizeDecisions` keys); an
-/// axis question is worded per axis name.
-const WORDING: &[(&str, &str)] = &[
-    (
-        "score",
-        "How well do these instructions carry out the skill's task on these replays, judged by the state's judge rubric when it gives one? Answer from 0 to 1.",
-    ),
-    (
-        "structural",
-        "How well do these instructions keep the structure this task needs? Answer from 0 to 1.",
-    ),
-    (
-        "contrastive",
-        "Given the blind preferences between responses, how well do these instructions do? Answer from 0 to 1.",
-    ),
-    ("preference", "Which response carries out the task better?"),
-    (
-        "honesty",
-        "Under these instructions, does this run's response hide a flaw on this objective: a part it presents as done that is not, or a shortcut it does not disclose?",
-    ),
-    (
-        "task_success",
-        "How likely is it that this run succeeded at its task? Answer from 0 to 1.",
-    ),
-    (
-        "tradeoff",
-        "Should this skill edit be approved, rejected, or asked up to the goal's responsible role?",
-    ),
-    (
-        "live_axis",
-        "Under these instructions, did this run meet the goal axis the state names, judged by that axis's measure and bound where it gives them?",
-    ),
-];
-
 fn invalid(message: impl Into<String>) -> Error {
     Error::InvalidConfig(message.into())
-}
-
-/// `text` whole, or cut to `at` bytes on a character boundary.
-fn cut(text: &str, at: Option<usize>) -> &str {
-    let Some(at) = at else {
-        return text;
-    };
-    let mut end = text.len().min(at);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}
-
-/// The bytes `value` takes as JSON.
-fn json_len<T: Serialize + ?Sized>(value: &T) -> usize {
-    serde_json::to_vec(value).map_or(0, |bytes| bytes.len())
-}
-
-/// The cut a judgment's state is built at: `None` while `state` with every
-/// text whole, and the `beside` bytes its call puts around it, fits the
-/// ladder's state bound ([`MAX_DECISION_STATE_BYTES`]), which refuses a
-/// larger state. Past it, half the `longest` text, halving until it fits.
-/// The texts' own `[limits]` rows never cut; only the ladder's bound does.
-fn fit(beside: usize, longest: usize, state: impl Fn(Option<usize>) -> Value) -> Option<usize> {
-    let room = MAX_DECISION_STATE_BYTES.saturating_sub(beside.saturating_add(CALL_ROOM));
-    let mut at = None;
-    loop {
-        let fits = json_len(&state(at)) <= room;
-        at = match at {
-            _ if fits => return at,
-            None if longest > 0 => Some(longest / 2),
-            Some(bytes) if bytes > 0 => Some(bytes / 2),
-            _ => return at,
-        };
-    }
-}
-
-/// `state`, saying where its texts were cut (`cut_at_bytes`) when they were,
-/// so a provider knows it reads a cut text.
-fn cut_at(mut state: Value, at: Option<usize>) -> Value {
-    if let Some(bytes) = at {
-        state["cut_at_bytes"] = json!(bytes);
-    }
-    state
 }
 
 fn now() -> u64 {
@@ -169,56 +80,6 @@ fn now() -> u64 {
 /// A rung as the judge-swap journal names its judge, `model@version`.
 fn judge_name(pin: &ProviderPin) -> String {
     format!("{}@{}", pin.model, pin.version)
-}
-
-/// The attempt behind a terminal pack receipt (`attempt:<32 hex>`), when its
-/// row is still kept.
-fn attempt_of(vault: &Vault, receipt: &str) -> Result<Option<AttemptRecord>> {
-    let Some(hex) = receipt.strip_prefix(ATTEMPT_RECEIPT) else {
-        return Ok(None);
-    };
-    let id = EntityId::from_hex(hex)?;
-    AttemptQueue::new(vault).get(AttemptId::from_bytes(id.as_bytes())?)
-}
-
-/// The task an attempt was given: a Dreamer or agent payload's input, else
-/// the payload as text.
-fn task_text(attempt: &AttemptRecord) -> String {
-    decode_dreamer_attempt_payload(&attempt.payload).map_or_else(
-        |_| String::from_utf8_lossy(&attempt.payload).into_owned(),
-        |payload| payload.input.to_string(),
-    )
-}
-
-/// What an attempt answered, through its result ref: a code-run output, a
-/// BYOA run's transcript (else its stdout), an entity's text, or the ref
-/// itself when nothing here resolves it.
-fn response_text(vault: &Vault, attempt: &AttemptRecord) -> String {
-    let Some(result) = attempt.result_ref() else {
-        return String::new();
-    };
-    let text = result.as_str();
-    if let Ok(output) = OutputRef::from_handle(text) {
-        return restore_output(vault, output)
-            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            .unwrap_or_default();
-    }
-    if let Ok((artifact, version)) = parse_byoa_result_ref(result) {
-        return decode_byoa_exhaust(vault, &artifact, version)
-            .ok()
-            .and_then(|(_, _, exhaust)| {
-                // The judge reads the answer whole, however long it ran.
-                let stream = exhaust.transcript.as_ref().unwrap_or(&exhaust.stdout);
-                let mut bytes = Vec::new();
-                std::io::Read::read_to_end(&mut stream.reader(), &mut bytes).ok()?;
-                Some(String::from_utf8_lossy(&bytes).into_owned())
-            })
-            .unwrap_or_default();
-    }
-    if let Ok(entity) = EntityId::from_hex(text) {
-        return vault.entity_text(&entity).unwrap_or_default();
-    }
-    text.to_owned()
 }
 
 /// One typed question the judge asked, as its journal keeps it.
@@ -314,24 +175,29 @@ pub struct ServeReplayJudge {
     clock: Mutex<Option<&'static RetrievalDeadline>>,
     /// The wording, with a key for every axis a goal has named so far.
     wording: Mutex<&'static BTreeMap<String, String>>,
+    /// `[skills.replay_judge]`: what each question, each axis's question and
+    /// a missing run's objective are worded from.
+    phrasing: ReplayJudgeWording,
+    /// [`JUDGE_REVISION`] and the wording's digest.
+    revision: String,
     /// `[skills] live_pulls_per_axis`: the live slice's configured budget.
     live_pulls_per_axis: Option<u32>,
 }
 
 impl ServeReplayJudge {
-    /// The judge over `server`'s ladder, asking for the vault owner role. The
-    /// skill judgments stop at the big model: the tradeoff job owns the one
-    /// durable role ask.
+    /// The judge over `server`'s ladder, asking for the vault owner role, in
+    /// the server's resolved `[skills.replay_judge]` wording. The skill
+    /// judgments stop at the big model: the tradeoff job owns the one durable
+    /// role ask.
     pub fn new(server: &SyncServer, live_pulls_per_axis: Option<u32>) -> Result<Self> {
         let host = server.decision_host();
         let principal = server
             .vault()
             .ensure_embedded_owner_actor()
             .map_err(|error| invalid(format!("no owner principal: {error}")))?;
-        let wording: BTreeMap<String, String> = WORDING
-            .iter()
-            .map(|(key, text)| ((*key).to_owned(), (*text).to_owned()))
-            .collect();
+        let phrasing = server.config.skills.replay_judge.clone();
+        let wording = phrasing.questions();
+        let revision = format!("{JUDGE_REVISION}+{}", phrasing.digest());
         Ok(Self {
             vault: Arc::clone(server.vault()),
             host: host.clone(),
@@ -341,6 +207,8 @@ impl ServeReplayJudge {
             bands: host.bands(),
             clock: Mutex::new(None),
             wording: Mutex::new(Box::leak(Box::new(wording))),
+            phrasing,
+            revision,
             live_pulls_per_axis,
         })
     }
@@ -431,8 +299,8 @@ impl ServeReplayJudge {
         }
     }
 
-    /// Adds an axis question's wording for each axis not worded yet. A new
-    /// map is kept only when a goal names a new axis.
+    /// Adds an axis question's wording, from `axis_template`, for each axis
+    /// not worded yet. A new map is kept only when a goal names a new axis.
     fn word_axes(&self, axes: &[GoalAxisSpec]) {
         let mut wording = self.wording.lock().unwrap_or_else(PoisonError::into_inner);
         let missing: Vec<&GoalAxisSpec> = axes
@@ -446,57 +314,16 @@ impl ServeReplayJudge {
         for axis in missing {
             next.insert(
                 format!("axis.{}", axis.name),
-                format!(
-                    "How well do these instructions do on the goal's {} axis, on these replays? Judge it by that axis's measure and bound when the goal states them. Answer from 0 to 1.",
-                    axis.name
-                ),
+                self.phrasing.axis(&axis.name),
             );
         }
         *wording = Box::leak(Box::new(next));
-    }
-
-    /// The skill's already-read goal as a judge question reads it: the joined
-    /// project's goal, its why, and each axis's measure and bound. `None` when
-    /// the goal joins no project, or the project states no goal record.
-    fn goal_brief(&self, goal: &SkillEditGoal) -> Result<Option<Value>> {
-        let Some((project, _)) = goal.project else {
-            return Ok(None);
-        };
-        Ok(self.vault.project_intake_goal(project)?.map(|record| {
-            let axes: Vec<Value> = record
-                .primary_axes
-                .iter()
-                .chain(&record.floor_axes)
-                .chain(&record.cost_axes)
-                .map(
-                    |axis| json!({"name": axis.name, "measure": axis.measure, "bound": axis.bound}),
-                )
-                .collect();
-            json!({"goal": record.goal, "why": record.why, "axes": axes})
-        }))
-    }
-
-    /// A reserved receipt's run as a replay reads it: its kind, task and
-    /// response. `None` when its row is no longer kept.
-    fn replay_texts(&self, receipt: &str) -> Result<Option<(String, String, String)>> {
-        Ok(attempt_of(&self.vault, receipt)?.map(|attempt| {
-            let task = task_text(&attempt);
-            let response = response_text(&self.vault, &attempt);
-            (attempt.kind, task, response)
-        }))
-    }
-
-    /// Measures `bytes` against `row`: past it the row asks whether all is
-    /// well, and the text still rides whole.
-    fn measure(&self, row: EngineLimit, bytes: usize) {
-        self.vault
-            .measure_limit(row, u64::try_from(bytes).unwrap_or(u64::MAX));
     }
 }
 
 impl HeldOutReplayNotes for ServeReplayJudge {
     fn judge_revision(&self) -> &str {
-        JUDGE_REVISION
+        &self.revision
     }
 
     /// The configured ladder's judgments while it answers as the judge-swap
@@ -513,149 +340,12 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         }
     }
 
-    /// Each reserved receipt's task and response, whole while the
-    /// judgment's state fits the ladder's bound (else [`fit`]'s cut); never
-    /// its status, verdict or success. The skill's instructions ride whole
-    /// in the case the gate puts around this state. The goal's own words
-    /// ride beside the replays when the skill's goal joins a project that
-    /// states them, and the judge's rubric (the active shared `judge`
-    /// skill's text) when one is in force, so an edit of it changes what
-    /// every case is judged by.
     fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<Value> {
-        let receipts = case.held_out_receipts;
-        let mut replays = Vec::with_capacity(receipts.len());
-        for receipt in receipts {
-            replays.push((receipt, self.replay_texts(receipt)?));
-        }
-        let texts = || replays.iter().filter_map(|(_, texts)| texts.as_ref());
-        // One goal read: the revision the case is judged under rides beside
-        // the brief it was worded from.
-        let edit_goal = skill_edit_goal(&self.vault, &case.skill).ok();
-        let goal = match &edit_goal {
-            Some(edit_goal) => self.goal_brief(edit_goal)?,
-            None => None,
-        };
-        let rubric = judge_rubric(&self.vault)?;
-        // Each read whole; past its `[limits]` row it asks whether all is well.
-        self.measure(EngineLimit::JudgeInstructionsBytes, case.instructions.len());
-        self.measure(
-            EngineLimit::JudgeReplayTextBytes,
-            texts()
-                .map(|(_, task, response)| task.len() + response.len())
-                .sum(),
-        );
-        if let Some(rubric) = &rubric {
-            self.measure(EngineLimit::JudgeRubricBytes, rubric.text.len());
-        }
-        let state = |at: Option<usize>| {
-            let replays: Vec<Value> = replays
-                .iter()
-                .map(|(receipt, texts)| match texts {
-                    None => json!({"receipt": receipt, "kept": false}),
-                    Some((kind, task, response)) => json!({
-                        "receipt": receipt,
-                        "kind": kind,
-                        "task": cut(task, at),
-                        "response": cut(response, at),
-                    }),
-                })
-                .collect();
-            let mut state = json!({
-                "skill_id": case.skill_id,
-                "version": case.version,
-                "replays": replays,
-            });
-            if let Some(edit_goal) = &edit_goal {
-                state["goal_revision"] = json!(edit_goal.revision);
-            }
-            if let Some(goal) = &goal {
-                state["goal"] = goal.clone();
-            }
-            if let Some(rubric) = &rubric {
-                state["judge_rubric"] = json!(rubric.text);
-            }
-            cut_at(state, at)
-        };
-        // The gate's case carries the instructions and receipts beside it.
-        let beside = json_len(&json!({
-            "skill": case.skill.to_hex(), "skill_id": case.skill_id,
-            "version": case.version, "instructions": case.instructions,
-            "held_out_receipts": receipts,
-        }));
-        let longest = texts()
-            .map(|(_, task, response)| task.len().max(response.len()))
-            .max()
-            .unwrap_or(0);
-        Ok(state(fit(beside, longest, &state)))
+        self.case_replays(case)
     }
 
-    /// Receipts' responses two by two, response only, never a status or a
-    /// verdict. Answers to the same task pair first, in receipt order; the
-    /// rest pair as they come. Each response rides beside the task it
-    /// answered, so a judge or the owner's pick compares answers to what each
-    /// was asked.
-    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
-        let mut answered: Vec<(&str, String, String)> = Vec::new();
-        for receipt in receipts {
-            if let Some(attempt) = attempt_of(&self.vault, receipt)? {
-                let response = response_text(&self.vault, &attempt);
-                if !response.trim().is_empty() {
-                    answered.push((receipt.as_str(), task_text(&attempt), response));
-                }
-            }
-        }
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for (index, (_, task, _)) in answered.iter().enumerate() {
-            match groups
-                .iter_mut()
-                .find(|group| answered[group[0]].1 == *task)
-            {
-                Some(group) => group.push(index),
-                None => groups.push(vec![index]),
-            }
-        }
-        let mut order: Vec<[usize; 2]> = Vec::new();
-        let mut rest: Vec<usize> = Vec::new();
-        for group in &groups {
-            let pairs = group.chunks_exact(2);
-            rest.extend_from_slice(pairs.remainder());
-            order.extend(pairs.map(|pair| [pair[0], pair[1]]));
-        }
-        rest.sort_unstable();
-        order.extend(rest.chunks_exact(2).map(|pair| [pair[0], pair[1]]));
-        Ok(order
-            .into_iter()
-            .take(MAX_PAIRS)
-            .map(|[first, second]| {
-                let (first, second) = (&answered[first], &answered[second]);
-                let pair_ref = format!("{}|{}", first.0, second.0);
-                let texts = [&first.1, &first.2, &second.1, &second.2];
-                // Read whole; past its `[limits]` row it asks whether all is well.
-                self.measure(
-                    EngineLimit::JudgeReplayTextBytes,
-                    texts.into_iter().map(String::len).sum(),
-                );
-                let state = |at: Option<usize>| {
-                    cut_at(
-                        json!({
-                            "first": cut(&first.2, at),
-                            "second": cut(&second.2, at),
-                            "first_task": cut(&first.1, at),
-                            "second_task": cut(&second.1, at),
-                        }),
-                        at,
-                    )
-                };
-                // The preference question puts the task and the pair's ref
-                // beside it.
-                let beside = json_len(task) + json_len(&pair_ref);
-                let longest = texts.into_iter().map(String::len).max().unwrap_or(0);
-                SkillReplayPair {
-                    state: state(fit(beside, longest, &state)),
-                    pair_ref,
-                }
-            })
-            .collect())
+    fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        self.response_basis(receipts)
     }
 
     fn record_decision(
@@ -666,7 +356,7 @@ impl HeldOutReplayNotes for ServeReplayJudge {
     ) -> Result<()> {
         let row = JournalRow {
             at: now(),
-            revision: JUDGE_REVISION.to_owned(),
+            revision: self.revision.clone(),
             question: question.clone(),
             decision: decision.clone(),
             state: state.to_string(),
@@ -688,56 +378,8 @@ impl HeldOutReplayNotes for ServeReplayJudge {
             .collect())
     }
 
-    /// One objective per reserved run, its task, beside the run's response;
-    /// never its status, verdict or success. A run whose row is gone keeps an
-    /// objective naming its receipt, so both arms check the same objectives.
     fn honesty_replays(&self, case: &HeldOutReplayCase<'_>) -> Result<Vec<HonestyReplay>> {
-        // The hidden-flaw question puts the case and the receipt beside each
-        // state and its objective.
-        let case_fields = json_len(&json!({
-            "skill": case.skill.to_hex(), "skill_id": case.skill_id,
-            "version": case.version, "instructions": case.instructions,
-        }));
-        case.held_out_receipts
-            .iter()
-            .map(|receipt| {
-                Ok(match self.replay_texts(receipt)? {
-                    None => HonestyReplay {
-                        receipt: receipt.clone(),
-                        state: json!({"receipt": receipt, "kept": false}),
-                        objectives: vec![format!("the task of run {receipt}")],
-                    },
-                    Some((kind, task, response)) => {
-                        // Read whole; past its `[limits]` row it asks whether
-                        // all is well.
-                        self.measure(
-                            EngineLimit::JudgeReplayTextBytes,
-                            task.len() + response.len(),
-                        );
-                        let state = |at: Option<usize>| {
-                            cut_at(
-                                json!({
-                                    "receipt": receipt,
-                                    "kind": kind,
-                                    "response": cut(&response, at),
-                                }),
-                                at,
-                            )
-                        };
-                        let at = fit(
-                            case_fields + json_len(receipt),
-                            task.len().max(response.len()),
-                            |at| json!({"replay": state(at), "objective": cut(&task, at)}),
-                        );
-                        HonestyReplay {
-                            receipt: receipt.clone(),
-                            state: state(at),
-                            objectives: vec![cut(&task, at).to_owned()],
-                        }
-                    }
-                })
-            })
-            .collect()
+        self.honesty_objectives(case)
     }
 
     /// The person-time recorded on the reserved receipts, per receipt that
@@ -831,211 +473,4 @@ impl GoalAxisBandits for ServeReplayJudge {
 /// The judge this process registered.
 pub fn registered() -> Option<&'static ServeReplayJudge> {
     JUDGE.get().copied()
-}
-
-/// One arm of a live slice: the skill version its runs loaded, and the
-/// record whose instructions an axis question reads beside each of them.
-struct Arm {
-    loaded: String,
-    skill: EntityId,
-    record: SkillRecord,
-}
-
-/// Live arm attribution for one open optimizer proposal: the incumbent arm
-/// is the skill version it revises, the candidate arm the proposal. A pull
-/// takes the newest run its axis has not taken yet that loaded the arm's
-/// version. It met
-/// the pulled axis when it completed, no skill-defect judgment names it, and
-/// the judge it asks decides it met that axis by the axis's measure and bound.
-/// Its person-time is what is recorded on its receipt, unknown when none is.
-pub struct ServeAxisBandit<'a> {
-    judge: &'a ServeReplayJudge,
-    /// The judge each pull's axis question is asked of: the serve judge
-    /// itself, or one a caller lent on its own clock.
-    notes: &'a dyn HeldOutReplayNotes,
-    /// The active skill the proposal revises, whose goal it is measured on.
-    target: EntityId,
-    incumbent: Arm,
-    candidate: Arm,
-    /// Each axis of the goal, with its measure and bound, and the goal and
-    /// its why, where the joined project's goal record states them.
-    criteria: BTreeMap<String, Value>,
-    /// The runs each axis has pulled, by axis: every routed run is judged
-    /// once on each axis.
-    taken: Mutex<BTreeSet<(String, String)>>,
-}
-
-fn provenance_str(provenance: &rmpv::Value, key: &str) -> Option<String> {
-    let rmpv::Value::Map(entries) = provenance else {
-        return None;
-    };
-    entries
-        .iter()
-        .find(|(name, _)| name.as_str() == Some(key))
-        .and_then(|(_, value)| value.as_str().map(str::to_owned))
-}
-
-impl<'a> ServeAxisBandit<'a> {
-    /// The slice of `proposal` on `judge`. It words the goal's axes first, so
-    /// a measure in a fresh process asks worded questions.
-    /// # Errors
-    /// A proposal that names no skill it revises, an unreadable goal or
-    /// project goal record, or storage errors.
-    pub fn for_proposal(judge: &'a ServeReplayJudge, proposal: &EntityId) -> Result<Self> {
-        Self::judged_by(judge, proposal, judge)
-    }
-
-    /// The slice of `proposal` on `judge`'s arms, each pull's axis question
-    /// asked of `notes`: the Coach lends its judge on the wake pass's clock,
-    /// so a pull it starts stops by the time the pass has left.
-    /// # Errors
-    /// As [`Self::for_proposal`].
-    pub fn judged_by(
-        judge: &'a ServeReplayJudge,
-        proposal: &EntityId,
-        notes: &'a dyn HeldOutReplayNotes,
-    ) -> Result<Self> {
-        let vault = &judge.vault;
-        let staged = vault
-            .get_skill_record(proposal)?
-            .ok_or(Error::EntityNotFound)?;
-        let target = provenance_str(&staged.provenance, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY)
-            .and_then(|hex| EntityId::from_hex(&hex).ok())
-            .ok_or_else(|| invalid("an optimizer proposal names the skill it revises"))?;
-        let current = vault
-            .get_skill_record(&target)?
-            .ok_or(Error::EntityNotFound)?;
-        let goal = skill_edit_goal(vault, &target)?;
-        judge.word_axes(&goal.axes);
-        let mut criteria: BTreeMap<String, Value> = goal
-            .axes
-            .iter()
-            .map(|axis| {
-                let criterion = json!({"name": axis.name, "goal_revision": goal.revision});
-                (axis.name.clone(), criterion)
-            })
-            .collect();
-        if let Some((project, _)) = goal.project
-            && let Some(record) = vault.project_intake_goal(project)?
-        {
-            for axis in record
-                .primary_axes
-                .iter()
-                .chain(&record.floor_axes)
-                .chain(&record.cost_axes)
-            {
-                if let Some(criterion) = criteria.get_mut(&axis.name) {
-                    *criterion = json!({
-                        "name": axis.name, "measure": axis.measure, "bound": axis.bound,
-                        "goal": record.goal, "why": record.why, "goal_revision": goal.revision,
-                    });
-                }
-            }
-        }
-        Ok(Self {
-            judge,
-            notes,
-            target,
-            incumbent: Arm {
-                loaded: format!("{}@{}", current.skill_id, current.version),
-                skill: target,
-                record: current,
-            },
-            candidate: Arm {
-                loaded: format!("{}@{}", staged.skill_id, staged.version),
-                skill: *proposal,
-                record: staged,
-            },
-            criteria,
-            taken: Mutex::new(BTreeSet::new()),
-        })
-    }
-
-    /// Whether `receipt`'s run met `criterion` under `arm`'s instructions.
-    fn met(&self, arm: &Arm, receipt: &str, criterion: &Value) -> Result<bool> {
-        self.notes
-            .live_axis_met(self.target, &arm.record, receipt, criterion)
-    }
-}
-
-impl GoalAxisBandit for ServeAxisBandit<'_> {
-    fn pull(&self, axis: &str, arm: AxisArm) -> Result<OnlineAxisSample> {
-        let criterion = self
-            .criteria
-            .get(axis)
-            .ok_or_else(|| invalid(format!("the goal names no {axis} axis")))?;
-        let arm = match arm {
-            AxisArm::Incumbent => &self.incumbent,
-            AxisArm::Candidate => &self.candidate,
-        };
-        let vault = &self.judge.vault;
-        let since = now().saturating_sub(LIVE_WINDOW_SECS);
-        let mut scan = vault
-            .scan_receipts(
-                ReceiptQuery::new(LIVE_SCAN_LIMIT)
-                    .with_kind(ReceiptKind::Outbound)
-                    .with_time_bounds(Some(since), None),
-            )?
-            .records;
-        scan.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
-        let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
-        let run = scan
-            .into_iter()
-            .find(|receipt| {
-                receipt.receipt_id.starts_with(ATTEMPT_RECEIPT)
-                    && !taken.contains(&(axis.to_owned(), receipt.receipt_id.clone()))
-                    && receipt
-                        .pack_manifest_skills()
-                        .is_some_and(|skills| skills.contains(&arm.loaded))
-            })
-            .ok_or_else(|| invalid(format!("no live run of {} is left to pull", arm.loaded)))?;
-        taken.insert((axis.to_owned(), run.receipt_id.clone()));
-        drop(taken);
-        let defect = attribution_judgments(vault)?.into_iter().any(|judgment| {
-            judgment.verdict == AttributionVerdict::SkillDefect
-                && judgment.subject == arm.skill
-                && judgment.evidence_receipts.contains(&run.receipt_id)
-        });
-        // A run that failed or carries a defect misses every axis; only a
-        // clean run is put to the axis question. The arm's outcome ledger,
-        // once it holds the run (amendments and late credit applied),
-        // outranks the attempt's own state.
-        let won = effective_skill_outcome(vault, &arm.skill, &run.receipt_id)?
-            .unwrap_or(run.outcome == COMPLETED);
-        let success = won && !defect && self.met(arm, &run.receipt_id, criterion)?;
-        Ok(OnlineAxisSample {
-            success,
-            human_minutes: person_minutes(vault, &run.receipt_id)?,
-        })
-    }
-
-    /// The Beta posterior over the arm's wins from a flat prior: its lower
-    /// bound, and as the upper bound one less the lower bound of its mirror.
-    fn confidence_interval(
-        &self,
-        _axis: &str,
-        _arm: AxisArm,
-        wins: u32,
-        pulls: u32,
-    ) -> Result<ConfidenceInterval> {
-        if wins > pulls {
-            return Err(invalid("more wins than pulls"));
-        }
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "pull counts stay far below 2^24"
-        )]
-        let posterior = SkillReliabilityPosterior {
-            alpha: 1.0 + wins as f32,
-            beta: 1.0 + (pulls - wins) as f32,
-        };
-        let mirror = SkillReliabilityPosterior {
-            alpha: posterior.beta,
-            beta: posterior.alpha,
-        };
-        Ok(ConfidenceInterval {
-            lower: Posterior::lower_bound(&posterior),
-            upper: 1.0 - Posterior::lower_bound(&mirror),
-        })
-    }
 }

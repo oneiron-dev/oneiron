@@ -19,8 +19,8 @@ use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_attribution::ContributionCandidate;
 use oneiron::skill_optimize::{
-    GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, SkillOptimizeDecisions, SkillReplayPair,
-    skill_edit_goal,
+    GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, SkillOptimizeDecisions,
+    SkillReplayResponse, SkillReplayResponses, skill_edit_goal,
 };
 use oneiron::{
     BudgetExhaustionPolicy, ContentPart, EntityId, Error, LlmMessageRole, LlmRequest, LlmResponse,
@@ -29,7 +29,7 @@ use oneiron::{
 use serde_json::{Value, json};
 
 use super::CHAT_ROLE;
-use crate::replay_judge::{JUDGE_REVISION, ServeReplayJudge};
+use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
 
 /// The most one fork's model call may spend. Each fork is metered on a
@@ -195,7 +195,7 @@ impl ContributionForkScorer for JudgeScorer {
                 "name": axis.name, "kind": axis.kind, "measure": stated.measure,
                 "bound": stated.bound, "goal": record.goal, "why": record.why,
             }),
-            scorer: format!("{JUDGE_REVISION}/{SCORER_JUDGMENT}"),
+            scorer: format!("{}/{SCORER_JUDGMENT}", self.judge.judge_revision()),
         }))
     }
 
@@ -267,12 +267,23 @@ impl HeldOutReplayNotes for ForkNotes<'_> {
         }))
     }
 
-    fn blind_pairs(
-        &self,
-        _task: &str,
-        _receipts: &[String],
-    ) -> oneiron::Result<Vec<SkillReplayPair>> {
-        Ok(Vec::new())
+    /// The fork's own task and answer, when the receipts name its run, and
+    /// the judge's rubric: the one response this fork holds, never a second
+    /// one made up to pair it with.
+    fn replay_responses(&self, receipts: &[String]) -> oneiron::Result<SkillReplayResponses> {
+        let responses = (receipts.iter().any(|receipt| receipt == self.receipt)
+            && !self.response.trim().is_empty())
+        .then(|| SkillReplayResponse {
+            receipt: self.receipt.to_owned(),
+            task: self.task.clone(),
+            response: self.response.clone(),
+        })
+        .into_iter()
+        .collect();
+        Ok(SkillReplayResponses {
+            responses,
+            rubric: self.judge.rubric()?,
+        })
     }
 
     fn record_decision(
