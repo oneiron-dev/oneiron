@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1117 code-mode rows (1092 host rows, 25 run rows), 3761 declarations.
-// Replies: 998 fully typed, 115 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1117 code-mode rows (1092 host rows, 25 run rows), 3762 declarations.
+// Replies: 997 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -3174,7 +3174,8 @@ declare namespace Sdk {
   type EsignSealAttemptView = { attempt_ref: string; kind: string; state: string; dedupe_key?: string | null; lease_owner?: string | null; attempt_count: number; created_at: number; updated_at: number; last_error?: string | null };
   type EsignSealedItemView = { original_artifact: string; original_version: number; sealed_artifact: string; sealed_version: number; sha256: string };
   type EsignSealedView = { attempt_ref: string; audit_chain_sha256: string; rejected: boolean; items: EsignSealedItemView[] };
-  type EsignSealView = { document_ref: string; status: DocumentStatus; attempts: EsignSealAttemptView[]; sealed?: EsignSealedView | null };
+  type EsignSealTrail = { trail: "readable"; status: DocumentStatus } | { trail: "unreadable"; error: MemoryError };
+  type EsignSealView = EsignSealTrail & { document_ref: string; attempts: EsignSealAttemptView[]; sealed?: EsignSealedView | null; delivery_receipts: EsignDeliveryReceipt[] };
   type CoreWriteTextField = { field: string; value: string };
   type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
@@ -3192,7 +3193,7 @@ declare namespace Sdk {
   type OfficeBodyKind = "docx" | "xlsx" | "pptx";
   type OfficeBodyHead = { artifact: EntityId; kind: OfficeBodyKind; source_version: number; source_hash: number[]; import_frontier: number[]; frontier: number[]; commits: number };
   type OfficeBodyArtifactRequest = { artifact_ref: string };
-  type OfficeBodyReadRequest = { artifact_ref: string; at?: number[] | null };
+  type OfficeBodyReadRequest = { artifact_ref: string; at?: number[] | null; why?: string | null };
   type BodyBlockKind = "paragraph" | { heading: number } | "table" | "opaque";
   type DocxMark = "bold" | "italic" | "underline" | "strike" | "subscript" | "superscript";
   type DocxRun = { text: string; marks?: DocxMark[] };
@@ -3312,7 +3313,7 @@ declare namespace Sdk {
   type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean; projector: string; source_sha: string; case_manifest_sha256: string };
   type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
   type DeckOracleRequest = { receipt: OracleReceipt };
-  type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[] };
+  type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[]; why?: string | null };
   type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string };
   type DeckPreview = { frontier: number[]; profile: string; projector: string; export_key: string; renderer: string; provisional: boolean; slides: DeckPreviewSlide[] };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
@@ -4318,7 +4319,7 @@ declare const vault: Sdk.VaultHost & {
         merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.LandingReceipt | StoredResult>;
         /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
         oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.DeckGateView | StoredResult>;
-        /** The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed. */
+        /** The asked slides of a deck's head or open fork's merge candidate, as this host's review renderer draws its export now: provisional images; nothing lands. A lifted deck draws for an agent that gives why once a grant covers its keys. */
         preview(input: Sdk.DeckPreviewRequest): Promise<Sdk.DeckPreview | StoredResult>;
         /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
         review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.DeckReviewView | StoredResult>;
@@ -4351,7 +4352,7 @@ declare const vault: Sdk.VaultHost & {
         /** Accepts or rejects the reviewed forks of an office proposal that the scope covers; each lands on a person's word from outside the opener's lineage or on a standing grant, or waits. */
         settle(input: Sdk.OfficeBodyProposalSettleRequest): Promise<Sdk.OfficeBodyProposal | StoredResult>;
       };
-      /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history. */
+      /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history; an agent that gives why reads its lifted secrets whole once a grant covers their keys. */
       read(input: Sdk.OfficeBodyReadRequest): Promise<Sdk.OfficeBodyView | StoredResult>;
     };
     /** What a task, ask, run, skill or agent run produced: the artifacts it created and every version it made. */
@@ -5101,7 +5102,7 @@ declare const vault: Sdk.VaultHost & {
     /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
     remind(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
     seal: {
-      /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+      /** Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error. */
       get(input: Sdk.EsignSealGetRequest): Promise<Sdk.EsignSealView | StoredResult>;
     };
     /** Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope. */

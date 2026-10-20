@@ -2522,7 +2522,7 @@ export class Oneiron {
         signature: (input: Facade.EsignSigningSignatureRequest): Facade.EsignSigningSignatureView => this.#call(() => this.#client.vaultEsignSigningSignature(input) as Facade.EsignSigningSignatureView),
       },
       seal: {
-        /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+        /** Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error. */
         get: (input: Facade.EsignSealGetRequest): Facade.EsignSealView => this.#call(() => this.#client.vaultEsignSealGet(input) as Facade.EsignSealView),
       },
     },

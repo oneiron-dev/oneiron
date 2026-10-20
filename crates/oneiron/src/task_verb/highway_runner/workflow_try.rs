@@ -153,10 +153,12 @@ pub(crate) fn dispatch_bound(
     let dispatcher = AgentDispatcher::new(vault);
     let spawn = dispatcher.prepare_bound_workflow(&input, spawn, caller.parent())?;
     let refusal = |key: &str, first| caller.retry_refusal(key, first);
-    {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    // A replay is read as the side-row wall stored its first run (FIX
+    // 2314), in a writer this pass commits nothing in.
+    if input.dedupe_key.is_some() {
+        let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
         if let Some(existing) =
-            dispatcher.bound_workflow_existing_in(&txn, &input, &spawn, &bind, &refusal)?
+            dispatcher.bound_workflow_existing_in(&mut txn, &input, &spawn, &bind, &refusal)?
         {
             return Ok(existing);
         }
@@ -169,7 +171,7 @@ pub(crate) fn dispatch_bound(
     }
     let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
     if let Some(existing) =
-        dispatcher.bound_workflow_existing_in(&txn, &input, &spawn, &bind, &refusal)?
+        dispatcher.bound_workflow_existing_in(&mut txn, &input, &spawn, &bind, &refusal)?
     {
         return Ok(existing);
     }

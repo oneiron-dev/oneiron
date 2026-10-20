@@ -17,8 +17,11 @@
 //! channel caveat lists the threads of a room only its own read lane reads
 //! the record of, in the list's snapshot, and of any other room nothing,
 //! never a refusal (FIX 6500); one bounded by the whole vault, and a handle
-//! bound to no credential, lists every room's. The room's history is read
-//! whole, however long (rule 5): no cap, no count refusal.
+//! bound to no credential, lists every room's. A credential's proof is read
+//! again in the list's snapshot, a whole-vault one's too (FIX 6502): one
+//! revoked or expired by then is refused as the scoped read refuses it,
+//! naming that credential. The room's history is read whole, however long
+//! (rule 5): no cap, no count refusal.
 
 use super::audience::thread_binding;
 use super::audience_doors::vault_owner_or_admin_in;
@@ -80,21 +83,30 @@ impl Memory<'_> {
         if self.room_turn().is_some_and(|turn| turn.room != room) {
             return Err(MemoryError::from(invalid()));
         }
-        // A narrowed credential's lane, built before the list's snapshot
-        // opens (one per thread); one that does not build reaches no room.
-        let narrowed = match self.presented_credential() {
-            Some(proof) if !bounded_by_whole_vault(proof) => {
-                Some(self.read_lane(ClaimReadStatus::Recorded).ok())
-            }
-            _ => None,
-        };
+        // A presented credential's lane, built before the list's snapshot
+        // opens (one per thread), with whether it is bounded by the whole
+        // vault. A narrowed one that does not build reaches no room.
+        let presented = self.presented_credential().map(|proof| {
+            (
+                bounded_by_whole_vault(proof),
+                self.read_lane(ClaimReadStatus::Recorded).ok(),
+            )
+        });
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        // Its proof, read again in this snapshot (FIX 6502).
+        if let Some((_, Some(lane))) = &presented
+            && !lane.proof_live_in(&txn)?
+        {
+            return Err(MemoryError::from(Error::InvalidClaimBody(
+                "scoped read credential no longer live",
+            )));
+        }
         if !self.lists_private_threads_in(&txn)? {
             return Err(MemoryError::from(invalid()));
         }
         room_in(vault, &txn, room)?;
-        if let Some(lane) = &narrowed
+        if let Some((false, lane)) = &presented
             && !lane_reaches_room_in(lane.as_ref(), &txn, room)
         {
             return Ok(Vec::new());

@@ -36,7 +36,7 @@ use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
 /// Why an invitation or reminder ended unsent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EsignDeliveryEndReason {
     /// The document ended first: voided, expired or past its deadline,
@@ -68,7 +68,7 @@ impl EsignDeliveryEndReason {
 /// the owner's receipt. An ended one says the delivery's last lease was never
 /// exported; an earlier lease that lapsed with no ack may still have reached
 /// its sender.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EsignDeliveryReceipt {
     /// The queued delivery, 32 lower-hex.
     pub attempt_ref: String,
@@ -87,7 +87,7 @@ pub struct EsignDeliveryReceipt {
 }
 
 /// Where one receipt's delivery stands (FIX 6455).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", content = "reason", rename_all = "snake_case")]
 pub enum EsignDeliveryReceiptState {
     /// It settled unsent, for this reason (FIX 6363).

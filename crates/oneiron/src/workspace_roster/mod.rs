@@ -194,10 +194,11 @@ pub use rooms::{
 };
 pub(crate) use rooms::{
     ROOM_THREAD_AUDIENCE_KEY, ROOM_THREAD_KEY, ThreadBinding, ThreadPlace,
-    audience_edit_erased_from, audience_edit_is_erased, audience_event_put_refusal, names_actor_in,
-    overlay_thread_binding_in, privileged_private_thread_reader_in, record_thread_admits_in,
-    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
-    thread_audience_now_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
+    audience_edit_erased_from, audience_edit_is_erased, audience_event_put_refusal,
+    is_audience_edit_row, names_actor_in, overlay_thread_binding_in,
+    privileged_private_thread_reader_in, record_thread_admits_in, require_thread_audience_in,
+    stamp_thread, thread_audience_allows_in, thread_audience_in, thread_audience_now_in,
+    thread_binding, thread_members_in, thread_root_readable_with_read_in,
     thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
 };
 pub use rooms::{
@@ -237,7 +238,9 @@ pub(crate) use rooms::{
     replicated_shared_rows_in, replicated_side_carriers_in, replicated_side_rows_in,
     replicated_turn_in,
 };
-pub(crate) use rooms::{erase_host_pin_actor_in_txn, erase_offer_actor_in_txn};
+pub(crate) use rooms::{
+    erase_host_pin_actor_in_txn, erase_offer_actor_in_txn, erase_turn_actor_in_txn,
+};
 pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
