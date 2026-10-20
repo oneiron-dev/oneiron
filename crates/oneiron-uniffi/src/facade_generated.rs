@@ -5356,6 +5356,11 @@ export_facade! {
     let output = client.self_browser_handover(&input)?;
     crate::codec::lift_record("self.browser.handover", &output)
 };
+"self.browser.switch_engine" => fn self_browser_switch_engine(&self, input: LiveRunRequestSwitchEngineInput) -> BrowserAnswerSwitchEngineOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserSwitchEngineInput> = crate::codec::lower_record("self.browser.switch_engine", input)?;
+    let output = client.self_browser_switch_engine(&input)?;
+    crate::codec::lift_record("self.browser.switch_engine", &output)
+};
 "vault.claims.supersede" => fn vault_claims_supersede(&self, input: LiveRunRequestMemorySupersedeInput) -> MemoryWriteOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemorySupersedeInput> = crate::codec::lower_record("vault.claims.supersede", input)?;
     let output = client.vault_claims_supersede(&input)?;

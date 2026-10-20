@@ -20,15 +20,20 @@
 //!   sends it all the same;
 //! - a `rawKeyDown` is ignored: a key goes down as a `keyDown`, with its
 //!   text when it types, else with none, and comes up as a `keyUp`.
+//!
+//! Each refusal names the way out: `switch_engine` to Chromium, which the
+//! model calls when it decides to; nothing switches by itself.
 
 use super::{CdpDriver, KeySpec};
 use crate::{BrowserEngine, BrowserError, TabSwitchCause};
 
-/// What Lightpanda does not serve, as its refusal names it.
+/// What Lightpanda does not serve, as its refusal names it, with the verb
+/// that moves the page to an engine that does.
 fn unsupported(what: &str) -> BrowserError {
     BrowserError::Unsupported(format!(
-        "{what} on the {} engine",
-        BrowserEngine::Lightpanda.as_str()
+        "{what} on the {} engine; self.browser.switch_engine to {} serves it",
+        BrowserEngine::Lightpanda.as_str(),
+        BrowserEngine::Chromium.as_str()
     ))
 }
 

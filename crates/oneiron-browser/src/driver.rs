@@ -29,6 +29,7 @@ mod change;
 mod handles;
 mod lightpanda;
 pub(crate) mod pages;
+pub(crate) mod state;
 
 use crate::capture::{self, Capture, Captures};
 use crate::cdp::Pipe;
@@ -237,7 +238,15 @@ impl CdpDriver {
             .iter()
             .find(|tab| tab.target == self.target)
             .and_then(|tab| tab.opener.clone());
-        self.tabs.retain(|tab| open.contains(&tab.target));
+        // A closed tab's page drops what the pipe kept of it (FIX 6767).
+        let pipe = &self.pipe;
+        self.tabs.retain(|tab| {
+            let kept = open.contains(&tab.target);
+            if !kept {
+                pipe.forget_page(&tab.session);
+            }
+            kept
+        });
         let mut opened = None;
         for info in &pages {
             let id = target_id(info);
@@ -1219,7 +1228,7 @@ fn attach_tab(pipe: &Pipe, target: &str) -> Result<String, BrowserError> {
     let by = Instant::now() + CALL;
     let enabled = pipe.call(Some(&session), "Page.enable", json!({}), by);
     if enabled.is_ok() {
-        pipe.watch_navigations(&session);
+        pipe.watch_navigations(&session, target);
     }
     Ok(session)
 }

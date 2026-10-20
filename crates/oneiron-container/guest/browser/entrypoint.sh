@@ -1,5 +1,7 @@
 #!/bin/sh
 # The first argument names the engine: lightpanda (the default) or chromium.
+# The second names the largest CDP message the host sends; the host derives
+# it from its egress door's largest answer body (BrowserEngine::guest_argv).
 # Either way CDP rides the container's stdin and stdout, so the host driver
 # is the only client, and stderr stays the container's stderr.
 set -eu
@@ -37,12 +39,12 @@ lightpanda)
 # ends the browser when either side ends. A start that drops the image's
 # environment (Firecracker's) still sends no telemetry. Lightpanda closes a
 # client whose message passes --cdp-max-message-size (1 MiB unless named):
-# 64 MiB carries a Fetch.fulfillRequest with the egress door's whole 32 MiB
-# body in base64.
+# the host's bound carries a Fetch.fulfillRequest with the egress door's
+# whole largest body in base64 (FIX 6815).
 export LIGHTPANDA_DISABLE_TELEMETRY=true
 exec /usr/local/bin/oneiron-browser-relay 9222 -- \
   /usr/local/bin/lightpanda serve --host 127.0.0.1 --port 9222 --log-level info \
-  --cdp-max-message-size 67108864
+  --cdp-max-message-size "${2:?the host names the largest CDP message}"
 ;;
 *)
 echo "oneiron-browser-guest: no engine $1; name lightpanda or chromium" >&2
