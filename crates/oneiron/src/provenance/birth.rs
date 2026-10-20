@@ -25,6 +25,7 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::ManifestDbs;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
+pub(crate) mod checkpoint;
 
 /// The count a few producers still cut their birth inputs to. A birth itself
 /// names any number: its row is one Named MessagePack value, so the shape

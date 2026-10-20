@@ -4,6 +4,7 @@ use super::storage::state;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Error, Result};
+pub(super) mod checkpoint;
 const PENDING: SideTable<EntityId, Pending, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_PENDING_PHONETIC);
 #[derive(serde::Serialize, serde::Deserialize)]

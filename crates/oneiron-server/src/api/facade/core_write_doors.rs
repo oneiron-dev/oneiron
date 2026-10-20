@@ -37,12 +37,14 @@ pub(crate) async fn vault_conversations_turns_create(
 /// One TURN under a conversation, held to the read `auth`'s credential
 /// reads under on every `/v1` door (FIX 5939), then its landing on the
 /// vault. Every caller runs this: the row's door and the REST route alike.
-/// A host credential that acts as no person gets its refusal.
+/// A host credential that acts as no person gets its refusal. It is a
+/// platform announcement only at `auth`'s owner authority.
 pub(crate) async fn write_core_turn(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ConversationTurnCreateInput,
 ) -> MemoryResult<CoreEntityWriteReceipt> {
+    let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
     let receipt = tokio::task::spawn_blocking(move || {
@@ -56,14 +58,14 @@ pub(crate) async fn write_core_turn(
                     crate::error::ApiErrorDetails::Unauthorized
                 ) && let Some(proof) = auth.verified_slip()
                     && let Some(receipt) =
-                        vault.write_core_conversation_turn_as_owner(&input, proof)?
+                        vault.write_core_conversation_turn_as_owner(&input, proof, announcement)?
                 {
                     return Ok(receipt);
                 }
                 return Err(super::FacadeApiError::from(refused).into_memory_error());
             }
         };
-        vault.write_core_conversation_turn(&input, &writer)
+        vault.write_core_conversation_turn(&input, &writer, announcement)
     })
     .await
     .map_err(|_| internal("vault.conversations.turns.create"))??;
@@ -128,7 +130,8 @@ fn write_dag_record_listing(
         Some(producers) => writer.listing_producers(producers),
         None => writer,
     };
-    let receipt = writer.conversations_records_append(input)?;
+    let announcement = crate::api::announcement_authority(server, auth);
+    let receipt = writer.conversations_records_append_at(input, announcement)?;
     server
         .ai
         .turn_landed(server.vault(), WakeTurnSubject::Vault);
@@ -147,7 +150,8 @@ pub(crate) async fn vault_batch(
     })
 }
 
-/// One atomic batch, committed at owner grade only when `auth` carries it.
+/// One atomic batch, committed at owner grade only when `auth` carries it,
+/// its TURNs platform announcements only at `auth`'s owner authority.
 pub(crate) async fn write_core_batch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -158,8 +162,9 @@ pub(crate) async fn write_core_batch(
     } else {
         CoreBatchCommit::BelowOwner
     };
+    let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || vault.write_core_batch(&input, commit))
+    tokio::task::spawn_blocking(move || vault.write_core_batch(&input, commit, announcement))
         .await
         .map_err(|_| internal("vault.batch"))?
 }

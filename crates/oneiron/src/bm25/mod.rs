@@ -33,6 +33,7 @@ mod codec;
 mod config;
 mod diagnostics;
 mod index;
+pub(crate) use index::checkpoint;
 mod query;
 mod scoped;
 mod scoring;
