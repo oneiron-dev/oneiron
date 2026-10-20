@@ -527,10 +527,12 @@ async fn put_probe(
                     let probe = SpaceProbe {
                         kind: request.kind,
                         query: request.query,
+                        query_media: request.query_media,
                         family: request.family,
                         targets,
                         author: request.author,
                         written_at: vault.now_recorded_at(),
+                        cohort: None,
                     };
                     let id = vault.put_space_probe(probe.clone()).map_err(invalid)?;
                     Ok(Probe {

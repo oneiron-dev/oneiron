@@ -150,7 +150,12 @@ pub struct EmbeddingSpaceProbePutRequest {
     /// `text`, `image` or `audio`: the kind of the documents it finds.
     #[schemars(with = "String")]
     pub kind: InputKind,
+    /// A text query; beside `query_media`, what it asks in words, which may be empty.
     pub query: String,
+    /// A stored image or audio ASSET whose bytes are the query, as 32 hex; absent for a text
+    /// query. Never one of its targets.
+    #[serde(default)]
+    pub query_media: Option<EntityId>,
     /// The document the query was written from, as 32 hex.
     pub family: EntityId,
     /// Every document that answers it, as 32 hex; the family's when absent.
@@ -357,10 +362,12 @@ pub fn put_embedding_space_probe_as(
     let probe = SpaceProbe {
         kind: input.kind,
         query: input.query,
+        query_media: input.query_media,
         family: input.family,
         targets,
         author: input.author,
         written_at: vault.now_recorded_at(),
+        cohort: None,
     };
     let id = vault.put_space_probe(probe.clone()).map_err(refused)?;
     Ok(EmbeddingSpaceProbe {

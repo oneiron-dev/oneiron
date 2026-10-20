@@ -315,7 +315,8 @@ impl Reranker for PreparedBlock {
 impl Memory<'_> {
     /// A recall at high, xhigh or max whose door brought a reranker; see the
     /// module doc. Every pass reads the one `as_of`, so recency and time
-    /// words score both alike, and the one query vector.
+    /// words score both alike, and the one query vector. `pin` is the
+    /// door's, which its cut pack and hyde ready pack share (FIX 6693).
     #[expect(
         clippy::too_many_arguments,
         reason = "the door's resolved request: its dial, deadline and query vectors beside it"
@@ -333,12 +334,13 @@ impl Memory<'_> {
         door: &RecallDoor<'_>,
         fallback: Option<&MemoryPack>,
         host: &dyn RecallRerankHost,
+        pin: &RecallPin,
     ) -> MemoryResult<MemoryPack> {
         let as_of = input.as_of.unwrap_or_else(crate::unix_seconds_now);
         let format = input.format.as_deref();
         // Every pass, retry and text read of this recall narrows by the one
-        // selection its first pass resolves (FIX 5006).
-        let pin = RecallPin::default();
+        // selection its first pass resolves (FIX 5006), or the door's cut
+        // and ready packs before it (FIX 6693).
         let answered = |deadline: Option<&RetrievalDeadline>| {
             fallback.filter(|_| deadline.is_some_and(RetrievalDeadline::answer_due))
         };
@@ -384,7 +386,7 @@ impl Memory<'_> {
                     rerank_unavailable: true,
                     ..Default::default()
                 },
-                Some(&pin),
+                Some(pin),
             )
         };
         for call in 1..=RERANK_CALLS {
@@ -414,7 +416,7 @@ impl Memory<'_> {
                     door_fallback: fallback,
                     ..Default::default()
                 },
-                Some(&pin),
+                Some(pin),
             );
             let block = match (first, capture.take()) {
                 (_, Some(block)) => block,
@@ -427,7 +429,7 @@ impl Memory<'_> {
                 (Err(error), None) => return Err(error),
             };
             let (texts, egress) =
-                self.rerank_documents(scope, &pin, &block, host.runs_on_device())?;
+                self.rerank_documents(scope, pin, &block, host.runs_on_device())?;
             if texts.iter().all(String::is_empty) {
                 let mut pack = by_fusion(deadline.as_ref())?;
                 pack.retrieval_meta.rerank = Some(unreranked(&pack));
@@ -548,7 +550,7 @@ impl Memory<'_> {
                     door_fallback: fallback,
                     ..Default::default()
                 },
-                Some(&pin),
+                Some(pin),
             );
             match second {
                 Ok(mut pack) => {
