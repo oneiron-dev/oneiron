@@ -5,7 +5,7 @@ use loro::LoroMap;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{TombstoneReason, decode_tombstone_value};
 use crate::entity_id::EntityId;
-use crate::error::{Error, RegistryError};
+use crate::error::{Error, RegistryError, Result};
 use crate::sync::loro_support::map_get_bytes;
 use crate::vault::Vault;
 
@@ -34,6 +34,33 @@ pub(in crate::sync) fn classify_tombstone(
     key: &str,
     value: &[u8],
 ) -> TombstoneStep {
+    classify_with(vault, entities_map, key, value, |id| {
+        vault.read_entity_header(id)
+    })
+}
+
+/// [`classify_tombstone`] reading the LMDB row in the caller's transaction, so a batch sees
+/// what its earlier items already applied.
+pub(in crate::sync) fn classify_tombstone_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entities_map: &LoroMap,
+    key: &str,
+    value: &[u8],
+) -> TombstoneStep {
+    classify_with(vault, entities_map, key, value, |id| {
+        vault.entity_header_in_txn(txn, id)
+    })
+}
+
+/// The classification, reading the LMDB header through `lmdb_header`.
+fn classify_with(
+    vault: &Vault,
+    entities_map: &LoroMap,
+    key: &str,
+    value: &[u8],
+    lmdb_header: impl FnOnce(&EntityId) -> Result<Option<EntityMetadataHeader>>,
+) -> TombstoneStep {
     let Ok(id) = EntityId::from_hex(key) else {
         return TombstoneStep::Refuse {
             id: None,
@@ -56,7 +83,7 @@ pub(in crate::sync) fn classify_tombstone(
             ),
         };
     }
-    if matches!(vault.read_entity_header(&id), Ok(None))
+    if matches!(lmdb_header(&id), Ok(None))
         && let Some(entity_blob) = map_get_bytes(entities_map, &id.to_hex())
         && let Some(header) = admitted_concurrent_delete_protected_header(&id, &entity_blob)
             .or_else(|| concurrent_project_revision_header(vault, &id, &entity_blob))

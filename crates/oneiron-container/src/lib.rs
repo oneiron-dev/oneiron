@@ -2,9 +2,14 @@
 //! No guest has a network device. The host proxy relays sockets and DNS.
 
 mod egress;
+mod host_net_floor;
 mod relay_protocol;
 mod transport;
 pub use egress::{EgressRelay, HttpRequest, HttpResponse};
+pub use host_net_floor::{
+    HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit, UnmeteredFloor,
+    floor_saturated, known_floor, saturated_floor,
+};
 pub use relay_protocol::{RelayReply, RelayRequest, read_relay, write_relay};
 pub use transport::{SessionLease, SessionTransport};
 #[cfg(target_os = "linux")]

@@ -15,9 +15,13 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::ManagedWidenAction;
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CtlRequest, CtlResponse, ManagedReadiness, REAP_PAUSE_REFUSAL, UnixTs,
-    now_ts, validate_wake_entries,
+    CONTRACT_VERSION, CtlResponse, ManagedReadiness, REAP_PAUSE_REFUSAL, UnixTs, now_ts,
+    validate_wake_entries,
 };
+// The test module below names the ctl request through `use super::*`; the
+// dispatcher that names it lives in `control`.
+#[cfg(test)]
+use oneiron_vault_contract::CtlRequest;
 use tokio::sync::{Mutex, watch};
 
 use crate::build_app;
@@ -29,6 +33,9 @@ use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
 use super::listener::{BoundServeListener, ManagedCtl, ServeListener, init_managed_tracing};
 use super::vault_gates::{open_managed_vault, provision_host_authority};
 use oneiron_vault_contract::host::{Host, HostLimits};
+
+/// The ctl dispatcher, [`ManagedState::handle_request`].
+mod control;
 
 /// Machine-readable tag on the refusals a frozen engine serves, so a client can
 /// match on it rather than parse prose.
@@ -561,51 +568,6 @@ impl ManagedState {
 
     pub async fn observed_alarms(&self) -> Vec<ObservedAlarm> {
         self.alarms.lock().await.clone()
-    }
-
-    /// Dispatches one parsed ctl request.
-    ///
-    /// [`CtlRequest::validate`] runs first on every request: deserialization
-    /// alone does not enforce the wire limits, so an `alarm_due` carrying an
-    /// out-of-bounds id or reason tag is refused here rather than reaching the
-    /// reconciler.
-    pub async fn handle_request(&self, request: CtlRequest) -> Result<CtlResponse, ManagedError> {
-        request
-            .validate()
-            .map_err(|error| ManagedError::CtlRequestRefused {
-                reason: error.to_string(),
-            })?;
-        match request {
-            CtlRequest::Ping => Ok(CtlResponse::Ping {
-                ok: true,
-                vault: self.vault_name.clone(),
-                pid: std::process::id(),
-                contract_version: CONTRACT_VERSION,
-                readiness: self.readiness.clone(),
-            }),
-            CtlRequest::Shed { cause, waited_secs } => {
-                self.guard_write()?;
-                super::shed::shed(self.server.vault(), cause, waited_secs)
-            }
-            CtlRequest::PrepareReap => self.prepare_reap().await,
-            CtlRequest::ReapAbort => {
-                self.unfreeze()?;
-                Ok(CtlResponse::Ok { ok: true })
-            }
-            CtlRequest::AlarmDue { id, reason_tag } => {
-                self.record_alarm(id, reason_tag).await;
-                Ok(CtlResponse::Ok { ok: true })
-            }
-            CtlRequest::TrainingPurge => {
-                self.guard_write()?;
-                let training_purge = self.server.vault().training_purge().map_err(|error| {
-                    ManagedError::CtlRequestRefused {
-                        reason: error.to_string(),
-                    }
-                })?;
-                Ok(CtlResponse::TrainingPurge { training_purge })
-            }
-        }
     }
 
     /// Freeze, drain, export — in that order.
