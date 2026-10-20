@@ -1871,7 +1871,9 @@ the tab that opened it, else the newest. The next answer names the move as
 `closed`). Lightpanda serves one page per guest and follows no popup: a
 verb that meets a second tab, or a new tab once its only page closed,
 refuses `browser_unsupported`, as `click_at` does there, and the refusal's
-detail names `self.browser.switch_engine` as the way to Chromium.
+words name `self.browser.switch_engine` as the way to Chromium: as its
+detail at the facade's browser door, and as its `reasonCodes` in a
+code-mode program (an agent run's or an MCP `execute_code`'s).
 
 A run's browser starts on the engine the `[browser]` section's `engine`
 names: `lightpanda`, the default and the engine agents start on, or
@@ -1955,6 +1957,37 @@ library) stores locators only: a proposal's handles are put back to their
 locators before the program is checked, and each step resolves its
 locators as it runs. A desktop row has no live handle: its `ref` is its
 locator.
+
+A page row also carries what the page shows of it beyond its role and name.
+A `link` row carries `href`, where it goes: its whole destination, resolved
+against its document's base, in whatever scheme it names (`http`, `https`,
+`mailto`, `tel`, `data`, `javascript`, which is never run, or another), and
+never clipped; a link with no destination carries none. A `heading` row
+carries `level`, its semantic heading level (1 the highest) as the
+engine's accessibility tree reads it; `depth` stays the row's nesting among
+named scopes. A row carries `datetimes`: the raw text of each `datetime`
+attribute its element carries, as written and never parsed, its own, else
+its nearest DOM ancestor's, and on a link or control row every one inside
+it too, in document order. The accessibility tree gives `href` and `level`
+where it can. One DOM read per page read (`DOM.getDocument` of the whole
+tree, inside that read's document samples, so a page that moves reads both
+again) gives the datetimes, a link Chromium's tree cuts at 10,000 bytes,
+Lightpanda's empty or non-native links, and a Lightpanda heading's
+`aria-level` or `h1` to `h6` tag. A destination resolved from the DOM is
+resolved in UTF-8, so a page in a legacy charset may spell a query apart
+from its engine. A field the read could not fill is listed in the row's
+`unavailable` as `{field, reason}`, `field` being `href`, `level` or
+`datetime`, so an absent field means no such datum. The reasons:
+`no_dom_node` (the row has no DOM node), `stale_node` (the page moved
+between the reads), `outside_dom_read` (a frame the engine's DOM read does
+not cover: on Lightpanda, any but the main document), `read_failed` (the
+DOM read failed, past the message bound, on an engine error or out of
+time, and the rest of the answer stands) and `unresolvable` (a relative
+href with no usable base, or one that does not parse). A paged answer's
+later pages carry the fields as its first read gave them. They live in the
+answers only: never in a locator, a receipt, a fact or a switch record. A
+CDP message past the 32 MiB bound, on either engine, fails only its own
+call, or is dropped if it is an event; the browser stays up.
 
 An observation names its `seq` and its `scope` (`page:` and the documents
 it read, or `window:` and the desktop window). It is whole (`full: true`),

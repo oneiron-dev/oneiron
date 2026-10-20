@@ -15,12 +15,17 @@
 //! bytes and each call hands it its message, through one bounded queue, so a
 //! call goes out while no reply arrives and no lock is held across a read.
 //! Its writes reach the guest through a writer thread, so a guest slow to
-//! read never stops it taking replies. A message or frame past
-//! [`MAX_MESSAGE`] ends the pipe, as one past it ends Chromium's; every
-//! message is routed as Chromium's are.
+//! read never stops it taking replies. A message past [`MAX_MESSAGE`] fails
+//! only its own call, or is dropped as an event, as one past it on
+//! Chromium's pipe does: the frame gate (`gate`) keeps it from tungstenite,
+//! whose own bounds stay as they are. Every message is routed as
+//! Chromium's are.
 
-use super::{MAX_MESSAGE, Outbound, Pipe, route};
+mod gate;
+
+use super::{MAX_MESSAGE, Outbound, Pipe, overrun, route};
 use crate::BrowserError;
+use gate::Gate;
 use oneiron_container::EgressRelay;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -275,19 +280,22 @@ fn refused(why: &str) -> BrowserError {
 }
 
 /// Runs the WebSocket until the guest ends or the socket closes or fails:
-/// the guest's bytes are read into whole messages and routed, and each call
-/// is sent.
+/// the guest's bytes pass the frame gate, are read into whole messages and
+/// routed, and each call is sent.
 fn pump(
     mut socket: WebSocket<Carrier>,
     inbound: &Receiver<Event>,
     pipe: &Pipe,
     relay: Option<&Arc<dyn EgressRelay>>,
 ) {
+    let mut gate = Gate::default();
     for event in inbound {
         let open = match event {
             Event::Read(bytes) => {
-                socket.get_mut().read.extend(bytes);
-                deliver(&mut socket, pipe, relay)
+                let over = gate.pass(&bytes, &mut socket.get_mut().read);
+                over.iter()
+                    .all(|prefix| overrun::oversize_message_policy(pipe, prefix))
+                    && deliver(&mut socket, pipe, relay)
             }
             Event::Ended => {
                 socket.get_mut().ended = true;

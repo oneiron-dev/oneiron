@@ -12,10 +12,12 @@
 //!
 //! A browser verb the guest refuses answers its stable code; a host caller
 //! is worded the code, and for `browser_unsupported` the engine's own words,
-//! which name the verb that serves it (FIX 6862).
+//! which name the verb that serves it (FIX 6862). A run's guests keep those
+//! words from its newest browser call, for the run's door to carry them to
+//! the guest's program as well ([`KeptRefusal`], FIX 6887).
 
 use std::ffi::OsString;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::code_run::AgentVerbRefusalWords;
 use oneiron::code_sandbox::egress::EgressConfig;
@@ -102,6 +104,34 @@ pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
             suggestions: Vec::new(),
         },
         _ => code_words(error.code().to_owned()),
+    }
+}
+
+/// The words a run's newest browser call was refused with, for the run's
+/// door to copy into the program's answer (FIX 6887): kept for
+/// `browser_unsupported` alone, whose words name the verb that serves what
+/// was refused. A call that answered, or was refused another way, keeps
+/// none.
+#[derive(Default)]
+pub(super) struct KeptRefusal(Mutex<Option<AgentVerbRefusalWords>>);
+
+impl KeptRefusal {
+    /// Keeps the newest call's refusal words, `None` when it was not
+    /// refused, in place of the last call's.
+    pub(super) fn keep(&self, refused: Option<&AgentVerbRefusalWords>) {
+        let unsupported = BrowserError::Unsupported(String::new());
+        let kept = refused
+            .filter(|words| words.code == unsupported.code())
+            .cloned();
+        *self.0.lock().unwrap_or_else(PoisonError::into_inner) = kept;
+    }
+
+    /// The words kept, if any.
+    pub(super) fn words(&self) -> Option<AgentVerbRefusalWords> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
