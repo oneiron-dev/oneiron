@@ -6654,13 +6654,14 @@
      "kind": "src",
      "notable": [
       "EsignDocumentTrail",
-      "EsignDocumentView"
+      "EsignDocumentView",
+      "EsignSealTrail"
      ],
      "path": "src/blob_artifact/esign/document_view.rs",
-     "purpose": "The owner's view of one signing document on `vault.esign.get` (FIX 6481): its delivery receipts always…",
+     "purpose": "The owner's view of one signing document on `vault.esign.get` (FIX 6481) and of its seal on…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 2,
       "struct": 1
      }
     },
@@ -38970,7 +38971,7 @@
      "path": "src/office_body/docx.rs",
      "purpose": "The DOCX body inside its Loro document, schema 1",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 2,
       "struct": 2
      }
@@ -91948,6 +91949,7 @@
       "EsignRecipient",
       "EsignSealAttemptView",
       "EsignSealGetRequest",
+      "EsignSealTrail",
       "EsignSealView",
       "EsignSealedItemView",
       "EsignSealedView",
@@ -94467,7 +94469,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 887,
+      "enum": 888,
       "struct": 2796
      }
     },
