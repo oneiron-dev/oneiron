@@ -384,8 +384,17 @@ pub(super) fn team_receipt_in_txn(
 /// Storage errors.
 pub fn team_receipts(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<TeamReceipt>> {
     let rtxn = vault.store.env.read_txn()?;
+    team_receipts_in_txn(vault, &rtxn, type_ref)
+}
+
+/// [`team_receipts`] in the caller's snapshot.
+pub(super) fn team_receipts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    type_ref: Option<&TypeRef>,
+) -> Result<Vec<TeamReceipt>> {
     let mut rows: Vec<TeamReceipt> = TEAM_RECEIPT
-        .scan(&vault.store, &rtxn)?
+        .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, row)| row)
         .filter(|row| type_ref.is_none_or(|t| row.type_ref == *t))

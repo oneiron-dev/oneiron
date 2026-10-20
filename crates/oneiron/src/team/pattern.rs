@@ -264,7 +264,16 @@ pub(crate) fn bind_pattern_skill_in_txn(
 /// Storage errors.
 pub fn pattern_skill(vault: &Vault, skill: &EntityId) -> Result<Option<PatternSkill>> {
     let rtxn = vault.store.env.read_txn()?;
-    PATTERN_SKILL.get(&vault.store, &rtxn, skill)
+    pattern_skill_in_txn(vault, &rtxn, skill)
+}
+
+/// [`pattern_skill`] in the caller's snapshot.
+pub(super) fn pattern_skill_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Option<PatternSkill>> {
+    PATTERN_SKILL.get(&vault.store, txn, skill)
 }
 
 /// Every bound pattern skill.

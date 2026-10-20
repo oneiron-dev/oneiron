@@ -22,6 +22,8 @@
 //! recorded on the receipt, so the ladder is scored from receipts like any
 //! skill.
 
+mod measured;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -44,6 +46,8 @@ use super::spend_calibration::ExpectedSpend;
 use super::team_shape::{CoordinationPattern, TEAM_SHAPE_LESSONS, TeamShape};
 use super::types::{CareLevel, SpawnNeed, SpawnOverride};
 use super::widen_record::invalid;
+
+pub use self::measured::{MeasuredRate, PatternCandidate};
 
 /// One rung of the planner ladder. Cheap rungs handle the easy cases; the
 /// strong rung is reserved for xhigh/max care or big plans.
@@ -186,48 +190,6 @@ impl CostEnvelope {
 pub struct SkillRevisionRef {
     pub skill: EntityId,
     pub version: String,
-}
-
-/// What the vault measured for one candidate on one seat: the posterior
-/// mean in force, the candidate's own anchored runs (0 = prior only), and
-/// the weight in runs the whole estimate carries (own runs plus its prior).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct MeasuredRate {
-    pub mean: f64,
-    pub own_runs: f64,
-    pub weight_runs: f64,
-}
-
-impl MeasuredRate {
-    /// One width's anchored record, shrunk toward this estimate. Only
-    /// anchored wins and losses count: an open team is neither.
-    #[allow(clippy::cast_precision_loss)]
-    fn pooled(self, wins: u64, losses: u64) -> Self {
-        let (wins, losses) = (wins as f64, losses as f64);
-        let weight = self.weight_runs.max(0.0);
-        let total = wins + losses + weight;
-        if total <= 0.0 {
-            return self;
-        }
-        Self {
-            mean: (wins + self.mean * weight) / total,
-            own_runs: wins + losses,
-            weight_runs: total,
-        }
-    }
-}
-
-/// One bound pattern skill the planner may run, as the planner card reads
-/// it: the skill revision, the shape it teaches, its `works well for` line,
-/// its estimate per seat model, and the anchored team outcomes per measured
-/// width and seat model, `(wins, losses)`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct PatternCandidate {
-    pub skill: PatternSkillRef,
-    pub pattern: CoordinationPattern,
-    pub works_well_for: String,
-    pub rates: BTreeMap<ModelId, MeasuredRate>,
-    pub widths: BTreeMap<u32, BTreeMap<ModelId, (u64, u64)>>,
 }
 
 /// Everything one plan reads, gathered from the vault by the live service.
@@ -495,8 +457,8 @@ fn candidate_token(shape: &TeamShape, model: &ModelId, skill: Option<&PatternSki
 }
 
 /// The widths a pattern candidate is quoted at: the pinned width alone, or
-/// the pattern's floor, every width its payoff rows measured, and a seeded
-/// width the pattern can run. No width is capped.
+/// the pattern's floor, every width its payoff rows measured (own or
+/// borrowed), and a seeded width the pattern can run. No width is capped.
 fn candidate_widths(need: &SpawnNeed, candidate: &PatternCandidate) -> BTreeSet<u32> {
     if let Some(width) = need.pinned_width() {
         return if candidate.pattern.admits_width(width) {
@@ -506,9 +468,8 @@ fn candidate_widths(need: &SpawnNeed, candidate: &PatternCandidate) -> BTreeSet<
         };
     }
     let mut widths: BTreeSet<u32> = candidate
-        .widths
-        .keys()
-        .copied()
+        .measured_widths()
+        .into_iter()
         .filter(|width| candidate.pattern.admits_width(*width))
         .collect();
     widths.insert(candidate.pattern.min_width());
@@ -584,11 +545,7 @@ pub(super) fn ranked_quotes(
                 .copied()
                 .ok_or_else(|| invalid("planner card has no read for a seat"))?;
             for width in candidate_widths(need, candidate) {
-                let measured = candidate
-                    .widths
-                    .get(&width)
-                    .and_then(|by_model| by_model.get(&seat.model))
-                    .map_or(rate, |(wins, losses)| rate.pooled(*wins, *losses));
+                let measured = candidate.width_rate(width, &seat.model, rate);
                 quotes.push(quote(
                     need,
                     TeamShape {

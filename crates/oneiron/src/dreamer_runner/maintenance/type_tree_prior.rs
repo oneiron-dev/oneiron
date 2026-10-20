@@ -9,6 +9,10 @@
 //! tree, its counts recounted for the pass on the vault's own fit runs
 //! ([`DonorTree::of_vault`]), so no project on a fork of its own, and no
 //! reserved leader, reaches it.
+//!
+//! The live planner borrows on the same path at the same weight
+//! ([`donor_weight`], FIX 5496): there the donor is the vault's stored tree
+//! in force, and what it lends is measured learning, not decision counts.
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -87,13 +91,33 @@ pub(crate) fn donor_prior_winner(
     donor: Option<&TaskTypeTree>,
 ) -> Option<String> {
     donor
-        .and_then(|donor| matched(project_tree, node_id, donor))
-        .and_then(|(own, theirs, _)| blended_winner(own, theirs, axis))
+        .and_then(|donor| {
+            let weight = donor_weight(project_tree, node_id, donor)?;
+            let (own, theirs) = (project_tree.nodes.get(node_id)?, donor.nodes.get(node_id)?);
+            blended_winner(own, theirs, weight, axis)
+        })
         .or_else(|| {
             project_tree
                 .effective_winner(node_id, axis)
                 .map(str::to_owned)
         })
+}
+
+/// The weight `donor`'s evidence carries on `node_id`'s reads in
+/// `project_tree`: `q = W * max(0, 1 - r / THIN_LEAF_MIN_RECEIPTS)`, with
+/// `r` the project leaf's own stored receipts, wherever `matched` lends
+/// (the thin live leaf of a project's own tree on the donor's exact live
+/// path); `None` where nothing is lent. The Coach's winner reads and the
+/// live planner's measured reads take their weight here alone.
+#[must_use]
+pub(crate) fn donor_weight(
+    project_tree: &TaskTypeTree,
+    node_id: &str,
+    donor: &TaskTypeTree,
+) -> Option<f64> {
+    let (own, _, _) = matched(project_tree, node_id, donor)?;
+    let fade = (1.0 - own.receipt_count as f64 / THIN_LEAF_MIN_RECEIPTS as f64).max(0.0);
+    Some(PROJECT_TREE_DONOR_WEIGHT * fade)
 }
 
 /// The path, root first, on which `node_id`'s reads in `project_tree` blend
@@ -153,12 +177,15 @@ fn matched<'a, 'b>(
     Some((own, theirs, path))
 }
 
-/// The strict leader of `own`'s counts on `axis` plus the faded weight of
-/// `donor`'s, when it carries at least [`SPLIT_MIN_RUNS_PER_WINNER`]
-/// weighted runs.
-fn blended_winner(own: &TaskTypeNode, donor: &TaskTypeNode, axis: DecisionAxis) -> Option<String> {
-    let fade = (1.0 - own.receipt_count as f64 / THIN_LEAF_MIN_RECEIPTS as f64).max(0.0);
-    let weight = PROJECT_TREE_DONOR_WEIGHT * fade;
+/// The strict leader of `own`'s counts on `axis` plus `weight` times
+/// `donor`'s ([`donor_weight`]), when it carries at least
+/// [`SPLIT_MIN_RUNS_PER_WINNER`] weighted runs.
+fn blended_winner(
+    own: &TaskTypeNode,
+    donor: &TaskTypeNode,
+    weight: f64,
+    axis: DecisionAxis,
+) -> Option<String> {
     let mut mass: BTreeMap<&str, f64> = BTreeMap::new();
     for (node, scale) in [(own, 1.0), (donor, weight)] {
         for (winner, runs) in node.decision_wins.get(axis.as_str()).into_iter().flatten() {
