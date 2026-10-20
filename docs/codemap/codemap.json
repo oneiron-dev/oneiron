@@ -77691,6 +77691,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/training_offer/unverifiable.rs",
+     "purpose": "The check's outcome when the promise cannot be read (FIX 6265): `unverifiable_unpriced_cache`",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/training_pack.rs",
      "purpose": "An owner-authorized training run on the host (OF-577, OF-552)",
      "surface": {
@@ -87777,6 +87787,7 @@
      "notable": [
       "CycleSettlements",
       "SeatUsage",
+      "UnpricedCache",
       "UsageLedger"
      ],
      "path": "src/usage/ledger.rs",
@@ -87784,7 +87795,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 6,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -87815,7 +87826,9 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CacheDimension",
       "Money",
+      "UnpricedReason",
       "UsageAllocation",
       "UsageCostInput",
       "UsageCostRates",
@@ -87832,8 +87845,8 @@
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
       "crate-vis": 3,
-      "enum": 2,
-      "fn": 7,
+      "enum": 4,
+      "fn": 9,
       "struct": 10
      }
     },
@@ -88517,7 +88530,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88974,7 +88987,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 890,
+   "source_files": 891,
    "test_files": 182
   },
   "oneiron-spawn": {
