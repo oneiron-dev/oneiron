@@ -35,8 +35,8 @@ use super::identity::{CustodySubject, decode_native_path, encode_native_path, he
 use super::log::{CustodyEpoch, CustodyPosition, Journal, LogEntry, frame_hash, open_frame};
 use super::platform;
 use super::protocol::{
-    ACK_VERSION, AckOperation, AckRecord, CustodyBatch, EvidenceKind, PendingCode, TargetId,
-    TargetKind, TargetPending, TargetScope, TargetSpec, hex,
+    ACK_VERSION, AckOperation, AckRecord, BatchFacts, CustodyBatch, EvidenceKind, PendingCode,
+    TargetId, TargetKind, TargetPending, TargetScope, TargetSpec, hex,
 };
 use super::retirement::{RetireCause, RetirementIntent};
 
@@ -289,35 +289,13 @@ impl Journal {
     /// (none for a log-only member). Stored durably; an older one never
     /// replaces a newer.
     pub(crate) fn accept_ack(&self, batch: &CustodyBatch, ack: &AckRecord) -> Result<()> {
-        let mismatch = || {
-            Error::InvalidConfig(
-                "the custody target's acknowledgement does not match its batch".into(),
-            )
-        };
-        let id = TargetId::new(&ack.target_id)?;
-        let set = self.required_set()?;
-        let member = set.member(&id).ok_or_else(mismatch)?;
-        let expected = batch.ack(&id, ack.evidence.clone(), &ack.attester);
-        let remaining = match member.spec.scope() {
-            TargetScope::HeadAndLog => 1,
-            TargetScope::LogOnly => 0,
-        };
-        let evidence_fits = ack.evidence.remaining_heads == remaining
-            && (member.spec.scope() == TargetScope::HeadAndLog)
-                != (ack.evidence.kind == EvidenceKind::NoHeadInScope)
-            && hex_decode(&ack.evidence.inventory_digest).is_some_and(|digest| digest.len() == 32);
-        if ack.version != ACK_VERSION
-            || ack.operation != AckOperation::PublishAndDeleteSuperseded
-            || ack.set_revision != batch.set_revision()
-            || member.added > ack.set_revision
-            || ack.position != expected.position
-            || ack.head_object_id != expected.head_object_id
-            || ack.operation_id != expected.operation_id
-            || ack.attester.is_empty()
-            || !evidence_fits
-        {
-            return Err(mismatch());
-        }
+        self.accept_facts(&batch.facts(), ack)
+    }
+
+    /// [`Self::accept_ack`] of the batch `facts` describes: a retained one
+    /// whose head is gone (FIX 5899).
+    pub(super) fn accept_facts(&self, facts: &BatchFacts, ack: &AckRecord) -> Result<()> {
+        let id = self.check_ack(facts, ack)?;
         let acks = self.sub(ACKS)?;
         let _lock = self.lock()?;
         let name = target_file("a", &id);
@@ -336,13 +314,48 @@ impl Journal {
             // A head sealed without the data key is sealed again for this
             // member once the key is held (FIX 5791).
             let root_only = target_file("r", &id);
-            if batch.data_key {
+            if facts.data_key {
                 remove_quietly(&acks.join(root_only));
             } else {
                 replace_file(&acks, &root_only, &[])?;
             }
         }
         Ok(())
+    }
+
+    /// The member `ack` names, once it names exactly the batch `facts`
+    /// describes; nothing is written.
+    pub(super) fn check_ack(&self, facts: &BatchFacts, ack: &AckRecord) -> Result<TargetId> {
+        let mismatch = || {
+            Error::InvalidConfig(
+                "the custody target's acknowledgement does not match its batch".into(),
+            )
+        };
+        let id = TargetId::new(&ack.target_id)?;
+        let set = self.required_set()?;
+        let member = set.member(&id).ok_or_else(mismatch)?;
+        let expected = facts.ack(&id, ack.evidence.clone(), &ack.attester);
+        let remaining = match member.spec.scope() {
+            TargetScope::HeadAndLog => 1,
+            TargetScope::LogOnly => 0,
+        };
+        let evidence_fits = ack.evidence.remaining_heads == remaining
+            && (member.spec.scope() == TargetScope::HeadAndLog)
+                != (ack.evidence.kind == EvidenceKind::NoHeadInScope)
+            && hex_decode(&ack.evidence.inventory_digest).is_some_and(|digest| digest.len() == 32);
+        if ack.version != ACK_VERSION
+            || ack.operation != AckOperation::PublishAndDeleteSuperseded
+            || ack.set_revision != facts.set_revision
+            || member.added > ack.set_revision
+            || ack.position != expected.position
+            || ack.head_object_id != expected.head_object_id
+            || ack.operation_id != expected.operation_id
+            || ack.attester.is_empty()
+            || !evidence_fits
+        {
+            return Err(mismatch());
+        }
+        Ok(id)
     }
 
     /// Whether `target`'s acknowledged head is wrapped to the recovery root
