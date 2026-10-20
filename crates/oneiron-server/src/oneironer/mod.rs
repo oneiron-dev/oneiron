@@ -8,6 +8,7 @@
 
 #[cfg(test)]
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
@@ -19,6 +20,7 @@ use crate::config::{OneironerConfig, OneironerProvider};
 pub(crate) mod endpoint;
 pub(crate) mod engines;
 mod local;
+pub(crate) mod release;
 
 #[cfg(test)]
 mod tests;
@@ -56,6 +58,15 @@ impl ProviderTagger {
         match self {
             Self::Endpoint(tagger) => tagger.probe(),
             Self::Local(tagger) => Ok(endpoint::ProbeOutcome::Ready(tagger.card())),
+        }
+    }
+
+    /// The decoder revision a native tagger runs; `None` for an endpoint,
+    /// whose card names no decoder.
+    pub(crate) fn decode_revision(&self) -> Option<&'static str> {
+        match self {
+            Self::Endpoint(_) => None,
+            Self::Local(tagger) => Some(tagger.decode_revision()),
         }
     }
 }
@@ -205,7 +216,18 @@ impl TaggerSlot {
 /// `None` and an absent section build nothing. Native artifacts are verified
 /// and loaded before the listener binds. A reachable endpoint that is not
 /// the configured tagger stops `serve`; an unreachable one is probed again.
+/// The engine rows sit at their XDG/HOME default ([`build_slot_with_rows`]).
 pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Option<TaggerSlot>> {
+    build_slot_with_rows(config, None)
+}
+
+/// [`build_slot`], with the engine rows file the caller names: a managed
+/// vault's sits under its data directory, never HOME, XDG, a shared model
+/// root or a bundle. `None` keeps the XDG/HOME default.
+pub(crate) fn build_slot_with_rows(
+    config: Option<&OneironerConfig>,
+    rows_location: Option<&Path>,
+) -> anyhow::Result<Option<TaggerSlot>> {
     let Some(config) = config.filter(|config| config.is_active()) else {
         return Ok(None);
     };
@@ -213,7 +235,7 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     let mut serving = None;
     let tagger = match config.provider {
         OneironerProvider::Local => {
-            let (tagger, engine) = engines::load(config)?;
+            let (tagger, engine) = engines::load(config, rows_location)?;
             tracing::info!(
                 engine = %engine.engine.id(),
                 pick = engine.pick.as_str(),
@@ -238,13 +260,20 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     };
     match slot.tagger.probe()? {
         endpoint::ProbeOutcome::Ready(card) => {
-            // The card's stack is the tagger's own string: with no pin to
-            // compare it to, it could be anything the tagger has read, so the
-            // log says only whether one was pinned.
+            // The accepted card names the bundle that serves, so the log
+            // alone says which one answers. Its checkpoint and stack are 16
+            // lowercase hex digits, never text the tagger has read: an
+            // endpoint's passed the probe's checks and a native card hashes
+            // its own. `stack_pinned` says whether the owner pinned that
+            // stack too; `decode_revision` is the native decoder this build
+            // runs, `-` for an endpoint.
             tracing::info!(
                 provider = config.provider.as_str(),
                 label_count = card.label_count,
                 links = card.returns.links,
+                checkpoint_sha16 = card.checkpoint_sha16.as_str(),
+                stack_sha16 = card.stack_sha16.as_deref().unwrap_or("-"),
+                decode_revision = slot.tagger.decode_revision().unwrap_or("-"),
                 stack_pinned = config.stack_sha16.is_some(),
                 "tagger probe succeeded"
             );
@@ -261,9 +290,13 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     Ok(Some(slot))
 }
 
-/// [`build_slot`] off the async runtime: native loading and HTTP are blocking.
+/// [`build_slot_with_rows`] off the async runtime: native loading and HTTP
+/// are blocking. `rows_location` is the engine rows file, `None` for the
+/// XDG/HOME default.
 pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
+    rows_location: Option<PathBuf>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    crate::logging::off_runtime("tagger slot task", move || build_slot(config.as_ref())).await?
+    let build = move || build_slot_with_rows(config.as_ref(), rows_location.as_deref());
+    crate::logging::off_runtime("tagger slot task", build).await?
 }

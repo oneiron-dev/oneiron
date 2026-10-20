@@ -59,12 +59,18 @@ pub enum ManagedError {
     RelativeRecipientFile { flag: &'static str },
 
     /// One leaf of the owner's settings file that a managed vault does not
-    /// take, named by its dotted field and never by its value.
-    #[error("--settings-file sets `{field}`, which a managed vault refuses: {reason}")]
+    /// take, named by its dotted field and never by its value. `cause` is
+    /// the finer reason an owner path was refused, when there is one: the
+    /// contract's path reason (FIX 6874).
+    #[error(
+        "--settings-file sets `{field}`, which a managed vault refuses: {reason}{}",
+        .cause.map_or_else(String::new, |cause| format!(" ({cause})"))
+    )]
     SettingsRefused {
         section: String,
         field: String,
         reason: SettingsRefusal,
+        cause: Option<&'static str>,
     },
 
     #[error("--artifact-http-socket must be an absolute path")]
@@ -269,6 +275,12 @@ pub struct ManagedArgs {
     /// (`--shared-model-root`), checked when the start configures
     /// (`managed::settings`): one that fails is ignored with a warning.
     pub shared_model_root: Option<PathBuf>,
+    /// The guests' container CLI's `HOME` as the supervisor declared it
+    /// (`--container-home`), checked when the start configures
+    /// (`managed::container_dirs`): one that fails is ignored with a warning.
+    pub container_home: Option<PathBuf>,
+    /// Its `XDG_RUNTIME_DIR` (`--container-runtime-dir`), checked the same way.
+    pub container_runtime_dir: Option<PathBuf>,
 }
 
 impl ManagedArgs {
@@ -399,6 +411,9 @@ impl ManagedArgs {
             // Not among the absolute paths refused below: a root that fails
             // its check is ignored, never a refused start.
             shared_model_root: args.shared_model_root.clone(),
+            // Nor are the container CLI's directories (FIX 6876).
+            container_home: args.container_home.clone(),
+            container_runtime_dir: args.container_runtime_dir.clone(),
         };
         if managed
             .artifact_socket

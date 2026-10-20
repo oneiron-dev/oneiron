@@ -348,7 +348,7 @@ impl Vault {
 
     /// [`Self::media_backlog_in_txn`] of the documents `gate` admits, when there is one; the
     /// others are counted [`MediaEmbedReport::withheld`].
-    fn media_backlog_where_in_txn(
+    pub(super) fn media_backlog_where_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         space: &EmbeddingSpace,
@@ -455,7 +455,7 @@ impl Vault {
     /// or base with none: none is one a device-local world keeps (DEC-0005), or whose world
     /// cannot be read while one is flagged. Read under the flag lock right before the bytes
     /// go, and held across no send.
-    fn media_rows_may_leave(
+    pub(super) fn media_rows_may_leave(
         &self,
         session: Option<&OffRecordSession<'_>>,
         rows: &[EntityId],

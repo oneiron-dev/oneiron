@@ -38,6 +38,9 @@ pub struct VaultUsage {
 struct AdmittedCall {
     facts: PermitFacts,
     rates: Option<UsageCostRates>,
+    /// The rows `rates` was read from: the catalog row's, none for the
+    /// host's override (FIX 5760).
+    price_sources: Option<Vec<EntityId>>,
     /// The billing owner the call's usage lands on, fixed at admission.
     owner: String,
 }
@@ -50,8 +53,17 @@ impl VaultUsage {
         vault_id: String,
         catalog: Arc<oneiron::Vault>,
     ) -> Result<Arc<Self>, UsageError> {
-        // Validate the scope and read any existing rollup before binding it.
-        ledger.vault_rollup(&owner, &vault_id)?;
+        // Validate the scope before binding it. The derived rollup is warmed
+        // here, and one that cannot be read never keeps the meter from
+        // binding: a recorded call does not wait on it (FIX 6407).
+        UsageLedger::validate_scope(&owner, &vault_id)?;
+        if let Err(error) = ledger.vault_rollup(&owner, &vault_id) {
+            tracing::warn!(
+                vault_id = %vault_id,
+                ?error,
+                "the vault usage rollup could not be read; calls are still metered"
+            );
+        }
         Ok(Arc::new(Self {
             ledger,
             owner,
@@ -118,7 +130,12 @@ impl VaultUsage {
                     .expect("usage rates lock poisoned")
                     .get(&facts.offer)
                     .cloned();
-                let rates = overridden.or_else(|| self.catalog.snapshot(facts));
+                // The host's override reads no row; the catalog's price, the
+                // rows its row was read from (FIX 5760).
+                let (rates, price_sources) = match overridden {
+                    Some(rates) => (Some(rates), Some(Vec::new())),
+                    None => self.catalog.snapshot(facts),
+                };
                 // A room-paid call bills its payer PERSON's own account, which
                 // for a live Owner is the vault's; the vault's too when the
                 // owners approved that on its payer-needed ask; a call no
@@ -137,6 +154,7 @@ impl VaultUsage {
                         AdmittedCall {
                             facts: *facts.clone(),
                             rates,
+                            price_sources,
                             owner,
                         },
                     );
@@ -161,6 +179,7 @@ impl VaultUsage {
                 let Some(AdmittedCall {
                     facts,
                     rates,
+                    price_sources,
                     owner,
                 }) = facts.filter(|_| *dispatched)
                 else {
@@ -224,6 +243,12 @@ impl VaultUsage {
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
                 let bound = facts.attribution.as_ref();
+                // The call's facts read its input's rows and its price's,
+                // frozen beside the settlement (FIX 5760).
+                let source_rows = oneiron::skill_optimize::union_source_rows([
+                    facts.source_rows.as_deref(),
+                    price_sources.as_deref(),
+                ]);
                 let event = UsageEvent {
                     owner,
                     vault_id: self.vault_id.clone(),
@@ -275,12 +300,35 @@ impl VaultUsage {
                         settlement_refused: error.is_some(),
                     }),
                 };
-                if self
-                    .ledger
-                    .record_event(event, source, UsageEventOrigin::Engine)
-                    .is_err()
-                {
-                    tracing::error!("served run usage could not be persisted");
+                // The call's identity, for its log line once the event moves
+                // into the ledger.
+                let idempotency_key = event.idempotency_key.clone();
+                match self.ledger.record_event_sourced(
+                    event,
+                    source,
+                    UsageEventOrigin::Engine,
+                    source_rows,
+                ) {
+                    // Recorded with its counts and frozen rates, and no price:
+                    // its price at them does not fit in an amount (FIX 6407).
+                    Ok(recorded) if recorded.unpriced == Some(UnpricedReason::PriceOverflow) => {
+                        tracing::warn!(
+                            vault_id = %self.vault_id,
+                            %idempotency_key,
+                            replayed = recorded.replayed,
+                            reason = "price_overflow",
+                            "a settled call was recorded without a representable price"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::error!(
+                            vault_id = %self.vault_id,
+                            %idempotency_key,
+                            ?error,
+                            "served run usage could not be persisted"
+                        );
+                    }
                 }
             }
             _ => {}

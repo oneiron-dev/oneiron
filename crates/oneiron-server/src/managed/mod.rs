@@ -37,6 +37,7 @@
 mod args;
 mod attested_routes;
 mod backup_facts;
+mod container_dirs;
 #[cfg(test)]
 mod ctl_shed_tests;
 mod host;
@@ -52,17 +53,15 @@ mod peer;
 /// Private live previews on a session-owned origin.
 pub mod preview;
 mod relay;
+/// The relay locker delete this engine executes (FIX 6826).
+mod relay_delete;
 /// The cold managed restore start mode (`--restore`).
 mod restore;
 pub(crate) use relay::hold_guard::{
     RelayDeleteDeferral, RelayDeleteHoldError, RelayDeleteHoldGuard, RelayDeleteHoldOutcome,
     RelayDeleteTarget,
 };
-#[allow(
-    unused_imports,
-    reason = "the host installs the relay hold guard here once it has one (FIX 1488)"
-)]
-pub(crate) use relay::run_relay_with_hold_guard;
+pub(crate) use relay::run_host_relay;
 pub use relay::{IROH_RELAY_REVISION, RelayConfig, run_relay};
 mod settings;
 mod shed;

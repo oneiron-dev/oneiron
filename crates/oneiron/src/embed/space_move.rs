@@ -23,7 +23,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
-use super::media::{MediaEmbeddingInput, PendingMedia};
+use super::EgressPredicate;
+use super::media::{MediaEgressGate, MediaEmbeddingInput, PendingMedia};
 use super::space::{
     EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, drop_space_rows_in_txn,
     embedding_space_in_txn, kind_slot_bindings_in_txn, search_media_space_in_txn,
@@ -219,6 +220,15 @@ pub trait SpaceProbeEncoder {
     ) -> Result<Option<Vec<f32>>> {
         let _ = (space, query);
         Ok(None)
+    }
+
+    /// The host's media egress gate on the candidate's tower, when that model runs at a third
+    /// party: the backfill never sends it a document the gate withholds (FIX 382), so the
+    /// filling check counts those settled, as the backfill counts them
+    /// [`super::MediaEmbedReport::withheld`] (FIX 6741). `None` reads every document as one the
+    /// candidate must hold. The default has none.
+    fn candidate_egress(&self) -> Option<&dyn EgressPredicate> {
+        None
     }
 }
 
@@ -663,7 +673,8 @@ impl Vault {
     /// the move by the reading: every kind not worse swaps the candidate in; a kind worse keeps
     /// the incumbent and closes the move; a kind unknown keeps the incumbent and the move open.
     /// While the candidate lacks a vector of some moving document no probe runs
-    /// ([`SpaceMoveOutcome::Filling`]). Each probe is encoded outside any transaction: twice
+    /// ([`SpaceMoveOutcome::Filling`]); one the candidate's egress gate withholds does not count
+    /// ([`SpaceProbeEncoder::candidate_egress`]). Each probe is encoded outside any transaction: twice
     /// into the incumbent, once into the candidate; a text query through each space's text
     /// tower, a media query through its kind's ([`SpaceProbeEncoder::encode_media_probe`]),
     /// its own document left out of the hits. Each kind's reading is read on its sufficiency
@@ -706,9 +717,21 @@ impl Vault {
                     "embedding space {candidate} is not declared"
                 )));
             };
+            // A document a third-party candidate is never sent is settled, not pending: the
+            // move would otherwise read filling until its deadline (FIX 6741).
+            let gate = encoder
+                .candidate_egress()
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .transpose()?;
             let mut report = super::MediaEmbedReport::default();
-            let pending =
-                self.media_backlog_in_txn(&rtxn, &candidate_space, &moving.kinds, 1, &mut report)?;
+            let pending = self.media_backlog_where_in_txn(
+                &rtxn,
+                &candidate_space,
+                &moving.kinds,
+                1,
+                &mut report,
+                gate.as_ref(),
+            )?;
             if let Some(witness) = pending.first() {
                 return Ok((SpaceMoveOutcome::Filling, Some(vec![witness.id])));
             }
@@ -904,6 +927,21 @@ impl Vault {
     /// [`Error::InvalidConfig`] when no move to `candidate` is open, the candidate is still
     /// filling, or a slot it moves was rebound since it began.
     pub fn approve_space_move(&self, candidate: &str) -> Result<()> {
+        self.approve_space_move_admitted(candidate, None)
+    }
+
+    /// [`Self::approve_space_move`] for a candidate whose model runs at a third party behind the
+    /// host's media egress gate `egress` (FIX 6907): a document the gate withholds never fills the
+    /// candidate, so it does not keep the move filling, as in the move's check (FIX 6741).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::approve_space_move`].
+    pub fn approve_space_move_admitted(
+        &self,
+        candidate: &str,
+        egress: Option<&dyn EgressPredicate>,
+    ) -> Result<()> {
         let check = {
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
@@ -912,9 +950,19 @@ impl Vault {
                     "embedding space {candidate} is not declared"
                 )));
             };
+            let gate = egress
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .transpose()?;
             let mut report = super::MediaEmbedReport::default();
             if !self
-                .media_backlog_in_txn(&rtxn, &space, &moving.kinds, 1, &mut report)?
+                .media_backlog_where_in_txn(
+                    &rtxn,
+                    &space,
+                    &moving.kinds,
+                    1,
+                    &mut report,
+                    gate.as_ref(),
+                )?
                 .is_empty()
             {
                 return Err(Error::InvalidConfig(format!(

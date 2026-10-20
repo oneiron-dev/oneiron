@@ -1,6 +1,7 @@
 //! The ctl dispatcher: every parsed ctl request a managed vault answers.
 
 use oneiron_vault_contract::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION;
+use oneiron_vault_contract::relay_delete::RELAY_DELETE_REVISION;
 use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
 use oneiron_vault_contract::slim_control::SLIM_RECOVERY_REVISION;
 use oneiron_vault_contract::{
@@ -8,6 +9,7 @@ use oneiron_vault_contract::{
 };
 
 use super::ManagedState;
+use super::admission::WriteKind;
 use crate::managed::ManagedError;
 
 impl ManagedState {
@@ -49,13 +51,15 @@ impl ManagedState {
                 artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),
                 slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
                 vm_outbox_revision: self.vm_outbox_revision,
+                relay_delete_revision: Some(RELAY_DELETE_REVISION),
+                engine_instance: Some(self.relay_delete.instance().to_owned()),
             }),
             CtlRequest::Shed {
                 cause,
                 waited_secs,
                 wait_id,
             } => {
-                self.guard_write()?;
+                let _admission = self.admit(WriteKind::OwnerWrite)?;
                 crate::managed::shed::shed(self.server.vault(), cause, waited_secs, wait_id)
             }
             CtlRequest::PrepareReap => self.prepare_reap().await,
@@ -71,7 +75,7 @@ impl ManagedState {
                 Ok(CtlResponse::Ok { ok: true })
             }
             CtlRequest::TrainingPurge => {
-                self.guard_write()?;
+                let _admission = self.admit(WriteKind::OwnerWrite)?;
                 let training_purge = self.server.vault().training_purge().map_err(|error| {
                     ManagedError::CtlRequestRefused {
                         reason: error.to_string(),
@@ -126,7 +130,7 @@ impl ManagedState {
             // Through the write gate, as `shed`: a vault frozen for reap
             // answers the typed reap pause and stays frozen.
             CtlRequest::Unslim => {
-                self.guard_write()?;
+                let _admission = self.admit(WriteKind::OwnerWrite)?;
                 crate::managed::shed::unslim(self.server.vault())
             }
             // A read of the cold restore this process kept: it writes nothing
@@ -156,6 +160,18 @@ impl ManagedState {
                     .await?;
                 Ok(CtlResponse::HostOrderHolds { host_order_holds })
             }
+            // Past the write gate: a vault frozen for reap answers it
+            // `unknown` (`not_ready`) and starts nothing, and an admitted
+            // delete counts among the writes in flight until its job ends.
+            CtlRequest::RelayDeleteExecute { request } => {
+                Ok(self.relay_delete_execute(request).await)
+            }
+            // A read: a vault frozen for reap answers it and stays frozen.
+            CtlRequest::RelayDeleteRechecks { request } => {
+                Ok(self.relay_delete_rechecks(request).await)
+            }
+            // The supervisor's alone; a vault frozen for reap binds nothing.
+            CtlRequest::RelayLockerBind { request } => Ok(self.relay_locker_bind(request).await),
         }
     }
 }

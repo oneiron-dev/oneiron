@@ -38,6 +38,10 @@ use super::listener::init_managed_tracing;
 /// socket to listen on (FIX 5017).
 const VOICE_SOCKET_MISSING: &str = "voice_socket_missing";
 
+/// The cause of a model directory refused because its bundle's manifest
+/// states another stack than the settings pin, or does not read (FIX 6874).
+const BUNDLE_STACK_MISMATCH: &str = "bundle_stack_mismatch";
+
 /// The settings file, read and refused, ready for [`settle`]: its table with
 /// the leaves argv stands over removed and the supervisor's own leaves set.
 pub(super) struct PreparedSettings {
@@ -87,7 +91,15 @@ pub(super) fn configure(
     // between its refusal and its settling, at the level the settled
     // configuration runs at (argv over the file), so what settling decides
     // is logged.
-    let settings = prepare(managed, args, &mut config)?;
+    // A refusal ends the start before tracing does, so it carries the
+    // ignored root's cause itself (FIX 6874).
+    let settings = prepare(managed, args, &mut config).map_err(|error| match &shared_model {
+        Some((_, Err(cause))) => error.context(format!(
+            "{SHARED_MODEL_ROOT_IGNORED} ({}): the shared model root the supervisor declared failed its check and is ignored",
+            cause.as_str()
+        )),
+        _ => error,
+    })?;
     init_managed_tracing(log_level(settings.as_ref(), &config));
     if let Some((declared, Err(cause))) = shared_model {
         tracing::warn!(
@@ -97,6 +109,9 @@ pub(super) fn configure(
             "the shared model root the supervisor declared failed its check and is ignored: the vault starts without it, and a model directory only it would admit is refused"
         );
     }
+    // The container CLI's HOME and XDG_RUNTIME_DIR, checked and bound once
+    // tracing runs, so one that fails is logged (FIX 6876).
+    super::container_dirs::bind_container_cli_env(managed);
     let settled = settle(settings, &mut config)?;
     Ok((config, settled))
 }
@@ -143,10 +158,10 @@ pub(super) fn prepare(
     // supervisor's, never as unknown.
     visit(&table, &mut Vec::new(), &mut |field, _| {
         if matches_any(field, SUPERVISOR_OWNED) {
-            return Err(refused(field, SettingsRefusal::SupervisorOwned));
+            return Err(refused(field, SettingsRefusal::SupervisorOwned, None));
         }
         if matches_any(field, ENVIRONMENT_KEYS) {
-            return Err(refused(field, SettingsRefusal::EnvironmentSecret));
+            return Err(refused(field, SettingsRefusal::EnvironmentSecret, None));
         }
         Ok(())
     })?;
@@ -326,13 +341,13 @@ fn refuse_unknown(table: &toml::Table) -> Result<(), ManagedError> {
     let known = settings_schema_keys(None).unwrap_or_default();
     for (key, value) in table {
         if !known.contains(&key.as_str()) {
-            return Err(refused(&[key], SettingsRefusal::UnknownField));
+            return Err(refused(&[key], SettingsRefusal::UnknownField, None));
         }
         if let (toml::Value::Table(section), Some(keys)) =
             (value, settings_schema_keys(Some(key.as_str())))
             && let Some(field) = section.keys().find(|field| !keys.contains(&field.as_str()))
         {
-            return Err(refused(&[key, field], SettingsRefusal::UnknownField));
+            return Err(refused(&[key, field], SettingsRefusal::UnknownField, None));
         }
     }
     Ok(())
@@ -346,7 +361,11 @@ fn refuse_default_import_roots(table: &toml::Table) -> Result<(), ManagedError> 
     };
     let queue = import.get("queue").and_then(toml::Value::as_bool) == Some(true);
     if queue_reads_default_root(queue, |leaf| import.contains_key(leaf)) {
-        return Err(refused(&["import", "queue"], SettingsRefusal::OutsideVault));
+        return Err(refused(
+            &["import", "queue"],
+            SettingsRefusal::OutsideVault,
+            None,
+        ));
     }
     Ok(())
 }
@@ -364,12 +383,16 @@ fn admit_owner_path(
 ) -> Result<(), ManagedError> {
     let stack = declared_stack(table, field);
     let admitted = check_owner_path(field, path, stack, roots)
-        .map_err(|_| refused(field, SettingsRefusal::OutsideVault))?;
+        .map_err(|reason| refused(field, SettingsRefusal::OutsideVault, Some(reason.as_str())))?;
     if admitted.origin == OwnerPathOrigin::SharedModel {
         let manifest = crate::oneironer::engines::bundle_identity(&admitted.path)
             .map(|identity| identity.stack_sha16);
         if manifest.ok().as_deref() != stack {
-            return Err(refused(field, SettingsRefusal::OutsideVault));
+            return Err(refused(
+                field,
+                SettingsRefusal::OutsideVault,
+                Some(BUNDLE_STACK_MISMATCH),
+            ));
         }
     }
     Ok(())
@@ -417,9 +440,14 @@ fn visit_value(
     }
 }
 
-/// The typed refusal of one dotted field; its section is the first key of a
-/// nested field, empty for a top-level one.
-fn refused<S: AsRef<str>>(field: &[S], reason: SettingsRefusal) -> ManagedError {
+/// The typed refusal of one dotted field for `reason`, with its finer
+/// `cause`; its section is the first key of a nested field, empty for a
+/// top-level one.
+fn refused<S: AsRef<str>>(
+    field: &[S],
+    reason: SettingsRefusal,
+    cause: Option<&'static str>,
+) -> ManagedError {
     let parts: Vec<&str> = field.iter().map(AsRef::as_ref).collect();
     let section = match parts.as_slice() {
         [section, _, ..] => (*section).to_owned(),
@@ -429,5 +457,6 @@ fn refused<S: AsRef<str>>(field: &[S], reason: SettingsRefusal) -> ManagedError 
         section,
         field: parts.join("."),
         reason,
+        cause,
     }
 }
