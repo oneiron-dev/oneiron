@@ -8,15 +8,17 @@
 //! over`). The row is custody only, never approval authority: the Gate
 //! decides every send, the carried one included, as it always does.
 //!
-//! What a pass does with a carried batch is read from durable facts, never
-//! from the row's own stage: its intent ledger row (absent, retryable on an
-//! owner's recorded press, or settled), and the owner's denial of its digest
-//! in the Gate's decisions since it was staged. Its settlement takes exactly
-//! the quantities and records it froze, in one writer with the row's
-//! removal. A denial, a change in what it may carry, or an actor erase
-//! retires it with no ack, and nothing is dropped: the next pass selects
-//! afresh (CALLS `FIX 6679 denied or ineligible held batch retires without
-//! ack`).
+//! What a pass does with a carried batch is read from durable facts: its
+//! intent ledger row (absent, retryable on an owner's recorded press, or
+//! settled), the Gate's newest decision on a send of it when none was
+//! admitted (only a hold for the owner keeps it), and the owner's denial of
+//! its digest in the Gate's decisions since it was staged. Its settlement
+//! takes exactly the quantities and records it froze, once, in one writer
+//! with the row's removal: the row still there is what says they are owed.
+//! A denial, a change in what it may carry, or an actor erase retires it
+//! with no ack of anything its ledger row has not settled, and nothing is
+//! dropped: the next pass selects afresh (CALLS `FIX 6679 denied or
+//! ineligible held batch retires without ack`).
 
 use std::sync::{MutexGuard, PoisonError};
 
@@ -77,8 +79,9 @@ pub(super) struct HeldBatch {
     stage: HeldStage,
 }
 
-/// Where a kept batch stood after its last send. A record only: what a pass
-/// does with a carried batch is read from durable facts, never from this.
+/// Where a kept batch stood after its last send. A record: what a pass does
+/// with a carried batch is read from durable facts, and this counts only
+/// where the Gate's decisions on it are gone, to say the Gate held it once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum HeldStage {
     /// Written before its send.
@@ -158,6 +161,16 @@ impl HeldBatch {
         blake3::hash(self.body.as_bytes()).to_hex().as_str() == self.digest
     }
 
+    /// It as an actor erase leaves a batch its ledger row has settled
+    /// nothing of yet (FIX 6679): its body and digest gone, its frozen
+    /// shares kept for whoever settles it. No check finds it live, so no
+    /// pass sends it again.
+    fn erased(mut self) -> Self {
+        self.body.clear();
+        self.digest.clear();
+        self
+    }
+
     /// Whether it may still leave, read in `txn`: the training permission
     /// it was built under, every record in it still queued and public, and
     /// no owner denial of `approval_digest` since it was staged.
@@ -179,7 +192,8 @@ impl HeldBatch {
     }
 
     /// [`Self::eligible_in`] with its custody still this batch, read in
-    /// `txn`: an erase may have retired it since the pass read it.
+    /// `txn`: an erase may have retired it, or kept only its frozen shares,
+    /// since the pass read it.
     pub(super) fn may_still_leave_in(
         &self,
         vault: &Vault,
@@ -188,7 +202,7 @@ impl HeldBatch {
     ) -> Result<bool> {
         let live = HELD
             .get_lenient(&vault.store, txn, &())?
-            .is_some_and(|kept| kept.batch_id == self.batch_id);
+            .is_some_and(|kept| kept.batch_id == self.batch_id && kept.digest == self.digest);
         Ok(live && self.eligible_in(vault, txn, approval_digest)?)
     }
 }
@@ -204,13 +218,16 @@ impl FailureSignalCounts {
 impl Vault {
     /// The batch this pass carries, with its request and digest, if any. A
     /// row that does not decode, or whose body no longer hashes to its
-    /// digest, is retired. A batch never admitted may have been held, so it
-    /// goes again while it may still leave to the same endpoint. One
-    /// admitted and failed definitely retries under its own ref only when
-    /// its admission spent the owner's press; one a grant admitted is
-    /// retired, and the pass selects afresh as it always did. One whose
-    /// ledger row is settled or unresolved is carried, so its replay
-    /// resolves it with no wire before anything is selected anew.
+    /// digest (an erase's frozen shares among them), is retired. A batch no
+    /// send of which was admitted goes again only while the Gate's newest
+    /// decision on it holds it for the owner and it may still leave to the
+    /// same endpoint; a Gate Deny, any other decision on it, or none on one
+    /// only ever staged retires it, and the pass selects afresh as it
+    /// always did. One admitted and failed definitely retries under its own
+    /// ref only when its admission spent the owner's press; one a grant
+    /// admitted is retired. One whose ledger row is settled or unresolved
+    /// is carried, so its replay resolves it with no wire before anything
+    /// is selected anew.
     pub(super) fn carried_failure_signal_batch(
         &self,
         endpoint: &str,
@@ -246,7 +263,7 @@ impl Vault {
                     && held.eligible_in(self, &txn, approval_digest.as_deref())?)
             };
             match read_intent_for_attempt_in_txn(self, &txn, attempt, 0)? {
-                None => may_leave(true)?,
+                None => may_leave(owner_held_in(self, &txn, &held, sender)?)?,
                 Some(row) if retryable(&row) => may_leave(row.admitted_approval.is_some())?,
                 Some(_) => true,
             }
@@ -331,13 +348,24 @@ impl Vault {
     /// quantities leave the aggregate, and, once it was `delivered`, its
     /// code-fix records leave the queue. An ambiguous send takes the counts
     /// only, since a record sent again carries its own id and the publisher
-    /// keeps one. Counts and records that came since stay.
+    /// keeps one. Counts and records that came since stay. Its row gone
+    /// means an actor erase settled it first, so nothing is taken twice
+    /// (FIX 6679).
     pub(super) fn settle_failure_signal_batch(
         &self,
         held: &HeldBatch,
         delivered: bool,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
+            let Some(bytes) = HELD.get_bytes(&self.store, &*txn, &())? else {
+                return Ok(());
+            };
+            if HELD
+                .decode_value(&bytes)
+                .is_ok_and(|kept| kept.batch_id != held.batch_id)
+            {
+                return Ok(());
+            }
             settle_in_txn(self, txn, held, delivered)?;
             HELD.delete(&self.store, txn, &())?;
             Ok(())
@@ -443,13 +471,56 @@ fn owner_denied_in(
     Ok(found.is_some())
 }
 
-/// An erase of `actor` retires the carried batch whole, with no ack (CALLS
-/// `FIX 6679 held batch custody table`): its counts and records may come
-/// from that actor's failures, and nothing in a frozen body is edited under
-/// its old ref. The signals stay queued; the next pass selects afresh. It
-/// settles nothing: a pass may be sending the batch, and that pass settles
-/// what it sent. An id whose entity is no actor retires nothing; a row that
-/// does not decode goes by its key all the same.
+/// The content kind of the Gate's decision on an outbound send
+/// (`GateContentKind::ExternalEffect`).
+const SEND_DECISION_KIND: &str = "external_effect";
+
+/// Whether the Gate holds `held` for its owner, read in `txn`, for a batch
+/// no send of which was admitted (FIX 6679). The newest of the Gate's
+/// decisions on a send by `sender` since it was staged says so: one batch
+/// per vault is in flight, and every pass sends it until it is settled or
+/// retired, so each such decision since its floor is on it. A pending one
+/// is the owner's hold; a Gate Deny, or any other decision, is none, and
+/// no ledger row alone is no hold. Where no such decision is left, a batch
+/// the Gate held on an earlier pass (its stage says so) still waits, and
+/// one only ever staged was never shown.
+fn owner_held_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    held: &HeldBatch,
+    sender: EntityId,
+) -> Result<bool> {
+    let actor = sender.to_hex();
+    let mut newest = None;
+    vault.store.find_gate_decision_after_in_txn(
+        txn,
+        GateDecisionId::from_bytes(held.floor),
+        |record: &GateDecisionRecord| {
+            if record.content_kind == SEND_DECISION_KIND
+                && record.actor_ref.as_deref() == Some(actor.as_str())
+            {
+                newest = Some(record.outcome == GateOutcome::Pending.as_str());
+            }
+            false
+        },
+    )?;
+    Ok(newest.unwrap_or(held.stage != HeldStage::Staged))
+}
+
+/// An erase of `actor` retires the carried batch with no ack of anything
+/// its ledger row has not settled (CALLS `FIX 6679 held batch custody
+/// table`): its counts and records may come from that actor's failures, and
+/// nothing in a frozen body is edited under its old ref. What the row
+/// already settled (a delivered send's quantities and records, or the
+/// counts of a stopped send that may have landed) is acked here first, with
+/// no wire, and the custody goes with it, so a crash after the send's Done
+/// never sends them again. A batch whose row has settled nothing yet keeps
+/// only its frozen shares, its body and digest gone: no check finds it
+/// live, so no pass sends it, and whoever settles it next (the pass still
+/// sending it, or the next pass's retirement) takes them once, with the
+/// row. The signals stay queued; the next pass selects afresh. An id whose
+/// entity is no actor retires nothing; a row that does not decode goes by
+/// its key all the same.
 pub(crate) fn erase_held_batch_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -458,6 +529,16 @@ pub(crate) fn erase_held_batch_actor_in_txn(
     if crate::learning_setting::names_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
-    HELD.delete(&vault.store, wtxn, &())?;
+    let Some(held) = HELD.get_lenient(&vault.store, &*wtxn, &())? else {
+        HELD.delete(&vault.store, wtxn, &())?;
+        return Ok(());
+    };
+    match settled_in(vault, &*wtxn, &held)? {
+        Some(delivered) => {
+            settle_in_txn(vault, wtxn, &held, delivered)?;
+            HELD.delete(&vault.store, wtxn, &())?;
+        }
+        None => HELD.put(&vault.store, wtxn, &(), &held.erased())?,
+    }
     Ok(())
 }
