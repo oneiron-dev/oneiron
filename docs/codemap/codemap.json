@@ -95382,7 +95382,70 @@
       "const": 18,
       "enum": 4,
       "fn": 12,
+      "re-export": 3,
       "struct": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PieceBatchResultV1",
+      "PieceBatchV1",
+      "PieceBoundsV1",
+      "PieceChunkV1",
+      "PieceCursorV1",
+      "PieceEntryV1",
+      "PieceErrorBodyV1",
+      "PieceErrorV1",
+      "PieceFactsHeadV1",
+      "PieceFinalV1",
+      "PieceInstallCheckV1",
+      "PieceMetaPageV1",
+      "PieceOutcomeV1",
+      "PiecePartV1",
+      "PieceReceiptAskV1",
+      "PieceReceiptBodyV1",
+      "PieceReceiptCursorAskV1",
+      "PieceReceiptEntryV1",
+      "PieceReceiptPageV1",
+      "PieceReceiptV1",
+      "PieceResultV1",
+      "PieceStateV1",
+      "PieceWithdrawalV1",
+      "TrainingKeysV1"
+     ],
+     "path": "src/lib/conversation_training/piece.rs",
+     "purpose": "The anonymous training window (TL-6, FIX 5813): the wire a self-host engine ships its released offers and…",
+     "surface": {
+      "const": 13,
+      "enum": 2,
+      "fn": 1,
+      "struct": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/conversation_training/piece_check.rs",
+     "purpose": "The anonymous training window's shape checks and decoders (TL-6): the shape only",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PieceFactsDigest"
+     ],
+     "path": "src/lib/conversation_training/piece_facts.rs",
+     "purpose": "The anonymous training window's facts digest (TL-6): the one fn the engine and the intake both compute a…",
+     "surface": {
+      "fn": 9,
+      "struct": 1
      }
     },
     {
@@ -95995,7 +96058,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 40,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -96004,7 +96067,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 39,
+   "source_files": 42,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
