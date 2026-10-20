@@ -240,15 +240,17 @@ impl CoreAuth {
         if server.managed_issuer.is_none() {
             return Err(ApiError::unauthorized());
         }
-        Ok(Self::for_attested_owner(holder, server).unwrap_or_else(|_| {
-            Self::attested(
-                holder,
-                [super::CoreScope::Read, super::CoreScope::Write]
-                    .into_iter()
-                    .collect(),
-                false,
-            )
-        }))
+        Ok(
+            Self::for_attested_owner(holder, server).unwrap_or_else(|_| {
+                Self::attested(
+                    holder,
+                    [super::CoreScope::Read, super::CoreScope::Write]
+                        .into_iter()
+                        .collect(),
+                    false,
+                )
+            }),
+        )
     }
 
     /// Whether this caller is a stale owner sign-in a booking door admitted
