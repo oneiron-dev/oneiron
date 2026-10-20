@@ -6586,18 +6586,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignDeliveryLink",
-      "EsignDeliveryMint"
+      "EsignDeliveryMint",
+      "EsignDeliveryWait"
      ],
      "path": "src/blob_artifact/esign/delivery_capability.rs",
      "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
-      "fn": 3,
+      "enum": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -6712,7 +6713,7 @@
      "purpose": "Claims are the document state machine",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -6812,7 +6813,7 @@
      "path": "src/blob_artifact/esign/notice_scope.rs",
      "purpose": "FIX 6220: a world-, facet- or record-scoped credential sends its own e-sign notices…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
