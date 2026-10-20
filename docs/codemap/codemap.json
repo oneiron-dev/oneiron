@@ -1434,7 +1434,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -18103,7 +18103,7 @@
      "path": "src/context_board/room_verbs/thread_readers.rs",
      "purpose": "A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -18845,11 +18845,32 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/conversation/deletion.rs",
+     "path": "src/conversation/deletion/mod.rs",
      "purpose": "Actor-bound room deletion and per-person erasure over the existing delete door",
      "surface": {
       "crate-vis": 7,
-      "fn": 3
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/deletion/private_thread.rs",
+     "purpose": "A private thread's delete by the vault's Owner or an Admin (owner ruling 2026-10-20, FIX 6381, 6382): \"The…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/deletion/record.rs",
+     "purpose": "A room record's delete as its author, or as a room owner or admin for policy: the gate it meets and the rail…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -38606,7 +38627,7 @@
      "path": "src/off_record/lifecycle/participant.rs",
      "purpose": "A run's session handle, bound to the participant it acts as (Codex burn engine-prs-01)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -38627,7 +38648,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -38950,13 +38971,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/office_body/pptx/doc.rs",
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/order.rs",
+     "purpose": "A movable list of identities (a body's paragraphs, a table's rows or columns): read in order, and made equal…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/table.rs",
+     "purpose": "A table frame's table in the body's `tables` root, keyed by the frame's identity (ARCH-0077: \"Movable lists…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -38978,6 +39019,16 @@
      "purpose": "The deck log's entries as the body keeps them (FIX 4513): each operation with the commit peer it ran under…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/merge.rs",
+     "purpose": "A deck fork's merge candidate as the body would hold it once landed: the head's document with the fork's own…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -57936,7 +57987,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1105
+      "fn": 1111
      }
     },
     {
@@ -62014,8 +62065,8 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 27,
-      "re-export": 20
+      "crate-vis": 28,
+      "re-export": 21
      }
     },
     {
@@ -62742,7 +62793,7 @@
      "path": "src/workspace_roster/rooms/audience_doors.rs",
      "purpose": "The doors that edit a private thread's audience (FIX 5545): an add and a remove, each one audience edit TURN…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "fn": 2,
       "struct": 3
      }
@@ -62776,7 +62827,7 @@
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 30,
       "enum": 1
      }
     },
@@ -62804,7 +62855,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ThreadNotice"
@@ -62812,7 +62863,7 @@
      "path": "src/workspace_roster/rooms/audience_notices.rs",
      "purpose": "What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1
      }
     },
@@ -62921,10 +62972,10 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 41,
       "enum": 2,
       "fn": 6,
-      "re-export": 16,
+      "re-export": 19,
       "struct": 6
      }
     },
@@ -63052,6 +63103,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PrivateThreadMetadata",
+      "RoomPrivateThreadsRequest"
+     ],
+     "path": "src/workspace_roster/rooms/private_threads.rs",
+     "purpose": "That a room's private threads exist (owner ruling 2026-10-20, FIX 6381, 6384; replaces FIX 6338): \"The Owner…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -63073,6 +63138,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "PrivateThreadDeleteReceipt",
+      "PrivateThreadDeleteRequest"
+     ],
+     "path": "src/workspace_roster/rooms/thread_delete.rs",
+     "purpose": "Deleting a private thread (owner ruling 2026-10-20, FIX 6381, 6382): the vault's Owner, or an Admin while…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "RoomMessagesRequest"
      ],
      "path": "src/workspace_roster/rooms/thread_history.rs",
@@ -63080,6 +63160,24 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ThreadJoinDecisionRequest",
+      "ThreadJoinRequest",
+      "ThreadJoinRequestState",
+      "ThreadJoinRequestView",
+      "ThreadJoinRequestsRequest"
+     ],
+     "path": "src/workspace_roster/rooms/thread_join.rs",
+     "purpose": "Asking to join a private thread (owner ruling 2026-10-20, FIX 6381, 6384): the Owner and Admins may \"ASK to…",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 4
      }
     },
     {
@@ -65003,7 +65101,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65486,7 +65584,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 16,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66109,7 +66207,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 107,
+     "files": 110,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66130,9 +66228,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 189,
+   "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4127,
+   "source_files": 4135,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71673,6 +71771,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/table.rs",
+     "purpose": "A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71689,7 +71797,17 @@
      "path": "src/live/held.rs",
      "purpose": "What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/held/table.rs",
+     "purpose": "A retained table as the live model reads it (ARCH-0077: a table keeps its `a:tbl`, `a:tblGrid`, row heights…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -71909,14 +72027,55 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 9,
-      "fn": 32,
+      "fn": 29,
+      "re-export": 2,
       "struct": 24
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/pptx/merge.rs",
+     "purpose": "The three-way comparison of a fork's base, the head and its proposal, and the merge preflight over the…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MergeFault",
+      "TableBinding",
+      "TableBody",
+      "TableEdit",
+      "TableMerge"
+     ],
+     "path": "src/live/pptx/table.rs",
+     "purpose": "A live table (ARCH-0077, \"One deck, one document\": \"Movable lists of stable ids",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/pptx/table_ops.rs",
+     "purpose": "Table edits applied by identity; a whole table written over the table a node holds lowered to the edits that…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/live/reshape.rs",
@@ -71931,6 +72090,16 @@
      "notable": [],
      "path": "src/live/reshape/series.rs",
      "purpose": "A new series' format (OF-510, FIX 3493)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/table.rs",
+     "purpose": "A written table's grid rewritten at export by row and column identity (OF-510)",
      "surface": {
       "crate-vis": 1
      }
@@ -72403,7 +72572,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 27,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72468,7 +72637,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 100,
+   "source_files": 106,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -75323,7 +75492,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1076
+      "fn": 1082
      }
     },
     {
@@ -76537,7 +76706,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1077
+      "fn": 1083
      }
     },
     {
@@ -83815,7 +83984,7 @@
      "path": "src/commands/api.rs",
      "purpose": "`oneiron api …` — the bash/curl lane of the packaging ladder",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -84194,9 +84363,19 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/serve/hooks.rs",
+     "purpose": "The vault's one hook sandbox and the fact-hook runner that runs on it, for plain and managed serve",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -86277,7 +86456,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -87597,7 +87776,7 @@
      "path": "src/owner/backup/custody.rs",
      "purpose": "Custody heads beside the backups (KS-4A1/KS-4A2, FIX 5685)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -87608,6 +87787,16 @@
      "purpose": "The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/custody/anchor_credentials.rs",
+     "purpose": "The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -89575,7 +89764,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -89834,7 +90023,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -89955,7 +90144,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 904,
+   "source_files": 906,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -92534,6 +92723,9 @@
       "PriorOrigin",
       "PriorRung",
       "PriorSeed",
+      "PrivateThreadDeleteReceipt",
+      "PrivateThreadDeleteRequest",
+      "PrivateThreadMetadata",
       "ProbeRequest",
       "ProductivityCreateRequest",
       "ProductivityCreateRole",
@@ -92904,6 +93096,7 @@
       "RoomMessagesRequest",
       "RoomOriginCard",
       "RoomPage",
+      "RoomPrivateThreadsRequest",
       "RoomQuote",
       "RoomRefRequest",
       "RoomRequest",
@@ -93456,6 +93649,9 @@
       "SupportHolderClass",
       "TabSwitch",
       "TabSwitchCause",
+      "TableBody",
+      "TableEdit",
+      "TableMerge",
       "TaggedMentionView",
       "TaggingFailureView",
       "TaggingHistoryView",
@@ -93573,6 +93769,11 @@
       "ThreadAudienceReceipt",
       "ThreadAudienceRemoveRequest",
       "ThreadEntryAtom",
+      "ThreadJoinDecisionRequest",
+      "ThreadJoinRequest",
+      "ThreadJoinRequestState",
+      "ThreadJoinRequestView",
+      "ThreadJoinRequestsRequest",
       "ThreadMaskView",
       "ThreadPassportLookup",
       "ThreadPassportRequest",
@@ -93818,8 +94019,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 881,
-      "struct": 2781
+      "enum": 883,
+      "struct": 2791
      }
     },
     {

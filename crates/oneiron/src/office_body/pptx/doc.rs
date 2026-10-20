@@ -11,8 +11,9 @@
 //! and shapes below them; sibling position is the only order, and the model
 //! root is implicit. Each tree node's meta map holds its model identity (`id`,
 //! decimal, kept apart from the Loro handle), its kind, name, binding,
-//! placeholder, its preset and payload, and one key per
-//! geometry field, so concurrent writes of different fields merge. Root `texts` maps a text shape's identity to its
+//! placeholder, its preset and payload (a table's in root `tables`, see
+//! [`table`]), and one key per geometry field, so concurrent writes of
+//! different fields merge. Root `texts` maps a text shape's identity to its
 //! body: `order`, a movable list of paragraph identities, and `paras`, each
 //! paragraph's level and one rich text whose run formatting rides as marks,
 //! one mark key per run property, each written only where it changed.
@@ -25,6 +26,9 @@
 //! deck with the fewest container writes, so an edit read against an older
 //! frontier merges with the head unit by unit.
 
+mod order;
+mod table;
+
 use super::{invalid, live, log::LoggedOp};
 use crate::error::{Error, Result};
 use loro::{
@@ -34,8 +38,8 @@ use loro::{
 };
 use oneiron_docedit::edit::transaction::IdMarks;
 use oneiron_docedit::live::{
-    DeckNode, DeckOp, GeometryProps, LiveDeck, LiveError, NodeId, NodeKind, Paragraph, Run,
-    TextBody,
+    DeckNode, DeckOp, GeometryProps, LiveDeck, LiveError, NodeId, NodeKind, NodePayload, Paragraph,
+    Run, TextBody,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -45,6 +49,7 @@ const OFFICE: &str = "office";
 const ALLOC: &str = "alloc";
 const TREE: &str = "tree";
 const TEXTS: &str = "texts";
+const TABLES: &str = "tables";
 const OPAQUE: &str = "opaque";
 const LOG: &str = "log";
 const LANDED: &str = "landed";
@@ -141,10 +146,18 @@ pub(super) fn read(doc: &LoroDoc) -> Result<Body> {
 
     let mut nodes = BTreeMap::from([(NodeId(0), root())]);
     let tree = doc.get_tree(TREE);
+    let tables = doc.get_map(TABLES);
     let mut stack = vec![(TreeParentId::Root, NodeId(0), NodeKind::Root)];
     while let Some((parent, parent_id, parent_kind)) = stack.pop() {
         for handle in tree.children(parent).unwrap_or_default() {
-            let (id, node) = node_of(&tree.get_meta(handle).map_err(loro)?, parent_id)?;
+            let (id, node) = node_of(&tree.get_meta(handle).map_err(loro)?, parent_id, &tables)?;
+            // A table concurrent deletes left no row or column is gone, as
+            // PowerPoint deletes a table whose last row or column goes.
+            if matches!(&node.payload, Some(NodePayload::Table(table))
+                if table.rows.is_empty() || table.columns.is_empty())
+            {
+                continue;
+            }
             if !parent_kind.holds(node.kind) {
                 return Err(live(LiveError::TreeShape(
                     "the merged deck puts a node under a parent that cannot hold it",
@@ -212,6 +225,7 @@ pub(super) fn sync_to(doc: &LoroDoc, target: &LiveDeck) -> Result<()> {
     sync_alloc(doc, target)?;
     sync_tree(&doc.get_tree(TREE), target)?;
     sync_texts(&doc.get_map(TEXTS), target)?;
+    table::sync(&doc.get_map(TABLES), target)?;
     let opaque = doc.get_map(OPAQUE);
     for part in keys(&opaque) {
         if !target.opaque_parts.contains_key(&part) {
@@ -401,7 +415,10 @@ fn sync_meta(meta: &LoroMap, id: NodeId, node: &DeckNode) -> Result<()> {
     put_json(meta, BINDING, &node.binding)?;
     put_json(meta, PLACEHOLDER, &node.placeholder)?;
     put_json(meta, PRESET, &node.preset)?;
-    put_json(meta, PAYLOAD, &node.payload)?;
+    match &node.payload {
+        Some(NodePayload::Table(_)) => put(meta, PAYLOAD, table::MARK.to_owned())?,
+        payload => put_json(meta, PAYLOAD, payload)?,
+    }
     put_json(meta, OFFSET, &node.geometry.offset)?;
     put_json(meta, EXTENT, &node.geometry.extent)?;
     put_json(meta, ROTATION, &node.geometry.rotation)?;
@@ -425,31 +442,7 @@ fn sync_texts(map: &LoroMap, target: &LiveDeck) -> Result<()> {
             .map(|paragraph| paragraph.id.0.to_string())
             .collect();
         let keep: BTreeSet<&str> = wanted.iter().map(String::as_str).collect();
-        // Drop what the body no longer holds and any repeat, keeping the
-        // first; what is left is placed in target order.
-        let held = paragraph_ids(&order)?;
-        for (index, id) in held.iter().enumerate().rev() {
-            if !keep.contains(id.as_str()) || held[..index].contains(id) {
-                order.delete(index, 1).map_err(loro)?;
-            }
-        }
-        let mut held = paragraph_ids(&order)?;
-        for (index, id) in wanted.iter().enumerate() {
-            if held.get(index) == Some(id) {
-                continue;
-            }
-            match held.iter().position(|other| other == id) {
-                Some(from) => {
-                    order.mov(from, index).map_err(loro)?;
-                    let moved = held.remove(from);
-                    held.insert(index, moved);
-                }
-                None => {
-                    order.insert(index, id.as_str()).map_err(loro)?;
-                    held.insert(index, id.clone());
-                }
-            }
-        }
+        order::sync(&order, &wanted)?;
         for key in keys(&paras) {
             if !keep.contains(key.as_str()) {
                 paras.delete(&key).map_err(loro)?;
@@ -587,9 +580,16 @@ fn root() -> DeckNode {
     }
 }
 
-fn node_of(meta: &LoroMap, parent: NodeId) -> Result<(NodeId, DeckNode)> {
+/// A tree node's model identity and node; a table frame's table is its
+/// `tables` entry.
+fn node_of(meta: &LoroMap, parent: NodeId, tables: &LoroMap) -> Result<(NodeId, DeckNode)> {
+    let id = identity(meta)?;
+    let payload = match string(meta, PAYLOAD).as_deref() {
+        Some(table::MARK) => Some(NodePayload::Table(table::read(tables, id)?)),
+        _ => json(meta, PAYLOAD)?,
+    };
     Ok((
-        identity(meta)?,
+        id,
         DeckNode {
             kind: json(meta, KIND)?,
             parent: Some(parent),
@@ -605,7 +605,7 @@ fn node_of(meta: &LoroMap, parent: NodeId) -> Result<(NodeId, DeckNode)> {
             },
             placeholder: json(meta, PLACEHOLDER)?,
             preset: json(meta, PRESET)?,
-            payload: json(meta, PAYLOAD)?,
+            payload,
         },
     ))
 }
@@ -633,7 +633,7 @@ fn text_body(entry: &LoroMap) -> Result<TextBody> {
     };
     let mut seen = BTreeSet::new();
     let mut paragraphs = Vec::new();
-    for key in paragraph_ids(&order)? {
+    for key in order::ids(&order)? {
         if !seen.insert(key.clone()) {
             return Err(invalid("a paragraph appears twice in its body"));
         }
@@ -724,15 +724,6 @@ fn flag(value: Option<&LoroValue>) -> Result<Option<bool>> {
         Some(LoroValue::Bool(value)) => Ok(Some(*value)),
         Some(_) => Err(invalid("deck run flag mark")),
     }
-}
-
-fn paragraph_ids(order: &LoroMovableList) -> Result<Vec<String>> {
-    (0..order.len())
-        .map(|index| match order.get(index) {
-            Some(ValueOrContainer::Value(LoroValue::String(id))) => Ok(id.to_string()),
-            _ => Err(invalid("deck paragraph order entry")),
-        })
-        .collect()
 }
 
 /// A JSON list's entries, in list order.

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1076 facade rows, 3662 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1028.
+// UniFFI census: 1082 facade rows, 3674 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1034.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -38726,6 +38726,113 @@ pub struct ThreadAudienceRemoveRequest {
     pub person_ref: String,
 }
 
+/// `oneiron::workspace_roster::rooms::private_threads::RoomPrivateThreadsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPrivateThreadsRequest {
+    #[serde(rename = "room_ref")]
+    pub room_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::private_threads::PrivateThreadMetadata`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateThreadMetadata {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "creator", default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "last_active_at")]
+    pub last_active_at: u64,
+    #[serde(rename = "member_count")]
+    pub member_count: u64,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_delete::PrivateThreadDeleteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateThreadDeleteRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_delete::PrivateThreadDeleteReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateThreadDeleteReceipt {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "existed")]
+    pub existed: bool,
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequestState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ThreadJoinRequestState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "denied")]
+    Denied,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequestView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinRequestView {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "request_ref")]
+    pub request_ref: String,
+    #[serde(rename = "requester_ref")]
+    pub requester_ref: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "state")]
+    pub state: ThreadJoinRequestState,
+    #[serde(
+        rename = "decision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decision_ref: Option<String>,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequestsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinRequestsRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinDecisionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinDecisionRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "request_ref")]
+    pub request_ref: String,
+}
+
 /// `oneiron::genui::project_proposal::ProjectGoalDraft`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -48416,6 +48523,32 @@ pub struct HeldMedia {
     pub hash: String,
 }
 
+/// `oneiron_docedit::live::pptx::table::TableMerge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TableMerge {
+    #[serde(rename = "first_row")]
+    pub first_row: u64,
+    #[serde(rename = "first_column")]
+    pub first_column: u64,
+    #[serde(rename = "last_row")]
+    pub last_row: u64,
+    #[serde(rename = "last_column")]
+    pub last_column: u64,
+}
+
+/// `oneiron_docedit::live::pptx::table::TableBody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TableBody {
+    #[serde(rename = "rows")]
+    pub rows: Vec<u64>,
+    #[serde(rename = "columns")]
+    pub columns: Vec<u64>,
+    #[serde(rename = "cells", default, skip_serializing_if = "Option::is_none")]
+    pub cells: Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
+    #[serde(rename = "merges", default, skip_serializing_if = "Option::is_none")]
+    pub merges: Option<Vec<TableMerge>>,
+}
+
 /// `oneiron_docedit::live::pptx::ChartKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChartKind {
@@ -48603,12 +48736,7 @@ pub enum NodePayload {
         media: HeldMedia,
     },
     #[serde(rename = "table")]
-    Table {
-        #[serde(rename = "header")]
-        header: Vec<String>,
-        #[serde(rename = "rows")]
-        rows: Vec<Vec<Option<String>>>,
-    },
+    Table(TableBody),
     #[serde(rename = "chart")]
     Chart {
         #[serde(rename = "family")]
@@ -49000,6 +49128,62 @@ pub enum XlsxBodyOp {
     },
 }
 
+/// `oneiron_docedit::live::pptx::table::TableEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TableEdit {
+    #[serde(rename = "insert_row")]
+    InsertRow {
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "insert_column")]
+    InsertColumn {
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "delete_row")]
+    DeleteRow {
+        #[serde(rename = "row")]
+        row: u64,
+    },
+    #[serde(rename = "delete_column")]
+    DeleteColumn {
+        #[serde(rename = "column")]
+        column: u64,
+    },
+    #[serde(rename = "move_row")]
+    MoveRow {
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "move_column")]
+    MoveColumn {
+        #[serde(rename = "column")]
+        column: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "set_cell")]
+    SetCell {
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "column")]
+        column: u64,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "merge")]
+    Merge(TableMerge),
+    #[serde(rename = "unmerge")]
+    Unmerge(TableMerge),
+}
+
 /// `oneiron_docedit::live::pptx::DeckOp`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeckOp {
@@ -49075,6 +49259,13 @@ pub enum DeckOp {
         node: u64,
         #[serde(rename = "payload")]
         payload: NodePayload,
+    },
+    #[serde(rename = "edit_table")]
+    EditTable {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "edits")]
+        edits: Vec<TableEdit>,
     },
     #[serde(rename = "replace_opaque")]
     ReplaceOpaque {
@@ -49731,6 +49922,15 @@ pub enum Conflict {
     PayloadVsPayload {
         #[serde(rename = "node")]
         node: u64,
+    },
+    #[serde(rename = "cell_vs_cell")]
+    CellVsCell {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "column")]
+        column: u64,
     },
 }
 

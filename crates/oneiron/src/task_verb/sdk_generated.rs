@@ -3893,6 +3893,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.rooms.private_threads",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::RoomPrivateThreadsRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.thread_delete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::PrivateThreadDeleteRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.thread_join.request",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadJoinRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.thread_join.requests",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadJoinRequestsRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.thread_join.approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadJoinDecisionRequest,
+                >(),
+            ),
+            (
+                "vault.rooms.thread_join.deny",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadJoinDecisionRequest,
+                >(),
+            ),
+            (
                 "vault.projects.propose",
                 crate::code_run::vault_read::request_schema::<
                     crate::workspace_roster::ProjectProposalRequest,
@@ -14023,6 +14059,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.private_threads" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.thread_delete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.thread_join.request" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.thread_join.requests" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.thread_join.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.rooms.thread_join.deny" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.projects.propose" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18974,6 +19052,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::workspace_roster::ThreadAudienceRemoveRequest =
                 decode(value.clone())?;
         }
+        "vault.rooms.private_threads" => {
+            let _input: crate::workspace_roster::RoomPrivateThreadsRequest = decode(value.clone())?;
+        }
+        "vault.rooms.thread_delete" => {
+            let _input: crate::workspace_roster::PrivateThreadDeleteRequest =
+                decode(value.clone())?;
+        }
+        "vault.rooms.thread_join.request" => {
+            let _input: crate::workspace_roster::ThreadJoinRequest = decode(value.clone())?;
+        }
+        "vault.rooms.thread_join.requests" => {
+            let _input: crate::workspace_roster::ThreadJoinRequestsRequest = decode(value.clone())?;
+        }
+        "vault.rooms.thread_join.approve" => {
+            let _input: crate::workspace_roster::ThreadJoinDecisionRequest = decode(value.clone())?;
+        }
+        "vault.rooms.thread_join.deny" => {
+            let _input: crate::workspace_roster::ThreadJoinDecisionRequest = decode(value.clone())?;
+        }
         "vault.projects.propose" => {
             let _input: crate::workspace_roster::ProjectProposalRequest = decode(value.clone())?;
         }
@@ -21713,6 +21810,22 @@ pub fn invoke(
         ),
         "vault.rooms.thread_audience.remove" => {
             encode(vault_rooms_thread_audience_remove(memory, decode(value)?)?)
+        }
+        "vault.rooms.private_threads" => {
+            encode(vault_rooms_private_threads(memory, decode(value)?)?)
+        }
+        "vault.rooms.thread_delete" => encode(vault_rooms_thread_delete(memory, decode(value)?)?),
+        "vault.rooms.thread_join.request" => {
+            encode(vault_rooms_thread_join_request(memory, decode(value)?)?)
+        }
+        "vault.rooms.thread_join.requests" => {
+            encode(vault_rooms_thread_join_requests(memory, decode(value)?)?)
+        }
+        "vault.rooms.thread_join.approve" => {
+            encode(vault_rooms_thread_join_approve(memory, decode(value)?)?)
+        }
+        "vault.rooms.thread_join.deny" => {
+            encode(vault_rooms_thread_join_deny(memory, decode(value)?)?)
         }
         "vault.projects.propose" => encode(vault_projects_propose(memory, decode(value)?)?),
         "vault.projects.proposals" => encode(vault_projects_proposals(memory, decode(value)?)?),
@@ -28519,6 +28632,42 @@ pub fn vault_rooms_thread_audience_remove(
     input: crate::workspace_roster::ThreadAudienceRemoveRequest,
 ) -> MemoryResult<crate::workspace_roster::ThreadAudienceReceipt> {
     memory.rooms_thread_audience_remove(&input)
+}
+pub fn vault_rooms_private_threads(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::RoomPrivateThreadsRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::PrivateThreadMetadata>> {
+    memory.rooms_private_threads(&input)
+}
+pub fn vault_rooms_thread_delete(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::PrivateThreadDeleteRequest,
+) -> MemoryResult<crate::workspace_roster::PrivateThreadDeleteReceipt> {
+    memory.rooms_thread_delete(&input)
+}
+pub fn vault_rooms_thread_join_request(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadJoinRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadJoinRequestView> {
+    memory.rooms_thread_join_request(&input)
+}
+pub fn vault_rooms_thread_join_requests(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadJoinRequestsRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::ThreadJoinRequestView>> {
+    memory.rooms_thread_join_requests(&input)
+}
+pub fn vault_rooms_thread_join_approve(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadJoinDecisionRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadJoinRequestView> {
+    memory.rooms_thread_join_approve(&input)
+}
+pub fn vault_rooms_thread_join_deny(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadJoinDecisionRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadJoinRequestView> {
+    memory.rooms_thread_join_deny(&input)
 }
 pub fn vault_projects_propose(
     memory: &Memory<'_>,

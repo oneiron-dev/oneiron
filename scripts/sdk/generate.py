@@ -166,6 +166,17 @@ for row in ROWS:
     # unrecorded.
     if row.get('no_record') and (row.get('context', 'memory') != 'memory' or not row.get('host_door')):
         raise ValueError(f'{row["name"]}: only a host-door facade row keeps no call receipt')
+    # FIX 6498: `require_granted_scope` marks a write whose engine door judges
+    # the credential's own read lane in every snapshot it reads and writes, so
+    # its facade head checks the grant alone and its lane guard
+    # (`lane_record_scope`) keeps refusing a channel caveat: a world-, facet-
+    # or record-scoped credential reaches it over HTTP as over MCP.
+    admission = row.get('admission', {})
+    if admission.get('require_granted_scope') and (
+            not admission.get('lane_record_scope') or row.get('scope') == 'Read'
+            or row.get('host_door') or row.get('context', 'memory') != 'memory'
+            or any(admission.get(other) for other in ('owner_grade', 'claim_record_scope', 'credential_record_scope', 'scoped_export', 'born_record_scope'))):
+        raise ValueError(f'{row["name"]}: require_granted_scope is only a non-Read lane_record_scope facade row\'s, with no other record-scope admission and no host door')
 # OF-063: `refs` lists a row's typed record-ref slots as JSON pointers into its
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
@@ -1484,8 +1495,10 @@ def facade_dispatch(facade_rows):
         if r.get('lands_turn'):
             landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
-        # left to check.
-        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') or r.get('admission', {}).get('claim_record_scope') else 'require'
+        # left to check; so does a lane door whose engine door judges the
+        # credential's lane in each snapshot (`require_granted_scope`).
+        require = 'require_granted' if (r.get('admission', {}).get('born_record_scope') or r.get('admission', {}).get('claim_record_scope')
+                                        or r.get('admission', {}).get('require_granted_scope')) else 'require'
         head += f'''auth.{require}(CoreScope::{r["scope"]})?;
         {record_scope_guard(r)}
         let value = input?;\n'''

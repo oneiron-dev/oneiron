@@ -1087,6 +1087,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         dek: host.secret("dek")?.as_slice().try_into()?,
         token: host.secret("spawn_token")?.as_slice().try_into()?,
     };
+    // So is the custody anchor door's credential, on its own pipe when the
+    // supervisor hands one: never the environment (FIX 5788).
+    let anchor = host.custody_anchor_credentials()?;
     let mut vault_config = config.vault_config();
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export
@@ -1147,7 +1150,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     // The owner's backups and restore rehearsals, on the tenant's own disk
     // beside the data directory, as plain serve keeps them beside its vault.
-    let owner_host = super::owner_storage::owner_host(&config, rehearsal_config, &managed);
+    let owner_host = super::owner_storage::owner_host(&config, rehearsal_config, &managed, anchor);
     // A direct `[linear]` mirror's response custody, private beside them.
     super::owner_storage::linear_responses(&config);
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes

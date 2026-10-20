@@ -847,7 +847,7 @@ async fn self_inbox_mark(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
+    auth.require_granted(CoreScope::Write)?;
     auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
@@ -22198,6 +22198,140 @@ async fn vault_rooms_thread_audience_remove(
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_private_threads(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.private_threads",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_thread_delete(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_delete",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_thread_join_request(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_join.request",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_thread_join_requests(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_join.requests",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_thread_join_approve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_join.approve",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_rooms_thread_join_deny(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_join.deny",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_projects_propose(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -27603,7 +27737,7 @@ async fn vault_esign_notices_dispatch(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
+    auth.require_granted(CoreScope::Write)?;
     auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
@@ -34585,6 +34719,18 @@ pub(crate) async fn call_verb(
         "vault.rooms.thread_audience.remove" => {
             vault_rooms_thread_audience_remove(server, call, input).await
         }
+        "vault.rooms.private_threads" => vault_rooms_private_threads(server, call, input).await,
+        "vault.rooms.thread_delete" => vault_rooms_thread_delete(server, call, input).await,
+        "vault.rooms.thread_join.request" => {
+            vault_rooms_thread_join_request(server, call, input).await
+        }
+        "vault.rooms.thread_join.requests" => {
+            vault_rooms_thread_join_requests(server, call, input).await
+        }
+        "vault.rooms.thread_join.approve" => {
+            vault_rooms_thread_join_approve(server, call, input).await
+        }
+        "vault.rooms.thread_join.deny" => vault_rooms_thread_join_deny(server, call, input).await,
         "vault.projects.propose" => vault_projects_propose(server, call, input).await,
         "vault.projects.proposals" => vault_projects_proposals(server, call, input).await,
         "vault.projects.dismiss_card" => vault_projects_dismiss_card(server, call, input).await,

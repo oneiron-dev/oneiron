@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff", "crates/loro", "crates/loro/vendor/loro-1.16.2", "crates/loro/vendor/loro-internal-1.16.2"]
 
 # Limited debug information keeps file/line backtraces while reducing build CPU,
 # peak memory and target size. Tests inherit this profile. For debugger locals:
@@ -119,6 +119,8 @@ too_many_lines = "deny"
 [patch.crates-io]
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
 paste = { path = "crates/paste/vendor/paste-1.0.15" }
+loro = { path = "crates/loro/vendor/loro-1.16.2" }
+loro-internal = { path = "crates/loro/vendor/loro-internal-1.16.2" }
 # Match .cargo/config.toml: trybuild copies manifest patches into its external
 # offline workspace, but does not copy the checkout's Cargo configuration.
 pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
