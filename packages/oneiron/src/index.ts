@@ -2082,7 +2082,7 @@ export class Oneiron {
         set: (input: Facade.AgentDreamingSetRequest): Facade.AgentDreamingView => this.#call(() => this.#client.vaultAgentsDreamingSet(input) as Facade.AgentDreamingView),
       },
       grants: {
-        /** The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant. */
+        /** The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant. */
         mint: (input: Facade.AgentGrantMintRequest): Facade.AgentGrantMinted => this.#call(() => this.#client.vaultAgentsGrantsMint(input) as Facade.AgentGrantMinted),
         /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
         revoke: (input: Facade.AgentGrantRevokeRequest): Facade.AgentGrantRevoked => this.#call(() => this.#client.vaultAgentsGrantsRevoke(input) as Facade.AgentGrantRevoked),

@@ -47,8 +47,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/world_privacy.rs` | src | s | 2 struct · 4 enum · 3 fn · 3 const · 2 crate-vis | ModelOrder, PrivacyDirection, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
-| `src/federation/mod.rs` | src | s | 5 mod · 2 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
+| `src/federation/mod.rs` | src | s | 6 mod · 3 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
 | `src/federation/pact_scope.rs` | src | m | 4 struct · 17 fn · 1 const · 1 re-export | Ceiling, FederationDirectionScope, FederationPactScope, Position | Pact direction scope: the worlds, facets and bands axes as `ScopeAxis` lattices, and their one canonical codec |
+| `src/federation/repo_scope.rs` | src | m | 2 struct · 2 enum · 10 fn · 2 const | RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget | Repo access bounds on an owner's agent Grant, and the pure admission of a repo target under them (FIX 6867… |
 | `src/federation/scope.rs` | src | m | 2 struct · 3 enum · 1 trait · 13 fn | Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling | One Scope: six-axis audience lattice with explicit bottom on every wire axis |
 | `src/federation/scope_codec.rs` | src | s | 5 fn | — | Canonical MessagePack bridge for six-axis Scope positions and grant presets |
 | `src/federation/selector_kind.rs` | src | s | 1 enum · 6 fn | SelectorRange | Replication vocabulary keyed on declared classification and family, never byte ranges |
