@@ -163,6 +163,27 @@ impl GitWire<'_> {
         self.run_at(&repo.repo_root, argv)
     }
 
+    /// Runs a read whose failure comes back classified rather than as an
+    /// error, so a caller can tell a call that passed its output or runtime
+    /// bound from a broken read. The same refusals as [`run_read`] apply.
+    ///
+    /// [`run_read`]: Self::run_read
+    pub(super) fn run_read_classified(
+        &self,
+        repo: &GitWireRepo,
+        argv: &FrozenGitArgv,
+    ) -> Result<std::result::Result<GitWireProcessOutput, GitWireFailure>> {
+        if !argv.operation().effect_class().is_read() {
+            return Err(invalid("git wire read phase refuses a mutating operation"));
+        }
+        self.validate_repo_binding(repo)?;
+        let output = self.run_raw_at(&repo.repo_root, argv)?;
+        if output.success {
+            return Ok(Ok(output));
+        }
+        Ok(Err(classify_failure(&output)))
+    }
+
     /// Runs a mutation. A read is refused here in the same way, so a read can
     /// never be laundered into a durable mutation record.
     pub(super) fn run_mutation(

@@ -180,6 +180,12 @@ side_tables! {
     /// Crash-recoverable heartbeat journal (oid32+timestamp8, 40 bytes) for one in-progress streamed
     /// LFS upload. Key: id16.
     ORIGIN_LFS_UPLOAD_JOURNAL: VaultMeta b"origin:lfs:upload:v1:" Raw;
+    /// The last finished Git-LFS census of one repository's mirror pushes (FIX
+    /// 6331): the tips it walked, the commit each peels to, every LFS object
+    /// under them in the order met, and whether the history needed pages. A
+    /// cache: a miss walks the whole history again. Runtime-tier. Key: id16
+    /// (repo id).
+    ORIGIN_MIRROR_LFS_CENSUS: VaultMeta b"origin:mirror_lfs_census:v1:" Named;
     /// The owner's outbound mirror of one served repository: its https URL, the custody record of
     /// its push token, the cadence and the last push. Key: id16 (repo id).
     ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named;

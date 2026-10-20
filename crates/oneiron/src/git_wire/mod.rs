@@ -64,6 +64,7 @@ pub use self::ids::{GitOid, GitRefExpectation, GitRefName, GitRefPublication, Ob
 pub use self::objects::{GitCommitHeader, GitCommitRequest, GitTreeEntry};
 pub use self::operation::{GitWireEffectClass, GitWireOperation};
 pub use self::plan::{GitWireObjectWrite, GitWirePlan, GitWirePlannedOid};
+pub use self::reachable_blobs::GitPeeledTip;
 pub use self::record::{
     GitWireCommitOutcome, GitWirePrepared, GitWireReceipt, GitWireRecordState, GitWireRejection,
 };

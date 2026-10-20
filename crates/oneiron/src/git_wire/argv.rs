@@ -96,7 +96,14 @@ impl FrozenGitArgv {
     /// tips' whole history reaches, and each smaller blob, once. A missing
     /// object prints with a `?` prefix. Stdin carries the tips, so no ref
     /// count is bounded by argv.
-    pub(super) fn reachable_objects_below(tips: &[GitOid], below_bytes: u64) -> Self {
+    ///
+    /// `exclude` goes on stdin as `^<oid>` lines: git walks none of the
+    /// commits they reach, and lists none of the objects their trees reach.
+    pub(super) fn reachable_objects_below(
+        tips: &[GitOid],
+        exclude: &[GitOid],
+        below_bytes: u64,
+    ) -> Self {
         let mut tail = os_args(&[
             "rev-list",
             "--objects",
@@ -105,12 +112,42 @@ impl FrozenGitArgv {
         ]);
         tail.push(OsString::from(format!("--filter=blob:limit={below_bytes}")));
         tail.push(OsString::from("--stdin"));
+        Self::frozen(GitWireOperation::ReachableObjects, tail)
+            .with_stdin(revision_lines(tips, exclude))
+    }
+
+    /// `rev-list --topo-order --parents --max-count=<count> --stdin`: up to
+    /// `count` of the commits the tips on stdin reach and the `^<oid>` lines
+    /// do not, each before its parents, each line the commit then its
+    /// parents.
+    pub(super) fn commit_page(tips: &[GitOid], exclude: &[GitOid], count: usize) -> Self {
+        let mut tail = os_args(&["rev-list", "--topo-order", "--parents"]);
+        tail.push(OsString::from(format!("--max-count={count}")));
+        tail.push(OsString::from("--stdin"));
+        Self::frozen(GitWireOperation::ReachableObjects, tail)
+            .with_stdin(revision_lines(tips, exclude))
+    }
+
+    /// `rev-list --max-count=1 --stdin`: one commit that `commits` reach and
+    /// `tips` do not, or nothing at all.
+    pub(super) fn commits_outside(commits: &[GitOid], tips: &[GitOid]) -> Self {
+        let tail = os_args(&["rev-list", "--max-count=1", "--stdin"]);
+        Self::frozen(GitWireOperation::ReachableObjects, tail)
+            .with_stdin(revision_lines(commits, tips))
+    }
+
+    /// `cat-file --batch-check` over `<oid><peel>` names on stdin, `peel`
+    /// being `^{}` (through every tag) or `^{tree}`: per name, the object
+    /// it peels to as `<oid> <type> <size>`, or `<name> missing`.
+    pub(super) fn object_info_peeled(oids: &[GitOid], peel: &str) -> Self {
+        let tail = os_args(&["cat-file", "--batch-check", "--buffer"]);
         let mut payload = Vec::new();
-        for oid in tips {
+        for oid in oids {
             payload.extend_from_slice(oid.as_str().as_bytes());
+            payload.extend_from_slice(peel.as_bytes());
             payload.push(b'\n');
         }
-        Self::frozen(GitWireOperation::ReachableObjects, tail).with_stdin(payload)
+        Self::frozen(GitWireOperation::ObjectInfo, tail).with_stdin(payload)
     }
 
     /// `cat-file --batch` over oids on stdin: per object a `<oid> <type>
@@ -312,6 +349,22 @@ impl FrozenGitArgv {
             .as_ref()
             .map(|(path, commit)| (path.as_path(), commit))
     }
+}
+
+/// Stdin revisions for a `--stdin` walk: each of `include`, then each of
+/// `exclude` as `^<oid>`.
+fn revision_lines(include: &[GitOid], exclude: &[GitOid]) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for oid in include {
+        payload.extend_from_slice(oid.as_str().as_bytes());
+        payload.push(b'\n');
+    }
+    for oid in exclude {
+        payload.push(b'^');
+        payload.extend_from_slice(oid.as_str().as_bytes());
+        payload.push(b'\n');
+    }
+    payload
 }
 
 pub(super) fn os_args(args: &[&str]) -> Vec<OsString> {

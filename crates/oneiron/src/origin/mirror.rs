@@ -21,15 +21,14 @@
 //! vault (ARCH-0068), and the push sends no Git-LFS bytes, so each run that
 //! lands records an [`OriginMirrorReadiness`]: `Ready` only when the pushed
 //! refs' whole history names no LFS object, else `NotReady`, naming the
-//! objects nothing has verified at the mirror. The census behind it never
-//! fails or holds back the push.
-
-use std::collections::HashSet;
+//! objects nothing has verified at the mirror. The census behind it
+//! (`mirror_census`) reads histories of any size in pages and never fails or
+//! holds back the push.
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::lfs::{LFS_POINTER_SIZE_CUTOFF, LfsOid, LfsPushedPointer};
+use super::mirror_census::LfsCensus;
 use super::publication::OriginPublicationStatus;
 use super::residence::OriginHostAuthority;
 use super::smart_http::origin_repo_dir;
@@ -248,6 +247,7 @@ impl Vault {
         repo_name: &str,
     ) -> Result<bool> {
         let repo_id = self.served_mirror_repo_id(repo_name)?;
+        self.clear_mirror_lfs_census_in_txn(txn, &repo_id)?;
         TARGETS.delete(&self.store, txn, &repo_id)
     }
 
@@ -444,7 +444,7 @@ impl Vault {
             },
         )?;
         pushed?;
-        let readiness = lfs_readiness(&wire, &handle, &refs);
+        let readiness = self.mirror_lfs_readiness(&wire, &handle, repo_id, &refs);
         let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
         let names = refs
             .iter()
@@ -516,71 +516,6 @@ impl Vault {
         }
         TARGETS.put(&self.store, txn, &repo_id, &row)?;
         Ok(())
-    }
-}
-
-/// The readiness of a mirror that took exactly `refs`: a census of every
-/// Git-LFS pointer their whole history reaches, each object once. A census
-/// that cannot finish is never ready, and never fails the push.
-fn lfs_readiness(
-    wire: &GitWire<'_>,
-    handle: &GitWireRepo,
-    refs: &[(GitRefName, GitOid)],
-) -> OriginMirrorReadiness {
-    let tips: Vec<GitOid> = refs.iter().map(|(_, oid)| oid.clone()).collect();
-    let mut census = LfsCensus::default();
-    let walked =
-        wire.for_each_reachable_blob_below(handle, &tips, LFS_POINTER_SIZE_CUTOFF, |_, bytes| {
-            if let Some(pointer) = LfsPushedPointer::from_pointer_content("", bytes) {
-                census.meet(pointer.oid, pointer.size_bytes);
-            }
-        });
-    let complete = walked.unwrap_or_else(|error| {
-        tracing::warn!(kind = ?error.kind(), "mirror LFS census did not finish");
-        false
-    });
-    census.readiness(complete)
-}
-
-/// The Git-LFS objects a census met: each once, the first
-/// [`ORIGIN_MIRROR_NAMED_LFS_OBJECTS`] by name and the rest counted.
-#[derive(Default)]
-struct LfsCensus {
-    seen: HashSet<LfsOid>,
-    named: Vec<OriginMirrorLfsObject>,
-    omitted: u64,
-}
-
-impl LfsCensus {
-    fn meet(&mut self, oid: LfsOid, size: u64) {
-        if !self.seen.insert(oid) {
-            return;
-        }
-        if self.named.len() < ORIGIN_MIRROR_NAMED_LFS_OBJECTS {
-            self.named.push(OriginMirrorLfsObject {
-                oid: oid.to_hex(),
-                size,
-            });
-        } else {
-            self.omitted = self.omitted.saturating_add(1);
-        }
-    }
-
-    /// Ready only over a finished census that met no object: nothing proves
-    /// an object at the mirror yet, so each one met leaves it not ready.
-    fn readiness(self, complete: bool) -> OriginMirrorReadiness {
-        let reason = if !complete {
-            OriginMirrorNotReadyReason::LfsInventoryIncomplete
-        } else if self.seen.is_empty() {
-            return OriginMirrorReadiness::Ready;
-        } else {
-            OriginMirrorNotReadyReason::LfsObjectsNotVerified
-        };
-        OriginMirrorReadiness::NotReady {
-            reason,
-            objects: self.named,
-            omitted_objects: self.omitted,
-        }
     }
 }
 
