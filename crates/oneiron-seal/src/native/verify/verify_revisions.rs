@@ -118,8 +118,7 @@ fn catalog_id(doc: &Document) -> Option<ObjectId> {
 }
 
 fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) -> bool {
-    let (Some(old_catalog), Some(new_catalog)) = (before.catalog().ok(), after.catalog().ok())
-    else {
+    let (Some(old_catalog), Some(new_catalog)) = (pdf::catalog(before), pdf::catalog(after)) else {
         return false;
     };
     if !preserves_trailer(before, after)
@@ -136,11 +135,7 @@ fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) ->
     {
         return false;
     }
-    let Some(dss) = after
-        .get_object(dss_ref)
-        .ok()
-        .and_then(|o| o.as_dict().ok())
-    else {
+    let Some(dss) = pdf::resolve_id(after, dss_ref).and_then(|o| o.as_dict().ok()) else {
         return false;
     };
     if !matches!(dss.get(b"Type"), Ok(Object::Name(n)) if n == b"DSS") {
@@ -160,11 +155,7 @@ fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) ->
         let Ok(value) = dss.get(key) else {
             continue;
         };
-        let Some(arr) = after
-            .dereference(value)
-            .ok()
-            .and_then(|(_, o)| o.as_array().ok())
-        else {
+        let Some(arr) = pdf::resolve(after, value).and_then(|o| o.as_array().ok()) else {
             return false;
         };
         if let Some(id) = ref_id(value) {
@@ -174,7 +165,7 @@ fn dss_allowed(before: &Document, after: &Document, ids: &BTreeSet<ObjectId>) ->
             let Some(id) = ref_id(entry) else {
                 return false;
             };
-            let Some(obj) = after.get_object(id).ok() else {
+            let Some(obj) = pdf::resolve_id(after, id) else {
                 return false;
             };
             let Object::Stream(stream) = obj else {
@@ -212,8 +203,7 @@ fn doc_timestamp_allowed(
     {
         return false;
     }
-    let (Some(old_catalog), Some(new_catalog)) = (before.catalog().ok(), after.catalog().ok())
-    else {
+    let (Some(old_catalog), Some(new_catalog)) = (pdf::catalog(before), pdf::catalog(after)) else {
         return false;
     };
     if !preserves_trailer(before, after)
@@ -224,18 +214,14 @@ fn doc_timestamp_allowed(
     let Some(af_obj) = new_catalog.get(b"AcroForm").ok() else {
         return false;
     };
-    let Some(af) = after
-        .dereference(af_obj)
-        .ok()
-        .and_then(|(_, o)| o.as_dict().ok())
-    else {
+    let Some(af) = pdf::resolve(after, af_obj).and_then(|o| o.as_dict().ok()) else {
         return false;
     };
     let Some(fields) = af
         .get(b"Fields")
         .ok()
-        .and_then(|o| after.dereference(o).ok())
-        .and_then(|(_, o)| o.as_array().ok())
+        .and_then(|o| pdf::resolve(after, o))
+        .and_then(|o| o.as_array().ok())
     else {
         return false;
     };
@@ -243,11 +229,7 @@ fn doc_timestamp_allowed(
         return false;
     };
     if let Ok(old_af_obj) = old_catalog.get(b"AcroForm") {
-        let Some(old_af) = before
-            .dereference(old_af_obj)
-            .ok()
-            .and_then(|(_, o)| o.as_dict().ok())
-        else {
+        let Some(old_af) = pdf::resolve(before, old_af_obj).and_then(|o| o.as_dict().ok()) else {
             return false;
         };
         if without(old_af, &[b"Fields", b"SigFlags"]) != without(af, &[b"Fields", b"SigFlags"]) {
@@ -256,8 +238,8 @@ fn doc_timestamp_allowed(
         let Some(old_fields) = old_af
             .get(b"Fields")
             .ok()
-            .and_then(|o| before.dereference(o).ok())
-            .and_then(|(_, o)| o.as_array().ok())
+            .and_then(|o| pdf::resolve(before, o))
+            .and_then(|o| o.as_array().ok())
         else {
             return false;
         };
@@ -267,11 +249,7 @@ fn doc_timestamp_allowed(
     } else if fields.len() != 1 {
         return false;
     }
-    let Some(field) = after
-        .get_object(last_field)
-        .ok()
-        .and_then(|o| o.as_dict().ok())
-    else {
+    let Some(field) = pdf::resolve_id(after, last_field).and_then(|o| o.as_dict().ok()) else {
         return false;
     };
     if field
@@ -284,7 +262,7 @@ fn doc_timestamp_allowed(
     let Some(ts_id) = field.get(b"V").ok().and_then(ref_id) else {
         return false;
     };
-    let Some(ts) = after.get_object(ts_id).ok().and_then(|o| o.as_dict().ok()) else {
+    let Some(ts) = pdf::resolve_id(after, ts_id).and_then(|o| o.as_dict().ok()) else {
         return false;
     };
     if ts.len() != 5
@@ -358,9 +336,7 @@ pub(super) fn classify(
                 SignatureKind::Signature => RevisionKind::Signature,
                 SignatureKind::DocumentTimestamp => RevisionKind::DocumentTimestamp,
             }
-        } else if doc
-            .catalog()
-            .ok()
+        } else if pdf::catalog(&doc)
             .and_then(|d| d.get(b"DSS").ok())
             .is_some()
         {

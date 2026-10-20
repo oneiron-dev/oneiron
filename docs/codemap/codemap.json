@@ -6108,7 +6108,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -6119,6 +6119,16 @@
      "purpose": "Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/text.rs",
+     "purpose": "A text's mask on write (OF-560): each span the door's text rules place, and each value custody already…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -6355,6 +6365,16 @@
       "enum": 1,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/checkpoint.rs",
+     "purpose": "The checkpoint getter of blob artifact versions (KS7-2): each artifact's head record and version records…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -7098,7 +7118,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
       "re-export": 10
      }
@@ -12388,7 +12408,7 @@
      "path": "src/code_document/mod.rs",
      "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -12433,8 +12453,18 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/storage/checkpoint.rs",
+     "purpose": "The checkpoint getter of code documents (KS7-2): each document's head, tested frontiers, path row and…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -12697,7 +12727,7 @@
      "path": "src/code_revision/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 5
      }
     },
@@ -12711,9 +12741,19 @@
      "path": "src/code_revision/promotion.rs",
      "purpose": "Session provenance claims and promotion guarded by verified revision history",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/promotion/checkpoint.rs",
+     "purpose": "The promotion receipts (KS7-2), each under the session of the revision it promoted",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -12726,10 +12766,20 @@
      "path": "src/code_revision/proposals.rs",
      "purpose": "Durable stranded revisions against the new head; reconciliation is explicit",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/proposals/checkpoint.rs",
+     "purpose": "The stranded revision proposals (KS7-2), each whole (its revision, folds and artifact body) under the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -12739,8 +12789,18 @@
      "path": "src/code_revision/storage.rs",
      "purpose": "Vault CRUD for code revisions and forks, plus record/index reads, writes and deletes",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_revision/storage/checkpoint.rs",
+     "purpose": "The checkpoint getter of code revisions (KS7-2): every revision row under the tree of the session it belongs…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -13495,21 +13555,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CapsuleContent",
       "CapsuleHost",
       "CapsuleRungBinding",
       "ExecutorStepStart",
       "ExposureKind",
       "ExposureSlot",
       "StepReplayCapsule",
+      "StoredSpan",
       "TaskExposure"
      ],
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
-      "crate-vis": 5,
-      "enum": 2,
-      "fn": 4,
-      "struct": 5
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 6,
+      "struct": 6
      }
     },
     {
@@ -13785,8 +13847,28 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 11,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/admit.rs",
+     "purpose": "A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/erase.rs",
+     "purpose": "The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -14958,7 +15040,7 @@
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -15019,6 +15101,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/codebase/store/checkpoint.rs",
+     "purpose": "The checkpoint getter of codebase snapshots (KS7-2): each snapshot's file manifest and its repo, project…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/codebase/store/index_rows.rs",
      "purpose": "—",
      "surface": {
@@ -15042,7 +15134,7 @@
      "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 9
      }
     },
@@ -19617,7 +19709,7 @@
      "path": "src/deletion/erase/markers.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -19627,7 +19719,7 @@
      "path": "src/deletion/erase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -19658,6 +19750,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/erase/scope_probes.rs",
+     "purpose": "One decision-ledger scan for a tombstone batch's missing-id probes (SCAN C049)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -19726,7 +19828,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 11
      }
     },
@@ -26274,7 +26376,7 @@
      "path": "src/failure_signals/code_fix/exact.rs",
      "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -30000,7 +30102,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4
      }
     },
@@ -37537,11 +37639,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/note/checkpoint/bundle.rs",
-     "purpose": "A NOTE review bundle (KS7-2), under the NOTE its waiting forks and landings name",
+     "purpose": "A NOTE review bundle (KS7-2), under the NOTEs its waiting forks and landings name",
      "surface": {
       "crate-vis": 2
      }
@@ -37561,9 +37663,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/note/citation_erase.rs",
-     "purpose": "Hard-erase dependency fences",
+     "purpose": "Citation scrubs of deleted sources: a delete's default mode and the hard-erase dependency fences",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -37573,7 +37675,7 @@
      "path": "src/note/citation_scrub.rs",
      "purpose": "Pin-only live-state rebuild",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -37652,7 +37754,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 9
      }
     },
@@ -38398,6 +38500,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/office_body/checkpoint.rs",
+     "purpose": "The checkpoint getter of office bodies (KS7-2): each artifact's office head, deck fork records, export…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "AnsweringAuthority",
       "BundleVerdict",
@@ -38487,7 +38599,7 @@
      "path": "src/office_body/mod.rs",
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 18,
       "re-export": 8,
@@ -40355,7 +40467,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 3
      }
     },
@@ -40376,7 +40488,17 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/store/checkpoint.rs",
+     "purpose": "The checkpoint getter of the outbound intent ledger (KS7-2): each call's whole frozen record (its payload…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -43441,7 +43563,7 @@
      "path": "src/receipt/archive_source/access.rs",
      "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -49812,7 +49934,7 @@
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -50086,14 +50208,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SkillOptimizeDecisions",
-      "SkillReplayPair"
+      "SkillOptimizeDecisions"
      ],
      "path": "src/skill_optimize/decisions.rs",
      "purpose": "Skill judgments on the shared typed-decision ladder",
      "surface": {
       "crate-vis": 8,
       "fn": 4,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillReplayResponse",
+      "SkillReplayResponses"
+     ],
+     "path": "src/skill_optimize/decisions/replay_pairs.rs",
+     "purpose": "The blind preference's pairs (FIX 1091)",
+     "surface": {
+      "crate-vis": 2,
       "struct": 2
      }
     },
@@ -51300,6 +51436,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeadlineJob"
+     ],
+     "path": "src/store/deadline_jobs.rs",
+     "purpose": "Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Diagnostics"
      ],
      "path": "src/store/diagnostics.rs",
@@ -51392,6 +51543,16 @@
      "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/ledger/erasure_scan.rs",
+     "purpose": "The ERASE completeness scan for many claims at once (SCAN C049): one tombstone batch's missing-id probes…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51816,9 +51977,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 25,
       "mod": 1,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -52283,6 +52444,16 @@
      "purpose": "The training link key's custody client (TRAINING-LINK = C, TL-2): K, the one key the vault's publisher…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/turn_missing.rs",
+     "purpose": "The MESSAGE rows a kept TURN lacks after a window demotion (OF-534, FIX 3859)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -61822,7 +61993,7 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 1
      }
     },
@@ -62001,7 +62172,7 @@
       "crate-vis": 37,
       "enum": 2,
       "fn": 6,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 6
      }
     },
@@ -62124,7 +62295,7 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "enum": 1
      }
     },
@@ -62145,6 +62316,19 @@
      "path": "src/workspace_roster/rooms/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomMessagesRequest"
+     ],
+     "path": "src/workspace_roster/rooms/thread_history.rs",
+     "purpose": "One thread's page of a room's history (FIX 5638): `vault.rooms.messages` naming a thread by its root reads…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -63733,14 +63917,14 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63873,7 +64057,7 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -63887,14 +64071,14 @@
      "purpose": "—"
     },
     "code_revision": {
-     "files": 13,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "—"
     },
     "code_run": {
-     "files": 106,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63922,7 +64106,7 @@
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64097,7 +64281,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64531,7 +64715,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64573,7 +64757,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64916,7 +65100,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64951,7 +65135,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 112,
+     "files": 115,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65154,7 +65338,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 103,
+     "files": 104,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65177,7 +65361,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4049,
+   "source_files": 4066,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76228,8 +76412,8 @@
      "path": "src/api.rs",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)",
      "surface": {
-      "const": 5,
-      "crate-vis": 3,
+      "const": 4,
+      "crate-vis": 6,
       "enum": 11,
       "fn": 2,
       "mod": 1,
@@ -76415,6 +76599,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native/pdf/decode.rs",
+     "purpose": "Strict loads with every stream decoded whole (Rule 5)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/pdf/incremental.rs",
      "purpose": "Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and…",
      "surface": {
@@ -76426,7 +76620,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/lex.rs",
-     "purpose": "Bounded PDF structural tokens",
+     "purpose": "PDF structural tokens",
      "surface": {
       "crate-vis": 12
      }
@@ -76438,7 +76632,7 @@
      "path": "src/native/pdf/mod.rs",
      "purpose": "Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -76488,6 +76682,16 @@
      "path": "src/native/pdf/tests.rs",
      "purpose": "Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/pdf/walk.rs",
+     "purpose": "Reference chains and the page tree, followed whole (Rule 5)",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "m",
@@ -76602,7 +76806,7 @@
      "path": "src/native/verify/verify_dss_core.rs",
      "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -76827,7 +77031,7 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 42,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76843,7 +77047,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 45,
+   "source_files": 47,
    "test_files": 12
   },
   "oneiron-server": {
@@ -83610,6 +83814,21 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReplayJudgeWording"
+     ],
+     "path": "src/config/skills/replay_judge.rs",
+     "purpose": "`[skills.replay_judge]`: the serve replay judge's wording (OF-495, FIX 1091)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -86606,20 +86825,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JournalRow",
       "PersonTime",
-      "ServeAxisBandit",
       "ServeReplayJudge"
      ],
      "path": "src/replay_judge.rs",
      "purpose": "The serve host's skill judge (OF-495)",
      "surface": {
       "const": 1,
-      "fn": 11,
-      "struct": 4
+      "fn": 9,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServeAxisBandit"
+     ],
+     "path": "src/replay_judge/axis_bandit.rs",
+     "purpose": "The goal-axis bandit's live arm attribution for one open optimizer proposal, on the serve judge's arms: each…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/replay_judge/replays.rs",
+     "purpose": "The serve judge's replay evidence: each reserved receipt's task and response, read whole from its attempt…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -88219,7 +88461,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88492,10 +88734,10 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "replay_judge": {
-     "files": 1,
+     "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "The serve host's skill judge (OF-495)"
     },
     "residence_machines": {
@@ -88590,9 +88832,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 54,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 882,
+   "source_files": 885,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -91531,6 +91773,7 @@
       "RoomHostPin",
       "RoomHostRequest",
       "RoomHosting",
+      "RoomMessagesRequest",
       "RoomOriginCard",
       "RoomPage",
       "RoomQuote",
@@ -92442,7 +92685,7 @@
      "purpose": "—",
      "surface": {
       "enum": 874,
-      "struct": 2774
+      "struct": 2775
      }
     },
     {

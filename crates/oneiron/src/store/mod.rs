@@ -126,6 +126,7 @@ mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 mod commitment_due;
+mod deadline_jobs;
 mod diagnostics;
 mod gate_decision;
 mod group_commit;
@@ -152,6 +153,7 @@ mod short_id_alias;
 mod structural_kind_registry;
 mod sync_responses;
 mod training_link;
+pub(crate) mod turn_missing;
 mod writer_lease;
 
 #[cfg(test)]
@@ -196,6 +198,8 @@ pub(crate) use body_store::{
 pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
+pub(crate) use deadline_jobs::DeadlineJobs;
+pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;

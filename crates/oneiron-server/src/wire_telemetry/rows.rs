@@ -167,6 +167,14 @@ impl LimitRow {
         Self::Engine(EngineLimit::SealTsaBytes),
         Self::Engine(EngineLimit::SealReportJsonBytes),
         Self::Engine(EngineLimit::SealPreparedStreamBytes),
+        Self::Engine(EngineLimit::SealStreamDecodeBytes),
+        Self::Engine(EngineLimit::SealStreamHeaderTokens),
+        Self::Engine(EngineLimit::SealPdfDepth),
+        Self::Engine(EngineLimit::SealSecurityNameHops),
+        Self::Engine(EngineLimit::SealReferenceHops),
+        Self::Engine(EngineLimit::SealDssReferenceWork),
+        Self::Engine(EngineLimit::SealFieldTreeWork),
+        Self::Engine(EngineLimit::SealContentsBytes),
         Self::Engine(EngineLimit::OrganAsks),
         Self::Engine(EngineLimit::OrganAskPerVerb),
         Self::Engine(EngineLimit::OrganAnswerBytes),
@@ -187,6 +195,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::OrganNoteBytes),
         Self::Engine(EngineLimit::OrganLossCodeBytes),
         Self::Engine(EngineLimit::OrganMemoryBytes),
+        Self::Engine(EngineLimit::DeadlineJobsPerCaller),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

@@ -264,6 +264,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TRUSTED_CONTACT_FIRE, LIVE),
     (&t::TRUSTED_CONTACT_RELATION, LIVE),
     (&t::TRUSTED_CONTACT_TIER, LIVE),
+    // What a kept TURN lacks is this vault's residency, not history: a restore
+    // neither promotes a demoted window nor rebuilds the list (FIX 3859).
+    (&t::TURN_MISSING_MESSAGES, LIVE),
     (&t::TYPED_BODY_DOC, CONTENT),
     (&t::TYPED_BODY_FORK, CONTENT),
     (&t::TYPED_BODY_FORK_DOC, CONTENT),

@@ -320,9 +320,16 @@ pub(super) fn fold_effective_identity_topology_events_for_store_in_txn(
                 identity_topology_entity_type_for_store_in_txn(store, rtxn, target)?
                     .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
             }
+            // SCAN C040: a resolution is effective, and receipted, only once
+            // its proposal is here and the resolution rule holds against it;
+            // admission checked nothing for one that arrived first. One that
+            // fails is left out alone, never the fold.
             IdentityTopologyAction::ResolveProposal { proposal, .. } => {
                 identity_topology_entity_type_for_store_in_txn(store, rtxn, proposal)?
                     .is_some_and(|kind| kind == ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT)
+                    && super::proposal_resolution::resolution_rule_holds_for_store_in_txn(
+                        store, rtxn, proposal, &record,
+                    )?
             }
             IdentityTopologyAction::CancelProposal { proposal } => {
                 // A deferred reference may later materialize as a *different*

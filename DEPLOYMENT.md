@@ -261,7 +261,7 @@ seal_reply_frame_bytes = 101711872 # bytes of the largest frame the seal organ s
 seal_structural_work = 8000000    # tokens one structural pass of the seal lexes (a revision analysis or a classic xref section); past it the pass runs to its end and the row asks
 seal_revisions = 32               # revisions in the xref chain of a PDF the seal reads; past it every revision is followed and the row asks
 seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision chain parses, summed over its revisions; past it every prefix is parsed and the row asks
-seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (one stream still decodes to at most 256 MiB)
+seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (each stream decodes whole; the largest also meets seal_stream_decode_bytes)
 seal_identity_asks = 1            # signing-identity asks one seal call makes; past it the pinned identity is answered again and the row asks
 seal_sign_asks = 3                # signature asks one seal call makes (still one issuance per revision the engine wrote); past it each is answered and the row asks
 seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
@@ -270,7 +270,15 @@ seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity
 seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
 seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
 seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks
-seal_prepared_stream_bytes = 67108864 # bytes the largest object stream of a prepared PDF decodes to, read where the engine writes its signature revisions; past it the PDF is read whole and the row asks (one stream still decodes to at most 256 MiB)
+seal_prepared_stream_bytes = 67108864 # bytes the largest object stream of a prepared PDF decodes to, read where the engine writes its signature revisions; past it the PDF is read whole and the row asks (each stream decodes whole)
+seal_stream_decode_bytes = 268435456 # bytes the largest single stream a seal reads decodes to (an object or xref stream, a DSS entry); past it the stream decodes whole and the row asks
+seal_stream_header_tokens = 4096  # tokens the seal lexes in one stream dictionary to find its /Length; past it the header is lexed to its stream keyword and the row asks
+seal_pdf_depth = 64               # nesting depth of one PDF value the seal lexes (string parentheses, arrays, dictionaries); past it the value is read whole and the row asks
+seal_security_name_hops = 8       # reference links behind one /Type, /FT or /S name the seal checks; past it the chain is followed to its name and the row asks
+seal_reference_hops = 128         # reference links of one other chain the seal follows; past it the chain is followed to its object and the row asks
+seal_dss_reference_work = 16384   # reference steps one measurement of a PDF's DSS coverage takes; past it every chain is followed and the row asks
+seal_field_tree_work = 16384      # nodes one descent of a PDF's AcroForm field tree visits; past it the tree is walked whole and the row asks
+seal_contents_bytes = 262144      # DER bytes of the largest CMS or timestamp token one seal writes into a signature hole; past it a revision the seal writes grows its hole and the row asks
 organ_asks = 32                   # asks of every verb one organ call makes (an install naming its own count is measured at it); past it each granted ask is answered and the row asks
 organ_ask_per_verb = 32           # asks of one verb one organ call makes, measured at the count the install grant names for it; past it each is answered and the row asks
 organ_answer_bytes = 16777216     # answer bytes one organ call is lent (an install naming its own is measured at it); past it the call's booking grows and the row asks
@@ -291,6 +299,7 @@ organ_note_items = 64             # notes of one kind (touched, warnings, losses
 organ_note_bytes = 256            # bytes of one note (an encoded locator, a warning, a loss's detail) an organ call's receipt keeps; past it the note is kept whole and the row asks
 organ_loss_code_bytes = 64        # bytes of one loss's code an organ call's receipt keeps; past it the code is kept whole and the row asks
 organ_memory_bytes = 2147483648   # bytes the organ host's budget holds when a live call grows past it (measured at the host's own budget); one elected call goes on with its overcommit on its receipt, new calls wait for the drain, and the row asks
+deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the job runs on and the row asks (the deadline_jobs_high check, naming the caller and the count, once per caller per minute)
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

@@ -27,6 +27,7 @@
 
 mod actor_erase;
 mod author_token;
+pub(crate) mod checkpoint;
 mod consent;
 mod docx;
 mod fork;

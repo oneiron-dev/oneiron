@@ -272,6 +272,11 @@ fn apply_tombstone_batch(
     #[cfg(test)]
     note_tombstone_batch_top_level_txn();
     let batch = vault.with_write_txn_grouped(|parent| {
+        // SCAN C049: one decision-ledger scan answers the hard items' probes.
+        let _probes = vault.batch_tombstone_scope_probes_in_txn(
+            parent,
+            staged.iter().filter(|work| work.hard).map(|work| work.id),
+        )?;
         let mut affected = Vec::new();
         for work in staged {
             let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {

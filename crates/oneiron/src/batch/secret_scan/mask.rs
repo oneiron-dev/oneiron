@@ -23,6 +23,7 @@ pub(super) mod admit;
 pub(super) mod carrier;
 pub(super) mod side_row;
 pub(super) mod stream_known;
+mod text;
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -374,13 +375,8 @@ struct Masker {
     known: Option<Arc<KnownValues>>,
     /// Whether this pass placed a known value's handle.
     placed_known: bool,
-}
-
-/// What one span of a text is: a value custody holds, by its handle, or a
-/// shape the door's text rules place, by its reason.
-enum TextHit {
-    Known(String),
-    Shape(&'static str),
+    /// Where a tracked pass put each handle, by the text it masked (FIX 6144).
+    traced: Option<text::TextReplacements>,
 }
 
 impl Masker {
@@ -655,79 +651,12 @@ impl Masker {
         }
     }
 
-    /// `text` with each secret span the door's text rules place replaced by
-    /// its handle. `None` when it holds none.
-    fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
-        let known = self.known_spans(text);
-        let mut hits: Vec<(Range<usize>, TextHit)> = secret_spans(text)
-            .into_iter()
-            .filter(|(span, _)| {
-                !known
-                    .iter()
-                    .any(|(held, _)| held.start < span.end && span.start < held.end)
-            })
-            .map(|(span, reason)| (span, TextHit::Shape(reason)))
-            .collect();
-        hits.extend(
-            known
-                .into_iter()
-                .map(|(span, handle)| (span, TextHit::Known(handle))),
-        );
-        if hits.is_empty() {
-            return Ok(None);
-        }
-        hits.sort_by_key(|(span, _)| span.start);
-        let mut out = String::with_capacity(text.len());
-        let mut from = 0;
-        let mut placed = false;
-        for (span, hit) in hits {
-            let handle = match hit {
-                TextHit::Known(handle) => {
-                    self.placed_known = true;
-                    handle
-                }
-                TextHit::Shape(reason) => {
-                    if self.is_kept(text[span.clone()].as_bytes()) {
-                        continue;
-                    }
-                    self.handle(text[span.clone()].as_bytes(), reason)?
-                }
-            };
-            placed = true;
-            out.push_str(&text[from..span.start]);
-            out.push_str(HANDLE_OPEN);
-            out.push_str(&handle);
-            out.push(']');
-            from = span.end;
-        }
-        if !placed {
-            return Ok(None);
-        }
-        out.push_str(&text[from..]);
-        Ok(Some(out))
-    }
-
     /// Whether the owner ruled `value` no secret in the record the pass
     /// reads now.
     fn is_kept(&self, value: &[u8]) -> bool {
         self.at
             .as_ref()
             .is_some_and(|(record, _)| self.kept.holds(record, value))
-    }
-
-    /// Each value custody holds in `text`, with its record's handle, but a
-    /// value the owner ruled no secret in the record the pass reads: that
-    /// ruling wins over the known-value sweep.
-    fn known_spans(&self, text: &str) -> Vec<(Range<usize>, String)> {
-        let Some(known) = &self.known else {
-            return Vec::new();
-        };
-        known
-            .spans(text.as_bytes())
-            .into_iter()
-            .filter(|hit| !self.is_kept(&text.as_bytes()[hit.span.clone()]))
-            .map(|hit| (hit.span, hit.handle.to_owned()))
-            .collect()
     }
 
     /// The handle of the custody record that holds `value` whole, if one

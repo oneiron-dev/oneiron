@@ -195,7 +195,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 /// whose opener did not open goes, as the erase deletes it; every other row
 /// stays, naming no one where its actor did not open.
 fn join(
-    _: &RoTxn<'_>,
+    dbs: &impl ManifestDbs,
+    view: &RoTxn<'_>,
     at: &RowLocator,
     value: &[u8],
     parts: &[&ActorPart],
@@ -234,17 +235,21 @@ fn join(
         return NOTE_RECEIPT_BY_REQUEST.encode_value(&receipt).map(Some);
     }
     if at.in_table(NOTE_PROPOSAL_BUNDLE.decl()) {
-        return bundle::join(value, parts);
+        return bundle::join(dbs, view, at, value, parts);
     }
     Err(rows::bad_part())
 }
 
 /// Puts `opened`'s NOTE rows back: exact rows as they are, each actor that
-/// opened back in its row, and each title row whose author opened.
+/// opened back in its row, each bundle fragment and explainer copy merged
+/// into the bundle the owners restored so far hold, and each title row whose
+/// author opened.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, join)
+    rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
+        join(dbs, view, at, value, parts)
+    })
 }
