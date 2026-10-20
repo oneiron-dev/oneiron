@@ -147,20 +147,19 @@ pub(crate) fn import_note_from_authority(
             for pin in &next.view()?.pins {
                 pin.validate()?;
             }
-            super::citation_scrub::rescrub_replica(vault, txn, &next)?;
             return persist_replica(vault, txn, &next);
         }
         let floor_key = HexId(id);
         let authority_floor =
             super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.get(&vault.store, txn, &floor_key)?;
-        // This replica's own delete scrubs are not authority operations
-        // (C050): no authority state or floor holds them. They write no floor.
-        let held = super::citation_scrub::authority_vv(id, &previous.doc);
         let required = match &authority_floor {
             Some(bytes) => crate::sync::documents::storage::decode_vv(bytes)?,
-            None => held.clone(),
+            None => previous.doc.oplog_vv(),
         };
-        if authority_floor.is_some() && kind == document_sub_tags::UPDATE && held != required {
+        if authority_floor.is_some()
+            && kind == document_sub_tags::UPDATE
+            && previous.doc.oplog_vv() != required
+        {
             // Local erasure operations are not authority operations. A STATE
             // rebase must retire them before normal authority deltas resume.
             return Err(invalid("NOTE erasure requires authority state"));
@@ -178,7 +177,7 @@ pub(crate) fn import_note_from_authority(
         // Once this document was scrubbed, a full authority snapshot must not
         // restore the removed quote through deleted map values in its oplog.
         let next = if authority_floor.is_some() {
-            let vv = super::citation_scrub::authority_vv(id, &next.doc).encode();
+            let vv = next.doc.oplog_vv().encode();
             let clean =
                 NoteDocument::load(id, &crate::sync::documents::storage::state_copy(&next.doc)?)?;
             super::citation_erase::NOTE_ERASE_AUTHORITY_FLOOR.put(
@@ -222,9 +221,6 @@ pub(crate) fn import_note_from_authority(
         for pin in &new.pins {
             pin.validate()?;
         }
-        // A pin of a source this replica deleted goes again, after the checks
-        // above compared the authority's state with the held one.
-        super::citation_scrub::rescrub_replica(vault, txn, &next)?;
         persist_replica(vault, txn, &next)
     })?;
     vault.notify_note_document(id);
