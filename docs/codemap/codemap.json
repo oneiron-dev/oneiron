@@ -85454,6 +85454,7 @@
      "notable": [
       "DistillArgs",
       "ExportArgs",
+      "FetchArgs",
       "OneironerCommand",
       "PublishArgs",
       "QualifyArgs",
@@ -85466,7 +85467,7 @@
      "surface": {
       "enum": 4,
       "fn": 1,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -86817,7 +86818,7 @@
      "path": "src/embedder/local/model_manager.rs",
      "purpose": "Where the local model's files live, and how they get there",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 24
      }
     },
     {
@@ -86885,7 +86886,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -89362,13 +89363,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/oneironer/release.rs",
+     "purpose": "The shipped Oneironer releases, and the fetch that places one on this machine (FIX 6828)",
+     "surface": {
+      "crate-vis": 21
      }
     },
     {
@@ -91702,7 +91713,7 @@
      "purpose": "ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1)"
     },
     "oneironer": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91830,7 +91841,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 961,
+   "source_files": 962,
    "test_files": 182
   },
   "oneiron-spawn": {
