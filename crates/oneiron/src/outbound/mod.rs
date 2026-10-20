@@ -38,7 +38,9 @@ pub use self::connector_reply::{ConnectorReply, ConnectorReplyDispatch, connecto
 pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,
 };
-pub(crate) use self::dispatch_attempt_id::outbound_dispatch_attempt_id;
+pub(crate) use self::dispatch_attempt_id::{
+    connector_logical_send_ref, outbound_dispatch_attempt_id,
+};
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::dispatch_pipeline::{

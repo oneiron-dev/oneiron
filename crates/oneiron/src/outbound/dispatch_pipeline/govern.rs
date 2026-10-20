@@ -43,17 +43,38 @@ pub(super) fn gate_input(
 
 /// FIX 6424: the one send an owner's approve-once press on `request`
 /// approves, read off the canonical request: its original transport target
-/// (never the counterparty alias), its intent ref, and its family's facts.
+/// (never the counterparty alias), its logical send ref, and its family's
+/// facts.
 pub(super) fn approval_target(request: &OutboundDispatchRequest) -> Option<ApprovalTarget> {
+    let connector = normalize_key(&request.intent.channel);
     ApprovalTarget::for_outbound(&OutboundSendFacts {
-        connector: &normalize_key(&request.intent.channel),
+        connector: &connector,
         target: &request.intent.target,
         sender: request.channel_identity_ref,
         thread_ref: request.reply_thread_ref.as_deref(),
         content_ref: request.intent.content_ref.as_deref(),
-        send_ref: &request.intent_ref,
+        send_ref: approval_send_ref(request, &connector),
         calendar_invite: request.calendar_invite.as_ref(),
     })
+}
+
+/// FIX 6424 (Engine 10-20 20:4x): the logical send ref a press on `request`
+/// pins. A family whose press is recomposed from its frozen ledger bytes
+/// (e-sign) pins its send's stable identity: the logical send a schedule's
+/// ask names, else `ledger_identity_ref.unwrap_or(intent_ref)`, so a retry
+/// that keeps its ledger identity under a new caller-facing intent ref
+/// still matches its frozen payload and its press, and a scheduled ask pins
+/// the send its executor spends. Every other family pins its intent ref,
+/// the one a schedule's ask and its executor's spend share.
+fn approval_send_ref<'r>(request: &'r OutboundDispatchRequest, connector: &str) -> &'r str {
+    if !ApprovalTarget::freezes_send_ref_of(connector) {
+        return &request.intent_ref;
+    }
+    request
+        .approval_identity_ref
+        .as_deref()
+        .or(request.ledger_identity_ref.as_deref())
+        .unwrap_or(&request.intent_ref)
 }
 
 /// FIX 6424 (Engine 10-20 20:4x): the approve-once digest an owner's
@@ -105,7 +126,8 @@ fn pinned_approval_digest(effect: &ExternalEffectGateInput) -> Option<EffectDige
 /// proof check, a retry and a delivery's link mint recompose the digest the
 /// press approved. `None` for every other send.
 pub(super) fn frozen_approval_send_ref(request: &OutboundDispatchRequest) -> Option<&str> {
+    let connector = normalize_key(&request.intent.channel);
     approval_target(request)
         .is_some_and(|target| target.freezes_send_ref())
-        .then_some(request.intent_ref.as_str())
+        .then(|| approval_send_ref(request, &connector))
 }

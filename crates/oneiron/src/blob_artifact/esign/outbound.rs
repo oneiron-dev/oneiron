@@ -405,8 +405,9 @@ impl Vault {
     /// for with `command` once the Gate holds it: the act's command binding,
     /// as [`Self::dispatch_esign`] computes it, under
     /// [`crate::outbound::outbound_approve_once_digest`]. The press pins
-    /// the document, that binding and the act's send ref, so only the act
-    /// that keeps them spends it. A held act's dispatch result carries the same
+    /// the document, that binding and the act's stable send ref (its
+    /// `ledger_identity_ref` when it names one, else its intent ref), so only
+    /// the act that keeps them spends it. A held act's dispatch result carries the same
     /// digest as `approval_digest`. It reads and records nothing else.
     /// # Errors
     /// The refusals [`Self::dispatch_esign`] makes before its gate.

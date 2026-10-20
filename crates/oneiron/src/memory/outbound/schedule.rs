@@ -296,6 +296,13 @@ impl Memory<'_> {
         if let Some(payload) = calendar_invite {
             request = request.calendar_invite(payload.clone());
         }
+        // FIX 6424: the ask names the logical send the executor will run
+        // this TASK under, so a press on it pins the send that spends it.
+        request.approval_identity_ref = Some(crate::outbound::connector_logical_send_ref(
+            self.actor,
+            intent.idempotency_key.as_deref(),
+            task_ref,
+        ));
         let mut sink = ScheduleOnlySink;
         let result = self
             .vault

@@ -23,10 +23,14 @@ use crate::entity_id::EntityId;
 
 /// The BLAKE3 domain of the target pin.
 const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once.target.v1";
+/// The connector whose admitted press is recomposed from its frozen ledger
+/// bytes, so its press pins its send's stable logical identity.
+const ESIGN_CONNECTOR: &str = "esign";
 
 /// The facts one non-mail send's approve-once press pins, per family. Every
 /// `send_ref` is the family's existing logical ref: the dispatch's intent
-/// ref, which a retry of the same prepared send carries again.
+/// ref, or for e-sign its stable ledger identity, which a retry of the same
+/// prepared send carries again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ApprovalTarget {
     /// An e-sign send for signature, reminder or void: the document, the
@@ -101,7 +105,7 @@ impl ApprovalTarget {
         let content_ref = facts.content_ref.map(str::to_owned);
         let target = match facts.connector {
             "email" | "email_resend" | "email_ses" | "email_postmark" | "linear" => return None,
-            "esign" => Self::Esign {
+            ESIGN_CONNECTOR => Self::Esign {
                 document: facts.target.to_owned(),
                 content_ref,
                 send_ref,
@@ -141,6 +145,14 @@ impl ApprovalTarget {
     /// frozen payload carries the send ref the press pins.
     pub(crate) const fn freezes_send_ref(&self) -> bool {
         matches!(self, Self::Esign { .. })
+    }
+
+    /// [`Self::freezes_send_ref`] for a send on `connector`, before its
+    /// target is built: such a press pins the send's stable logical
+    /// identity, the one its ledger row and every retry keep (Engine 10-20
+    /// 20:4x).
+    pub(crate) fn freezes_send_ref_of(connector: &str) -> bool {
+        connector == ESIGN_CONNECTOR
     }
 
     /// `operation_kind` named by this one send, the shape native mail's

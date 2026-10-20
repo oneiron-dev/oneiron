@@ -101,6 +101,14 @@ pub struct OutboundDispatchRequest {
     /// that sinks key their per-send plan by. Never persisted; defaults to
     /// deriving the ledger identity from `intent_ref`.
     pub ledger_identity_ref: Option<String>,
+    /// FIX 6424: the stable logical send an ask runs for before that send
+    /// has its ledger identity: a schedule's ask names the logical send its
+    /// executor later runs under `ledger_identity_ref`, so an owner's
+    /// approve-once press on the ask pins the send that spends it (CALLS
+    /// `FIX 6424 scheduled ask stable identity`). Read only by a family whose
+    /// press pins its send's stable identity (e-sign). In memory only, never
+    /// persisted; `None` everywhere else.
+    pub approval_identity_ref: Option<String>,
     pub intent: OutboundIntent,
     pub actor: OutboundDispatchActor,
     pub gate: OutboundDispatchGate,
@@ -181,6 +189,7 @@ impl OutboundDispatchRequest {
             receipt_id: receipt_id.into(),
             intent_ref: intent_ref.into(),
             ledger_identity_ref: None,
+            approval_identity_ref: None,
             intent,
             actor,
             gate,
