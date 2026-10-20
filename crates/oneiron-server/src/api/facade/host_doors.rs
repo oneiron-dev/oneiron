@@ -1976,10 +1976,26 @@ pub(super) async fn off_runtime_listing<T: Send + 'static>(
     .unwrap_or_else(|_| refused(internal(verb)))
 }
 
+tokio::task_local! {
+    /// The host origin of the code run calling a credential-backed door
+    /// (Docs #3016): [`credential_listing`]'s fresh handle keeps it, so a
+    /// generated program's call never reads as a person's.
+    static CALLING_ORIGIN: oneiron::memory::HostWriteOrigin;
+}
+
+/// Runs `call` as the code run `origin` binds: every handle
+/// [`credential_listing`] builds inside it carries that origin.
+pub(crate) async fn with_calling_origin<F: std::future::Future>(
+    origin: oneiron::memory::HostWriteOrigin,
+    call: F,
+) -> F::Output {
+    CALLING_ORIGIN.scope(origin, call).await
+}
+
 /// `read` off the runtime on the credential's own handle as `caller`, at
 /// its locality ([`crate::api::credential_memory`]), listing every row its
 /// reads derive the answer from: the one collector the credential-backed
-/// host doors share.
+/// host doors share. A calling code run's host origin rides onto the handle.
 pub(super) async fn credential_listing<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -1988,10 +2004,15 @@ pub(super) async fn credential_listing<T: Send + 'static>(
     read: impl FnOnce(&SyncServer, &CoreAuth, Memory<'_>) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
     let (server, auth) = (Arc::clone(server), auth.clone());
+    let origin = CALLING_ORIGIN.try_with(Clone::clone).ok();
     off_runtime_listing(verb, move |producers| {
         let memory = crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
             .at(auth.locality())
             .listing_producers(producers);
+        let memory = match origin {
+            Some(origin) => memory.with_host_origin(origin),
+            None => memory,
+        };
         read(&*server, &auth, memory)
     })
     .await

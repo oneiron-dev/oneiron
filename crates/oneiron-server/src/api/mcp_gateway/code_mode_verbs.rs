@@ -1294,14 +1294,18 @@ async fn run_code_mode_verb(
     // A run's call is answered once and never continued.
     let mut served = Vec::new();
     let mut board_hooks = None;
-    let (output, ..) = execute_agent_verb_input(
-        server,
-        tool.name,
-        input,
-        actor,
-        Some(run),
-        &mut served,
-        &mut board_hooks,
+    let origin = run.origin.clone();
+    let (output, ..) = crate::api::facade::host_doors::with_calling_origin(
+        origin,
+        execute_agent_verb_input(
+            server,
+            tool.name,
+            input,
+            actor,
+            Some(run),
+            &mut served,
+            &mut board_hooks,
+        ),
     )
     .await?;
     // A board read answers the run here: the receipt its hook rows owe is
