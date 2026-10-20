@@ -12,6 +12,9 @@
 //! rewritten whole when the engine's list of scopes or a cursor differs from
 //! it; `scopes/` is the vault user's own directory, so the root stays
 //! read-only to the vault on a managed node.
+//! On a self-hosted vault with its shipper on, the intake's two key files at
+//! the root are written here too, from the intake's descriptor
+//! (`descriptor`): whole, under the lock, the receipt key ring first.
 //! Nothing here decides what is staged, published or purged.
 
 use std::collections::BTreeSet;
@@ -25,10 +28,12 @@ use oneiron::feedback::{
     SignedTrainingControl, TrainingQueued, TrainingReceiptPage, TrainingSubmissionId,
 };
 use oneiron_vault_contract::conversation_training::{
-    CONTROLS_DIR, OFFERS_DIR, RECEIPTS_DIR, SCOPES_DIR, TRAINING_SCHEMA_VERSION,
-    TRAINING_SCOPES_FILE, TRAINING_SCOPES_TYPE, TrainingFileName, TrainingScopeCursorV2,
-    TrainingScopesV2, decode_training_receipt, parse_training_file_name, spool_training_file,
+    CONTROLS_DIR, INTAKE_RECEIPT_KEY_FILE, INTAKE_RECIPIENT_FILE, OFFERS_DIR, RECEIPTS_DIR,
+    SCOPES_DIR, TRAINING_SCHEMA_VERSION, TRAINING_SCOPES_FILE, TRAINING_SCOPES_TYPE,
+    TrainingFileName, TrainingScopeCursorV2, TrainingScopesV2, decode_training_receipt,
+    parse_training_file_name, spool_training_file,
 };
+use rand_core::{OsRng, RngCore as _};
 
 /// Held for a tick, so two vault processes never share the directory.
 const LOCK_FILE: &str = ".lock";
@@ -87,6 +92,27 @@ impl Outbox {
                 Err(anyhow::Error::new(error).context(format!("lock {}", path.display())))
             }
         }
+    }
+
+    /// Installs the intake's keys from its descriptor (TL-6) under this
+    /// outbox's lock: the receipt key ring first, then the recipient, so the
+    /// ring that verifies an offer's receipts is in place before any offer
+    /// is sealed to the recipient beside it. Each file is written whole
+    /// ([`write_atomic`]), and only when it holds other bytes. How many
+    /// files it wrote.
+    pub(super) fn install_intake_keys(&self, ring: &[u8], recipient: &[u8]) -> io::Result<usize> {
+        let mut written = 0;
+        for (name, bytes) in [
+            (INTAKE_RECEIPT_KEY_FILE, ring),
+            (INTAKE_RECIPIENT_FILE, recipient),
+        ] {
+            if fs::read(self.root.join(name)).is_ok_and(|held| held == bytes) {
+                continue;
+            }
+            write_atomic(&self.root, name, bytes)?;
+            written += 1;
+        }
+        Ok(written)
     }
 
     /// Where a protocol file of `offers/` is staged.
@@ -294,6 +320,34 @@ fn write_synced(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = options.open(path)?;
     file.write_all(bytes)?;
     file.sync_all()
+}
+
+/// Writes `bytes` to `dir/name` whole: a private sibling made new under a
+/// random name, written and synced, renamed over the file, then the
+/// directory synced. The pattern is the e-sign delivery outbox's, copied
+/// rather than shared. Off unix a directory does not open for a sync here,
+/// and the file's own sync is all this writer makes.
+fn write_atomic(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<()> {
+    let staged = dir.join(format!(".{name}.{:016x}.tmp", OsRng.next_u64()));
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let written = options
+        .open(&staged)
+        .and_then(|mut file| {
+            file.write_all(bytes)?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&staged, dir.join(name)));
+    if let Err(error) = written {
+        let _ = fs::remove_file(&staged);
+        return Err(error);
+    }
+    if cfg!(unix) {
+        sync_dir(dir)?;
+    }
+    Ok(())
 }
 
 fn remove_if_present(path: &Path) -> io::Result<()> {

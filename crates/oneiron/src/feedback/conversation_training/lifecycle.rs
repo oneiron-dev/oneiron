@@ -296,15 +296,17 @@ pub enum TrainingUnavailable {
         INTAKE_RECEIPT_KEY_FILE
     )]
     MissingReceiptKey,
-    /// The receipt key file holds no Ed25519 public key.
+    /// The receipt key file is no ring of one or two Ed25519 public keys
+    /// (FIX 6156).
     #[error(
-        "the outbox's {} is not an Ed25519 public key",
+        "the outbox's {} is not one or two Ed25519 public keys",
         INTAKE_RECEIPT_KEY_FILE
     )]
     UnusableReceiptKey,
-    /// A self-hosted vault has no account binding to the intake yet (C1).
-    #[error("no account binding to the publisher's intake (no device-code client in-tree)")]
-    NoAccountBinding,
+    /// A self-hosted vault's offers leave only through the anonymous
+    /// training window (TL-6), and its self-host shipper is off.
+    #[error("the self-host training shipper is off (--publisher-training-self-host-shipper)")]
+    ShipperOff,
     /// This install has no signing key to sign an offer with.
     #[error("this install has no machine signing key to sign training files with")]
     NoInstallKey,
