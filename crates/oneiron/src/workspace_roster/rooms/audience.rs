@@ -209,7 +209,7 @@ pub(super) fn root_audience_in(
             if carrier == room || binding.room == room {
                 binding
                     .audience
-                    .map(|seed| fold_audience_in(vault, txn, root, &seed))
+                    .map(|seed| fold_audience_in(vault, txn, binding.room, root, &seed))
                     .transpose()
             } else {
                 Err(Error::EntityNotFound)
@@ -244,7 +244,7 @@ pub(crate) fn privileged_private_thread_reader_in(
     if bound != room {
         return Ok(false);
     }
-    let folded = fold_audience_in(vault, txn, root, &seed)?;
+    let folded = fold_audience_in(vault, txn, bound, root, &seed)?;
     Ok(names_actor_in(vault, txn, &folded.current(), actor)?
         && vault_owner_or_admin_in(vault, txn, actor)?)
 }
@@ -445,7 +445,7 @@ fn thread_readable_by_in(
     };
     let audience = binding
         .audience
-        .map(|seed| fold_audience_in(vault, txn, root, &seed))
+        .map(|seed| fold_audience_in(vault, txn, binding.room, root, &seed))
         .transpose()?
         .map(|folded| match turn {
             None => folded.current(),
