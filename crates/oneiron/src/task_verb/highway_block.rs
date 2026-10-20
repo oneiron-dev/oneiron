@@ -413,8 +413,15 @@ pub(super) fn continue_blocked_task_in(
         _ => return Ok(()),
     };
     moved.map_err(continuation_refusal)?;
+    let settled = body.terminal().is_some();
     vault
         .memory(asker, class)
         .rewrite_task_in_txn(txn, task_ref, body, now)
-        .map_err(continuation_refusal)
+        .map_err(continuation_refusal)?;
+    // FIX 1140: a TASK the answer settled wakes its peer-result waiters when
+    // the settling write commits, not at the next wake pass.
+    if settled {
+        crate::batch::queue_settled_tasks(vault, txn, [task_ref]);
+    }
+    Ok(())
 }

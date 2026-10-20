@@ -19,7 +19,7 @@ use crate::team::PatternSkillRef;
 
 use super::super::task_type_tree::{load_team_type_tree, place_in_tree};
 use super::super::{AgentDispatcher, SpawnPlanReceipt, SpawnSpend};
-use super::LivePlanRequest;
+use super::{LivePlanRequest, PlanSeats};
 
 impl AgentDispatcher<'_> {
     /// Places the owner's spawn type once, against the root project's tree
@@ -65,7 +65,7 @@ impl AgentDispatcher<'_> {
             None,
             spend,
             &request.need,
-            request.seats,
+            PlanSeats::Listed(request.seats),
             at,
         )?;
         Ok(self

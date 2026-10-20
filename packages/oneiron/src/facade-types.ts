@@ -4519,7 +4519,7 @@ export type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref
 /** `oneiron::task_verb::sdk_workflows::WorkflowStepRun` */
 export type WorkflowStepRun = { ordinal: number; requested_agent_ref: EntityId; dispatched_agent_ref: EntityId; attempt_ref: EntityId; result_ref: string }
 /** `oneiron::task_verb::sdk_workflows::WorkflowRunView` */
-export type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] }
+export type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[]; task_ref?: EntityId | null }
 /** `oneiron::task_verb::sdk_workflows::WorkflowPersonDispatchRequest` */
 export type WorkflowPersonDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId; cap_units: number; unit: string; shown_at_ms: number }
 /** `oneiron::task_verb::sdk_workflows::WorkflowRunRequest` */

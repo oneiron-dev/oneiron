@@ -16,8 +16,10 @@ use crate::error::{Error, Result};
 
 impl AgentDispatcher<'_> {
     /// The member whose bound run `row` wraps: a registered wrapper whose
-    /// TASK binding requires a payer and names a person. `None` for every
-    /// other row, the owner's and an agent's runs included.
+    /// TASK binding requires a payer and names a person other than the vault
+    /// owner. `None` for every other row, the owner's and an agent's runs
+    /// included: the owner bound through the person door reads his full
+    /// context, as at his own door (FIX 6289).
     pub(in crate::agent_dispatch) fn workflow_member(
         &self,
         row: &AttemptRecord,
@@ -28,7 +30,16 @@ impl AgentDispatcher<'_> {
             .filter(|bind| {
                 bind.payer_required && bind.bound_by.actor_class() == EdgeActorClass::Human
             })
-            .map(|bind| bind.bound_by.entity_ref()))
+            .map(|bind| bind.bound_by.entity_ref())
+            .filter(|person| {
+                !crate::memory::actor_is_vault_owner_in_txn(
+                    self.vault,
+                    &txn,
+                    *person,
+                    EdgeActorClass::Human,
+                )
+                .unwrap_or(false)
+            }))
     }
 
     /// `projection` as `member`'s own grant lane reads it: each memory and

@@ -9,9 +9,11 @@
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::claim::ClaimReadStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::decision::Reversibility;
+use crate::write_envelope::WriteActor;
 
 use super::brief::StoredBrief;
 use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask};
@@ -114,18 +116,49 @@ pub fn runner_done_question(
     if vault.get_entity_type_in_txn(&txn, &result_ref)?.is_none() {
         return Ok(None);
     }
-    done_question_in(vault, &txn, task_ref, result_ref)
+    done_question_in(vault, &txn, task_ref, result_ref, &[])
+}
+
+/// The question an ended workflow run's Done asks over its report NOTE
+/// `note` (FIX 4391), with each settled leaf's output in `leaves` as its
+/// evidence too, as far as `judge`'s lane reads it (FIX 5293): the NOTE
+/// holds only their handles. A leaf the lane does not read, or a lane that
+/// does not open, adds nothing.
+pub(super) fn workflow_done_question(
+    vault: &Vault,
+    task_ref: EntityId,
+    note: EntityId,
+    leaves: &[EntityId],
+    judge: WriteActor,
+) -> Result<Option<RunnerDoneQuestion>> {
+    let memory = vault.memory(judge.entity_ref(), judge.actor_class());
+    // The lane verifies its actor in a snapshot of its own, closed before
+    // the question's.
+    let lane = memory.read_lane(ClaimReadStatus::Recorded).ok();
+    let txn = vault.store.env.read_txn()?;
+    let readable: Vec<EntityId> = lane
+        .and_then(|lane| lane.get_entities_parts_in_txn(&txn, leaves).ok())
+        .map(|rows| {
+            leaves
+                .iter()
+                .zip(rows)
+                .filter_map(|(leaf, row)| row.map(|_| *leaf))
+                .collect()
+        })
+        .unwrap_or_default();
+    done_question_in(vault, &txn, task_ref, note, &readable)
 }
 
 /// The question a Done on `task_ref` with the durable `result_ref` asks, in
-/// `txn`: a leased runner's, or an ended workflow run's over its report NOTE
-/// (FIX 4391). `None` when it asks none: no brief, or an ask already holds
-/// the TASK.
-pub(super) fn done_question_in(
+/// `txn`, over `leaves` too: a leased runner's, or an ended workflow run's
+/// over its report NOTE (FIX 4391). `None` when it asks none: no brief, or
+/// an ask already holds the TASK.
+fn done_question_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
     result_ref: EntityId,
+    leaves: &[EntityId],
 ) -> Result<Option<RunnerDoneQuestion>> {
     let Some(body) = task_verb_body_in(vault, txn, task_ref)? else {
         return Ok(None);
@@ -141,7 +174,12 @@ pub(super) fn done_question_in(
     let Some(authority) = vault.task_authority_state_in(txn, task_ref)? else {
         return Ok(None);
     };
-    let (evidence, state) = done_question_inputs(task_ref, result_ref, &brief);
+    let (mut evidence, state) = done_question_inputs(task_ref, result_ref, &brief);
+    for leaf in leaves {
+        if !evidence.contains(leaf) {
+            evidence.push(*leaf);
+        }
+    }
     Ok(Some(RunnerDoneQuestion {
         judged: Judged {
             task_ref,
