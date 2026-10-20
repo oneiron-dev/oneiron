@@ -12,7 +12,9 @@ use crate::{EntityId, Vault};
 mod live_audience;
 mod thread_readers;
 
-pub(crate) use thread_readers::{thread_ceiling_in, thread_reader_in};
+pub(crate) use thread_readers::{
+    off_room_reader_clearance_in, thread_ceiling_in, thread_reader_in,
+};
 
 impl Memory<'_> {
     /// The room's roster (ARCH-0067 §8): the channel Conversation's members,
