@@ -113,6 +113,10 @@ impl Gateway<'_> {
             let unavailable = ShadowUnavailable::new(Reason::RouteUnavailable, cause);
             return Ok(refused(receipt, unavailable));
         }
+        // An arm whose source an erase took sends nothing (FIX 5718).
+        if let Some(withheld) = self.store.source_withheld() {
+            return Ok(refused(receipt, withheld));
+        }
         let sent = serde_json::to_vec(&request)
             .map_err(|error| Error::InvalidConfig(format!("shadow model request: {error}")))?;
         let path = format!("shadow/{step:06}/call-{call_id:03}.request.json");
@@ -158,14 +162,21 @@ impl Gateway<'_> {
             .map_err(|error| Error::InvalidConfig(format!("shadow model receipt: {error}")))?;
         match answered {
             Ok(response) => {
+                // What the call used is evidence of a call made, kept
+                // before its answer is published.
+                receipt.usage = ShadowUsage::Answered {
+                    usage: response.usage.clone(),
+                };
+                // An erase that took the source's content during the call
+                // leaves its answer unpublished, its receipt kept (FIX 5718).
+                if let Some(withheld) = self.store.source_withheld() {
+                    return Ok(refused(receipt, withheld));
+                }
                 let encoded = serde_json::to_vec(&response).map_err(|error| {
                     Error::InvalidConfig(format!("shadow model answer: {error}"))
                 })?;
                 let path = format!("shadow/{step:06}/call-{call_id:03}.answer.json");
                 receipt.response = Some(self.store.put(path, &encoded)?);
-                receipt.usage = ShadowUsage::Answered {
-                    usage: response.usage.clone(),
-                };
                 Ok(ModelCall {
                     answer: Ok(response),
                     receipt,

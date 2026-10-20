@@ -365,7 +365,7 @@ impl Vault {
         for ((note, kind), id) in notes.iter().zip(kinds).zip(ids) {
             let body = encode_note_body(&NoteBody {
                 kind,
-                author_ref: author,
+                author_ref: super::NoteActor::Actor(author),
                 markdown: note.markdown.clone(),
                 source_revision_ref: revision(folder, &note.path, &note.markdown),
             })?;
@@ -395,7 +395,7 @@ impl Vault {
                         &doc,
                         &super::NoteAuthorship {
                             operation: self.new_entity_id()?,
-                            actor: author,
+                            actor: super::NoteActor::Actor(author),
                             actor_class: EdgeActorClass::System.gate_actor_class().to_owned(),
                             grant: None,
                             command_hash: *blake3::hash(title.as_bytes()).as_bytes(),

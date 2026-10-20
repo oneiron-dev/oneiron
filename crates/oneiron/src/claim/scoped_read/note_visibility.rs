@@ -53,7 +53,7 @@ impl ScopedRead<'_> {
         if crate::provenance::validate_actor_class(entity_type, class).is_err() {
             return Ok(false);
         }
-        if actor == body.author_ref
+        if body.author_ref.is(actor)
             || crate::note::reader_imported_note(&self.vault.store, txn, &body, actor)?
         {
             return Ok(true);

@@ -7,10 +7,11 @@
 //! The document rows ([`documents`]) and fork snapshots are Loro bytes whose
 //! birth and commit messages name their actors (FIX 6072): a full history
 //! splits through the shared Loro projection (`loro`), its join writing the
-//! same history back with every actor that did not open erased. A shallow
-//! history, a pending fork's snapshot and a NOTE document stay under the
-//! vault-wide seal, named with the owner they join. Nothing calls this until
-//! KS7-5, and only once CHECKPOINT_PAYLOADS_ENABLED is on.
+//! same history back with every actor that did not open erased. A NOTE's
+//! document rows split the same through NOTE's own codec. A shallow history
+//! and a pending fork's snapshot stay under the vault-wide seal, named with
+//! the owner they join. Nothing calls this until KS7-5, and only once
+//! CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"

@@ -949,10 +949,12 @@ impl EngineNativeExecutor<'_> {
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint, None)?;
         // The run's clock and config are durable from its start: a process
         // that stops after the first step's writes and before its checkpoint
-        // resumes under them, never under a fresh clock or another task.
-        let generation = self
-            .storage
-            .put_code_run_replay_record_if_generation_with_heal(&record, None, None)?;
+        // resumes under them, never under a fresh clock or another task. Its
+        // replies are its actor's from the start too (FIX 5718).
+        let actor = self.gated_write.actor().entity_ref();
+        let generation =
+            self.storage
+                .put_owned_code_run_replay_record(&record, None, config.run_id, actor)?;
         Ok(LoadedReplayRecord {
             record,
             generation: Some(generation),

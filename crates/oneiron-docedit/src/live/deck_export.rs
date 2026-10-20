@@ -70,8 +70,10 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
+mod table;
+
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/11";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/12";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -767,6 +769,7 @@ pub fn project(
                 native_id: Some(slide.sld_id),
                 creation_id: slide.creation_id.map(|id| id.to_string()),
                 fingerprint: slide.content_fingerprint,
+                table: None,
             }
         } else {
             let shape = shape_at(&output, part, *native).ok_or(LiveError::UnknownNode)?;
@@ -775,6 +778,7 @@ pub fn project(
                 native_id: Some(*native),
                 creation_id: shape.creation_id.clone(),
                 fingerprint: shape.content_fingerprint,
+                table: table::binding(&deck.nodes[id]),
             }
         };
         bindings.insert(*id, binding);
@@ -1126,57 +1130,8 @@ fn project_payload(
                 }
             }
         }
-        Some(NodePayload::Table { header, rows }) => {
-            let have = held::table_cells(&tree, at).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
-            let wanted: Vec<Vec<String>> = std::iter::once(header.clone())
-                .chain(rows.iter().map(|row| {
-                    row.iter()
-                        .map(|cell| cell.clone().unwrap_or_default())
-                        .collect()
-                }))
-                .collect();
-            // A shape change rewrites the grid (new cells with their text),
-            // then the kept cells' text is written below.
-            let have = if have.len() != wanted.len()
-                || have
-                    .iter()
-                    .zip(&wanted)
-                    .any(|(was, now)| was.len() != now.len())
-            {
-                let fit = node.geometry.extent.is_none();
-                if let Some(extent) = reshape::table(work.next_mut(), part, native, &wanted, fit)? {
-                    work.converted(id, [Conversion::TableFrameFitted { extent }]);
-                }
-                work.changed.insert(part.to_owned());
-                let view = work.view()?;
-                let at = shape_at(&view, part, native)
-                    .ok_or(LiveError::UnknownNode)?
-                    .node
-                    .index;
-                let tree = work.slide_tree(part)?;
-                held::table_cells(&tree, at).ok_or(LiveError::Invalid(WRITTEN_FRAME))?
-            } else {
-                have
-            };
-            for (row, (was, now)) in have.iter().zip(&wanted).enumerate() {
-                for (col, (was, now)) in was.iter().zip(now).enumerate() {
-                    if was == now {
-                        continue;
-                    }
-                    let report = native_patch(
-                        work.next_mut(),
-                        &NativeEdit::SetTableCell {
-                            slide: part,
-                            table: native,
-                            row,
-                            col,
-                            expected: was,
-                            value: now,
-                        },
-                    )?;
-                    work.changed.extend(report.changed_parts);
-                }
-            }
+        Some(NodePayload::Table(body)) => {
+            table::project(work, id, node, (part, native), at, &tree, body)?;
         }
         Some(payload @ NodePayload::Chart { source, .. }) => {
             let chart = held::chart_part(&work.package, part, &tree, at)
@@ -1291,7 +1246,6 @@ fn native_frame(
         unit: None,
         format: None,
     };
-    let count = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
     let dataset = |columns: Vec<Column>, rows: Vec<Vec<Cell>>| Dataset {
         id: String::new(),
         columns,
@@ -1300,42 +1254,9 @@ fn native_frame(
         sources: Vec::new(),
         merges: Vec::new(),
     };
-    let report = match payload {
-        NodePayload::Table { header, rows } => {
-            let data = dataset(
-                header
-                    .iter()
-                    .map(|name| column(name, ColumnKind::Text))
-                    .collect(),
-                rows.iter()
-                    .map(|row| {
-                        row.iter()
-                            .map(|cell| cell.clone().map_or(Cell::Missing, Cell::Text))
-                            .collect()
-                    })
-                    .collect(),
-            );
-            let (cx, cy) = node.geometry.extent.unwrap_or((
-                TABLE_CELL.0.saturating_mul(count(header.len())),
-                TABLE_CELL
-                    .1
-                    .saturating_mul(count(rows.len()).saturating_add(1)),
-            ));
-            let name = node.name.clone().unwrap_or_else(|| "Table".to_owned());
-            native_patch(
-                work.next_mut(),
-                &NativeEdit::CreateTable {
-                    frame: Frame {
-                        slide: part,
-                        id,
-                        name: &name,
-                        bounds: Rect { x, y, cx, cy },
-                        placeholder: None,
-                    },
-                    dataset: &data,
-                    merges: &[],
-                },
-            )?
+    match payload {
+        NodePayload::Table(body) => {
+            table::born(work, live, node, (part, id), (x, y), body)?;
         }
         NodePayload::Chart {
             categories, series, ..
@@ -1449,8 +1370,7 @@ fn native_frame(
                 "a live-born graphic frame carries a table, chart or SmartArt",
             ));
         }
-    };
-    work.changed.extend(report.changed_parts);
+    }
     Ok(id)
 }
 

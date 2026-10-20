@@ -38,7 +38,7 @@ use crate::counterparty_contact::{
     CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut,
 };
 use crate::llm::{ModelId, ModelTierRef};
-use crate::note::NoteKind;
+use crate::note::{NoteActor, NoteKind};
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_PERSON};
 use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
@@ -580,8 +580,9 @@ enum Compared {
         opt_out: Option<CounterpartyOptOut>,
         promo_consent: bool,
     },
-    /// A note's kind and author.
-    Note { kind: NoteKind, author: EntityId },
+    /// A note's kind and author: an erased author is no one, never equal to
+    /// a live one (FIX 6072).
+    Note { kind: NoteKind, author: NoteActor },
     /// A claim's read scope, and, for a claim of an authority family, the
     /// family's name and the claim's whole body.
     Claim {
