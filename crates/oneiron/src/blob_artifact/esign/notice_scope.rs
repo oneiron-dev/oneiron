@@ -15,7 +15,12 @@
 //! its send queues the delivery only while the lane still reaches the
 //! document. A document the lane does not reach answers as one that is no
 //! signing document.
+//!
+//! The housekeeping notice worker (FIX 6219, `notice_unattended`) runs the
+//! same door path with no caller: as the notices' recorded principal, its
+//! recorded send act and standing judged again in each of those snapshots.
 use super::model::invalid;
+use super::notice_unattended::UnattendedNotices;
 use crate::attempt_queue::AttemptRecord;
 use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
@@ -51,6 +56,10 @@ pub(super) enum NoticeScope<'a> {
     Unrestricted,
     /// A narrowed credential, judged by its own read lane.
     Credential(ScopedRead<'a>),
+    /// No caller: the notice worker, as the notices' recorded principal
+    /// while its send act and standing hold (FIX 6219). It writes through
+    /// that principal's verified writer, as an unrestricted call does.
+    Unattended(UnattendedNotices<'a>),
 }
 
 impl Memory<'_> {
@@ -80,6 +89,7 @@ impl NoticeScope<'_> {
         match self {
             Self::Unrestricted => Ok(()),
             Self::Credential(lane) => reaches_in(lane, txn, document),
+            Self::Unattended(notices) => notices.stands_in(txn),
         }
     }
 
@@ -108,6 +118,10 @@ impl NoticeScope<'_> {
                     })
                 },
             ),
+            Self::Unattended(notices) => memory.with_verified_actor_write_txn(|txn| {
+                notices.stands_in(txn)?;
+                write(txn)
+            }),
         }
     }
 
@@ -129,6 +143,10 @@ impl NoticeScope<'_> {
                 vault.dispatch_esign_notice_in_scope(attempt, request, &|txn| {
                     reaches_in(lane, txn, document)
                 })
+            }
+            Self::Unattended(notices) => {
+                vault
+                    .dispatch_esign_notice_in_scope(attempt, request, &|txn| notices.stands_in(txn))
             }
         }
     }
