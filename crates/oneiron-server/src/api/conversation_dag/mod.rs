@@ -117,7 +117,11 @@ fn append_input(
     auth: &CoreAuth,
 ) -> Result<AppendRecord, EnvelopedApiError> {
     let times = core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
-    let body = core_body_for_write(ENTITY_TYPE_TURN, &req.body);
+    let body = core_body_for_write(
+        ENTITY_TYPE_TURN,
+        &req.body,
+        super::announcement_authority(server, auth),
+    );
     Ok(AppendRecord {
         conversation,
         reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,

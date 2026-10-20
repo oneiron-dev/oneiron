@@ -4,6 +4,10 @@ use super::*;
 use crate::channel_identity_provider::mailbox_cursor::{
     advance_mailbox_cursor, mailbox_cursor_snapshot, validate_mailbox_cursor,
 };
+use crate::channel_identity_provider::mailbox_skipped::{
+    GmailSkipStage, GmailSkippedMessage, record_gmail_skipped_message,
+};
+use crate::surface_event::SurfaceEventAdmission;
 
 /// A mailbox- and identity-bound read handle supplied to the host wire.
 ///
@@ -98,9 +102,16 @@ impl GmailDelegatedAdapter {
     /// cursor; retrying already admitted messages uses the handoff's idempotent
     /// provider event IDs. A placement change starts from page one.
     ///
+    /// A message that fails on its own account (ids or metadata that do not
+    /// normalize, an envelope the adapter refuses, a routing rejection naming
+    /// no identity reason) is set aside in a durable row before the page goes
+    /// on (FIX 6007), so the cursor moves only once each message is admitted
+    /// or set aside.
+    ///
     /// # Errors
     ///
-    /// Row/custody, provider, routing, queue, or cursor-store failures.
+    /// Row/custody, provider, identity routing, queue, skip-record or
+    /// cursor-store failures.
     pub fn run_mailbox_page<W: GmailReadWire + ?Sized>(
         &self,
         vault: &Vault,
@@ -121,19 +132,70 @@ impl GmailDelegatedAdapter {
         let progress = progress.for_binding(mailbox.as_str(), self.config.placement_policy);
         let page =
             self.fetch_inbox_page(vault, identity_id, wire, progress.next_cursor.as_ref())?;
-        let message_count = page.messages.len();
+        let mut messages_admitted = 0_usize;
+        let mut skipped = Vec::new();
         for message in page.messages {
             // A withdrawn row cannot route pages fetched while it was active.
             self.require_active_row_matches_adapter(vault, &identity_id)?;
-            let inbound = message.into_provider_inbound()?;
+            // Kept before the message is consumed, so a skip row names it as
+            // the wire returned it.
+            let message_id = message.message_id.clone();
+            let thread_id = message.thread_id.clone();
+            let internal_date_secs = message.internal_date_secs;
+            let set_aside = |stage: GmailSkipStage, reason: String| {
+                record_gmail_skipped_message(
+                    vault,
+                    identity_id,
+                    GmailSkippedMessage {
+                        identity_ref: identity_id.to_hex(),
+                        mailbox_address: mailbox.as_str().to_owned(),
+                        message_id: message_id.clone(),
+                        thread_id: thread_id.clone(),
+                        internal_date_secs,
+                        stage,
+                        reason,
+                        skipped_at: now,
+                    },
+                )
+            };
+            // Only these deterministic, message-local refusals are set aside;
+            // every other failure keeps the page retryable as before.
+            let inbound = match message.into_provider_inbound() {
+                Ok(inbound) => inbound,
+                Err(error @ Error::InvalidConfig(_)) => {
+                    skipped.push(set_aside(
+                        GmailSkipStage::ProviderInbound,
+                        error.to_string(),
+                    )?);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let thread = inbound.thread_headers.clone();
-            let input = self.parse_inbound(ChannelIdentityProviderInbound::Email(inbound))?;
-            if let crate::surface_event::SurfaceEventAdmission::Rejected(_) =
-                vault.enqueue_inbound_email(input, thread.as_ref(), now)?
-            {
-                return Err(Error::InvalidConfig(
-                    "gmail mailbox message was rejected by inbound routing".to_owned(),
-                ));
+            let input = match self.parse_inbound(ChannelIdentityProviderInbound::Email(inbound)) {
+                Ok(input) => input,
+                Err(error @ Error::InvalidConfig(_)) => {
+                    skipped.push(set_aside(GmailSkipStage::Parse, error.to_string())?);
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            match vault.enqueue_inbound_email(input, thread.as_ref(), now)? {
+                SurfaceEventAdmission::Accepted(_) => messages_admitted += 1,
+                // Every reason routing names is the receiving identity's,
+                // which each message on the page shares: the page stays
+                // retryable rather than set a mailbox's mail aside.
+                SurfaceEventAdmission::Rejected(receipt) if receipt.rejection_reason.is_some() => {
+                    return Err(Error::InvalidConfig(
+                        "gmail mailbox message was rejected by inbound routing".to_owned(),
+                    ));
+                }
+                SurfaceEventAdmission::Rejected(_) => {
+                    skipped.push(set_aside(
+                        GmailSkipStage::Routing,
+                        "gmail mailbox message was rejected by inbound routing".to_owned(),
+                    )?);
+                }
             }
         }
         self.require_active_row_matches_adapter(vault, &identity_id)?;
@@ -149,7 +211,8 @@ impl GmailDelegatedAdapter {
         };
         advance_mailbox_cursor(vault, identity_id, prior.as_ref(), &next)?;
         Ok(GmailMailboxRunOutcome {
-            messages_admitted: message_count,
+            messages_admitted,
+            skipped,
             progress: next,
         })
     }

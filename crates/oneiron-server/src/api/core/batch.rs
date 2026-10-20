@@ -231,6 +231,10 @@ pub(crate) fn encode_core_body(body: &Value) -> Result<Vec<u8>, ApiError> {
     oneiron::core_write::shape::encode_core_body(body).map_err(core_write_refusal)
 }
 
-pub(crate) fn core_body_for_write(entity_type: u8, body: &Value) -> Cow<'_, Value> {
-    oneiron::core_write::shape::core_body_for_write(entity_type, body)
+pub(crate) fn core_body_for_write(
+    entity_type: u8,
+    body: &Value,
+    announcement: oneiron::core_write::AnnouncementAuthority,
+) -> Cow<'_, Value> {
+    oneiron::core_write::shape::core_body_for_write(entity_type, body, announcement)
 }

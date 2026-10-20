@@ -532,6 +532,10 @@ pub enum EvidenceKind {
     ObjectVersionSweep,
     /// A log-only member: it holds no head, so none is superseded.
     NoHeadInScope,
+    /// An unversioned object store (e.g. the CP's Convex storage): every
+    /// superseded head object and upload stage deleted, a fresh listing
+    /// shows none.
+    UnversionedObjectSweep,
 }
 
 /// The inventory a target took after its deletions.
