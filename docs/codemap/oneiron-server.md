@@ -172,7 +172,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign.rs` | src | m | 5 crate-vis | — | Session-less signing ceremony |
 | `src/api/esign/delivery_outbox.rs` | src | m | 1 crate-vis | — | The e-sign delivery outbox (OF-415, FIX 3577): the seam that hands each authorized `esign.delivery` intent… |
 | `src/api/esign/editor_auth.rs` | src | s | 5 crate-vis | — | The owner's editor capability (FIX 5618) |
-| `src/api/esign/editor_budget.rs` | src | s | 4 crate-vis | — | Router-owned admission for editor computation |
+| `src/api/esign/editor_budget.rs` | src | s | 5 crate-vis | — | Router-owned admission for editor computation |
 | `src/api/esign/hold_worker.rs` | src | s | 2 crate-vis | — | The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks each new… |
 | `src/api/esign/ingress.rs` | src | m | 10 crate-vis | — | Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19) |
 | `src/api/esign/presentation.rs` | src | s | 8 crate-vis | — | Stateless field editor and capability-scoped ceremony presentation adapters |
@@ -547,8 +547,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/client_address.rs` | src | s | 2 crate-vis | — | The address a request's client is charged under: the key booking admission counts per-address quotas by |
 | `src/auth/left_notices.rs` | src | s | 1 crate-vis | — | `POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this… |
 | `src/auth/locality.rs` | src | s | 6 crate-vis | — | Where the caller of a request sits (DEC-0005): on this device or off it |
-| `src/auth/machine_proof.rs` | src | s | 5 crate-vis | — | The machine a request names |
-| `src/auth/managed_request.rs` | src | m | 16 crate-vis | — | The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19) |
+| `src/auth/machine_proof.rs` | src | s | 6 crate-vis | — | The machine a request names |
+| `src/auth/managed_request.rs` | src | m | 19 crate-vis | — | The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19) |
 | `src/auth/slips.rs` | src | m | 20 crate-vis | — | HTTP/session holder proof and projection of the single log-backed slip |
 | `src/auth/tests.rs` | test | m | — | — | Authentication tests use real logged mints and holder signatures |
 | `src/auth/tests/pairing.rs` | test | m | — | — | Owner-approved principal delivery through the actual pairing HTTP routes |
@@ -682,9 +682,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_host.rs` | src | L | 1 struct · 25 fn · 1 const · 24 crate-vis | DecisionHost | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `src/decision_verdict.rs` | src | L | 14 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/device_local.rs` | src | s | 10 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
-| `src/device_sync.rs` | src | m | 6 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
-| `src/device_sync/enrolment.rs` | src | s | 5 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
-| `src/device_sync/renewal.rs` | src | m | 6 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`… |
+| `src/device_sync.rs` | src | m | 7 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
+| `src/device_sync/dial.rs` | src | s | 2 crate-vis | — | What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron… |
+| `src/device_sync/enrolment.rs` | src | m | 7 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
+| `src/device_sync/renewal.rs` | src | m | 7 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the… |
 | `src/embedded.rs` | src | m | 1 fn · 5 re-export · 6 crate-vis | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
 | `src/embedded/blocking.rs` | src | m | 4 struct · 15 fn | BlockingBody, BlockingConnection, BlockingEngine, BlockingReply | The embedded engine for a binding whose callers are app threads (OF-237): [`BlockingEngine`] runs an… |
 | `src/embedded/engine.rs` | src | m | 6 struct · 20 fn · 1 const · 1 crate-vis | EmbeddedBody, EmbeddedConnection, EmbeddedEngine, EmbeddedReply, EmbeddedReplyStream, EmbeddedRequest | The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding |
@@ -949,7 +950,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 6 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
 | `src/server/board_publisher.rs` | src | s | 4 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
-| `src/server/browser_seats.rs` | src | s | 2 crate-vis | — | The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do… |
+| `src/server/browser_seats.rs` | src | s | 3 crate-vis | — | The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do… |
+| `src/server/browser_seats/handles.rs` | src | s | 3 crate-vis | — | A run browser's live-handle registry, charged to the host's retained-memory line… |
 | `src/server/connector_events.rs` | src | s | 2 crate-vis | — | The served surface-event drain (OF-218): the one thing that hands each queued inbound event to its actor's… |
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/consult_settle.rs` | src | s | 1 crate-vis | — | Consult settlement on every housekeeping pass (DOOR-063), on every substrate |
@@ -989,7 +991,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/space_move.rs` | src | m | 5 crate-vis | — | The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`… |
 | `src/server/tagging.rs` | src | s | 3 crate-vis | — | The tagging worker: the one thing that drives the engine's tagging reconciler |
 | `src/server/tests.rs` | test | m | 1 crate-vis | — | — |
-| `src/server/wave_door.rs` | src | s | 2 crate-vis | — | The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner… |
+| `src/server/wave_door.rs` | src | s | 3 crate-vis | — | The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner… |
 | `src/server/web_fetch.rs` | src | s | 1 fn · 1 crate-vis | — | The host owns renderer configuration; acquisition itself stays in the engine |
 | `src/server/windows.rs` | src | s | 9 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
 | `src/server/windows/tests.rs` | test | s | — | — | — |

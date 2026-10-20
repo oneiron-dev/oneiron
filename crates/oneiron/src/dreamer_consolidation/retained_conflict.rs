@@ -9,7 +9,10 @@
 //! it is a stored claim or active truth. A responder sees the values, and a
 //! Keep of one lands it as the round proposed it, in the settlement's own
 //! transaction, under the current Gate: its evidence is bound again in that
-//! transaction, since decoded bytes are never a witness by themselves.
+//! transaction, since decoded bytes are never a witness by themselves. Each
+//! cited TURN's projection, the MESSAGE ids its branch read and nothing of
+//! their words, rides beside the citations, so that binding compares against
+//! the words the round read (FIX 5755).
 
 use rmpv::Value;
 
@@ -20,12 +23,15 @@ use super::provenance::{
 use super::support::invalid_consolidation;
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, ClaimSubject};
+use crate::dreamer_promotion::KeptLanding;
 use crate::edge::EdgeActorClass;
 use crate::write_envelope::{ClaimCandidate, WriteActor};
 use crate::{EntityId, Result, TimeRange, Vault};
 
 /// The marker-value key the retained candidates ride under.
 const ALTERNATIVES_KEY: &str = "alternatives";
+/// The entry key each cited TURN's projection rides under (FIX 5755).
+const PROJECTIONS_KEY: &str = "projections";
 
 /// One candidate an escalated round dropped, as its marker retains it.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +45,9 @@ pub struct RetainedAlternative {
     pub source: ClaimSource,
     /// The consolidation attempt that proposed it.
     pub attempt: AttemptId,
+    /// The landings reverted settlements of its conflict made of it, each
+    /// retracted (FIX 5752): a Keep after them lands it at a fresh id.
+    pub(super) landings: Vec<EntityId>,
     /// The whole retained entry, read in full only when it is kept.
     entry: Value,
 }
@@ -108,6 +117,22 @@ fn encode(member: &VerifiedCandidate, attempt: AttemptId) -> Result<Value> {
             member.evidence.envelope(member.provenance_chain.clone()),
         ),
         (
+            PROJECTIONS_KEY,
+            Value::Array(
+                member
+                    .evidence
+                    .projections()
+                    .into_iter()
+                    .map(|(source, messages)| {
+                        Value::Array(vec![
+                            binary(source),
+                            Value::Array(messages.into_iter().map(binary).collect()),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+        (
             "occurred",
             Value::Array(vec![
                 Value::from(member.occurred.start),
@@ -148,9 +173,40 @@ fn bytes_at<'v>(entry: &'v Value, key: &str) -> Result<&'v [u8]> {
 }
 
 fn id_at(entry: &Value, key: &str) -> Result<EntityId> {
-    let bytes = <[u8; 16]>::try_from(bytes_at(entry, key)?)
+    entity(bytes_at(entry, key)?)
+}
+
+fn entity(bytes: &[u8]) -> Result<EntityId> {
+    let bytes = <[u8; 16]>::try_from(bytes)
         .map_err(|_| invalid_consolidation("a retained alternative's id has the wrong length"))?;
     Ok(EntityId::from_bytes(bytes)?)
+}
+
+/// The projections an entry keeps beside its citations, by source; none
+/// when it keeps none, so its citations bind as the TURN reads now.
+fn projections(entry: &Value) -> Result<Vec<(EntityId, Vec<EntityId>)>> {
+    let Ok(Value::Array(rows)) = field(entry, PROJECTIONS_KEY) else {
+        return Ok(Vec::new());
+    };
+    let malformed = || invalid_consolidation("a retained alternative's projection");
+    rows.iter()
+        .map(|row| {
+            let Value::Array(pair) = row else {
+                return Err(malformed());
+            };
+            let [Value::Binary(source), Value::Array(messages)] = pair.as_slice() else {
+                return Err(malformed());
+            };
+            let messages = messages
+                .iter()
+                .map(|message| match message {
+                    Value::Binary(bytes) => entity(bytes),
+                    _ => Err(malformed()),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok((entity(source)?, messages))
+        })
+        .collect()
 }
 
 fn optional_id(entry: &Value, key: &str) -> Result<Option<EntityId>> {
@@ -205,6 +261,7 @@ fn summary(entry: &Value) -> Result<RetainedAlternative> {
             as f32,
         source: evidence.source_meet,
         attempt: AttemptId::from_bytes(bytes_at(entry, "attempt")?)?,
+        landings: Vec::new(),
         entry: entry.clone(),
     })
 }
@@ -218,14 +275,17 @@ fn decisions(value: &Value) -> Result<Vec<KeptDecision>> {
 }
 
 impl RetainedAlternative {
-    /// The alternative as its round proposed it, its evidence bound again in
-    /// `txn` as the Dreamer reads it now: a citation whose source moved, left
-    /// the Dreamer's reach or lost the words it named refuses. Its trust
-    /// never rises above what its round verified.
+    /// The alternative as its round proposed it, to land at `landing`, its
+    /// evidence bound again in `txn` as the Dreamer reads it now, against
+    /// the projection its branch read where the TURN has moved on: a
+    /// citation whose source moved, left the Dreamer's reach or lost the
+    /// words it named refuses. Its trust never rises above what its round
+    /// verified.
     fn proposal_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
+        landing: EntityId,
         now: u64,
     ) -> Result<(PromotionCandidate, VerifiedEvidenceSet)> {
         let entry = &self.entry;
@@ -274,6 +334,7 @@ impl RetainedAlternative {
             vault,
             txn,
             &decode_verified_citations(stored)?,
+            &projections(entry)?,
             envelope.source_meet,
         )?;
         let Value::Array(occurred) = field(entry, "occurred")? else {
@@ -292,7 +353,7 @@ impl RetainedAlternative {
         };
         Ok((
             PromotionCandidate {
-                claim_id: self.id,
+                claim_id: landing,
                 candidate,
                 evidence_turn_refs: evidence.refs(),
                 provenance_chain: envelope.chain,
@@ -307,17 +368,19 @@ impl RetainedAlternative {
     }
 }
 
-/// Lands `alternative`, the one a settlement keeps, in the settlement's
-/// transaction through the promotion writer's selected landing, as the
-/// Dreamer's claim from its round: a refusal is the settlement's, and its
-/// marker stays open.
+/// Lands `alternative`, the one a settlement keeps, at `landing` in the
+/// settlement's transaction through the promotion writer's selected landing,
+/// as the Dreamer's claim from its round: a refusal is the settlement's, and
+/// its marker stays open. Words from an import are staged in that import's
+/// review instead, never landed (FIX 5754).
 pub(super) fn land_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     alternative: &RetainedAlternative,
+    landing: EntityId,
     now: u64,
-) -> Result<()> {
-    let (proposal, evidence) = alternative.proposal_in_txn(vault, txn, now)?;
+) -> Result<KeptLanding> {
+    let (proposal, evidence) = alternative.proposal_in_txn(vault, txn, landing, now)?;
     let run = crate::dreamer_promotion::DreamerRunContext {
         run_id: crate::entity_id::bytes_to_hex_lower(alternative.attempt.as_bytes()),
         attempt_id: alternative.attempt,

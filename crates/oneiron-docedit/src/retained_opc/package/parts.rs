@@ -340,6 +340,40 @@ impl Package {
             .fold(0usize, |sum, part| sum.saturating_add(part.data.len()))
     }
 
+    /// What a replacement of the XML part `name` may hold: the per-part
+    /// limit, and what the expanded-package limit leaves after every other
+    /// live part (added parts by their bytes, retained ones by their
+    /// replacement or expanded size; `name` itself excluded). A writer that
+    /// builds a part measures against these before it allocates a value
+    /// `replace_xml_part` would refuse with the same errors.
+    pub(crate) fn xml_replacement_budget(&self, name: &str) -> Result<(usize, usize)> {
+        let overflow = || Error::Edit("edited package size overflow");
+        let added = self
+            .added
+            .iter()
+            .filter(|part| part.name != name)
+            .try_fold(0usize, |sum, part| {
+                sum.checked_add(part.data.len()).ok_or_else(overflow)
+            })?;
+        let other = self
+            .entries
+            .iter()
+            .filter(|entry| entry.name != name && !entry.removed)
+            .try_fold(added, |sum, entry| {
+                sum.checked_add(
+                    entry
+                        .replacement
+                        .as_ref()
+                        .map_or(entry.uncompressed, Vec::len),
+                )
+                .ok_or_else(overflow)
+            })?;
+        Ok((
+            self.limits.part_bytes,
+            self.limits.expanded_bytes.saturating_sub(other),
+        ))
+    }
+
     pub(super) fn added_archive_bytes(&self) -> Result<usize> {
         self.added.iter().try_fold(0usize, |sum, part| {
             sum.checked_add(part.archive_bytes())

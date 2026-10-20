@@ -37,23 +37,27 @@
 //! admission of the reap freeze, taken before the home is held and kept
 //! until its task ends: a frozen vault starts none, and while it runs, its
 //! imports, renewals and catalog writes keep a reap from finding the vault
-//! quiescent.
+//! quiescent. Its enrolment is looked for beside the supervisor's key
+//! directory alone, never under HOME or XDG (FIX 5768).
 
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::config::{DeviceSyncConfig, ServeConfig};
+use crate::config::ServeConfig;
 use crate::handler::mesh::MeshHost;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// The admission a managed vault's connection holds for its whole run.
 type Admission = Box<dyn Send>;
 
+mod dial;
 mod enrolment;
 #[cfg(feature = "mesh")]
 mod renewal;
+use dial::Dial;
+use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{EnrolmentFiles, enrol};
 
 /// The running connection to the home.
@@ -72,21 +76,22 @@ impl DeviceSyncHost {
         config: &ServeConfig,
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
-        let dial = Self::dial(server, config)?;
+        let dial = Self::dial(server, config, EnrolmentSource::Plain)?;
         Self::open_logged(server, dial, mesh, None).await
     }
 
     /// [`Self::start`] on a managed vault: the connection, and every write
     /// it makes, run under one admission `admit` grants, taken before the
     /// home is held and kept until the connection's task ends. A frozen
-    /// vault starts none; it says so, and serve runs on without it.
+    /// vault starts none; it says so, and serve runs on without it. Its
+    /// enrolment is the one beside the supervisor's key directory, if any.
     pub(crate) async fn start_admitted(
         server: &Arc<SyncServer>,
         config: &ServeConfig,
         mesh: Option<&MeshHost>,
         admit: &HousekeepingAdmission,
     ) -> Option<Self> {
-        let dial = Self::dial(server, config)?;
+        let dial = Self::dial(server, config, EnrolmentSource::Managed)?;
         let Some(admission) = admit() else {
             tracing::warn!(
                 "device sync disabled: the vault is paused for reap preparation; it starts with \
@@ -97,9 +102,10 @@ impl DeviceSyncHost {
         Self::open_logged(server, dial, mesh, Some(admission)).await
     }
 
-    /// What this machine dials, or `None` with the one line that says why.
-    fn dial(server: &SyncServer, config: &ServeConfig) -> Option<Dial> {
-        match Dial::resolve(server, config) {
+    /// What this machine dials, its enrolment looked for where `source`
+    /// says, or `None` with the one line that says why.
+    fn dial(server: &SyncServer, config: &ServeConfig, source: EnrolmentSource) -> Option<Dial> {
+        match Dial::resolve(server, config, source) {
             Ok(dial) => dial,
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
@@ -125,8 +131,9 @@ impl DeviceSyncHost {
         }
     }
 
-    /// Stops the connection and waits for its loop to end, so its channel
-    /// detaches before the mesh it rides closes.
+    /// Stops the connection and waits for its loop, and any credential
+    /// renewal under way, to end, so its channel detaches and its renewal
+    /// is gone before the mesh it rides closes (FIX 5772).
     pub(crate) async fn stop(self) {
         let _ = self.stop.send(());
         if let Err(error) = self.task.await {
@@ -140,91 +147,23 @@ impl DeviceSyncHost {
 /// home: its Dreamer claims nothing, and its MACRO home candidacy is the one
 /// its section's flags declare (FIX 4898).
 pub(crate) fn dials_home(config: &ServeConfig, vault: &oneiron::Vault) -> bool {
+    dials(config, vault, EnrolmentSource::Plain)
+}
+
+/// [`dials_home`] on a managed vault: an enrolment counts only beside the
+/// supervisor's key directory, never under HOME or XDG (FIX 5768).
+pub(crate) fn dials_home_managed(config: &ServeConfig, vault: &oneiron::Vault) -> bool {
+    dials(config, vault, EnrolmentSource::Managed)
+}
+
+/// Whether `config` names a home, or an enrolment where `source` says
+/// records one.
+fn dials(config: &ServeConfig, vault: &oneiron::Vault, source: EnrolmentSource) -> bool {
     config.device_sync.is_some()
-        || EnrolmentFiles::for_vault(&config.keystore, vault)
-            .is_ok_and(|files| files.read().is_ok_and(|record| record.is_some()))
-}
-
-/// What this machine dials: the home `[device_sync]` names by hand, else the
-/// one it enrolled with, and the worlds the section follows.
-#[cfg_attr(not(feature = "mesh"), allow(dead_code))]
-struct Dial {
-    home: oneiron::EntityId,
-    url: String,
-    credential_file: std::path::PathBuf,
-    worlds: Vec<oneiron::EntityId>,
-    home_node: Option<u64>,
-    pin: Option<oneiron::authority::AuthorityCheckpointPin>,
-    /// Enrolled by `oneiron device enrol`: the home holds this machine's
-    /// profile, which reaches this vault on the first authority catch-up.
-    enrolled: bool,
-    /// The section's `always_on` and `primary` flags: what this machine's
-    /// MACRO home candidacy declares (FIX 4898).
-    always_on: bool,
-    primary: bool,
-}
-
-impl Dial {
-    /// `None` when this machine has no home: no section and no enrolment.
-    fn resolve(server: &SyncServer, config: &ServeConfig) -> anyhow::Result<Option<Self>> {
-        let section = config.device_sync.as_ref();
-        // No directory to look in means `device enrol` wrote nothing either.
-        let enrolment = match EnrolmentFiles::for_vault(&config.keystore, &server.vault) {
-            Ok(files) => files.read()?.map(|record| (files, record)),
-            Err(_) => None,
-        };
-        let worlds = section
-            .map(DeviceSyncConfig::followed_worlds)
-            .transpose()?
-            .unwrap_or_default();
-        let node = section.and_then(|section| section.home_node_id);
-        let (always_on, primary) = section.map_or((false, false), |section| {
-            (section.always_on, section.primary)
-        });
-        if let Some(named) = section
-            .map(DeviceSyncConfig::named_home)
-            .transpose()?
+        || EnrolmentFiles::for_serve(&config.keystore, vault, source)
+            .ok()
             .flatten()
-        {
-            // An enrolment's pin is its own home's only.
-            let pin = enrolment
-                .filter(|(_, record)| {
-                    crate::config::device_sync::parse_machine(&record.home_machine).ok()
-                        == Some(named.machine)
-                })
-                .and_then(|(_, record)| record.authority_checkpoint_pin);
-            return Ok(Some(Self {
-                home: named.machine,
-                url: named.url.to_owned(),
-                credential_file: named.credential_file.to_owned(),
-                worlds,
-                home_node: node,
-                pin,
-                enrolled: false,
-                always_on,
-                primary,
-            }));
-        }
-        let Some((files, record)) = enrolment else {
-            anyhow::ensure!(
-                section.is_none(),
-                "[device_sync] names no home and this machine is not enrolled; run `oneiron \
-                 device enrol` with the vault stopped"
-            );
-            return Ok(None);
-        };
-        Ok(Some(Self {
-            home: crate::config::device_sync::parse_machine(&record.home_machine)?,
-            url: record.home_url,
-            credential_file: files.credential,
-            worlds,
-            home_node: Some(node.unwrap_or(record.home_node_id)),
-            pin: record.authority_checkpoint_pin,
-            enrolled: true,
-            always_on,
-            primary,
-        }))
-    }
+            .is_some_and(|files| files.read().is_ok_and(|record| record.is_some()))
 }
 
 #[cfg(not(feature = "mesh"))]
@@ -393,6 +332,22 @@ impl Link {
         Ok(connection)
     }
 
+    /// Runs the connections ([`Self::run_connections`]), then ends a renewal
+    /// still under way and waits for its end, however the last connection
+    /// ended: no renewal request outlives the link (FIX 5772).
+    async fn run(
+        self,
+        connection: Arc<oneiron::sync::SyncConnection>,
+        mut renewal: renewal::Renewal,
+        stop: oneshot::Receiver<()>,
+        statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
+        home: &str,
+    ) {
+        self.run_connections(connection, &mut renewal, stop, statuses, home)
+            .await;
+        renewal.stop().await;
+    }
+
     /// Runs `connection` until `stop`, and again on each renewed credential
     /// (FIX 3377): the old connection stops and ends before the new one is
     /// built. Each connection's own loop reconnects with backoff. Every
@@ -402,10 +357,10 @@ impl Link {
     /// fetched it (FIX 3563). A stop sent before the write wins, and the file
     /// stays as it was; a write once begun ends before the stop is seen, and
     /// stays. The old connection stops only once the write has landed.
-    async fn run(
+    async fn run_connections(
         self,
         mut connection: Arc<oneiron::sync::SyncConnection>,
-        mut renewal: renewal::Renewal,
+        renewal: &mut renewal::Renewal,
         mut stop: oneshot::Receiver<()>,
         statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
         home: &str,
