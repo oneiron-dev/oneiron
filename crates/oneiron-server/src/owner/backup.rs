@@ -51,7 +51,9 @@ mod restore;
 mod scratch;
 pub(crate) mod write_budget;
 
-pub(crate) use self::custody::{custody_recovery, custody_status, take_publishing};
+pub(crate) use self::custody::{
+    CustodyAnchorCredentials, custody_recovery, custody_status, take_publishing,
+};
 #[cfg(test)]
 use self::rehearse::Owned;
 #[cfg(test)]

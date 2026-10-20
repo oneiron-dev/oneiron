@@ -39,9 +39,12 @@
 //! A person the root's edits name by a stand-in folds under it: the seed's
 //! place for them, and any live edit of theirs before the last edit naming
 //! the stand-in, a copy from before their erase, so an add and its erased
-//! remove still meet. A live edit after it names them anew. A stand-in is no
-//! one's place: who is in the thread, who reads a turn, and which turns are
-//! cut all skip it.
+//! remove still meet. A live edit after it names them anew, but for one
+//! this vault erased from the room or hard: every edit naming them folds
+//! under their stand-in, as the seed does, a live one a legal hold keeps
+//! included, its bytes as they are (FIX 6433). A stand-in is no one's
+//! place: who is in the thread, who reads a turn, and which turns are cut
+//! all skip it.
 //!
 //! # Walk-ins and opened history
 //!
@@ -52,6 +55,15 @@
 //! every turn, and keeps them there until a remove: a later add or walk-in
 //! does not cut them again. Each walk-in that entered and each opened
 //! history stays on the thread as its own edit, the log its members read.
+//!
+//! # Asking to join
+//!
+//! A request to join and its denial ride the same log (FIX 6381, 6384), as
+//! TURNs of the thread naming the person who asked: neither changes who is
+//! in it. A request stays pending until a later add, walk-in or opened
+//! history of that person approves it, or a denial denies it, the first one
+//! folded settling it; a request repeated while one is pending is that one.
+//! An approval is an ordinary add from now on, citing the request.
 
 use super::audience::{ThreadBinding, thread_binding};
 use super::*;
@@ -163,7 +175,8 @@ pub enum ThreadAudienceHistory {
 }
 
 /// Whether an edit adds its person, removes them, walks them in or opens
-/// the thread's full history to them.
+/// the thread's full history to them, or asks to join for them or denies
+/// that.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AudienceOp {
@@ -175,13 +188,20 @@ pub(crate) enum AudienceOp {
     /// The Owner's explicit act (FIX 6383): its person reads every turn of
     /// the thread until a remove.
     OpenFullHistory,
+    /// Its person, the one who wrote it, asks to join (FIX 6381, 6384): it
+    /// changes no one's place in the thread.
+    RequestJoin,
+    /// A member denies its person's pending request to join: it changes no
+    /// one's place in the thread.
+    DenyJoin,
 }
 
 /// One audience edit as its TURN carries it: the thread's root, the person
 /// added or removed (the root's stand-in for them once erased, FIX 5640),
 /// the actor whose door wrote it (no one once a privacy erase took it, FIX
 /// 5639) and, on an add alone, the history it shares: a walk-in and an
-/// opened history name none, their op is their history.
+/// opened history name none, their op is their history. An add or a
+/// denial answering a request to join cites that request's TURN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AudienceEvent {
@@ -191,6 +211,8 @@ pub(crate) struct AudienceEvent {
     pub(crate) op: AudienceOp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) history: Option<ThreadAudienceHistory>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request: Option<EntityId>,
 }
 
 impl AudienceEvent {
@@ -225,7 +247,7 @@ impl AudienceEvent {
     /// erased, and nothing else changed. Never the other way: no erased
     /// slot names anyone again.
     fn erases_to(&self, to: &Self) -> bool {
-        (self.root, self.op, self.history) == (to.root, to.op, to.history)
+        (self.root, self.op, self.history, self.request) == (to.root, to.op, to.history, to.request)
             && (self.by == to.by || to.by == RosterActor::Erased)
             && (self.person == to.person || self.person.stand_in(self.root) == to.person)
     }
@@ -264,7 +286,7 @@ pub(super) fn erased_here_in(
 /// Whether this vault erased `person` from `room`: by its own hard-delete
 /// marker, or by its room-person erase marker for `room` in either phase,
 /// the sweep under way or done (FIX 6094, 6095). Erase is one-way.
-fn erased_from_room_in(
+pub(super) fn erased_from_room_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
@@ -302,7 +324,8 @@ pub(super) fn live_edit_in(
 
 /// The audience edit a TURN's MessagePack `body` carries; `None` for a body
 /// that carries none, or is no map. An edit that does not decode, an add
-/// naming no history or any other edit naming one is refused.
+/// naming no history or any other edit naming one, and a cited request on
+/// anything but an add or a denial, is refused.
 pub(crate) fn audience_event(body: &[u8]) -> Result<Option<AudienceEvent>> {
     let mut bytes = body;
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
@@ -318,7 +341,9 @@ pub(crate) fn audience_event(body: &[u8]) -> Result<Option<AudienceEvent>> {
         return Err(invalid());
     }
     let event: AudienceEvent = rmpv::ext::from_value(value).map_err(|_| invalid())?;
-    if (event.op == AudienceOp::Add) != event.history.is_some() {
+    if (event.op == AudienceOp::Add) != event.history.is_some()
+        || (event.request.is_some() && !matches!(event.op, AudienceOp::Add | AudienceOp::DenyJoin))
+    {
         return Err(invalid());
     }
     Ok(Some(event))
@@ -401,6 +426,30 @@ pub(crate) struct FoldedAudience {
     /// Each walk-in that entered its person and each opened history, by
     /// its edit's TURN, in order (FIX 6381, 6383).
     entries: Vec<(EntityId, AudienceOp, AudiencePerson)>,
+    /// Each request to join, in order, with how it settled.
+    requests: Vec<JoinRequest>,
+    /// Every audience edit TURN of the root, in TURN id order.
+    turns: Vec<EntityId>,
+}
+
+/// How a request to join settled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JoinSettlement {
+    /// An add, a walk-in or an opened history of its person.
+    Approved,
+    /// A denial of it.
+    Denied,
+}
+
+/// One request to join a private thread, as the fold reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct JoinRequest {
+    /// The request's own TURN.
+    pub(crate) event: EntityId,
+    /// Who asked: the root's stand-in for them once erased.
+    pub(crate) person: AudiencePerson,
+    /// The TURN that settled it and how; `None` while it is pending.
+    pub(crate) settled: Option<(EntityId, JoinSettlement)>,
 }
 
 impl FoldedAudience {
@@ -451,25 +500,43 @@ impl FoldedAudience {
     pub(crate) fn entries(&self) -> &[(EntityId, AudienceOp, AudiencePerson)] {
         &self.entries
     }
+
+    /// Each request to join that is pending now, in order, of a person not
+    /// erased (FIX 6381, 6384).
+    pub(crate) fn pending(&self) -> impl Iterator<Item = &JoinRequest> {
+        self.requests
+            .iter()
+            .filter(|request| request.settled.is_none() && request.person.live().is_some())
+    }
+
+    /// The request to join whose TURN is `event`, settled or not.
+    pub(crate) fn request(&self, event: EntityId) -> Option<&JoinRequest> {
+        self.requests.iter().find(|request| request.event == event)
+    }
+
+    /// Every audience edit TURN of the root, requests and denials included,
+    /// in TURN id order.
+    pub(crate) fn turns(&self) -> &[EntityId] {
+        &self.turns
+    }
 }
 
-/// Whom a new remove of `person` from the thread rooted at `root`, whose
-/// audience is `folded`, names (FIX 5640): the root's stand-in for them once
-/// this vault erased them (its own hard-delete marker) or the root's edits
-/// name that stand-in, so the remove folds with the edits before it and
-/// names no erased person again; else them.
+/// Whom a new remove of `person` from the thread rooted at `root` in
+/// `room`, whose audience is `folded`, names (FIX 5640): the root's
+/// stand-in for them once this vault erased them, hard or from `room` (FIX
+/// 6432), or the root's edits name that stand-in, so the remove folds with
+/// the edits before it and names no erased person again; else them.
 pub(super) fn removed_person_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     folded: &FoldedAudience,
+    room: EntityId,
     root: EntityId,
     person: EntityId,
 ) -> Result<AudiencePerson> {
     let stand_in = AudiencePerson::erased(root, person);
     Ok(
-        if folded.forgotten.contains(&stand_in)
-            || vault.carrier_actor_erased_in_txn(txn, &person)?
-        {
+        if folded.forgotten.contains(&stand_in) || erased_from_room_in(vault, txn, room, person)? {
             stand_in
         } else {
             AudiencePerson::Live(person)
@@ -483,8 +550,9 @@ pub(super) fn removed_person_in(
 /// base). Every edit is read, however many (rule 5); one whose TURN is not
 /// here has not arrived yet. A person the edits forgot folds under the
 /// root's stand-in for them (module docs), and so does one this vault erased
-/// from `room` or hard whom the seed names, the seed's bytes kept as they
-/// are (FIX 6095): erase is one-way.
+/// from `room` or hard whom the seed or any edit names, their bytes kept as
+/// they are (FIX 6095, 6433): erase is one-way. Requests to join fold
+/// beside the audience, changing no one's place.
 pub(crate) fn fold_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -549,8 +617,31 @@ pub(crate) fn fold_audience_in(
         };
         members.insert(person, None);
     }
+    // Whom this vault erased from the room or hard, by the live id an edit
+    // names: each folds under their stand-in, whatever edit names them.
+    let mut erased_here = BTreeMap::new();
+    let mut requests: Vec<JoinRequest> = Vec::new();
+    // Each person's pending request, by its place in `requests`.
+    let mut open = BTreeMap::new();
+    let mut turns = Vec::with_capacity(events.len());
     for (turn, event) in events {
-        let person = key(event.person, Some(turn));
+        turns.push(turn);
+        let erased = match event.person.live() {
+            Some(id) => match erased_here.get(&id) {
+                Some(erased) => *erased,
+                None => {
+                    let erased = erased_from_room_in(vault, txn, room, id)?;
+                    erased_here.insert(id, erased);
+                    erased
+                }
+            },
+            None => false,
+        };
+        let person = if erased {
+            event.person.stand_in(root)
+        } else {
+            key(event.person, Some(turn))
+        };
         match (event.op, event.history) {
             (AudienceOp::Remove, _) => {
                 members.remove(&person);
@@ -573,11 +664,39 @@ pub(crate) fn fold_audience_in(
             (AudienceOp::Add, _) => {
                 members.insert(person, None);
             }
+            (AudienceOp::RequestJoin, _) => {
+                if let std::collections::btree_map::Entry::Vacant(slot) = open.entry(person) {
+                    slot.insert(requests.len());
+                    requests.push(JoinRequest {
+                        event: turn,
+                        person,
+                        settled: None,
+                    });
+                }
+            }
+            (AudienceOp::DenyJoin, _) => {}
+        }
+        // The first add, walk-in, opened history or denial of a person after
+        // their request settles it.
+        let settles = match event.op {
+            AudienceOp::Add | AudienceOp::WalkIn | AudienceOp::OpenFullHistory => {
+                Some(JoinSettlement::Approved)
+            }
+            AudienceOp::DenyJoin => Some(JoinSettlement::Denied),
+            AudienceOp::Remove | AudienceOp::RequestJoin => None,
+        };
+        if let Some(settlement) = settles
+            && let Some(at) = open.remove(&person)
+            && let Some(request) = requests.get_mut(at)
+        {
+            request.settled = Some((turn, settlement));
         }
     }
     Ok(FoldedAudience {
         members,
         forgotten: erased_until.into_keys().collect(),
         entries,
+        requests,
+        turns,
     })
 }

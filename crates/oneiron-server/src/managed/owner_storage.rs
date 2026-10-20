@@ -10,15 +10,19 @@
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::config::{LinearMode, ServeConfig};
+use crate::owner::backup::CustodyAnchorCredentials;
 use crate::owner::schedule::OwnerHost;
 
 /// The owner host over the vault `config` serves. `rehearsal_config` is the
 /// config the vault was opened with, its page seal cleared: a rehearsal's
 /// scratch takes a fresh incarnation of the seal (`owner::backup`). Its
 /// declared `outbox:` custody members ship through `custody/` under the
-/// escrow outbox `managed` names, which the engine makes itself (FIX 5899).
+/// escrow outbox `managed` names, which the engine makes itself (FIX 5899),
+/// and its custody anchor door is called with `anchor`, the owner credential
+/// the supervisor handed on its pipe.
 ///
 /// Both directories are made here, private, when missing, and checked with a
 /// write. One that is missing or cannot be written is said with its reason,
@@ -30,15 +34,17 @@ pub(super) fn owner_host(
     config: &ServeConfig,
     rehearsal_config: oneiron::VaultConfig,
     managed: &super::args::ManagedArgs,
+    anchor: Option<Arc<CustodyAnchorCredentials>>,
 ) -> OwnerHost {
     let rehearsals = rehearsal_dir(&config.vault_path);
-    // Its custody anchors where `[backup]` names (FIX 5789).
+    // Its custody anchors where `[backup]` names (FIX 5789), a door called
+    // with the supervisor's piped credential and never the environment's.
     // Each backup binds the vault id to the registry's name for the vault
     // (FIX 5826), with or without an escrow outbox.
     let host = OwnerHost::from_config(config, rehearsal_config)
         .with_rehearsal_dir(rehearsals.clone())
         .registered_as(managed.vault_name.clone())
-        .anchored_at(&config.backup)
+        .anchored_at(&config.backup, anchor)
         .shipping_custody_to(managed.escrow_outbox.as_ref().map(|outbox| {
             oneiron::recovery::checkpoint::CustodyOutbox::at(
                 outbox.join("custody"),

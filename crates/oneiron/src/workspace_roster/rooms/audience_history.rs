@@ -70,6 +70,7 @@ impl Memory<'_> {
                     by: RosterActor::Actor(actor),
                     op: AudienceOp::OpenFullHistory,
                     history: None,
+                    request: None,
                 },
             )?;
             Ok((receipt_in(vault, txn, &binding, event, Some(actor)), event))
