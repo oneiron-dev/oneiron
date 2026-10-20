@@ -176,6 +176,16 @@ fn decode_step(bytes: &[u8]) -> Result<super::AgentDispatchInput> {
     super::decode_agent_dispatch_input(&value)
 }
 
+/// Logs a frozen step whose masking savepoint failed; the step stays frozen.
+fn step_kept_frozen(root: &AttemptId, error: &Error) {
+    tracing::warn!(
+        kind = ?error.kind(),
+        %error,
+        root = ?root,
+        "workflow step masking savepoint failed; the step keeps its frozen bytes"
+    );
+}
+
 pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
     *blake3::hash(key.as_bytes()).as_bytes()
 }
@@ -376,15 +386,28 @@ impl super::AgentDispatcher<'_> {
     /// dispatch input, or a hit the wall would refuse or could not mask, so
     /// a step that dispatched before still dispatches. A storage error still
     /// fails the write, as the record's own admission would.
+    ///
+    /// The wall mints its custody records before its last reading, so it
+    /// reads in a savepoint of `txn` that commits only with the masked step
+    /// (FIX 6667): a step kept as frozen keeps no record or found-key note
+    /// of the handles it does not carry. A savepoint that cannot open or
+    /// commit logs and keeps the step as frozen.
     pub(super) fn admitted_workflow_step_in(
         &self,
         txn: &mut heed::RwTxn<'_>,
         root: &AttemptId,
         bytes: &[u8],
     ) -> Result<Option<(Vec<u8>, super::AgentDispatchInput)>> {
+        let mut savepoint = match self.vault.store.env.nested_write_txn(txn) {
+            Ok(savepoint) => savepoint,
+            Err(error) => {
+                step_kept_frozen(root, &Error::from(error));
+                return Ok(None);
+            }
+        };
         let admitted = crate::batch::secret_scan::admit_side_row(
             self.vault,
-            txn,
+            &mut savepoint,
             RECORD.decl(),
             &RECORD.key_bytes(root),
             bytes,
@@ -398,7 +421,16 @@ impl super::AgentDispatcher<'_> {
             ) => return Ok(None),
             Err(error) => return Err(error),
         };
-        Ok(decode_step(&masked).ok().map(|input| (masked, input)))
+        let Ok(input) = decode_step(&masked) else {
+            return Ok(None);
+        };
+        match savepoint.commit() {
+            Ok(()) => Ok(Some((masked, input))),
+            Err(error) => {
+                step_kept_frozen(root, &Error::from(error));
+                Ok(None)
+            }
+        }
     }
 
     /// [`Self::admitted_workflow_intent_in`] in a writer of its own that
