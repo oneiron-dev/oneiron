@@ -28,7 +28,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
 | `src/lib/managed_backup.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 const · 1 crate-vis | CheckpointSignerObservation, CheckpointSignerUnavailable, ManagedBackupFacts | What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): the vault id its… |
 | `src/lib/managed_holder.rs` | src | m | 5 struct · 12 fn · 1 type · 6 const | ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedWidenAction | Host-attested account actions: one managed widen request, and one request the vault owner makes in person… |
-| `src/lib/mod.rs` | src | s | 16 mod · 9 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 17 mod · 9 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/owner_signing_recovery.rs` | src | s | 2 struct · 2 fn · 2 const | OwnerSigningRecovery, OwnerSigningRecoveryAck | Owner-signing recovery (FIX 5260): an adopted vault proves, on its supervisor's challenge, that it still… |
 | `src/lib/preview.rs` | src | s | 3 struct · 1 enum · 2 fn | PreviewEndpoint, PreviewPortDeclaration, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
 | `src/lib/restore.rs` | src | s | 1 struct · 2 fn · 1 const · 3 mod · 3 re-export | RestoreCommitMarker | The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a… |
@@ -44,5 +44,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/tests.rs` | test | m | — | — | Wire-compat and validation test suite |
 | `src/lib/vault_uids.rs` | src | s | 1 struct · 1 enum · 4 fn · 5 const | VaultUidRow, VaultUidsError | The host's vault UID allocation table: one row per managed vault, binding its dedicated non-root UID to its… |
 | `src/lib/version.rs` | src | s | 1 fn · 2 const · 1 crate-vis | — | Wire version constants, SLIM gating and the revisions of the additive extensions a v3 vault reports on `Ping` |
-| `src/lib/vm.rs` | src | s | 2 enum · 4 fn · 12 const | VmGuestFrame, VmHostFrame | The vault-VM wire: vsock ports and boot-channel frames |
+| `src/lib/vm.rs` | src | s | 2 enum · 4 fn · 14 const | VmGuestFrame, VmHostFrame | The vault-VM wire: vsock ports and boot-channel frames |
+| `src/lib/vm_provision.rs` | src | s | 3 struct · 2 enum · 7 fn · 3 const | VmFscryptKey, VmProvision, VmProvisionBinding, VmProvisionFailure, VmProvisionReply | A vault VM's provision connection (FIX 6308): what its root bootstrap, `oneiron-vm-init`, takes from the… |
 | `src/lib/wake.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 crate-vis | Schedule, WakeEntry | Vault naming, timestamps, wake schedule and entry validation |
