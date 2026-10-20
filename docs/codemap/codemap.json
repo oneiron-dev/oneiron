@@ -5971,7 +5971,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "enum": 1,
       "re-export": 1
      }
@@ -6149,7 +6149,7 @@
      "path": "src/batch/secret_scan/mask.rs",
      "purpose": "Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -6190,6 +6190,16 @@
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/spool.rs",
+     "purpose": "The spool-aware admission adapter (FIX 5718 part 3, Engine ruling 3; CALLS C5718-19)",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -13793,7 +13803,7 @@
      "purpose": "Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`…",
      "surface": {
       "const": 1,
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 2
      }
@@ -13844,6 +13854,16 @@
      "notable": [],
      "path": "src/code_run/result_read/slice.rs",
      "purpose": "`slice`: one range of a result's body, by bytes or by lines, at most one reply of it, with where to go on from",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/unplaced.rs",
+     "purpose": "What a run's guest gets in place of an answer the side-row wall could not admit (FIX 5718 part 3, Engine…",
      "surface": {
       "crate-vis": 1
      }
@@ -13908,6 +13928,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/shadow_runner/admit.rs",
+     "purpose": "A shadow arm's writes, masked at write (FIX 5718 part 3; shadow items 2 and 5; CALLS C5718-21)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -13945,7 +13976,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "re-export": 4,
+      "re-export": 5,
       "trait": 1,
       "type": 1
      }
@@ -13974,8 +14005,8 @@
      "path": "src/code_run/shadow_runner/store.rs",
      "purpose": "A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 7,
+      "crate-vis": 7,
+      "fn": 9,
       "struct": 2
      }
     },
@@ -14127,9 +14158,19 @@
      "path": "src/code_run/storage/records.rs",
      "purpose": "The code-run vault_meta row families: replay records, raw output, taint refs and heal counts",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/records/admitted.rs",
+     "purpose": "A run's reply bodies masked at write (FIX 5718 part 3, Engine rulings 3 and 4)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -14221,7 +14262,7 @@
      "path": "src/code_run/storage/routing/bodies.rs",
      "purpose": "A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -14267,7 +14308,7 @@
      "path": "src/code_run/storage/wait_holders.rs",
      "purpose": "Who held each code-run wait's reply (FIX 5718, KEY STORE = A; Engine ruling 2): one durable row per run a…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -52078,6 +52119,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/store/body_store/spool.rs",
+     "purpose": "A body sink that spools its body raw for admission (FIX 5718 part 3, Engine ruling 3): it measures and scans…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ChannelIdentityLifecycleReceiptId",
       "ChannelIdentityLifecycleReceiptRecord"
@@ -53704,7 +53755,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 4
      }
     },
@@ -53761,6 +53812,16 @@
      "purpose": "Recovery preflight through the existing replay doors, in an aborted transaction",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/regenerates.rs",
+     "purpose": "FIX 6204: the exact obligation ledger for carried `regenerates` links",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -65002,7 +65063,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 133,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65163,7 +65224,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 119,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66220,7 +66281,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 122,
+     "files": 123,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66248,7 +66309,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 221,
+     "files": 222,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66446,7 +66507,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4155,
+   "source_files": 4161,
    "test_files": 902
   },
   "oneiron-android": {

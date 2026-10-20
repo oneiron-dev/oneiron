@@ -680,6 +680,16 @@ impl From<Error> for MemoryError {
                 message,
                 &[crate::error::LEGAL_HOLD_SUGGESTION],
             ),
+            // An erase of a code run's actor took the reply this read names
+            // (FIX 5718): the record's state, never the request's shape. What
+            // the call did stands, and no retry brings the reply back.
+            ErrorKind::ResponseErased => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "An erase took this reply: what the call did stands, and no call sends it again.",
+                ],
+            ),
             // The host skipped a setup step, so neither the request nor the
             // caller's standing is what has to change.
             ErrorKind::EngineIdentitiesNotProvisioned => Self::new(
