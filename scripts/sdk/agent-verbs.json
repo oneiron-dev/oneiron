@@ -14603,6 +14603,26 @@
       "section": false
     },
     {
+      "name": "vault.esign.notices.dispatch",
+      "description": "Dispatches the due transition notices of one signing document recorded for the caller through the email send gate, as the caller.",
+      "refs": [
+        "/document_ref"
+      ],
+      "input": "crate::blob_artifact::esign::EsignNoticesDispatchRequest",
+      "output": "crate::blob_artifact::esign::EsignNoticesDispatchView",
+      "call": "memory.esign_notices_dispatch(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.esign.remind",
       "description": "Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller.",
       "refs": [

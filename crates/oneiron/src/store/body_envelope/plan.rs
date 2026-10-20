@@ -10,6 +10,7 @@
 use std::collections::BTreeSet;
 
 use super::custody::{custody_unavailable, instance_id, instance_state};
+use super::response::{RESPONSE_BINDINGS, ResponseBinding};
 use super::retention::INLINE_ASSETS;
 use super::rows::BODY_KEYS;
 use crate::entity_id::EntityId;
@@ -20,7 +21,8 @@ use crate::store::key_custody::{CustodyPlan, EntryState, Requirement};
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
 /// Every body instance raw `vault_meta` rows name: a file's or an inline
-/// result's instance row, and an inline ASSET's binding.
+/// result's instance row, an inline ASSET's binding, and a row-held
+/// response's binding (KS-2B1). An obligation names no required body.
 ///
 /// # Errors
 ///
@@ -32,6 +34,8 @@ pub(crate) fn body_instances_in_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Result<BTre
             instances.insert(BODY_KEYS.decode_value(value)?.instance);
         } else if key.starts_with(INLINE_ASSETS.decl().prefix) {
             instances.insert(INLINE_ASSETS.decode_value(value)?);
+        } else if key.starts_with(RESPONSE_BINDINGS.decl().prefix) {
+            instances.insert(ResponseBinding::of_row(value)?.instance);
         }
     }
     Ok(instances)
@@ -77,16 +81,19 @@ pub(crate) fn require_body_instances(
 }
 
 /// What a prune took from raw rows: the digests whose instance rows went,
-/// and the entities whose inline ASSET binding went.
+/// the entities whose inline ASSET binding went, and the carriers whose
+/// row-held response binding went (KS-2B1).
 #[derive(Default)]
 pub(crate) struct PrunedBodies {
     pub(crate) digests: BTreeSet<[u8; 32]>,
     pub(crate) assets: BTreeSet<EntityId>,
+    pub(crate) responses: BTreeSet<Vec<u8>>,
 }
 
 impl PrunedBodies {
     /// The full `vault_meta` keys of the rows the prune takes: each pruned
-    /// digest's instance row and result row, each pruned ASSET's binding.
+    /// digest's instance row and result row, each pruned ASSET's binding,
+    /// each pruned response's binding.
     pub(crate) fn row_keys(&self) -> BTreeSet<Vec<u8>> {
         self.digests
             .iter()
@@ -101,6 +108,11 @@ impl PrunedBodies {
                     .iter()
                     .map(|entity| INLINE_ASSETS.key_bytes(entity)),
             )
+            .chain(
+                self.responses
+                    .iter()
+                    .map(|carrier| RESPONSE_BINDINGS.key_bytes(carrier)),
+            )
             .collect()
     }
 }
@@ -109,8 +121,9 @@ impl PrunedBodies {
 /// rows, as the erase that retired it took them from its vault: its
 /// instance row, an inline result's row and every descriptor holding its
 /// digest, which stays explicitly incomplete with nothing to show, never an
-/// unreadable complete body; and an inline ASSET's binding, whose entity
-/// the caller leaves its shell. Rows stay in order.
+/// unreadable complete body; an inline ASSET's binding, whose entity the
+/// caller leaves its shell; and a row-held response's binding, whose row
+/// the caller leaves its erased disposition. Rows stay in order.
 ///
 /// # Errors
 ///
@@ -136,6 +149,10 @@ pub(crate) fn prune_retired_bodies_in_rows(
             && retired.contains(&INLINE_ASSETS.decode_value(value)?)
         {
             pruned.assets.insert(entity);
+        } else if let Some(carrier) = key.strip_prefix(RESPONSE_BINDINGS.decl().prefix)
+            && retired.contains(&ResponseBinding::of_row(value)?.instance)
+        {
+            pruned.responses.insert(carrier.to_vec());
         }
     }
     let gone = pruned.row_keys();

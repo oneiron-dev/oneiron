@@ -2776,6 +2776,9 @@ impl OneironClient {
                 "vault.esign.send_for_signature" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignDispatchView,
                 >(client, verb, &input),
+                "vault.esign.notices.dispatch" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::esign::EsignNoticesDispatchView,
+                >(client, verb, &input),
                 "vault.esign.remind" => remote_agent_verb_output::<
                     oneiron::blob_artifact::esign::EsignDispatchView,
                 >(client, verb, &input),
@@ -14303,6 +14306,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.esign.send_for_signature", value)
+    }
+    pub fn vault_esign_notices_dispatch(
+        &self,
+        input: &oneiron::blob_artifact::esign::EsignNoticesDispatchRequest,
+    ) -> Result<oneiron::blob_artifact::esign::EsignNoticesDispatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.esign.notices.dispatch", value)
     }
     pub fn vault_esign_remind(
         &self,

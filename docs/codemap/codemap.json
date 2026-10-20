@@ -6642,7 +6642,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -6678,7 +6678,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignNotice"
@@ -6687,8 +6687,24 @@
      "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
      "surface": {
       "const": 1,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignNoticeOutcome",
+      "EsignNoticesDispatchRequest",
+      "EsignNoticesDispatchView"
+     ],
+     "path": "src/blob_artifact/esign/notice_door.rs",
+     "purpose": "`vault.esign.notices.dispatch` (FIX 5239): a signing document's staged transition notices (pending…",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -13356,7 +13372,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 6,
       "re-export": 20
      }
@@ -13675,7 +13691,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 4
      }
     },
@@ -13740,6 +13756,16 @@
      "surface": {
       "crate-vis": 24,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_bodies.rs",
+     "purpose": "A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22515,7 +22541,7 @@
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "mod": 4,
       "re-export": 14
      }
@@ -22595,6 +22621,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/program/bodies.rs",
+     "purpose": "A turn program's STEP bodies under body custody (KS-2B1, FIX 5719; FIX 5683 part B1)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/program/lease.rs",
      "purpose": "The program kind's own lease and reservation (DOOR-141): the runner's one admission chain over program…",
      "surface": {
@@ -22609,7 +22645,7 @@
      "path": "src/dreamer_runner/program/mod.rs",
      "purpose": "Turn-woken programs (DOOR-141, FIX 4382)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 2
      }
     },
@@ -22687,7 +22723,7 @@
      "path": "src/dreamer_runner/program/run.rs",
      "purpose": "Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -23476,7 +23512,7 @@
      "path": "src/edge.rs",
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 2,
       "re-export": 2,
@@ -33347,7 +33383,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 11,
       "re-export": 14
      }
@@ -33939,7 +33975,7 @@
      "path": "src/llm/step/mod.rs",
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "mod": 1,
       "re-export": 5
      }
@@ -33979,6 +34015,16 @@
       "fn": 2,
       "re-export": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/step/response_bodies.rs",
+     "purpose": "A terminal `dreamer.step` claim's inline response under body custody (KS-2B1, FIX 5683 part B1): an LLM…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -34034,7 +34080,7 @@
      "path": "src/llm/step/step_claim.rs",
      "purpose": "Terminal dreamer.step claim write, step-claim codec, and memo-index maintenance",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -34056,13 +34102,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/step_state.rs",
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 11
      }
     },
     {
@@ -34110,7 +34156,7 @@
      "purpose": "Shared durable-step type layer: schema consts, error, progression/trap enums, step context, and outcome",
      "surface": {
       "const": 8,
-      "crate-vis": 42,
+      "crate-vis": 46,
       "enum": 5,
       "fn": 3,
       "struct": 2,
@@ -42733,7 +42779,7 @@
      "path": "src/provenance/body.rs",
      "purpose": "Who owns a body and whether it is whole",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 3,
       "struct": 3
@@ -43948,7 +43994,7 @@
      "path": "src/recovery/checkpoint/carried_bodies.rs",
      "purpose": "The bodies a checkpoint carries beside its rows (OF-597, FIX 3677, FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -43977,7 +44023,7 @@
      "purpose": "Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685): publishing a vault's exterior key custody to…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 17,
       "re-export": 1,
       "struct": 3
@@ -44247,7 +44293,17 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/landing.rs",
+     "purpose": "Landing one checkpoint image in its destination: the restore pipeline behind every restore, wake and migrate…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RestoreEpoch",
@@ -44272,6 +44328,16 @@
      "purpose": "Rebuild mechanical projections and reset leased attempt ownership",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/response_rows.rs",
+     "purpose": "The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -51026,13 +51092,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/mod.rs",
      "purpose": "Body files and their instances (FIX 5348; KS-2A, FIX 5683 part A)",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -51056,13 +51122,23 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/body_envelope/response.rs",
+     "purpose": "Row-held response bodies under body custody (KS-2B1, FIX 5683 part B1; owner KEY STORE = A)",
+     "surface": {
+      "crate-vis": 20
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/store/body_envelope/retention.rs",
      "purpose": "Body instance retirement (KS-2A, FIX 5683 part A; ARCH-0038 #erase-checkpoint-bodies): a delete keeps an…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -51214,7 +51290,17 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/checkpoint_custody/activation.rs",
+     "purpose": "An owner's activation of an archived vault as a side vault of the vault that replaced it (moved out of the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51690,7 +51776,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 1,
       "re-export": 14
      }
@@ -56925,7 +57011,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1101
+      "fn": 1102
      }
     },
     {
@@ -63604,7 +63690,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63758,7 +63844,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 105,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64024,7 +64110,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 95,
+     "files": 96,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64339,7 +64425,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 113,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64570,7 +64656,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 67,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -64815,7 +64901,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 110,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65039,9 +65125,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 191,
+   "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4036,
+   "source_files": 4044,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67345,7 +67431,7 @@
      "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -74080,7 +74166,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1072
+      "fn": 1073
      }
     },
     {
@@ -75294,7 +75380,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1073
+      "fn": 1074
      }
     },
     {
@@ -89808,7 +89894,10 @@
       "EsignLifecycleRules",
       "EsignLinksIssueRequest",
       "EsignLinksView",
+      "EsignNoticeOutcome",
       "EsignNoticeSwitches",
+      "EsignNoticesDispatchRequest",
+      "EsignNoticesDispatchView",
       "EsignRecipient",
       "EsignSealAttemptView",
       "EsignSealGetRequest",
@@ -92303,7 +92392,7 @@
      "purpose": "—",
      "surface": {
       "enum": 874,
-      "struct": 2771
+      "struct": 2774
      }
     },
     {
