@@ -90,7 +90,13 @@ pub(crate) fn preflight_canonical_recovery(
             .into());
         }
     }
-    for edge in &snapshot.base_edges {
+    // FIX 5972: a `regenerates` link is proven on its MESSAGEs' axes, so it
+    // lands after every other base edge.
+    let (regenerates, ordinary): (Vec<_>, Vec<_>) = snapshot
+        .base_edges
+        .iter()
+        .partition(|edge| edge.kind == crate::edge::EdgeKind::Regenerates as u8);
+    for edge in ordinary.into_iter().chain(regenerates) {
         let source = EntityId::from_bytes(edge.source)?;
         let target = EntityId::from_bytes(edge.target)?;
         let kind = crate::edge::EdgeKind::try_from_u8(edge.kind).ok_or(crate::Error::InvalidKey)?;
@@ -147,6 +153,16 @@ pub(crate) fn preflight_canonical_recovery(
             .into());
         }
         crate::batch::validate_replayed_facet_of_edge(&vault.store, &txn, source, kind, target)?;
+        // A stored pair, or the canonical artifact's own link onto an erased
+        // shell, is restored as it is held; a new pair its MESSAGEs refute
+        // refuses, and one still missing an axis waits for the forward pass.
+        if kind == crate::edge::EdgeKind::Regenerates
+            && !crate::edge::regeneration_stored(&vault.store, &txn, &source, &target)?
+            && crate::edge::regeneration_pair(&vault.store, &txn, &source, &target)?
+                == crate::edge::Regeneration::Refuses
+        {
+            return Err(crate::edge::reserved_regenerates());
+        }
         vault
             .batch_in()
             .edge_with_value_fields(
