@@ -10,6 +10,8 @@ mod reader_jobs;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
+mod response_erase;
+mod response_owners;
 mod routing;
 mod session_write;
 mod speech_identity;
@@ -32,13 +34,15 @@ pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
     StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
 };
-pub(crate) use self::replay_bodies::{replay_carriage, replay_owners};
+pub(crate) use self::replay_bodies::{RESPONSE_ERASED, replay_carriage, replay_owners};
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{
     ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
     fork_response, fork_rows, put_fork, put_staged_capsule, put_unavailable,
     step_replay_capsules_in_txn, store_fork_response,
 };
+pub(crate) use self::response_erase::{actor_gone, retire_actor_responses_in_txn};
+pub(crate) use self::response_owners::stamp_response_owner_in_txn;
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]
 pub(super) use self::speech_identity::canonical_speech_conversation_id;

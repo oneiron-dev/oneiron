@@ -64,9 +64,19 @@ pub fn run_shadow_step(
     store: &ShadowBodyStore,
     cancel: &StepCancellation,
 ) -> Result<ShadowStepRun> {
-    seed_store(prepared, store)?;
     let seq = prepared.step().step;
     let (start, end) = prepared.bridge_window();
+    // An arm whose source an erase or actor scrub took copies nothing in
+    // and runs nothing (FIX 5718).
+    if let Some(withheld) = store.source_withheld() {
+        let bridge = ShadowBridgeWindow {
+            start,
+            end,
+            consumed: start,
+        };
+        return withheld_run(store, seq, withheld, bridge);
+    }
+    seed_store(prepared, store)?;
     let encoded = serde_json::to_vec(answer)
         .map_err(|error| Error::InvalidConfig(format!("shadow step answer: {error}")))?;
     let mut outputs = vec![store.put(arm_path(seq, "answer.json"), &encoded)?];
@@ -93,6 +103,16 @@ pub fn run_shadow_step(
         determinism: prepared.determinism,
     };
     let ran = runtime.run_step_cancellable(step, &mut host, cancel);
+    // An erase that took the source's content while the step ran leaves the
+    // arm nothing to publish of it (FIX 5718).
+    if let Some(withheld) = store.source_withheld() {
+        let bridge = ShadowBridgeWindow {
+            start,
+            end,
+            consumed: host.consumed(),
+        };
+        return withheld_run(store, seq, withheld, bridge);
+    }
     let (bodies, files_named) = step_bodies(prepared, store, &mut host, &ran)?;
     let status = match step_status(&host, &ran, cancel) {
         ShadowStatus::StepComplete { .. } if !files_named => ShadowStatus::Failed {
@@ -252,6 +272,20 @@ fn trailing_speech(seq: u64, text: &str) -> ShadowTraceEntry {
         request: text.as_bytes().to_vec(),
         outcome: None,
     }
+}
+
+/// The run of a step whose source an erase or actor scrub took (FIX
+/// 5718): unavailable for `withheld`, publishing no body and empty traces.
+fn withheld_run(
+    store: &ShadowBodyStore,
+    seq: u64,
+    withheld: ShadowUnavailable,
+    bridge: ShadowBridgeWindow,
+) -> Result<ShadowStepRun> {
+    let status = ShadowStatus::Unavailable {
+        unavailable: withheld,
+    };
+    finish_run(store, seq, status, Vec::new(), &[], &[], bridge)
 }
 
 /// The step's run, its two traces written to the arm's store.
