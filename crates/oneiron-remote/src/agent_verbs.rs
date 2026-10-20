@@ -2332,6 +2332,9 @@ impl OneironClient {
                 "vault.models.manifest.replace" => remote_agent_verb_output::<
                     oneiron::llm::manifest::ModelManifest,
                 >(client, verb, &input),
+                "vault.models.oneironer.bind" => remote_agent_verb_output::<
+                    oneiron::llm::manifest::ModelManifest,
+                >(client, verb, &input),
                 "vault.models.routes.read" => remote_agent_verb_output::<
                     oneiron::llm::manifest::doors::ModelRouteView,
                 >(client, verb, &input),
@@ -12561,6 +12564,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.models.manifest.replace", value)
+    }
+    pub fn vault_models_oneironer_bind(
+        &self,
+        input: &oneiron::llm::manifest::doors::OneironerBind,
+    ) -> Result<oneiron::llm::manifest::ModelManifest, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.oneironer.bind", value)
     }
     pub fn vault_models_routes_read(
         &self,
