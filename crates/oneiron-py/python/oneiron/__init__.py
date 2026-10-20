@@ -3906,9 +3906,9 @@ class Oneiron:
         def list(self):
             """The caller's rooms its own grants admit; inside a room turn, only that room."""
             return json.loads(_translate(lambda: self._client.vault_rooms_list(json.dumps({}))))
-        def messages(self, room_ref, after=None, limit=None):
-            """One page of the turns in a room this reader may read."""
-            return json.loads(_translate(lambda: self._client.vault_rooms_messages(json.dumps({"room_ref": room_ref, "after": after, "limit": limit}))))
+        def messages(self, room_ref, after=None, limit=None, thread_ref=None):
+            """One page of the turns in a room this reader may read; with thread_ref, of that one thread alone."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_messages(json.dumps({"room_ref": room_ref, "after": after, "limit": limit, "thread_ref": thread_ref}))))
         def participants(self, spec):
             """One page of who took part in a room or one of its threads, each with its causes and whether it may take part now."""
             return json.loads(_translate(lambda: self._client.vault_rooms_participants(json.dumps(spec))))
