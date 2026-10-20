@@ -59,7 +59,10 @@ impl ManagedState {
                 crate::managed::shed::shed(self.server.vault(), cause, waited_secs, wait_id)
             }
             CtlRequest::PrepareReap => self.prepare_reap().await,
+            // The idle reap's attempt goes before the vault thaws, so no
+            // answer of it outlives the abort.
             CtlRequest::ReapAbort => {
+                self.idle_backup.drop_attempt();
                 self.unfreeze()?;
                 Ok(CtlResponse::Ok { ok: true })
             }
@@ -137,6 +140,9 @@ impl ManagedState {
                 )?;
                 Ok(CtlResponse::RestoreStatus { restore_status })
             }
+            // Past the write gate, as `prepare_reap`: it freezes the vault
+            // itself, and a frozen vault answers it too.
+            CtlRequest::PrepareIdleReap => self.prepare_idle_reap().await,
         }
     }
 }

@@ -33,7 +33,10 @@ use crate::owner::schedule::OwnerHost;
 /// it is ([`say_if_unencrypted`]).
 ///
 /// The backups' label gets its handoff policy here ([`pin_backup_handoff`]),
-/// so retention waits for the node's stage ack of each backup.
+/// so retention waits for the node's stage ack of each backup. The host
+/// carries the managed backup duty: hourly when the vault changed, one
+/// before an idle reap, and the prune-only pass after a stage ack
+/// (`owner::schedule`).
 pub(super) fn owner_host(
     config: &ServeConfig,
     rehearsal_config: oneiron::VaultConfig,
@@ -47,6 +50,7 @@ pub(super) fn owner_host(
     // (FIX 5826), with or without an escrow outbox.
     let host = OwnerHost::from_config(config, rehearsal_config)
         .with_rehearsal_dir(rehearsals.clone())
+        .managed_hourly()
         .registered_as(managed.vault_name.clone())
         .anchored_at(&config.backup, anchor)
         .shipping_custody_to(managed.escrow_outbox.as_ref().map(|outbox| {

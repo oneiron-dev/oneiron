@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 use super::restore::{ManagedRestoreIdentity, RestoreStatus};
 use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
-use super::{ManagedBackupFacts, ManagedTrainingSetting, WakeEntry, valid_owner_signing_challenge};
+use super::{
+    IdleReapWire, ManagedBackupFacts, ManagedTrainingSetting, WakeEntry,
+    valid_owner_signing_challenge,
+};
 
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
@@ -104,6 +107,18 @@ pub enum CtlRequest {
         #[serde(default)]
         cursor: Option<u64>,
     },
+    /// Appended last (Engine 10-20 backup shipper row (a), co-signed with
+    /// LC): `prepare_reap` for an idle reap, with one backup before it
+    /// ([`CtlResponse::PrepareIdleReap`]). It freezes, drains and exports as
+    /// `prepare_reap` does, then reuses the vault's last backup when it
+    /// covers the vault as it stands and takes one when it does not, within
+    /// [`IDLE_REAP_PREPARATION_SECS`](crate::IDLE_REAP_PREPARATION_SECS) of
+    /// the attempt's first call; every call joins that one attempt, and
+    /// `reap_abort` drops it. Build floor: it rides v3 with no version move,
+    /// and a v3 vault built before it answers it as an unknown request
+    /// (`Ok { ok: false }`), which a supervisor reads as not supported and
+    /// prepares with `prepare_reap`.
+    PrepareIdleReap,
 }
 
 impl CtlRequest {
@@ -129,7 +144,8 @@ impl CtlRequest {
             | CtlRequest::LegalHolds
             | CtlRequest::SlimStatus
             | CtlRequest::Unslim
-            | CtlRequest::RestoreStatus { .. } => {}
+            | CtlRequest::RestoreStatus { .. }
+            | CtlRequest::PrepareIdleReap => {}
         }
         Ok(())
     }
@@ -590,12 +606,22 @@ pub enum CtlResponse {
     RestoreStatus {
         restore_status: RestoreStatus,
     },
+    /// Appended last (Engine 10-20 backup shipper row (a)): the answer to
+    /// [`CtlRequest::PrepareIdleReap`] ([`IdleReapWire`]). Its one required
+    /// field {idle_reap} is disjoint from every variant above, and it carries
+    /// no `ok` for the reason `Slim` carries none. A supervisor parses this
+    /// shape alone for the request it sent and runs
+    /// [`CtlResponse::validate`]: any other answer is not supported.
+    PrepareIdleReap {
+        idle_reap: IdleReapWire,
+    },
 }
 
 impl CtlResponse {
     /// Validate SLIM status, residency, numerics, and blocker combinations,
-    /// the shape of `PrepareReap.training`, the residency an `Unslim` left
-    /// and the shape of a `RestoreStatus` page, after parsing. Existing
+    /// the shape of `PrepareReap.training`, the residency an `Unslim` left,
+    /// the shape of a `RestoreStatus` page and of a `PrepareIdleReap`
+    /// answer ([`IdleReapWire::validate`]), after parsing. Existing
     /// responses keep their prior validation requirements;
     /// `PrepareReap.next_wake` still uses
     /// [`validate_wake_entries`](crate::validate_wake_entries).
@@ -605,6 +631,9 @@ impl CtlResponse {
         }
         if let CtlResponse::RestoreStatus { restore_status } = self {
             restore_status.validate()?;
+        }
+        if let CtlResponse::PrepareIdleReap { idle_reap } = self {
+            idle_reap.validate()?;
         }
         if let CtlResponse::Unslim { unslim } = self {
             anyhow::ensure!(

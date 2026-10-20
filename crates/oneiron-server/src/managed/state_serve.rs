@@ -15,13 +15,12 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::ManagedWidenAction;
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CtlResponse, ManagedBackupFacts, ManagedReadiness, REAP_PAUSE_REFUSAL,
-    UnixTs, now_ts, validate_wake_entries,
+    CONTRACT_VERSION, ManagedBackupFacts, ManagedReadiness, REAP_PAUSE_REFUSAL, UnixTs, now_ts,
 };
-// The test module below names the ctl request through `use super::*`; the
-// dispatcher that names it lives in `control`.
+// The test module below names the ctl request and response through `use
+// super::*`; the dispatcher that names them lives in `control` and `reap`.
 #[cfg(test)]
-use oneiron_vault_contract::CtlRequest;
+use oneiron_vault_contract::{CtlRequest, CtlResponse};
 use tokio::sync::{Mutex, watch};
 
 use crate::build_app;
@@ -39,6 +38,10 @@ use oneiron_vault_contract::host::{Host, HostLimits};
 mod boot_keys;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
 mod control;
+/// The backup before an idle reap (`prepare_idle_reap`).
+mod idle_backup;
+/// The reap freeze and `prepare_reap`'s freeze, drain and export.
+mod reap;
 
 /// Machine-readable tag on the refusals a frozen engine serves, so a client can
 /// match on it rather than parse prose.
@@ -145,7 +148,8 @@ pub struct ManagedState {
     vault_name: String,
     server: Arc<SyncServer>,
     frozen: AtomicBool,
-    http_mutating_in_flight: AtomicU64,
+    /// Shared with a backup before an idle reap, which counts among them.
+    http_mutating_in_flight: Arc<AtomicU64>,
     /// Unix seconds of the most recent sync upgrade the freeze gate admitted,
     /// or 0 if none. The handshake is the last thing that gate ever sees of a
     /// sync session, so this stamp is the only record that one exists.
@@ -171,6 +175,8 @@ pub struct ManagedState {
     /// The cold restore this process kept, which `restore_status` answers
     /// for: set once at boot, before ctl serves; `None` for an open.
     restore: Option<Arc<super::restore::RestoreOutcome>>,
+    /// The backup before an idle reap, one attempt at a time.
+    idle_backup: Arc<idle_backup::IdleBackup>,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -400,7 +406,7 @@ impl ManagedState {
             vault_name,
             server,
             frozen: AtomicBool::new(false),
-            http_mutating_in_flight: AtomicU64::new(0),
+            http_mutating_in_flight: Arc::default(),
             last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
@@ -410,6 +416,7 @@ impl ManagedState {
             backup_facts: None,
             vm_outbox_revision: None,
             restore: None,
+            idle_backup: Arc::default(),
         }
     }
 
@@ -522,42 +529,6 @@ impl ManagedState {
         &self.ledger
     }
 
-    pub fn is_frozen(&self) -> bool {
-        self.frozen.load(Ordering::SeqCst)
-    }
-
-    pub fn freeze(&self) -> Result<(), ManagedError> {
-        self.frozen.store(true, Ordering::SeqCst);
-        self.server
-            .wire_telemetry
-            .freeze_and_flush()
-            .map_err(|error| ManagedError::VaultMeta(error.to_string()))
-    }
-
-    /// Lifts the process-local freeze on `reap_abort`. A new process starts
-    /// unfrozen; shutdown must not reactivate observation writes.
-    pub fn unfreeze(&self) -> Result<(), ManagedError> {
-        self.server
-            .wire_telemetry
-            .unfreeze()
-            .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
-        self.frozen.store(false, Ordering::SeqCst);
-        if self.background_waiting.swap(false, Ordering::SeqCst) {
-            tracing::info!("the reap pause lifted; background passes run again");
-        }
-        Ok(())
-    }
-
-    /// The write gate a frozen vault refuses at. Typed, so a caller can tell
-    /// "frozen for reap" from a storage failure and retry rather than
-    /// surface an error to a user.
-    pub fn guard_write(&self) -> Result<(), ManagedError> {
-        if self.is_frozen() {
-            return Err(ManagedError::WritesFrozen);
-        }
-        Ok(())
-    }
-
     /// Records a sync upgrade the freeze gate let through.
     ///
     /// Called on the handshake and nowhere else, because the handshake is the
@@ -603,54 +574,6 @@ impl ManagedState {
 
     pub async fn observed_alarms(&self) -> Vec<ObservedAlarm> {
         self.alarms.lock().await.clone()
-    }
-
-    /// Freeze, drain, export — in that order.
-    ///
-    /// The freeze goes first so nothing new enters the lease table while it is
-    /// being drained, and the export runs last so the entries the supervisor
-    /// gets describe the quiesced state rather than the one before it. The
-    /// training setting rides the same report, read under the same revision.
-    ///
-    /// `quiescent` needs a third answer beyond "frozen" and "drained": the
-    /// freeze refuses new requests and new upgrades, but a sync session
-    /// upgraded before it rides past every per-request gate and can still
-    /// commit. `PrepareReap` is not shutdown and closes nothing, so while one
-    /// of those may be live this reports `false` and the supervisor reaps
-    /// later rather than over a live writer.
-    async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
-        self.freeze()?;
-        // Check BEFORE drain/export. A writer finishing after export must not
-        // turn a stale exported ledger into a quiescent reply.
-        let http_drained = self.http_mutating_in_flight.load(Ordering::SeqCst) == 0;
-        let drained = self.drain_lease_table().await;
-        let (ledger_rev, report) = self.ledger.export_at_freeze(&self.server).await?;
-        // The reply carries the entries, so they are bounds-checked before
-        // they are serialized rather than after a supervisor has trusted them,
-        // and the training setting is shape-checked with them.
-        validate_wake_entries(&report.entries)
-            .and_then(|()| report.training.validate())
-            .map_err(|error| ManagedError::LedgerRefused {
-                reason: error.to_string(),
-            })?;
-        Ok(CtlResponse::PrepareReap {
-            quiescent: http_drained && drained && self.is_frozen() && !self.live_sync_writer(),
-            ledger_rev,
-            next_wake: report.entries,
-            training: report.training,
-        })
-    }
-
-    /// Runs the lease table to completion once. A skipped run means a previous
-    /// sweep is still in flight, which is exactly "not yet quiescent".
-    async fn drain_lease_table(&self) -> bool {
-        match self.server.expire_leases_once().await {
-            Ok(report) => !report.skipped,
-            Err(error) => {
-                tracing::error!(kind = ?error.kind(), "lease table drain failed during prepare_reap");
-                false
-            }
-        }
     }
 }
 
@@ -1529,6 +1452,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         worker.abort();
         let _ = worker.await;
     }
+    // A backup before an idle reap ends before exit; none starts after.
+    state.idle_backup.stopped().await;
     // A hook pass in flight commits or fails whole before the runner stops.
     let _ = hooks_stop.send(true);
     if let Some(fact_hooks) = fact_hooks {

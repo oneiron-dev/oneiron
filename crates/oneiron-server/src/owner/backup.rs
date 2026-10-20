@@ -41,10 +41,13 @@ use std::path::{Path, PathBuf};
 use oneiron::recovery::checkpoint::SideRestoreSource;
 use serde::Serialize;
 
-use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
+#[cfg(test)]
+use super::stamp::file_stamp;
+use super::stamp::{parse_file_stamp, rfc3339};
 use crate::machine::DiskFloor;
 
 mod custody;
+pub(crate) mod finalize;
 mod handoff;
 mod rehearse;
 #[allow(
@@ -189,49 +192,11 @@ pub(crate) fn take_as(
     plan: &BackupPlan,
     owner: Option<&oneiron::consent::AuthenticatedOwner>,
 ) -> anyhow::Result<BackupOutcome> {
-    create_private_dir(&plan.dir)?;
-    let sequence = list(plan)?
-        .last()
-        .map_or(Some(1), |newest| newest.sequence.checked_add(1))
-        .ok_or_else(|| anyhow::anyhow!("backup sequence exhausted in {}", plan.dir.display()))?;
-    let taken_ms = now_unix_ms();
-    let stamp = file_stamp(taken_ms);
-    let partial = plan
-        .dir
-        .join(format!(".{}-{stamp}{PARTIAL_SUFFIX}", plan.label));
-    // The artifact claims its room on the floor the plan was lent, and on the
-    // disk of the directory it lands in when that is another, and gives it
-    // back once written or refused (FIX 5479, FIX 5675).
-    let floors = write_budget::landing_floors(plan.floor.as_ref(), &plan.dir);
-    let snapshot = vault.ensure_vault_key().and_then(|()| {
-        let room = write_budget::WriteClaim::on_each(&floors);
-        vault.snapshot_backup_within(
-            &partial,
-            vault.now_recorded_at(),
-            owner,
-            plan.registry.as_deref(),
-            &room,
-        )
-    });
-    let receipt = match snapshot {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            let _ = std::fs::remove_file(&partial);
-            return Err(anyhow::Error::new(error).context("backup failed"));
-        }
-    };
-    let checkpoint_id = receipt.image_digest.clone();
-    let id8 = checkpoint_id.get(..8).unwrap_or(&checkpoint_id);
-    let file = format!(
-        "{}-{sequence:0SEQUENCE_WIDTH$}-{stamp}-{id8}{FILE_SUFFIX}",
-        plan.label
-    );
-    let path = plan.dir.join(&file);
-    std::fs::rename(&partial, &path)?;
-    sync_dir(&plan.dir)?;
+    let produced =
+        finalize::produce(vault, plan, owner).map_err(finalize::Unproduced::into_error)?;
     // What it covered, beside it now that it landed. A marker that fails
     // leaves the one before, which only reads as changed.
-    if let Err(error) = receipt.persist_marker(&plan.dir, &plan.label, &file) {
+    if let Err(error) = produced.accept(plan) {
         tracing::warn!(
             reason = "backup_watermark_marker_failed",
             error = %error,
@@ -239,20 +204,9 @@ pub(crate) fn take_as(
         );
     }
     custody::publish_after_take(vault, plan);
-    let bytes = std::fs::metadata(&path)?.len();
-    let pruned = prune(vault, plan, Some(&file))?;
-    Ok(BackupOutcome {
-        backup: BackupRecord {
-            file,
-            path,
-            sequence,
-            bytes,
-            taken: rfc3339(taken_ms),
-            taken_ms,
-        },
-        checkpoint_id,
-        pruned,
-    })
+    let bytes = std::fs::metadata(&produced.path)?.len();
+    let pruned = prune(vault, plan, Some(&produced.file))?;
+    Ok(produced.into_outcome(bytes, pruned))
 }
 
 /// This vault's backups, oldest first. A missing directory is no backups.

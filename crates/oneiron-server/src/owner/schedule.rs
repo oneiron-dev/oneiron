@@ -9,8 +9,14 @@
 //! when a backup holds the lock: the owner's backup setting in the vault, else
 //! the deployment's `[backup]` section (FIX 5621). A setting stored while a
 //! backup is being written applies from the next one.
+//!
+//! A managed vault's host also carries the managed backup duty (`managed`):
+//! on a tick where the owner's schedule takes nothing, the same pass backs
+//! the vault up hourly when it changed, or prunes what its node's supervisor
+//! acked.
 
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,6 +27,12 @@ use super::location::{self, Location};
 use super::stamp::now_unix_ms;
 use super::{OwnerError, OwnerResult};
 use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
+
+/// The managed backup duty: hourly when changed, before an idle reap, and
+/// the prune-only pass.
+mod managed;
+
+pub(crate) use self::managed::{MANAGED_BACKUP_EVERY, PreIdleAttempt, PreIdleBackup};
 
 /// How often a running server checks whether a backup is due.
 pub(crate) const SCHEDULE_TICK: Duration = Duration::from_secs(60);
@@ -41,6 +53,12 @@ pub(crate) struct OwnerHost {
     /// directory beside its data, or a test's own. `None` is the vault's own
     /// directory, the disk its floor measures (FIX 5612).
     pub(crate) rehearse_temp: Option<PathBuf>,
+    /// How often the managed backup duty backs a changed vault up: a
+    /// managed vault's host carries it (`managed`); `None` elsewhere.
+    managed_every: Option<Duration>,
+    /// The backup jobs in flight: the resident pass and a backup before an
+    /// idle reap, which a reap preparation tells from other writes.
+    backup_jobs: AtomicU64,
 }
 
 impl OwnerHost {
@@ -64,6 +82,8 @@ impl OwnerHost {
             fallback: backup.policy(),
             backup_lock: Mutex::new(()),
             rehearse_temp: None,
+            managed_every: None,
+            backup_jobs: AtomicU64::new(0),
         }
     }
 
@@ -243,27 +263,28 @@ impl OwnerHost {
     /// Takes a backup when the policy in force has the schedule on and the
     /// newest backup is older than its interval. The policy is read once the
     /// lock is held, so a backup already being written finishes under the
-    /// one it began with.
+    /// one it began with. When it takes none, a managed vault's duty decides
+    /// in the same pass: an hourly backup of a changed vault, else a prune
+    /// alone (`managed`).
     pub(crate) fn take_if_due(
         &self,
         vault: &oneiron::Vault,
     ) -> anyhow::Result<Option<BackupOutcome>> {
         let _one_at_a_time = self.one_at_a_time();
         let (plan, policy) = self.effective_plan(vault)?;
-        if !policy.enabled {
-            return Ok(None);
+        if policy.enabled {
+            let every_ms = policy
+                .every_hours
+                .saturating_mul(3_600)
+                .saturating_mul(1_000);
+            let due = backup::list(&plan)?
+                .last()
+                .is_none_or(|newest| now_unix_ms().saturating_sub(newest.taken_ms) >= every_ms);
+            if due {
+                return backup::take(vault, &plan).map(Some);
+            }
         }
-        let every_ms = policy
-            .every_hours
-            .saturating_mul(3_600)
-            .saturating_mul(1_000);
-        let due = backup::list(&plan)?
-            .last()
-            .is_none_or(|newest| now_unix_ms().saturating_sub(newest.taken_ms) >= every_ms);
-        if !due {
-            return Ok(None);
-        }
-        backup::take(vault, &plan).map(Some)
+        self.managed_pass(vault, &plan)
     }
 }
 
@@ -280,8 +301,9 @@ impl SyncServer {
 
     /// Starts the backup schedule on a host with a write freeze: each tick is
     /// admitted through `admit` and holds that admission on its blocking
-    /// thread through the due check, the backup and its pruning. A refused
-    /// tick takes nothing and waits for the next.
+    /// thread through the due check, the backup and its pruning, counted as
+    /// a backup job meanwhile. A refused tick takes nothing and waits for the
+    /// next.
     pub(crate) fn spawn_backup_schedule_admitted(
         self: &Arc<Self>,
         tick: Duration,
@@ -300,6 +322,7 @@ impl SyncServer {
                 let (host, server) = (Arc::clone(&host), Arc::clone(&server));
                 let outcome = tokio::task::spawn_blocking(move || {
                     let _admission = admission;
+                    let _job = host.backup_job();
                     host.take_if_due(server.vault())
                 })
                 .await;
