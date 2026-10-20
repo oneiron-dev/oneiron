@@ -675,6 +675,7 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         promoted_pads::land_pads(&self.vault, window, &pads);
         self.materialize_sealed_mirror(window);
+        crate::store::turn_missing::reconcile_after_promotion(&self.vault);
         self.manager.notify_promotion(window);
         Ok(())
     }
@@ -792,6 +793,7 @@ impl SyncClient {
             .map_err(|e| TransportError::Storage(e.to_string()))?;
         promoted_pads::land_pads(&self.vault, window, &pads);
         self.materialize_sealed_mirror(window);
+        crate::store::turn_missing::reconcile_after_promotion(&self.vault);
         self.manager.notify_promotion(window);
         Ok(true)
     }

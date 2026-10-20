@@ -313,6 +313,10 @@ pub struct SeatUsage {
     pub calls: u64,
     /// Prompt tokens, cached reads and writes included.
     pub input_tokens: u64,
+    /// The cached reads among `input_tokens`.
+    pub cache_read_tokens: u64,
+    /// The cached writes among `input_tokens`.
+    pub cache_write_tokens: u64,
     pub output_tokens: u64,
     /// The stamped prices summed, in 10^-9 units of `currency`.
     pub cost_amount: u64,
@@ -366,6 +370,12 @@ impl UsageLedger {
                             .input_tokens
                             .saturating_add(counts.input_tokens)
                             .saturating_add(counts.cache_read_tokens)
+                            .saturating_add(counts.cache_write_tokens);
+                        usage.cache_read_tokens = usage
+                            .cache_read_tokens
+                            .saturating_add(counts.cache_read_tokens);
+                        usage.cache_write_tokens = usage
+                            .cache_write_tokens
                             .saturating_add(counts.cache_write_tokens);
                         usage.output_tokens =
                             usage.output_tokens.saturating_add(counts.output_tokens);

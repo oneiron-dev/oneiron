@@ -24,9 +24,10 @@
 //! grant, mention, task, offer or Ready receipt adds anyone. Reading or
 //! writing a private thread needs a place in its audience and current room
 //! membership both, save the vault's Owner or an Admin, whom a place in the
-//! audience admits without a seat in the room; a thread a reader is off
-//! reads as one that does not exist. The Owner and an Admin see that a
-//! room's private threads exist, by root id alone.
+//! audience admits without a seat in the room, on the reads of that thread
+//! alone too ([`privileged_private_thread_reader_in`], FIX 5638); a thread a
+//! reader is off reads as one that does not exist. The Owner and an Admin
+//! see that a room's private threads exist, by root id alone.
 //!
 //! # Two rules
 //!
@@ -216,6 +217,36 @@ pub(super) fn root_audience_in(
         }
         _ => Err(Error::EntityNotFound),
     }
+}
+
+/// Whether `actor` reads the private thread rooted at `root` in `room` with
+/// no standing in the room (FIX 5638): `root` resolves strictly
+/// ([`resolved_root_in`]) to a private thread whose canonical room is
+/// `room`, and `actor`, in its audience now with every edit folded in (the
+/// CURRENT rule), is the vault's Owner or an Admin. A public, missing or
+/// other room's root is `false`, never a refusal. Each turn's words still
+/// meet the CONTENT rule.
+pub(crate) fn privileged_private_thread_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    root: EntityId,
+    actor: EntityId,
+) -> Result<bool> {
+    let Some(ThreadBinding {
+        room: bound,
+        audience: Some(seed),
+        ..
+    }) = resolved_root_in(&vault.store.read(), txn, root)?
+    else {
+        return Ok(false);
+    };
+    if bound != room {
+        return Ok(false);
+    }
+    let folded = fold_audience_in(vault, txn, root, &seed)?;
+    Ok(names_actor_in(vault, txn, &folded.current(), actor)?
+        && vault_owner_or_admin_in(vault, txn, actor)?)
 }
 
 /// Which of the two rules (module docs) a check reads a thread under.
