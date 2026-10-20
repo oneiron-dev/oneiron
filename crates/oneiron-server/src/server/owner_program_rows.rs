@@ -76,7 +76,7 @@ pub(super) fn answer(
     let mut listed = Some(Vec::new());
     let output = verb_hook_boundary::row(&memory, name, input, |input| {
         sdk::validate_input(name, &input)?;
-        owner_row(server, owner, verb, input, &mut listed)
+        owner_row(server, owner, actor.entity_ref(), verb, input, &mut listed)
     })?;
     let rows = listed.map(|mut listed| {
         let mut rows = producers.take();
@@ -87,10 +87,12 @@ pub(super) fn answer(
 }
 
 /// The owner's door for one owner row, past its credential check: `owner`
-/// is the proof [`program_owner`] made for this row.
+/// is the proof [`program_owner`] made for this row, beside the program's
+/// actor, who asks.
 fn owner_row(
     server: &Arc<SyncServer>,
     owner: AuthenticatedOwner,
+    actor: EntityId,
     verb: AgentVerb,
     input: Value,
     listed: &mut Option<Vec<EntityId>>,
@@ -116,9 +118,12 @@ fn owner_row(
         AgentVerb::AiImage => media(AiOperation::Image, input),
         AgentVerb::AiTranscribe => media(AiOperation::Transcribe, input),
         AgentVerb::AiEmbed => media(AiOperation::Embed, input),
-        AgentVerb::AiVideo => {
-            encode(runtime.block_on(crate::api::ai_video_as_owner(server, decode(input)?))?)
-        }
+        // The program that asked is the job's actor (KS-2B2).
+        AgentVerb::AiVideo => encode(runtime.block_on(crate::api::ai_video_as_owner(
+            server,
+            decode(input)?,
+            Some(actor),
+        ))?),
         AgentVerb::AiVideoPoll => {
             encode(runtime.block_on(crate::api::ai_video_poll_as_owner(server, decode(input)?))?)
         }

@@ -1,4 +1,9 @@
 //! Native VM network channels terminate at the engine's one egress proxy.
+//!
+//! Each vsock request is host work: it takes its room on the relay's host
+//! floor before its thread starts, and a full floor answers it `EAGAIN`
+//! naming the floor, unread (FIX 5979). The VM's own floor charges nothing:
+//! this is where the VM's network work is counted on the host.
 use oneiron_container::{EgressRelay, RelayReply, RelayRequest, read_relay, write_relay};
 use std::{
     io::{Read, Write},
@@ -11,15 +16,34 @@ use std::{
     time::Duration,
 };
 
+/// What one vsock request holds of the host floor until it ends, as
+/// (descriptors, workers): its channel, the relay's own socket, and its
+/// thread.
+const REQUEST: (usize, usize) = (2, 1);
+/// What a relayed stream holds besides: the copies of its channel and of
+/// the remote socket, and its upload thread.
+const STREAM: (usize, usize) = (2, 1);
+
 pub(super) fn serve(listener: UnixListener, relay: Arc<dyn EgressRelay>, alive: Arc<AtomicBool>) {
     std::thread::spawn(move || {
         while alive.load(Ordering::Acquire) {
             match listener.accept() {
                 Ok((stream, _)) => {
+                    let (fds, workers) = REQUEST;
+                    let room = match relay.host_net_floor().acquire(fds, workers) {
+                        Ok(room) => room,
+                        Err(error) => {
+                            back_pressure(stream, &error);
+                            continue;
+                        }
+                    };
                     let relay = Arc::clone(&relay);
                     let alive = Arc::clone(&alive);
-                    std::thread::spawn(move || {
+                    // A thread the host cannot start drops the channel and
+                    // its room; the VM reads the channel's end.
+                    let _ = std::thread::Builder::new().spawn(move || {
                         let _ = request(stream, relay, alive);
+                        drop(room);
                     });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -41,10 +65,15 @@ fn request(
     let mut reply = RelayReply {
         errno: 0,
         bytes: Vec::new(),
+        floor: None,
     };
     let result = match op {
-        RelayRequest::Connect { target } => match relay.connect(target) {
-            Ok(mut remote) => {
+        RelayRequest::Connect { target } => match relay
+            .host_net_floor()
+            .acquire(STREAM.0, STREAM.1)
+            .and_then(|room| relay.connect(target).map(|remote| (room, remote)))
+        {
+            Ok((_room, mut remote)) => {
                 write_relay(&mut channel, &reply)?;
                 let mut upload = channel.try_clone()?;
                 let mut send = remote.try_clone()?;
@@ -112,7 +141,29 @@ fn request(
             .map(|bytes| reply.bytes = bytes),
     };
     if let Err(error) = result {
-        reply.errno = error.raw_os_error().unwrap_or(libc::EIO);
+        reply = failed(&error);
     }
     write_relay(&mut channel, &reply)
+}
+
+/// The reply to a request that failed. A host floor's back-pressure is
+/// `EAGAIN`, carrying the floor's name.
+fn failed(error: &std::io::Error) -> RelayReply {
+    let floor = oneiron_container::saturated_floor(error);
+    RelayReply {
+        errno: match floor {
+            Some(_) => libc::EAGAIN,
+            None => error.raw_os_error().unwrap_or(libc::EIO),
+        },
+        bytes: Vec::new(),
+        floor: floor.map(str::to_owned),
+    }
+}
+
+/// Answers a request the host floor has no room for, unread and on the
+/// accepting thread, so never by a wait: an answer that does not fit the
+/// fresh channel at once goes with it.
+fn back_pressure(mut channel: UnixStream, error: &std::io::Error) {
+    let _ = channel.set_nonblocking(true);
+    let _ = write_relay(&mut channel, &failed(error));
 }
