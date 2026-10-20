@@ -31,7 +31,7 @@ pub(super) fn validate_event_fields(
                 )?
                 .ok_or_else(|| invalid("original PDF is missing"))?;
             entry.insert(
-                render::inspect_pdf_pages(&bytes)
+                render::inspect_pdf_pages_within(&bytes, vault.esign_stream_decode_bytes())
                     .map_err(|_| invalid("field page cannot be presented"))?,
             );
         }

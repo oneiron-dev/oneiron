@@ -9,6 +9,7 @@ pub(super) use self::effect_consent::{
 pub(crate) use self::effect_contacts::{
     counterparty_send_override_in_txn, hydrate_external_effect_contact,
 };
+pub(crate) use self::effect_grants::live_grant_covering_effect_in_txn;
 use self::effect_grants::{
     channel_identity_envelope_reservation_in_txn, standing_outbound_grant_for_effect,
     touch_standing_outbound_grant_in_txn,

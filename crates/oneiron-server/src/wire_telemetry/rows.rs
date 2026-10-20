@@ -168,6 +168,8 @@ impl LimitRow {
         Self::Engine(EngineLimit::SealReportJsonBytes),
         Self::Engine(EngineLimit::SealPreparedStreamBytes),
         Self::Engine(EngineLimit::SealStreamDecodeBytes),
+        Self::Engine(EngineLimit::EsignStreamDecodeBytes),
+        Self::Engine(EngineLimit::EsignSealStreamCodecBytes),
         Self::Engine(EngineLimit::SealStreamHeaderTokens),
         Self::Engine(EngineLimit::SealPdfDepth),
         Self::Engine(EngineLimit::SealSecurityNameHops),

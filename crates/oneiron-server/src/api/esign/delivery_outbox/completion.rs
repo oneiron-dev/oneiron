@@ -7,16 +7,17 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use oneiron::Vault;
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptState};
 use oneiron_vault_contract::esign_delivery::{
     ESIGN_DELIVERY_COMPLETED_SCHEMA_VERSION, ESIGN_DELIVERY_COMPLETED_STATE,
     ESIGN_DELIVERY_DONE_SUFFIX, EsignDeliveryCompleted,
 };
 
-use super::wire::{AckStatus, ack_binds, export, hex, parse_ack};
+use super::wire::{AckStatus, export, hex, parse_ack};
 use super::{
-    DELIVERY_KIND, LEASE_OWNER, Outbox, read_if_present, remove_if_unchanged, sync_dir,
-    write_atomic,
+    DELIVERY_KIND, LEASE_OWNER, Outbox, binds, delivered, read_if_present, remove_if_unchanged,
+    sync_dir, write_atomic,
 };
 
 impl Outbox {
@@ -28,13 +29,14 @@ impl Outbox {
     /// ack until the sender takes that one. `Ok(true)` when the ack went.
     pub(super) fn hand_off(
         &self,
+        vault: &Vault,
         stem: &str,
         row: &AttemptRecord,
         ack_path: &Path,
         ack_bytes: &[u8],
     ) -> anyhow::Result<bool> {
-        let receipt =
-            receipt(row).context("the completed try is not an e-sign notice with a dedupe key")?;
+        let receipt = receipt(vault, row)?
+            .context("the completed try is not an e-sign notice its outbox delivered")?;
         // A receipt the sender would refuse is one this side must not write.
         receipt.validate()?;
         anyhow::ensure!(
@@ -72,7 +74,12 @@ impl Outbox {
     /// taken: a receipt, or the ok ack of a completed try whose hand-off a
     /// failure stopped. No newer envelope replaces either, so a later lease
     /// never takes a completion from the sender.
-    pub(super) fn holds_slot(&self, queue: &AttemptQueue<'_>, stem: &str) -> anyhow::Result<bool> {
+    pub(super) fn holds_slot(
+        &self,
+        vault: &Vault,
+        queue: &AttemptQueue<'_>,
+        stem: &str,
+    ) -> anyhow::Result<bool> {
         let done = self.done_path(stem);
         match fs::symlink_metadata(&done) {
             Ok(_) => return Ok(true),
@@ -97,7 +104,7 @@ impl Outbox {
         };
         Ok(row.kind == DELIVERY_KIND
             && row.state == AttemptState::Completed
-            && ack_binds(&ack, &row, stem))
+            && binds(vault, &ack, &row, stem)?)
     }
 
     fn done_path(&self, stem: &str) -> PathBuf {
@@ -105,11 +112,17 @@ impl Outbox {
     }
 }
 
-/// The receipt of `row`'s completed lease: its notice's dedupe key and the
-/// exact fence its ok ack echoed.
-fn receipt(row: &AttemptRecord) -> Option<EsignDeliveryCompleted> {
-    let export = export(row)?;
-    Some(EsignDeliveryCompleted {
+/// The receipt of `row`'s completed lease: its notice's dedupe key, the
+/// exact fence its ok ack echoed, and the digest of the content that lease
+/// delivered, the one the ack bound.
+fn receipt(vault: &Vault, row: &AttemptRecord) -> oneiron::Result<Option<EsignDeliveryCompleted>> {
+    let Some(export) = export(row) else {
+        return Ok(None);
+    };
+    let Some(payload_sha256) = delivered(vault, row, &export)? else {
+        return Ok(None);
+    };
+    Ok(Some(EsignDeliveryCompleted {
         schema_version: ESIGN_DELIVERY_COMPLETED_SCHEMA_VERSION,
         kind: DELIVERY_KIND.to_owned(),
         state: ESIGN_DELIVERY_COMPLETED_STATE.to_owned(),
@@ -117,6 +130,6 @@ fn receipt(row: &AttemptRecord) -> Option<EsignDeliveryCompleted> {
         attempt_id: hex(row.id.as_bytes()),
         lease_owner: LEASE_OWNER.to_owned(),
         attempt_count: row.attempt_count,
-        payload_sha256: export.payload_sha256,
-    })
+        payload_sha256,
+    }))
 }

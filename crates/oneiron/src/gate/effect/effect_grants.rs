@@ -268,3 +268,41 @@ pub(super) fn channel_identity_envelope_reservation_in_txn(
         store, txn, &grant_ref, &candidate, now,
     )
 }
+
+/// FIX 5238 (L02 seam): the Grant live on THIS writer that covers `effect`,
+/// read as [`super::evaluate_external_effect_policy`] reads its coverage: a
+/// standing outbound grant active under the current policy frontier whose
+/// actor and scope match, a budget-free policy-scoped grant the four-axis
+/// matcher accepts, or an active DEC-0006 standing consent grant whose bound
+/// covers the effect. It records, charges and spends nothing, and an
+/// approve-once press is no Grant. `None`: no live Grant covers it.
+pub(crate) fn live_grant_covering_effect_in_txn(
+    store: &Store,
+    wtxn: &heed::RwTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    policy: &PolicyManifestResolution,
+) -> Result<Option<String>> {
+    let (hydrated, _, _) = super::hydrate_external_effect_contact(store, wtxn, effect, policy)?;
+    if let Some((id, _)) =
+        standing_outbound_grant_for_effect(store, wtxn, &hydrated, policy, None, None)?
+    {
+        return Ok(Some(format!("grant:{}", id.to_hex())));
+    }
+    let provisional = hydrated.gate_input(None, None);
+    if let Some(context) = provisional.external_effect.as_ref()
+        && policy.scoped_grants().iter().any(|grant| {
+            grant.budget.is_none()
+                && crate::gate::grants::external_effect_grant_matches(
+                    grant,
+                    &provisional.actor,
+                    context,
+                )
+        })
+    {
+        return Ok(Some("policy".to_owned()));
+    }
+    let grants = crate::consent::load_active_standing_grants(store, wtxn)?;
+    let covered = super::external_effect_consent_context(&hydrated, None, &grants)
+        .is_some_and(|context| matches!(context.decision, crate::consent::ConsentDecision::Auto));
+    Ok(covered.then(|| "consent".to_owned()))
+}

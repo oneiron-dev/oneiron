@@ -23,6 +23,8 @@ pub use model::{
 
 mod capability;
 mod ceremony;
+mod delivery_capability;
+pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint};
 mod ingress;
 pub use ingress::EsignIngress;
 mod door;

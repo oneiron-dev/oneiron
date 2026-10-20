@@ -430,6 +430,7 @@ impl JobQueue for Memory {
             signals: Vec::new(),
             asks: Vec::new(),
             placement: None,
+            history: Vec::new(),
         };
         txn.jobs.insert(*record.id.as_bytes(), record.clone());
         Ok(EnqueueOutcome::Enqueued(record))

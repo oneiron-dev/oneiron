@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 115] = [
+    pub const ALL: [Self; 117] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -91,6 +91,8 @@ impl EngineLimit {
         Self::SealReportJsonBytes,
         Self::SealPreparedStreamBytes,
         Self::SealStreamDecodeBytes,
+        Self::EsignStreamDecodeBytes,
+        Self::EsignSealStreamCodecBytes,
         Self::SealStreamHeaderTokens,
         Self::SealPdfDepth,
         Self::SealSecurityNameHops,
@@ -211,6 +213,8 @@ impl EngineLimit {
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
             Self::SealPreparedStreamBytes => "limits.seal_prepared_stream_bytes",
             Self::SealStreamDecodeBytes => "limits.seal_stream_decode_bytes",
+            Self::EsignStreamDecodeBytes => "limits.esign_stream_decode_bytes",
+            Self::EsignSealStreamCodecBytes => "limits.esign_seal_stream_codec_bytes",
             Self::SealStreamHeaderTokens => "limits.seal_stream_header_tokens",
             Self::SealPdfDepth => "limits.seal_pdf_depth",
             Self::SealSecurityNameHops => "limits.seal_security_name_hops",
@@ -376,6 +380,10 @@ impl EngineLimit {
             // the security-name and lopdf reference chains, DSS coverage and
             // field-tree work, and the contents ladder's last rung.
             Self::SealStreamDecodeBytes => 256 << 20,
+            // The host's per-stream decode guards, hard constants until FIX
+            // 6287: the render pipeline's and the signature revision's.
+            Self::EsignStreamDecodeBytes => 64 << 20,
+            Self::EsignSealStreamCodecBytes => 256 << 20,
             Self::SealStreamHeaderTokens => 4096,
             Self::SealPdfDepth => 64,
             Self::SealSecurityNameHops => 8,

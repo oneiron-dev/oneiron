@@ -4,6 +4,7 @@
 //! No document size, page count or object count refuses a preparation (Rule
 //! 5): the bounds left are the codec's and the format's, below.
 use super::model::*;
+use crate::limit_ask::EngineLimit;
 use lopdf::content::{Content, Operation};
 use lopdf::{Dictionary, Document, LoadOptions, Object, ObjectId, Stream, dictionary};
 use sha2::{Digest, Sha256};
@@ -27,14 +28,39 @@ use evidence::{certificate, evidence};
 use fields::burn_fields;
 use source::{PageContents, VisualCopy, pages, pdf_box, reject_signatures};
 
-/// The most one PDF stream decodes to: a decompression-bomb guard, held per
-/// stream and never summed over a page or a document (Rule 5). An unfiltered
-/// stream runs no codec and is read whole.
-const STREAM_DECODE_BYTES: usize = 64 * 1024 * 1024;
+/// The most one filtered PDF stream decodes to in one preparation: the
+/// `[limits] esign_stream_decode_bytes` row (FIX 6287), a decompression-bomb
+/// guard held per stream and never summed over a page or a document (Rule
+/// 5). An unfiltered stream runs no codec and is read whole.
+#[derive(Clone, Copy)]
+struct StreamBound(usize);
+impl StreamBound {
+    fn of(bytes: u64) -> Self {
+        Self(usize::try_from(bytes).unwrap_or(usize::MAX))
+    }
+}
+impl crate::Vault {
+    /// This vault's `[limits] esign_stream_decode_bytes` row: the bound a
+    /// host passes the render and inspection paths it runs (FIX 6287).
+    #[must_use]
+    pub fn esign_stream_decode_bytes(&self) -> u64 {
+        self.limit_watch()
+            .bound(EngineLimit::EsignStreamDecodeBytes)
+    }
+}
+/// A decode refused past the bound, as its typed reason: the row it crossed.
+fn past_stream_bound(error: PdfPreparationError) -> PdfPreparationError {
+    match error {
+        PdfPreparationError::Limit => {
+            PdfPreparationError::StreamPastCodecBound(EngineLimit::EsignStreamDecodeBytes)
+        }
+        other => other,
+    }
+}
 // The name the render tests size an expansion bomb by: one stream past the
-// per-stream bound.
+// per-stream bound, at the row's default.
 #[cfg(test)]
-use self::STREAM_DECODE_BYTES as MAX_INPUT;
+const MAX_INPUT: usize = 64 * 1024 * 1024;
 /// The most indirect objects one PDF file holds: ISO 32000-1 Annex C,
 /// section C.2, Table C.1 (8,388,607).
 const MAX_INDIRECT_OBJECTS: usize = 8_388_607;
@@ -52,6 +78,9 @@ pub enum PdfPreparationError {
     /// object count or the writer's offset width.
     #[error("PDF past a codec or format bound")]
     Limit,
+    /// One stream decodes past a host codec bound: the named `[limits]` row.
+    #[error("a PDF stream decodes past the [limits] {} codec bound", .0.key())]
+    StreamPastCodecBound(EngineLimit),
     #[error("malformed PDF")]
     MalformedPdf,
     #[error("encrypted PDF cannot be rewritten")]
@@ -150,14 +179,31 @@ pub fn render_field_geometry(g: &FieldGeometry, crop: [f64; 4]) -> Result<PdfFie
         height: (top - bottom) * g.height_percent / 100.0,
     })
 }
+/// [`prepare_esign_pdf_within`] at the `[limits] esign_stream_decode_bytes`
+/// row's default, for a caller holding no vault.
+pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result<PreparedEsignPdf> {
+    prepare_esign_pdf_within(
+        original,
+        request,
+        EngineLimit::EsignStreamDecodeBytes.default_bound(),
+    )
+}
 /// Rewrite immutable original bytes and flatten all recorded fields. The audit
 /// chain is checked and replayed; its projection must equal the supplied state.
-/// No I/O, clock, network, key custody or PAdES signing occurs here.
-pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result<PreparedEsignPdf> {
+/// No I/O, clock, network, key custody or PAdES signing occurs here. Each
+/// filtered stream decodes within `stream_decode_bytes`, the host's
+/// `[limits] esign_stream_decode_bytes` row, or the preparation is refused
+/// with [`PdfPreparationError::StreamPastCodecBound`].
+pub fn prepare_esign_pdf_within(
+    original: &[u8],
+    request: PdfPreparation<'_>,
+    stream_decode_bytes: u64,
+) -> Result<PreparedEsignPdf> {
     if !original.starts_with(b"%PDF-") {
         return Err(PdfPreparationError::MalformedPdf);
     }
-    let source = preflight::load(original)?;
+    let bound = StreamBound::of(stream_decode_bytes);
+    let source = preflight::load(original, bound)?;
     reject_signatures(&source)?;
     let catalog = source.catalog()?;
     if [b"OCProperties".as_slice(), b"AlternatePresentations"]
@@ -208,6 +254,7 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         source: &source,
         ids: BTreeMap::new(),
         active: BTreeSet::new(),
+        bound,
     };
     let mut kids = Vec::new();
     let mut images = fields::BurnImages::default();
@@ -224,7 +271,7 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         let geometry = source::page_geometry(&source, page)?;
         let crop = geometry.crop;
         let streams = match page.get(b"Contents".as_slice()) {
-            Some(value) => contents.admit(&source, value)?,
+            Some(value) => contents.admit(&source, value, bound)?,
             None => Vec::new(),
         };
         let mut resources = match page.get(b"Resources".as_slice()) {
@@ -303,9 +350,19 @@ pub fn prepare_esign_pdf(original: &[u8], request: PdfPreparation<'_>) -> Result
         appendix_pages,
     })
 }
-/// Read actual inherited page boxes/rotation for editor and signing overlays.
+/// [`inspect_pdf_pages_within`] at the `[limits] esign_stream_decode_bytes`
+/// row's default, for a caller holding no vault.
 pub fn inspect_pdf_pages(bytes: &[u8]) -> Result<Vec<PageGeometry>> {
-    let source = preflight::load(bytes)?;
+    inspect_pdf_pages_within(bytes, EngineLimit::EsignStreamDecodeBytes.default_bound())
+}
+/// Read actual inherited page boxes/rotation for editor and signing overlays,
+/// each filtered stream decoded within `stream_decode_bytes`, the host's
+/// `[limits] esign_stream_decode_bytes` row.
+pub fn inspect_pdf_pages_within(
+    bytes: &[u8],
+    stream_decode_bytes: u64,
+) -> Result<Vec<PageGeometry>> {
+    let source = preflight::load(bytes, StreamBound::of(stream_decode_bytes))?;
     reject_signatures(&source)?;
     let mut input = Vec::new();
     pages(

@@ -103,7 +103,9 @@ pub(super) async fn preview(
     else {
         return refused();
     };
-    let Ok(pages) = render::inspect_pdf_pages(&bytes) else {
+    let Ok(pages) =
+        render::inspect_pdf_pages_within(&bytes, server.vault.esign_stream_decode_bytes())
+    else {
         return refused();
     };
     laid_out(LayoutRequest {
@@ -161,6 +163,8 @@ pub(super) async fn upload_geometry(
     ingress: EditorIngress,
     request: Request,
 ) -> Response {
+    // Each stream decodes within the vault's own row (FIX 6287).
+    let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
     let slot = match ingress {
         EditorIngress::Anonymous => {
             let permit = request
@@ -173,7 +177,7 @@ pub(super) async fn upload_geometry(
             };
             return match tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                render::inspect_pdf_pages(&body)
+                render::inspect_pdf_pages_within(&body, stream_decode_bytes)
             })
             .await
             {
@@ -194,7 +198,7 @@ pub(super) async fn upload_geometry(
             let Some(pdf) = super::ingress::whole_body(file, bytes) else {
                 return super::ingress::unread();
             };
-            match render::inspect_pdf_pages(&pdf) {
+            match render::inspect_pdf_pages_within(&pdf, stream_decode_bytes) {
                 Ok(pages) => Json(serde_json::json!({"pages":pages})).into_response(),
                 Err(_) => refused(),
             }

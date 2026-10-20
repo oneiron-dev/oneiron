@@ -48,7 +48,7 @@ pub use cancel::{
     SpendAttemptLandingReserve, WarnAttemptBudgetPressure, WarnAttemptLeaseExpiry,
     WarnExpiringAttemptLeases,
 };
-pub use engine::AttemptQueue;
+pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;

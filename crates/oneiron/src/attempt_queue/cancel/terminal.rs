@@ -606,5 +606,6 @@ fn landing_successor(
             }
         }),
         result_ref: None,
+        history: Vec::new(),
     }
 }

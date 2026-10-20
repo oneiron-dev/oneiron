@@ -156,6 +156,7 @@ impl AttemptQueue<'_> {
                 }
             }),
             result_ref: None,
+            history: Vec::new(),
         };
 
         // A `Failed` row must carry a reason, so an omitted retry cause

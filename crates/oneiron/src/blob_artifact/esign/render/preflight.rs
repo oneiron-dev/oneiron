@@ -9,6 +9,7 @@ use dictionary::leading_dictionary;
 struct Frame {
     entries: BTreeMap<u32, XrefEntry>,
     revisions: Vec<usize>,
+    bound: StreamBound,
 }
 
 /// Neutralize ObjStm before lopdf eagerly inflates it. We expand it ourselves
@@ -21,7 +22,7 @@ fn defer_object_streams(object: &mut Object) {
     }
 }
 
-pub(super) fn load(bytes: &[u8]) -> Result<Document> {
+pub(super) fn load(bytes: &[u8], bound: StreamBound) -> Result<Document> {
     let start = bytes
         .windows(9)
         .rposition(|v| v == b"startxref")
@@ -36,6 +37,7 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document> {
     let mut frame = Frame {
         entries: BTreeMap::new(),
         revisions: Vec::new(),
+        bound,
     };
     frame.read(bytes, offset)?;
     // Inspect superseded revisions too: rewriting must not erase a prior seal.
@@ -44,10 +46,10 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document> {
     for previous in frame.revisions.iter().skip(1) {
         let mut snapshot = bytes.to_vec();
         snapshot.extend_from_slice(format!("\nstartxref\n{previous}\n%%EOF\n").as_bytes());
-        let old = load_objects(&snapshot)?;
+        let old = load_objects(&snapshot, bound)?;
         reject_signatures(&old)?;
     }
-    let document = load_objects(bytes)?;
+    let document = load_objects(bytes, bound)?;
     for (id, entry) in &frame.entries {
         match entry {
             XrefEntry::Normal { generation, .. } => {
@@ -64,7 +66,7 @@ pub(super) fn load(bytes: &[u8]) -> Result<Document> {
     Ok(document)
 }
 
-fn load_objects(bytes: &[u8]) -> Result<Document> {
+fn load_objects(bytes: &[u8], bound: StreamBound) -> Result<Document> {
     let mut doc = Document::load_mem_with_options(
         bytes,
         LoadOptions {
@@ -74,10 +76,11 @@ fn load_objects(bytes: &[u8]) -> Result<Document> {
                 Some((id, Object::Null))
             }),
             // lopdf's bound is per stream, as ours is.
-            max_decompressed_size: Some(STREAM_DECODE_BYTES),
+            max_decompressed_size: Some(bound.0),
             ..Default::default()
         },
-    )?;
+    )
+    .map_err(|error| past_stream_bound(error.into()))?;
     if doc.is_encrypted() || doc.was_encrypted() {
         return Err(PdfPreparationError::EncryptedPdf);
     }
@@ -93,7 +96,7 @@ fn load_objects(bytes: &[u8]) -> Result<Document> {
         .collect();
     for id in ids {
         let stream = doc.get_object(id)?.as_stream()?;
-        let decoded = decoded(stream)?;
+        let decoded = decoded(stream, bound)?;
         let first = natural(stream.dict.get(b"First")?)?;
         // N is checked against the header's own tokens below, so no count
         // is reserved ahead of them.
@@ -264,7 +267,7 @@ impl Frame {
             if !trim_start(&after[length..]).starts_with(b"endstream") {
                 return Err(PdfPreparationError::MalformedPdf);
             }
-            let decoded = decoded(&Stream::new(dict.clone(), raw.to_vec()))?;
+            let decoded = decoded(&Stream::new(dict.clone(), raw.to_vec()), self.bound)?;
             let widths = dict
                 .get(b"W")?
                 .as_array()?

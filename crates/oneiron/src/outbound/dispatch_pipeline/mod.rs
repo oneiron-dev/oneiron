@@ -3,6 +3,7 @@
 
 pub(super) mod admission;
 mod effect;
+mod esign_delivery;
 mod frozen_payload;
 mod govern;
 mod pipeline;
@@ -14,6 +15,7 @@ mod transport;
 mod vault;
 pub(super) mod verdict;
 
+pub(crate) use self::esign_delivery::{esign_delivery_call_in_txn, esign_delivery_grant_in_txn};
 pub use self::pipeline::OutboundDispatchPipeline;
 pub(crate) use self::pipeline::RecordedDispatch;
 pub(super) use self::policy_risk::GATE_OUTCOME_PENDING;

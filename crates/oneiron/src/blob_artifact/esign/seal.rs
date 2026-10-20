@@ -4,7 +4,7 @@
 use super::{
     ledger::{append, events_in, state_in},
     model::*,
-    render::{PdfPreparation, PdfPreparationError, SignatureRaster, prepare_esign_pdf},
+    render::{PdfPreparation, PdfPreparationError, SignatureRaster, prepare_esign_pdf_within},
     sealer::{
         EsignSealInput, EsignSealRequest, EsignSealed, EsignSealer, EsignSealerError, EsignVerdict,
         SealProfile, SealVerdict,
@@ -182,7 +182,7 @@ impl Vault {
         let fingerprint = snapshot_hash(&rows)?;
         let mut outputs = Vec::new();
         for (index, (_, original)) in originals.iter().enumerate() {
-            let prepared = prepare_esign_pdf(
+            let prepared = prepare_esign_pdf_within(
                 original,
                 PdfPreparation {
                     document_ref: &document.to_hex(),
@@ -192,6 +192,8 @@ impl Vault {
                     canonical_url,
                     signature_images: &images,
                 },
+                self.limit_watch()
+                    .bound(EngineLimit::EsignStreamDecodeBytes),
             )?;
             // The seal holds the item whole, however large: past the `[limits]
             // esign_pdf_bytes` row it asks whether everything is okay, and
@@ -209,6 +211,8 @@ impl Vault {
                 prepared.bytes,
                 &operation_id,
                 self.now_recorded_at().saturating_mul(1000),
+                self.limit_watch()
+                    .bound(EngineLimit::EsignSealStreamCodecBytes),
             )?;
             self.measure_limit(EngineLimit::SealPreparedStreamBytes, stream_bytes);
             let sealed = sealer.seal(

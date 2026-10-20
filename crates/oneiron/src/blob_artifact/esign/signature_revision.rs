@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 
 use super::render::PdfPreparationError;
 use super::sealer::{EsignSealInput, EsignSignatureRevision};
+use crate::limit_ask::EngineLimit;
 
 #[cfg(test)]
 #[path = "signature_revision_tests.rs"]
@@ -22,35 +23,47 @@ mod tests;
 /// The contents ladder: the DER bytes each revision's hole holds.
 pub const SEAL_CONTENTS_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
 const BYTERANGE_DIGITS: usize = 20;
-/// The most one stream of the prepared PDF decodes to while it is read: the
-/// per-stream codec bound the seal organ holds itself to (its
-/// `STREAM_DECODE_BYTES`), so the engine refuses no stream the seal would
-/// read. Below it a stream's decoded size is measured against the
-/// `seal_prepared_stream_bytes` row and read whole (Rule 5).
-const STREAM_CODEC_BYTES: usize = 256 * 1024 * 1024;
+/// The row bounding what one stream of the prepared PDF decodes to while
+/// the host reads it here: the host's per-stream codec bound (Rule 5, FIX
+/// 6287), past which the revisions are refused with this row named. The
+/// seal organ decodes each stream whole under its own memory grant. Below
+/// the bound a stream's decoded size is measured against the
+/// `seal_prepared_stream_bytes` row and read whole.
+const STREAM_CODEC_ROW: EngineLimit = EngineLimit::EsignSealStreamCodecBytes;
 
 type Result<T> = std::result::Result<T, PdfPreparationError>;
 
 impl EsignSealInput {
     /// Writes the signature revisions of a prepared PDF, one per rung of
     /// [`SEAL_CONTENTS_LADDER`]. `operation_id` names the signature field and
-    /// `now_ms` dates it.
+    /// `now_ms` dates it. Each stream decodes within the `[limits]
+    /// esign_seal_stream_codec_bytes` row's default; a vault's seal reads
+    /// the PDF under its configured row.
     ///
     /// # Errors
     /// [`PdfPreparationError::MalformedPdf`] for a PDF this writer cannot
     /// append to: it reads the classic xref table the preparation writes.
     pub fn new(pdf: Vec<u8>, operation_id: &str, now_ms: u64) -> Result<Self> {
-        Ok(Self::measured(pdf, operation_id, now_ms)?.0)
+        let codec_bytes = STREAM_CODEC_ROW.default_bound();
+        Ok(Self::measured(pdf, operation_id, now_ms, codec_bytes)?.0)
     }
 
-    /// [`Self::new`], with the bytes the prepared PDF's largest stream
-    /// decoded to while it was read, for the `seal_prepared_stream_bytes`
-    /// row.
+    /// [`Self::new`], each stream decoded within `codec_bytes` (the
+    /// configured `[limits] esign_seal_stream_codec_bytes` row), with the
+    /// bytes the prepared PDF's largest stream decoded to while it was read,
+    /// for the `seal_prepared_stream_bytes` row.
     ///
     /// # Errors
-    /// As [`Self::new`].
-    pub(crate) fn measured(pdf: Vec<u8>, operation_id: &str, now_ms: u64) -> Result<(Self, u64)> {
-        let (base, stream_bytes) = Base::read(&pdf)?;
+    /// As [`Self::new`], and [`PdfPreparationError::StreamPastCodecBound`]
+    /// for a stream past `codec_bytes`.
+    pub(crate) fn measured(
+        pdf: Vec<u8>,
+        operation_id: &str,
+        now_ms: u64,
+        codec_bytes: u64,
+    ) -> Result<(Self, u64)> {
+        let codec = usize::try_from(codec_bytes).unwrap_or(usize::MAX);
+        let (base, stream_bytes) = Base::read(&pdf, codec)?;
         let revisions = SEAL_CONTENTS_LADDER
             .iter()
             .map(|&capacity| base.revision(pdf.len(), operation_id, now_ms, capacity))
@@ -63,7 +76,7 @@ impl EsignSealInput {
 /// an object stream's, which it leaves decoded in place, or a
 /// cross-reference stream's, decoded again here to be measured. Each
 /// decoded within the codec bound, or the read failed.
-fn largest_decoded_stream(doc: &Document) -> u64 {
+fn largest_decoded_stream(doc: &Document, codec: usize) -> u64 {
     doc.objects
         .values()
         .filter_map(|object| object.as_stream().ok())
@@ -76,7 +89,7 @@ fn largest_decoded_stream(doc: &Document) -> u64 {
             match kind {
                 Some(b"ObjStm") if !stream.is_compressed() => Some(stream.content.len()),
                 Some(b"ObjStm" | b"XRef") => stream
-                    .decompressed_content_with_limit(STREAM_CODEC_BYTES)
+                    .decompressed_content_with_limit(codec)
                     .ok()
                     .map(|content| content.len()),
                 _ => None,
@@ -117,16 +130,22 @@ fn reference(object: &Object) -> Option<ObjectId> {
 
 impl Base {
     /// The prepared PDF's base, and its largest decoded stream's bytes.
-    fn read(pdf: &[u8]) -> Result<(Self, u64)> {
+    fn read(pdf: &[u8], codec: usize) -> Result<(Self, u64)> {
         let doc = Document::load_mem_with_options(
             pdf,
             LoadOptions {
                 strict: true,
-                max_decompressed_size: Some(STREAM_CODEC_BYTES),
+                max_decompressed_size: Some(codec),
                 ..LoadOptions::default()
             },
-        )?;
-        let stream_bytes = largest_decoded_stream(&doc);
+        )
+        .map_err(|error| match PdfPreparationError::from(error) {
+            PdfPreparationError::Limit => {
+                PdfPreparationError::StreamPastCodecBound(STREAM_CODEC_ROW)
+            }
+            other => other,
+        })?;
+        let stream_bytes = largest_decoded_stream(&doc, codec);
         let prev_startxref = last_startxref(pdf)?;
         let at = usize::try_from(prev_startxref).map_err(malformed)?;
         if pdf.get(at..at.saturating_add(4)) != Some(b"xref".as_slice())
