@@ -635,6 +635,57 @@ impl Memory<'_> {
                 ));
             }
         }
+        // SCAN C034: a session handle reads as a participant. One no run is
+        // bound to reads as this facade's actor, and each is admitted on its
+        // room's roster in a fresh snapshot before retrieval and again before
+        // the pack is answered, so a participant who left reads nothing; a
+        // bound handle reads as the participant it was bound to.
+        let bound;
+        let session = match session {
+            Some(session) if session.participant().is_none() => {
+                bound = session.for_participant(self.actor)?;
+                Some(&bound)
+            }
+            session => {
+                if let Some(session) = session {
+                    session.admit_participant()?;
+                }
+                session
+            }
+        };
+        let pack = self.recall_admitted(
+            session,
+            query,
+            effort,
+            scope,
+            limit,
+            format,
+            candidate_filter,
+            execution,
+        )?;
+        if let Some(session) = session {
+            session.admit_participant()?;
+        }
+        Ok(pack)
+    }
+
+    /// [`Self::recall_routed`] once its session handle, if any, is bound and
+    /// admitted.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "recall_routed's parameter list, its checked lease aside"
+    )]
+    fn recall_admitted(
+        &self,
+        session: Option<&crate::off_record::OffRecordSession<'_>>,
+        query: &str,
+        effort: Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
+        execution: &RecallExecution<'_>,
+    ) -> MemoryResult<MemoryPack> {
         // ONE route and ONE registration door for the whole assembly. The
         // context pack registers a PROVISIONAL run and finalizes it in a
         // second write, so a target re-derived between them could stage into

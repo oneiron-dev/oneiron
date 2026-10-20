@@ -390,6 +390,7 @@ impl StepRunner {
             vault,
             attempt.id,
             attempt.attempt_count,
+            actor,
             &request,
         );
         let generated = runtime.block_on(call.ladder.generate_served(&run, request, None));

@@ -21,7 +21,7 @@ use crate::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_ATTEMPT_KEY,
     SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition, SkillEditDraft, SkillOptimizeAuthor,
-    SkillOptimizeBrief, SkillOptimizeDecisions, SkillReplayPair, measure_skill_edit_goal_axes,
+    SkillOptimizeBrief, SkillOptimizeDecisions, SkillReplayResponses, measure_skill_edit_goal_axes,
     run_skill_optimize, run_skill_optimize_for_resident, score_gate_skill_edit_in_cycle,
     skill_edit_needs_goal_axis_report, skill_edit_verdict, skill_tradeoff_ask,
 };
@@ -71,8 +71,8 @@ impl HeldOutReplayNotes for PassBoundScorer<'_> {
         self.inner.replay_state(case)
     }
 
-    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
-        self.inner.blind_pairs(task, receipts)
+    fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        self.inner.replay_responses(receipts)
     }
 
     fn record_decision(
