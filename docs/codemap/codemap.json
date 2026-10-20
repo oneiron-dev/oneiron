@@ -1383,13 +1383,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/workflow/member_context.rs",
+     "purpose": "A member's bound run reads its context on that member's own lane (FIX 5416): the memory and chat a step…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/workflow/workflow_task.rs",
      "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 4
      }
     },
@@ -18428,8 +18438,8 @@
      "purpose": "Dispatch-time resolution of a `ContextSpec` against live vault state",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
-      "fn": 2,
+      "crate-vis": 5,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -56309,7 +56319,7 @@
      "path": "src/task_verb/highway_runner/workflow_try/binder.rs",
      "purpose": "Who binds a saved workflow's run to a TASK, as the door that took the request proved them (FIX 5316): the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -63890,7 +63900,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65397,7 +65407,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4069,
+   "source_files": 4070,
    "test_files": 902
   },
   "oneiron-android": {
