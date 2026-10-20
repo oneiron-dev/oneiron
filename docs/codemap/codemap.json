@@ -14704,7 +14704,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 8
      }
     },
@@ -14715,7 +14715,7 @@
      "path": "src/code_symbol/rust_source.rs",
      "purpose": "tree-sitter Rust parsing: definition extraction, identifier references and the derived symbol graph",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -14740,7 +14740,7 @@
      "path": "src/code_symbol/storage.rs",
      "purpose": "Vault CRUD for symbol manifests and the blame / definition / reference / PPR reads over them",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 11
      }
     },
@@ -53398,7 +53398,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -53429,6 +53429,16 @@
      "purpose": "What a promotion owes the TURNs it lands (OF-534)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/task_pairs.rs",
+     "purpose": "TASK rows one delta or pass changes together (FIX 5998)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -54416,7 +54426,7 @@
      "path": "src/sync/server_state.rs",
      "purpose": "Server-side `sync_state` persistence per the ARCH-0023b key layout",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -64647,7 +64657,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 210,
+     "files": 211,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64845,7 +64855,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4021,
+   "source_files": 4022,
    "test_files": 902
   },
   "oneiron-android": {
