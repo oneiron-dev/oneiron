@@ -152,6 +152,16 @@ pub(crate) trait OutboundTransport {
     fn settled_result(&self) -> Option<&[u8]> {
         None
     }
+
+    /// Judges a new call once more under the writer that would record its
+    /// gate decision, before any decision is recorded (FIX 6404): a refusal
+    /// records none and sends nothing. By default a transport takes every
+    /// call.
+    /// # Errors
+    /// The transport's own refusal, or the failure of its read.
+    fn admit_in(&self, _txn: &heed::RoTxn<'_>) -> Result<(), IntentLedgerError> {
+        Ok(())
+    }
 }
 
 /// The CA-05 send-hygiene headers this call must go out under, read from the

@@ -120,6 +120,15 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         self.execution = Some(execution);
         outcome
     }
+
+    fn admit_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(), crate::outbound_intent_ledger::IntentLedgerError> {
+        self.sink
+            .admit_in(txn)
+            .map_err(crate::outbound_intent_ledger::IntentLedgerError::from)
+    }
 }
 /// A frozen call the dispatch transport cannot honor verbatim.
 fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {
