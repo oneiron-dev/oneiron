@@ -37,7 +37,6 @@ pub(super) struct OwedCompaction {
 /// # Errors
 ///
 /// Storage errors.
-#[allow(dead_code, reason = "L01's birth-carrier scrub calls this (FIX 6387)")]
 pub(crate) fn owe_window_compaction_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
