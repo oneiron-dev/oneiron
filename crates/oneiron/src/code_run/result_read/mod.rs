@@ -18,6 +18,9 @@ mod query;
 mod search;
 mod shape;
 mod slice;
+mod unplaced;
+
+pub(crate) use self::unplaced::unplaced_answer;
 
 use crate::code_run::{
     CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunOutputKind, CodeRunRawOutput, CodeRunReplayRecord,

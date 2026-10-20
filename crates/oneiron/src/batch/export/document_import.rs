@@ -554,11 +554,21 @@ fn put_run_results_in_txn<R: Read + Seek>(
             if archive.index.insert(Tag::Staged, &digest, &[])? && listed != output.bytes {
                 return Err(invalid("run result body does not match its digest"));
             }
-            let body = std::io::Cursor::new(archive.files.read_file(blake3)?);
+            // Masked at write as a run's reply body is (FIX 5718 part 3).
+            let may_spill = swept.is_some() || listed > vault.code_result_inline_bytes();
+            let body = archive.files.read_file(blake3)?;
+            let body = vault.admit_imported_result_in_txn(
+                wtxn,
+                run_id,
+                &output.path,
+                body,
+                swept.as_ref(),
+                may_spill,
+            )?;
             let finished = vault.stage_code_run_output_from(
                 output.path.clone(),
                 vault.code_run_output_sink_knowing(known.clone(), swept.clone())?,
-                body,
+                std::io::Cursor::new(body),
             )?;
             let occurrence = finished.at(output.path.clone(), output.complete)?;
             vault.put_code_run_output_in_txn(wtxn, &finished, &occurrence, Some(run_id))?;

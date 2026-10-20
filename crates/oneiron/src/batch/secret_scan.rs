@@ -30,6 +30,9 @@ pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
     admit_typed, admitted_from, from_named_tree, named_tree,
 };
+pub(crate) use self::mask::spool::{
+    BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
+};
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 use self::shapes::Door;
 pub(crate) use self::whole_read::{
