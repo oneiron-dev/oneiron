@@ -36,7 +36,7 @@ const FAILURE_SIGNALS_CONNECTOR: &str = "failure_signals";
 /// failure-signal batch carries over`, superseding `FIX 6424 failure-signal
 /// batches keep the unpinned digest`): the next pass carries a held batch's
 /// ref and content, so the owner's press is spent by exactly that batch.
-const FAILURE_SIGNAL_BATCHES_PIN: bool = false;
+const FAILURE_SIGNAL_BATCHES_PIN: bool = true;
 
 /// The facts one non-mail send's approve-once press pins, per family. Every
 /// `send_ref` is the family's existing logical ref: the dispatch's intent
