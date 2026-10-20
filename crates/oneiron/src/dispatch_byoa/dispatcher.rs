@@ -127,8 +127,9 @@ struct ByoaEnqueue {
     run_id: Option<String>,
     dedupe_key: Option<String>,
     now: u64,
-    /// The official seat stamp a seat dispatch carries (OF-375); the
-    /// generic and runner-seat doors leave it empty.
+    /// The official seat stamp a seat dispatch carries (OF-375), and a
+    /// runner seat whose adapter names one (FIX 5104); the generic door
+    /// leaves it empty.
     official_seat: Option<OfficialSeatStamp>,
 }
 
@@ -178,6 +179,18 @@ where
     /// Returns [`ByoaError::Store`] when the connector fails the door or the
     /// queue refuses the row.
     pub fn dispatch(&mut self, request: DispatchByoa) -> ByoaResult<ByoaDispatchOutcome> {
+        self.dispatch_stamped(request, None)
+    }
+
+    /// [`Self::dispatch`] carrying `official_seat`, the stamp an approved
+    /// official seat's adapter names (FIX 5104): the row's placement is then
+    /// judged by the vendor's table, here and again at execution. A raw
+    /// dispatch carries none.
+    fn dispatch_stamped(
+        &self,
+        request: DispatchByoa,
+        official_seat: Option<OfficialSeatStamp>,
+    ) -> ByoaResult<ByoaDispatchOutcome> {
         let enqueue = ByoaEnqueue {
             user_login: request.user_login,
             connector: request.connector,
@@ -186,7 +199,7 @@ where
             run_id: request.run_id,
             dedupe_key: request.dedupe_key,
             now: request.now,
-            official_seat: None,
+            official_seat,
         };
         self.vault
             .try_with_write_txn_grouped(|txn| self.enqueue_in_txn(txn, enqueue))
@@ -313,7 +326,9 @@ where
 
     /// Dispatches `work` to the policy's `seat` through the runner adapter
     /// the registry names for it (OF-137). The seat's login rides the attempt
-    /// as `user_login`, so the placement door holds again before execution.
+    /// as `user_login`, and the adapter's official stamp, when it names one
+    /// (FIX 5104), as the row's seat, so the placement door holds again
+    /// before execution on the same terms.
     ///
     /// # Errors
     ///
@@ -329,15 +344,19 @@ where
         policy.validate(registry)?;
         let chosen = policy.seat(seat)?;
         let connector = chosen.connector(registry, work.task, work.checkout_id)?;
-        self.dispatch(DispatchByoa {
-            user_login: chosen.logs_in(),
-            connector,
-            task_ref: work.task_ref,
-            parent_attempt_id: work.parent_attempt_id,
-            run_id: work.run_id,
-            dedupe_key: work.dedupe_key,
-            now: work.now,
-        })
+        let context = registry.resolve(&chosen.runner)?.placement_context();
+        self.dispatch_stamped(
+            DispatchByoa {
+                user_login: chosen.logs_in(),
+                connector,
+                task_ref: work.task_ref,
+                parent_attempt_id: work.parent_attempt_id,
+                run_id: work.run_id,
+                dedupe_key: work.dedupe_key,
+                now: work.now,
+            },
+            context,
+        )
     }
 
     /// Captures a runner attempt's terminal exhaust and, when the seat it
@@ -350,7 +369,8 @@ where
     /// attempt carries no CLI runner task to hand on (an endpoint or MCP
     /// seat), so its capture still stands. A seat a hosted-only bound keeps
     /// off this runtime is passed over and named in the receipt's
-    /// `skipped_seats`. InternalModels hands the work
+    /// `skipped_seats`; a seat whose adapter names an official stamp is
+    /// judged, and dispatched, on that stamp (FIX 5104). InternalModels hands the work
     /// back to the Dreamer's own model roles. A replay finds the same
     /// capture and the same child.
     ///
@@ -413,7 +433,8 @@ where
                         let connector =
                             next.connector(registry, task.to_owned(), ran.checkout_id)?;
                         let connector = super::staged_input::carry_staged_input(connector, &ran);
-                        if let Some(bound) = self.login_bound(next.logs_in(), &connector) {
+                        let context = registry.resolve(&next.runner)?.placement_context();
+                        if let Some(bound) = self.seat_bound(next.logs_in(), &connector, context)? {
                             receipt.skipped_seats.push(SkippedRunnerSeat {
                                 seat: index,
                                 runner: next.runner.clone(),
@@ -434,7 +455,7 @@ where
                                     bytes_to_hex_lower(&parent)
                                 )),
                                 now,
-                                official_seat: None,
+                                official_seat: context,
                             },
                         )?;
                         return Ok(SeatRoute::NextSeat {
@@ -475,6 +496,31 @@ where
             self.vault.config.privacy.posture,
             None,
         )
+    }
+
+    /// The hosted-only bound that keeps a fallback seat off this runtime:
+    /// judged by its vendor's table when its adapter names an official stamp
+    /// (FIX 5104), as its dispatch and execution judge it, else by the
+    /// connector's login ([`Self::login_bound`]).
+    fn seat_bound(
+        &self,
+        user_login: bool,
+        connector: &ByoaConnectorSpec,
+        context: Option<OfficialSeatStamp>,
+    ) -> ByoaResult<Option<HostedSeatBound>> {
+        let Some(stamp) = context else {
+            return Ok(self.login_bound(user_login, connector));
+        };
+        match check_seat_placement(
+            stamp.route,
+            self.vault.config.privacy.posture,
+            stamp.approvals,
+            stamp.unmodified_binary,
+        ) {
+            Ok(()) => Ok(None),
+            Err(ByoaError::CloudLoginRefused { bound }) => Ok(Some(bound)),
+            Err(error) => Err(error),
+        }
     }
 
     fn check_login_placement(

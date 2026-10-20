@@ -20,6 +20,8 @@ const NO_TUNING_LAYER_REASON: &str = "managed mode reads the owner's settings fr
 
 const NO_TENANT_LAYER_REASON: &str = "the supervisor binds the vault's tenant identity, privacy posture and key custody; contract v1 has no managed override for them";
 
+const NO_ARTIFACT_DOMAINS_REASON: &str = "a managed vault's artifact origin answers on its internal authority alone (<vault-name>.artifact.invalid); the edge checks public names and forwards to it";
+
 /// What managed mode does with one `ServeArgs` field.
 #[derive(Debug, Clone, Copy)]
 enum ArgvUse {
@@ -242,16 +244,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "artifact-domains",
         |args| args.artifact_domains.is_some(),
-        ArgvUse::Read,
+        ArgvUse::Refused(NO_ARTIFACT_DOMAINS_REASON),
     ),
     (
         "artifact-http-socket",
         |args| args.artifact_http_socket.is_some(),
-        ArgvUse::Read,
-    ),
-    (
-        "artifact-public-slug",
-        |args| args.artifact_public_slug.is_some(),
         ArgvUse::Read,
     ),
     (

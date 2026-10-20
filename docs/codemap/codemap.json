@@ -503,7 +503,7 @@
      "path": "src/agent_def/doors.rs",
      "purpose": "Vault CRUD doors over the generic entity/batch machinery",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 10
      }
@@ -4833,6 +4833,7 @@
       "ResearchBinding",
       "ResearchConfirmationSeat",
       "ResearchExecution",
+      "ResearchGoalBasis",
       "ResearchGoalPin",
       "ResearchStep",
       "ResearchTarget",
@@ -4847,9 +4848,9 @@
      "surface": {
       "crate-vis": 13,
       "enum": 6,
-      "fn": 15,
+      "fn": 16,
       "re-export": 5,
-      "struct": 16
+      "struct": 17
      }
     },
     {
@@ -22365,9 +22366,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ActionModeCeiling",
+      "ActionModeEffect",
       "ActionModePolicy",
       "ActionModeProjection",
       "ActionModeRule"
@@ -22376,9 +22379,10 @@
      "purpose": "Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's…",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
-      "fn": 2,
-      "struct": 3
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
+      "struct": 4
      }
     },
     {
@@ -22508,10 +22512,20 @@
      "purpose": "Dreamer maintenance that applies at once (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
       "const": 3,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/applied/action_mode_row.rs",
+     "purpose": "The owner's apply of an action-mode finding's ceiling patch on the applied list (FIX 1786): the finding's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -22548,8 +22562,8 @@
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
       "const": 31,
-      "crate-vis": 9,
-      "fn": 14,
+      "crate-vis": 8,
+      "fn": 12,
       "trait": 1
      }
     },
@@ -22591,6 +22605,19 @@
      "purpose": "The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResearchGoalOracle"
+     ],
+     "path": "src/dreamer_runner/maintenance/coach_research.rs",
+     "purpose": "The Coach's autoresearch jobs (OF-351, FIX 886, FIX 1331), both on the host lane: execution advances a…",
+     "surface": {
+      "fn": 3,
+      "trait": 1
      }
     },
     {
@@ -22899,7 +22926,7 @@
       "crate-vis": 12,
       "fn": 1,
       "mod": 18,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -48799,10 +48826,26 @@
      "path": "src/session_lifecycle.rs",
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 13,
+      "re-export": 1,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SessionParticipant",
+      "SessionSpeakers"
+     ],
+     "path": "src/session_lifecycle/speakers.rs",
+     "purpose": "Who spoke in a sitting (FIX 2015), kept on its lifecycle record so an ended sitting still names them after…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -49681,7 +49724,7 @@
      "path": "src/skill_attribution/host.rs",
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -51302,7 +51345,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 15,
+      "crate-vis": 14,
       "re-export": 11
      }
     },
@@ -65656,7 +65699,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 99,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66342,7 +66385,7 @@
      "purpose": "Context-pack serialization"
     },
     "session_lifecycle": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66673,7 +66716,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4175,
+   "source_files": 4178,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79007,6 +79050,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/coach_host/research_oracle.rs",
+     "purpose": "The research tick's goal oracle (FIX 1331)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_host/seal_checks.rs",
      "purpose": "The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession…",
      "surface": {
@@ -79709,7 +79762,7 @@
      "path": "src/api/artifacts/host.rs",
      "purpose": "Vault subdomain hosts on the artifact listener: `<vault>.<domain>/<artifact>/…`, and one app on an origin of…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -90827,7 +90880,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 62,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91284,7 +91337,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 942,
+   "source_files": 943,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -91496,6 +91549,8 @@
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
       "ActionFact",
+      "ActionModeCeiling",
+      "ActionModeEffect",
       "ActionModePolicy",
       "ActionModeRule",
       "ActionTarget",
@@ -95175,8 +95230,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 891,
-      "struct": 2799
+      "enum": 892,
+      "struct": 2800
      }
     },
     {
@@ -95307,15 +95362,17 @@
      "notable": [
       "ArtifactHost",
       "ArtifactHostRead",
+      "ArtifactInternalHost",
+      "ArtifactInternalRead",
       "ArtifactLabelRefusal"
      ],
      "path": "src/lib/artifact_origin.rs",
      "purpose": "The artifact origin's naming and forwarding contract (OF-356, ARCH-0078)",
      "surface": {
-      "const": 3,
-      "enum": 2,
-      "fn": 7,
-      "struct": 1
+      "const": 4,
+      "enum": 3,
+      "fn": 10,
+      "struct": 2
      }
     },
     {

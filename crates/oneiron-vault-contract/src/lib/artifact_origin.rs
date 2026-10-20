@@ -7,20 +7,23 @@
 //! configuration and names none itself.
 //!
 //! Forwarding: a front sends each request for a name under one of its domains
-//! to the named vault's artifact listener (a managed vault's
-//! `--artifact-http-socket`, or [`crate::vm::VM_ARTIFACT_PORT`] in a vault VM),
-//! with the request's own `Host` (or `:authority`), path, query and
-//! credentials unchanged. The listener picks the vault and the app from that
-//! authority alone and never reads a forwarded-host header, so nothing a
-//! client sends can steer a request to another vault. A name that serves
-//! nothing answers as a forbidden artifact does.
+//! to the named vault's artifact listener, with the request's path, query and
+//! credentials unchanged. The listener picks the vault and the app from the
+//! authority it receives alone and never reads a forwarded-host header, so
+//! nothing a client sends can steer a request to another vault. A name that
+//! serves nothing answers as a forbidden artifact does.
 //!
-//! A managed vault's name here is its public slug, the label the
-//! supervisor's slug map names it by and passes as `--artifact-public-slug`
-//! (FIX 5389), never its local vault id: the vault id names no public host.
-//! Each name is one DNS label of at most [`MAX_ARTIFACT_LABEL`] bytes,
+//! A plain serve reads the request's own `Host` (or `:authority`) under its
+//! configured domains ([`ArtifactHost::read`]). A managed vault (its
+//! `--artifact-http-socket`, or [`crate::vm::VM_ARTIFACT_PORT`] in a vault VM)
+//! is never told its public name (FIX 6716). The edge checks the public
+//! label, one DNS label of at most [`MAX_ARTIFACT_LABEL`] bytes,
 //! `<app>--<slug>` whole, with no fixed share for either part
-//! ([`ArtifactHost::label`]).
+//! ([`ArtifactHost::label`]), maps the slug to the vault id, and rewrites the
+//! `Host` and the URI authority to the vault's internal authority:
+//! `<vault_id>.artifact.invalid`, or `<app>.<vault_id>.artifact.invalid`
+//! ([`ArtifactInternalHost`]). The vault answers on that authority alone,
+//! for its own vault id, and no response names it.
 
 use serde::{Deserialize, Serialize};
 
@@ -33,9 +36,14 @@ pub const APP_SEPARATOR: &str = "--";
 /// vault's own or `<app>--<vault>` whole.
 pub const MAX_ARTIFACT_LABEL: usize = 63;
 
-/// The revision of the managed public slug binding (`--artifact-public-slug`)
-/// a vault built with it reports on `Ping` (`artifact_public_slug_revision`).
-pub const ARTIFACT_PUBLIC_SLUG_REVISION: u32 = 1;
+/// The fixed domain of a managed vault's internal artifact authority. Under
+/// `.invalid`, it names no public host.
+pub const ARTIFACT_INTERNAL_DOMAIN: &str = "artifact.invalid";
+
+/// The revision of the internal artifact authority a managed vault answers
+/// on ([`ArtifactInternalHost`]), which a vault built with it reports on
+/// `Ping` (`artifact_internal_host_revision`).
+pub const ARTIFACT_INTERNAL_HOST_REVISION: u32 = 1;
 
 /// One name under an artifact domain: a vault, and an app of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +185,87 @@ impl ArtifactHost {
             };
         }
         ArtifactHostRead::Outside
+    }
+}
+
+/// One name on a managed vault's internal artifact authority: the vault by
+/// its id, and an app of it. Each is a label of its own, so the vault id's
+/// length bounds no app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactInternalHost {
+    pub vault_id: String,
+    pub app: Option<String>,
+}
+
+/// Where a host falls on the internal artifact authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArtifactInternalRead {
+    /// Not under [`ARTIFACT_INTERNAL_DOMAIN`].
+    Outside,
+    /// Under it, naming a vault id (and maybe an app).
+    Named(ArtifactInternalHost),
+    /// Under it, naming nothing: the bare domain, more than two labels, or a
+    /// label that is not one.
+    Unnamed,
+}
+
+impl ArtifactInternalHost {
+    /// The vault's own internal authority.
+    #[must_use]
+    pub fn vault(vault_id: impl Into<String>) -> Self {
+        Self {
+            vault_id: vault_id.into(),
+            app: None,
+        }
+    }
+
+    /// The internal host name the edge forwards to:
+    /// `<vault_id>.artifact.invalid`, or `<app>.<vault_id>.artifact.invalid`.
+    /// `None` when the vault id is not a vault name or the app is not an app
+    /// label. It is never a link.
+    #[must_use]
+    pub fn name(&self) -> Option<String> {
+        if !valid_vault_name(&self.vault_id) {
+            return None;
+        }
+        let vault = format!("{}.{ARTIFACT_INTERNAL_DOMAIN}", self.vault_id);
+        match &self.app {
+            None => Some(vault),
+            Some(app) if valid_app_label(app) => Some(format!("{app}.{vault}")),
+            Some(_) => None,
+        }
+    }
+
+    /// Reads `host` (a port and a trailing dot are dropped, case is ignored)
+    /// on the internal authority: exactly one vault id label, or one app
+    /// label and one vault id label, before [`ARTIFACT_INTERNAL_DOMAIN`].
+    /// The app is an app label and the vault id a vault name.
+    #[must_use]
+    pub fn read(host: &str) -> ArtifactInternalRead {
+        let host = normalize_host(host);
+        if host == ARTIFACT_INTERNAL_DOMAIN {
+            return ArtifactInternalRead::Unnamed;
+        }
+        let Some(labels) = host
+            .strip_suffix(ARTIFACT_INTERNAL_DOMAIN)
+            .and_then(|rest| rest.strip_suffix('.'))
+        else {
+            return ArtifactInternalRead::Outside;
+        };
+        let named = match labels.split_once('.') {
+            None => Self::vault(labels),
+            Some((app, vault_id)) if valid_app_label(app) => Self {
+                vault_id: vault_id.to_owned(),
+                app: Some(app.to_owned()),
+            },
+            Some(_) => return ArtifactInternalRead::Unnamed,
+        };
+        // A vault name holds no dot, so a third label names nothing.
+        if valid_vault_name(&named.vault_id) {
+            ArtifactInternalRead::Named(named)
+        } else {
+            ArtifactInternalRead::Unnamed
+        }
     }
 }
 
