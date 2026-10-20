@@ -16,6 +16,15 @@
 //! folds as it did; no plain delete removes it while its root lives
 //! ([`super::audience_edit_guard`]).
 //!
+//! # Erased people
+//!
+//! An actor's erase, and a room's erase of one of its people, take that
+//! person out of every edit that names them (FIX 5640): as its editor, the
+//! edit was made by no one; as the person it adds or removes, it names the
+//! root's stand-in for them, an opaque digest of the root and that person,
+//! one per root and person. No PERSON or AGENT_DEF stands behind a
+//! stand-in, and anyone else an edit names stays named.
+//!
 //! # The fold
 //!
 //! The root's seed starts each member it names with the whole thread. The
@@ -24,6 +33,13 @@
 //! add from now gives the turns from the edit's own on, and a remove ends
 //! every read of that person's, old turns included. The latest edit per
 //! person wins, and the audience may end empty, read by no one.
+//!
+//! A person the root's edits name by a stand-in folds under it: the seed's
+//! place for them, and any live edit of theirs before the last edit naming
+//! the stand-in, a copy from before their erase, so an add and its erased
+//! remove still meet. A live edit after it names them anew. A stand-in is no
+//! one's place: who is in the thread, who reads a turn, and which turns are
+//! cut all skip it.
 
 use super::audience::{ThreadBinding, thread_binding};
 use super::*;
@@ -35,6 +51,94 @@ use std::collections::BTreeMap;
 
 /// The door-owned TURN body key an audience edit rides under.
 pub(crate) const ROOM_THREAD_AUDIENCE_KEY: &str = "room_thread_audience";
+
+/// The domain of an erased person's stand-in in a root's audience edits
+/// (FIX 5640).
+const AUDIENCE_PERSON_ERASED_DOMAIN: &str = "oneiron.rooms.thread-audience.person-erased.v1";
+
+/// What a stand-in reads and writes as, before its digest's hex.
+const ERASED_PERSON_PREFIX: &str = "erased:";
+
+/// Whom an audience edit adds or removes (FIX 5640): a live id, or no one,
+/// the stand-in the edit's root keeps for a person once they were erased.
+/// It reads and writes as the id's hex, or as `erased:` and the digest's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum AudiencePerson {
+    Live(EntityId),
+    Erased([u8; 16]),
+}
+
+impl AudiencePerson {
+    /// The stand-in the root `root` keeps for `person` once they were
+    /// erased: one per root and person, so an add and a remove of them still
+    /// meet, and two people never share one.
+    pub(crate) fn erased(root: EntityId, person: EntityId) -> Self {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(AUDIENCE_PERSON_ERASED_DOMAIN.as_bytes());
+        hasher.update(&[0]);
+        hasher.update(root.as_bytes());
+        hasher.update(person.as_bytes());
+        let mut digest = [0; 16];
+        digest.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+        Self::Erased(digest)
+    }
+
+    /// The person, while not erased.
+    pub(crate) const fn live(&self) -> Option<EntityId> {
+        match self {
+            Self::Live(id) => Some(*id),
+            Self::Erased(_) => None,
+        }
+    }
+
+    /// This, or the stand-in the root `root` keeps for it once erased.
+    pub(super) fn stand_in(self, root: EntityId) -> Self {
+        self.live().map_or(self, |live| Self::erased(root, live))
+    }
+}
+
+impl Serialize for AudiencePerson {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Live(id) => serializer.serialize_str(&id.to_hex()),
+            Self::Erased(digest) => serializer.serialize_str(&format!(
+                "{ERASED_PERSON_PREFIX}{}",
+                crate::entity_id::bytes_to_hex_lower(digest)
+            )),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AudiencePerson {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        let Some(hex) = value.strip_prefix(ERASED_PERSON_PREFIX) else {
+            return EntityId::from_hex(&value)
+                .map(Self::Live)
+                .map_err(serde::de::Error::custom);
+        };
+        let invalid = || <D::Error as serde::de::Error>::custom("invalid erased person");
+        // One spelling: thirty-two lowercase hex digits.
+        if hex.len() != 32
+            || !hex
+                .bytes()
+                .all(|digit| matches!(digit, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            return Err(invalid());
+        }
+        let mut digest = [0; 16];
+        for (at, byte) in digest.iter_mut().enumerate() {
+            let pair = hex.get(at * 2..at * 2 + 2).ok_or_else(invalid)?;
+            *byte = u8::from_str_radix(pair, 16).map_err(|_| invalid())?;
+        }
+        Ok(Self::Erased(digest))
+    }
+}
 
 /// What an add shares with the person it adds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -55,13 +159,14 @@ pub(crate) enum AudienceOp {
 }
 
 /// One audience edit as its TURN carries it: the thread's root, the person
-/// added or removed, the actor whose door wrote it (no one once a privacy
-/// erase took it, FIX 5639) and, on an add alone, the history it shares.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// added or removed (the root's stand-in for them once erased, FIX 5640),
+/// the actor whose door wrote it (no one once a privacy erase took it, FIX
+/// 5639) and, on an add alone, the history it shares.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AudienceEvent {
     pub(crate) root: EntityId,
-    pub(crate) person: EntityId,
+    pub(crate) person: AudiencePerson,
     pub(crate) by: RosterActor,
     pub(crate) op: AudienceOp,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -69,14 +174,91 @@ pub(crate) struct AudienceEvent {
 }
 
 impl AudienceEvent {
-    /// This edit as a privacy erase leaves it: the same root, person, op and
-    /// history, made by no one.
-    fn erased(self) -> Self {
+    /// This edit as a privacy erase of it leaves it: the same root, person,
+    /// op and history, made by no one.
+    pub(super) fn erased(self) -> Self {
         Self {
             by: RosterActor::Erased,
             ..self
         }
     }
+
+    /// This edit with `actor` erased where it names them (FIX 5640): made by
+    /// no one when they made it, and naming the root's stand-in for them
+    /// when it adds or removes them. Anyone else it names stays named. `None`
+    /// when it names `actor` in neither place.
+    pub(super) fn erased_for(self, actor: EntityId) -> Option<Self> {
+        let made = self.by.is(actor);
+        let named = self.person == AudiencePerson::Live(actor);
+        (made || named).then(|| Self {
+            by: if made { RosterActor::Erased } else { self.by },
+            person: if named {
+                AudiencePerson::erased(self.root, actor)
+            } else {
+                self.person
+            },
+            ..self
+        })
+    }
+
+    /// Whether `to` is this edit with none, some or all of whom it names
+    /// erased, and nothing else changed. Never the other way: no erased
+    /// slot names anyone again.
+    fn erases_to(&self, to: &Self) -> bool {
+        (self.root, self.op, self.history) == (to.root, to.op, to.history)
+            && (self.by == to.by || to.by == RosterActor::Erased)
+            && (self.person == to.person || self.person.stand_in(self.root) == to.person)
+    }
+
+    /// Whether this edit names someone as no one: its editor, or its person.
+    fn names_erased(&self) -> bool {
+        self.by == RosterActor::Erased || self.person.live().is_none()
+    }
+}
+
+/// `event` with each actor it names that this vault erased named as no one
+/// (FIX 5640): read by this vault's own hard-delete marker, as every carrier
+/// copy is ([`crate::deletion::ACTOR_ERASE_CARRIER_SOURCE`]).
+pub(super) fn erased_here_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    mut event: AudienceEvent,
+) -> Result<AudienceEvent> {
+    if let Some(by) = event.by.id()
+        && vault.carrier_actor_erased_in_txn(txn, &by)?
+    {
+        event.by = RosterActor::Erased;
+    }
+    if let Some(person) = event.person.live()
+        && vault.carrier_actor_erased_in_txn(txn, &person)?
+    {
+        event.person = AudiencePerson::erased(event.root, person);
+    }
+    Ok(event)
+}
+
+/// The audience edit the live TURN `id` carries, with its thread binding;
+/// `None` for any other row, and for an edit that does not decode, which
+/// no put admits.
+pub(super) fn live_edit_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(ThreadBinding, AudienceEvent)>> {
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_TURN,
+        body,
+    } = live_entity_row_in_txn(&vault.store, txn, id)?
+    else {
+        return Ok(None);
+    };
+    let Some(event) = audience_event(&body).ok().flatten() else {
+        return Ok(None);
+    };
+    Ok(thread_binding(&body)
+        .ok()
+        .flatten()
+        .map(|binding| (binding, event)))
 }
 
 /// The audience edit a TURN's MessagePack `body` carries; `None` for a body
@@ -115,21 +297,36 @@ pub(super) fn event_body(binding: &ThreadBinding, event: &AudienceEvent) -> Resu
     super::audience::stamp_thread(&body, binding)
 }
 
-/// The erased form of the audience edit a TURN's `body` carries (FIX 5639),
-/// `None` for a body that carries none: its thread binding and its edit,
-/// made by no one, and no other byte. An erased edit is its own erased form.
-pub(crate) fn erased_audience_edit(body: &[u8]) -> Result<Option<Vec<u8>>> {
+/// Whether `body` is an erased audience edit's TURN body (FIX 5639, 5640):
+/// its thread binding and its edit, naming someone as no one, and no other
+/// byte.
+pub(crate) fn audience_edit_is_erased(body: &[u8]) -> Result<bool> {
     let (Some(event), Some(binding)) = (audience_event(body)?, thread_binding(body)?) else {
-        return Ok(None);
+        return Ok(false);
     };
-    event_body(&binding, &event.erased()).map(Some)
+    Ok(event.names_erased() && event_body(&binding, &event)? == body)
+}
+
+/// Whether `body` is the TURN body `prior` as a privacy erase leaves it
+/// (FIX 5639, 5640): the same thread binding and edit, more of whom it names
+/// erased or as much, in its erased form ([`audience_edit_is_erased`]).
+/// The one change the DAG admits on an edit's pinned TURN.
+pub(crate) fn audience_edit_erased_from(prior: &[u8], body: &[u8]) -> Result<bool> {
+    let (Some(held), Some(binding)) = (audience_event(prior)?, thread_binding(prior)?) else {
+        return Ok(false);
+    };
+    Ok(
+        audience_event(body)?.is_some_and(|event| held.erases_to(&event))
+            && thread_binding(body)?.as_ref() == Some(&binding)
+            && audience_edit_is_erased(body)?,
+    )
 }
 
 /// Why a put of the TURN `id` with `body`, over the stored `prior` body if
 /// any, is refused for its audience edit, or `None` when it is not. An edit
 /// rides a reply of the thread it names, never the root; and it is a birth
 /// fact of its TURN, as the thread binding is, so a re-put keeps it whole,
-/// but for a privacy erase of who made it (FIX 5639).
+/// but for a privacy erase of whom it names (FIX 5639, 5640).
 pub(crate) fn audience_event_put_refusal(
     id: EntityId,
     prior: Option<&[u8]>,
@@ -144,7 +341,10 @@ pub(crate) fn audience_event_put_refusal(
     }
     if let Some(prior) = prior.filter(|prior| !prior.is_empty()) {
         let held = audience_event(prior)?;
-        if held != event && held.map(AudienceEvent::erased) != event {
+        let erased = held
+            .zip(event)
+            .is_some_and(|(held, event)| held.erases_to(&event));
+        if held != event && !erased {
             return Ok(Some("a TURN's thread audience edit is immutable"));
         }
     }
@@ -152,17 +352,23 @@ pub(crate) fn audience_event_put_refusal(
 }
 
 /// A private thread's audience now: each member, and the first turn of the
-/// thread it reads, `None` for the whole thread.
+/// thread it reads, `None` for the whole thread; a stand-in among them is
+/// no one's place (FIX 5640).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FoldedAudience {
-    members: BTreeMap<EntityId, Option<EntityId>>,
+    members: BTreeMap<AudiencePerson, Option<EntityId>>,
+    /// The stand-ins the root's edits name: each person they forgot.
+    forgotten: BTreeSet<AudiencePerson>,
 }
 
 impl FoldedAudience {
     /// Everyone in the audience now, whatever turn each reads from: who is
     /// in the thread (the CURRENT rule, [`super::audience`]).
     pub(crate) fn current(&self) -> BTreeSet<EntityId> {
-        self.members.keys().copied().collect()
+        self.members
+            .keys()
+            .filter_map(AudiencePerson::live)
+            .collect()
     }
 
     /// The members who read `turn` of the thread: each whose first turn is
@@ -173,7 +379,7 @@ impl FoldedAudience {
         self.members
             .iter()
             .filter(|(_, from)| from.is_none_or(|from| from <= turn))
-            .map(|(id, _)| *id)
+            .filter_map(|(person, _)| person.live())
             .collect()
     }
 
@@ -182,16 +388,41 @@ impl FoldedAudience {
     /// thread for every member, and a read for none it is withheld from.
     pub(crate) fn cuts(&self, turn: EntityId) -> bool {
         self.members
-            .values()
-            .any(|from| from.is_some_and(|from| from > turn))
+            .iter()
+            .any(|(person, from)| person.live().is_some() && from.is_some_and(|from| from > turn))
     }
+}
+
+/// Whom a new remove of `person` from the thread rooted at `root`, whose
+/// audience is `folded`, names (FIX 5640): the root's stand-in for them once
+/// this vault erased them (its own hard-delete marker) or the root's edits
+/// name that stand-in, so the remove folds with the edits before it and
+/// names no erased person again; else them.
+pub(super) fn removed_person_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    folded: &FoldedAudience,
+    root: EntityId,
+    person: EntityId,
+) -> Result<AudiencePerson> {
+    let stand_in = AudiencePerson::erased(root, person);
+    Ok(
+        if folded.forgotten.contains(&stand_in)
+            || vault.carrier_actor_erased_in_txn(txn, &person)?
+        {
+            stand_in
+        } else {
+            AudiencePerson::Live(person)
+        },
+    )
 }
 
 /// The audience of the private thread rooted at `root`, whose root names
 /// `seed`: the seed with every edit of the root folded in, read on base
 /// whatever view the root was read in (ARCH-0052: authority reads base).
 /// Every edit is read, however many (rule 5); one whose TURN is not here
-/// has not arrived yet.
+/// has not arrived yet. A person the edits forgot folds under the root's
+/// stand-in for them (module docs).
 pub(crate) fn fold_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -223,19 +454,45 @@ pub(crate) fn fold_audience_in(
         }
     }
     events.sort_unstable_by_key(|(turn, _)| *turn);
-    let mut members: BTreeMap<_, _> = seed.iter().map(|id| (*id, None)).collect();
+    // The last edit naming each stand-in, ids in order.
+    let mut erased_until = BTreeMap::new();
+    for (turn, event) in &events {
+        if event.person.live().is_none() {
+            erased_until.insert(event.person, *turn);
+        }
+    }
+    // The seed's place for a forgotten person, and a live edit of theirs
+    // before the last one naming their stand-in, fold under the stand-in.
+    let key = |person: AudiencePerson, at: Option<EntityId>| {
+        if erased_until.is_empty() {
+            return person;
+        }
+        let stand_in = person.stand_in(root);
+        match erased_until.get(&stand_in) {
+            Some(last) if at.is_none_or(|at| at < *last) => stand_in,
+            _ => person,
+        }
+    };
+    let mut members: BTreeMap<_, _> = seed
+        .iter()
+        .map(|id| (key(AudiencePerson::Live(*id), None), None))
+        .collect();
     for (turn, event) in events {
+        let person = key(event.person, Some(turn));
         match (event.op, event.history) {
             (AudienceOp::Remove, _) => {
-                members.remove(&event.person);
+                members.remove(&person);
             }
             (AudienceOp::Add, Some(ThreadAudienceHistory::FromNow)) => {
-                members.insert(event.person, Some(turn));
+                members.insert(person, Some(turn));
             }
             (AudienceOp::Add, _) => {
-                members.insert(event.person, None);
+                members.insert(person, None);
             }
         }
     }
-    Ok(FoldedAudience { members })
+    Ok(FoldedAudience {
+        members,
+        forgotten: erased_until.into_keys().collect(),
+    })
 }

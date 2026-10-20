@@ -573,6 +573,7 @@ fn admit(
         CarriedClaim::Held => return Ok(EntityStep::Skip),
         CarriedClaim::Redacted => return Ok(EntityStep::Materialized(id)),
     };
+    let data = crate::workspace_roster::carried_audience_edit_in_txn(vault, wtxn, &id, blob, data)?;
     // FIX 3554: a Switch's moved MESSAGE pointer lands with its document's head.
     if crate::entity_doc::moved_pointer_row_in_txn(vault, wtxn, &id, blob)? {
         return Ok(EntityStep::Skip);
