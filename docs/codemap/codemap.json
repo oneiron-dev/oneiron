@@ -26823,7 +26823,7 @@
       "crate-vis": 4,
       "enum": 4,
       "fn": 8,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 5
      }
     },
@@ -26936,7 +26936,21 @@
      "path": "src/failure_signals/held.rs",
      "purpose": "FIX 6679 (Engine 10-20 22:3x, pick B): a failure-signal batch the Gate holds for its owner carries into the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 16,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HeldFailureSignalBatchView"
+     ],
+     "path": "src/failure_signals/held/read.rs",
+     "purpose": "FIX 6740 (Engine 10-21 01:0x): the owner reads the failure-signal batch the vault carries, beside the press…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -58369,7 +58383,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1111
+      "fn": 1112
      }
     },
     {
@@ -65740,7 +65754,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 13,
+     "files": 14,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -66659,7 +66673,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4174,
+   "source_files": 4175,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70018,7 +70032,7 @@
      "path": "src/wire.rs",
      "purpose": "Private, bounded launcher/supervisor protocol",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     }
    ],
@@ -76225,7 +76239,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1082
+      "fn": 1083
      }
     },
     {
@@ -77440,7 +77454,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1083
+      "fn": 1084
      }
     },
     {
@@ -81023,7 +81037,7 @@
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -85028,12 +85042,13 @@
       "PublishArgs",
       "QualifyArgs",
       "QualifyDevice",
-      "QualifyLayers"
+      "QualifyLayers",
+      "QualifyWindow"
      ],
      "path": "src/commands/oneironer.rs",
      "purpose": "`oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 \"one base, two…",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 1,
       "struct": 4
      }
@@ -88706,7 +88721,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -88736,7 +88751,7 @@
      "path": "src/oneironer/local/window.rs",
      "purpose": "One causal window with byte-accurate message coordinates",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -92883,6 +92898,7 @@
       "HandoverOutput",
       "HeapDropReport",
       "HeldAttempt",
+      "HeldFailureSignalBatchView",
       "HeldMedia",
       "HeldOutCall",
       "HeldOutEvidence",
@@ -95109,7 +95125,7 @@
      "purpose": "—",
      "surface": {
       "enum": 891,
-      "struct": 2798
+      "struct": 2799
      }
     },
     {

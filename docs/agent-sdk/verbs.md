@@ -475,6 +475,7 @@ both bindings and their export-census tests in one change.
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
+- `vault.consent.failure_signals_held`
 - `vault.consent.revoke`
 - `vault.consent.bypass_grant_warning`
 - `vault.consent.create_bypass_grant`

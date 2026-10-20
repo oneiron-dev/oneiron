@@ -36,8 +36,8 @@ use crate::config::{EmbedderDevice, OneironerConfig};
 use backbone::{Backbone, Config};
 use heads::{Affect, CharacterBoundary, Coreference};
 use window::{
-    CharacterFeatures, Characters, DecodeLayers, Named, ONEIRONER_DECODE_REVISION, Window, decode,
-    decode_ner,
+    CharacterFeatures, Characters, DecodeLayers, Named, ONEIRONER_DECODE_REVISION, Window,
+    conversation_tokenizer, decode, decode_ner,
 };
 
 #[derive(Deserialize)]
@@ -143,6 +143,24 @@ struct Network {
     vad: Option<Affect>,
 }
 
+/// The window each call is tagged in.
+enum WindowMode {
+    /// The slot's causal window (`Window::new`): earlier text up to
+    /// `live_window_tokens`, then the current turn, never cut. Only the
+    /// current turn's spans return, `NerSpan.message` indexing
+    /// `EncoderInput.messages`. Every production caller tags in it.
+    Live,
+    /// The whole conversation in one window (`Window::conversation`), as the
+    /// model project's reference predictor tags it; `oneironer qualify`
+    /// alone selects it. Every turn is returnable: `NerSpan.message` is the
+    /// message's ordinal in the flattened conversation (each context turn's
+    /// messages in order, then the current turn's), and `start`/`end` are
+    /// UTF-8 byte offsets into that message. A conversation longer than
+    /// `max_input_tokens` is cut at its end by this tokenizer, never refused;
+    /// a turn the cut reaches keeps the spans inside its covered part.
+    Conversation(Box<Tokenizer>),
+}
+
 pub(crate) struct LocalTagger {
     model: ModelId,
     card: ModelCard,
@@ -151,6 +169,7 @@ pub(crate) struct LocalTagger {
     /// The character head's vocabulary; empty when the bundle has none.
     char_vocab: HashMap<char, u32>,
     layers: DecodeLayers,
+    window: WindowMode,
     network: Mutex<Network>,
     cap: usize,
     live: usize,
@@ -317,6 +336,7 @@ impl LocalTagger {
             tokenizer,
             char_vocab,
             layers: DecodeLayers::SERVED,
+            window: WindowMode::Live,
             network: Mutex::new(Network {
                 backbone,
                 ner,
@@ -340,8 +360,25 @@ impl LocalTagger {
         self.layers = DecodeLayers::E4;
     }
 
+    /// Tags each call's whole conversation in one window from here on, as
+    /// the model project's reference predictor does, cut at
+    /// `max_input_tokens`; `WindowMode::Conversation` says what its spans
+    /// address. Only `oneironer qualify` asks.
+    pub(crate) fn window_as_conversation(&mut self) -> anyhow::Result<()> {
+        let tokenizer = conversation_tokenizer(&self.tokenizer, self.cap)?;
+        self.window = WindowMode::Conversation(Box::new(tokenizer));
+        Ok(())
+    }
+
     fn extract(&self, input: &EncoderInput) -> anyhow::Result<EncoderOutput> {
-        let window = Window::new(input, &self.tokenizer, self.cap, self.live)?;
+        let window = match &self.window {
+            WindowMode::Live => Window::new(input, &self.tokenizer, self.cap, self.live)?,
+            WindowMode::Conversation(tokenizer) => Window::conversation(input, tokenizer)?,
+        };
+        // The live window returns its current turn; the conversation window
+        // returns every turn.
+        let conversation = matches!(self.window, WindowMode::Conversation(_));
+        let returned = |segment: usize| conversation || window.segments[segment].current;
         let network = self
             .network
             .lock()
@@ -382,7 +419,7 @@ impl LocalTagger {
         }
         let mut spans = BTreeMap::new();
         for span in &mentioned {
-            if window.segments[span.segment].current {
+            if returned(span.segment) {
                 spans.insert((span.segment, span.start, span.end), span);
             }
         }
@@ -394,7 +431,7 @@ impl LocalTagger {
         let mut moved = Vec::new();
         for name in &named {
             let span = &name.span;
-            if window.segments[span.segment].current {
+            if returned(span.segment) {
                 let key = (span.segment, span.start, span.end);
                 let decoded = (span.segment, name.decoded.0, name.decoded.1);
                 let left = decoded != key && !names.contains(&decoded);
@@ -416,9 +453,16 @@ impl LocalTagger {
         };
         for (key, span) in spans {
             let segment = &window.segments[span.segment];
+            // The conversation window keeps every message's segment in
+            // order, so a segment's index is its flattened message ordinal.
+            let message = if conversation {
+                span.segment
+            } else {
+                segment.message_index
+            };
             coordinates.insert(key, output.spans.len());
             output.spans.push(NerSpan {
-                message: segment.message_index,
+                message,
                 start: span.start - segment.base + segment.source_offset,
                 end: span.end - segment.base + segment.source_offset,
                 label: span.label.clone(),

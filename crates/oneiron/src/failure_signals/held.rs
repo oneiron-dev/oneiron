@@ -47,6 +47,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Vault};
 
+mod read;
+pub use read::HeldFailureSignalBatchView;
+
 /// The vault's one carried batch (CALLS `FIX 6679 held batch custody
 /// table`): one active publisher batch per vault, so the key is the unit.
 const HELD: SideTable<(), HeldBatch, Named> =
