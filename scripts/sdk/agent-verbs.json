@@ -14618,12 +14618,12 @@
       "call": "memory.esign_notices_dispatch(&input)?",
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_fields": {
         "spec": "$"
       },
-      "mcp_scope": "unrestricted",
+      "mcp_scope": "filtered",
       "section": false,
       "openapi": true
     },
