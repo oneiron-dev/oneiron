@@ -6,11 +6,12 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 use crate::gate::{
-    self, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
+    self, ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
+    GateProvenanceHandles, LinearMirrorFacts,
 };
 use crate::linear_sync::{
-    LinearIssueRef, LinearSyncDirection, LinearSyncError, LinearSyncResult, MirroredTaskFields,
-    linear_operation_id,
+    LinearEffectAdmission, LinearIssueRef, LinearSyncDirection, LinearSyncError, LinearSyncResult,
+    MirroredTaskFields, linear_operation_id,
 };
 use crate::task_verb::linear_effect_state_in_txn;
 
@@ -32,7 +33,7 @@ impl LinearEffectKind {
 
 /// Exactly the mutation the host will send. Every field participates in the
 /// frozen operation binding; an authorized TASK row is not a generic key.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinearEffectRequest {
     pub operation_id: [u8; 32],
     pub task_ref: EntityId,
@@ -55,7 +56,7 @@ fn binding(request: &LinearEffectRequest, writer: EntityId) -> LinearSyncResult<
     Ok(*blake3::hash(&[b"oneiron:linear-effect:v1".as_slice(), &bytes].concat()).as_bytes())
 }
 
-fn effect(
+pub(super) fn effect(
     actor: EntityId,
     class: EdgeActorClass,
     request: &LinearEffectRequest,
@@ -68,6 +69,8 @@ fn effect(
         },
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(actor),
+            // FIX 6424 part 2a: each actor's press pins this one operation.
+            approval_target: Some(ApprovalTarget::LinearMirror(LinearMirrorFacts::of(request))),
             ..Default::default()
         },
         verb: request.kind.verb().to_owned(),
@@ -173,6 +176,10 @@ impl Vault {
     /// rechecks live grants but does not charge the same operation's effector
     /// budget twice. Raw/replayed TASK writes have no writer stamp.
     ///
+    /// FIX 6424 part 2a: a mutation the Gate holds is logged with the
+    /// approve-once digest of the actor that held it;
+    /// [`Self::authorize_linear_effect_outcome`] returns it typed.
+    ///
     /// # Errors
     /// [`LinearSyncError::AuthorizationDenied`] when the request is not the
     /// exact current mirror operation, the TASK revision has no verified
@@ -181,6 +188,36 @@ impl Vault {
         &self,
         request: &LinearEffectRequest,
     ) -> LinearSyncResult<String> {
+        match self.authorize_linear_effect_outcome(request)? {
+            LinearEffectAdmission::Admitted { gate_ref } => Ok(gate_ref),
+            LinearEffectAdmission::Held(hold) => {
+                tracing::info!(
+                    role = ?hold.role,
+                    gate_decision = %hold.gate_decision_ref,
+                    approval_digest = ?hold.approval_digest,
+                    "Linear mutation held for the owner's approve-once press"
+                );
+                Err(LinearSyncError::AuthorizationDenied)
+            }
+        }
+    }
+
+    /// [`Self::authorize_linear_effect`], with a mutation the Gate did not
+    /// admit returned as its typed hold rather than refused (FIX 6424 part
+    /// 2a): the actor that held it, its decision and, while the Gate holds
+    /// it, the approve-once digest that actor's press names. A press each
+    /// actor's admission of this operation spent is kept, and a retry of the
+    /// same operation reuses it; an Allow the other actor did not match
+    /// spends none.
+    ///
+    /// # Errors
+    /// [`LinearSyncError::AuthorizationDenied`] when the request is not the
+    /// exact current mirror operation or the TASK revision has no verified
+    /// writer; a storage failure.
+    pub fn authorize_linear_effect_outcome(
+        &self,
+        request: &LinearEffectRequest,
+    ) -> LinearSyncResult<LinearEffectAdmission> {
         let issue_id = request.issue.as_ref().map(|issue| issue.issue_id.as_str());
         if request.operation_id == [0; 32]
             || (request.kind == LinearEffectKind::Create) != request.issue.is_none()
@@ -188,7 +225,7 @@ impl Vault {
         {
             return Err(LinearSyncError::AuthorizationDenied);
         }
-        let admitted = self.try_with_write_txn_grouped::<_, _, LinearSyncError>(|txn| {
+        self.try_with_write_txn_grouped::<_, _, LinearSyncError>(|txn| {
             let state = linear_effect_state_in_txn(self, txn, request.task_ref)?;
             // Only the operation the mirror would send for the current dirty
             // revision: same TASK, same link state, same fields.
@@ -244,24 +281,48 @@ impl Vault {
             }
             let host_effect = effect(request.scheduler_actor, EdgeActorClass::System, request);
             let writer_effect = effect(writer.actor_ref, class, request);
-            let admitted = gate::check_external_effect_policy_pair(
+            // FIX 6424 part 2a: the press each actor's admission of this
+            // operation spent, reused on its retry.
+            let retries = if previously_authorized {
+                [
+                    super::approval::kept_press_in(self, txn, request.operation_id, &host_effect),
+                    super::approval::kept_press_in(self, txn, request.operation_id, &writer_effect),
+                ]
+            } else {
+                [None, None]
+            };
+            let pair = gate::check_external_effect_policy_pair(
                 &self.store,
                 txn,
                 &host_effect,
                 &writer_effect,
                 &policy,
                 !previously_authorized,
+                retries,
             )?;
-            let Some(id) = admitted else { return Ok(None) };
+            let Some(id) = pair.admitted else {
+                return Ok(LinearEffectAdmission::Held(super::approval::held(
+                    &pair,
+                    [
+                        (request.scheduler_actor, &host_effect),
+                        (writer.actor_ref, &writer_effect),
+                    ],
+                )));
+            };
             if !previously_authorized {
                 self.store.vault_meta.put(txn, &key, &digest)?;
             }
+            super::approval::keep_spent_presses_in(
+                self,
+                txn,
+                request.operation_id,
+                pair.spent_presses,
+            )?;
             let gate_ref = format!("gate:{}", id.to_hex());
             // The push's provenance row keeps this admission (OF-427 C9).
             super::mirror_event::note_outbound_admitted_in(self, txn, request, writer, &gate_ref)?;
-            Ok(Some(gate_ref))
-        })?;
-        admitted.ok_or(LinearSyncError::AuthorizationDenied)
+            Ok(LinearEffectAdmission::Admitted { gate_ref })
+        })
     }
 
     /// The live recheck before a retried send through the recorded outbound

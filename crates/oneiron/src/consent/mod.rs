@@ -116,6 +116,11 @@ pub use self::registry::{
     ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction,
     SUPPORT_GRANT_CLASS,
 };
+/// FIX 6424 part 2a: the approve-once digest an owner's press on one
+/// campaign enrollment's outbound leg names, by the Gate's own composer over
+/// the leg's persisted rows. A Linear mirror mutation's two actors' digests
+/// are [`crate::Vault::linear_effect_approval_digests`].
+pub use crate::campaign::enrollment::enrollment_outbound_approval_digest;
 /// FIX 6424: the approve-once digest an owner's press on one held outbound
 /// send names, for a prepared request, by the Gate's own composer; an e-sign
 /// act's is [`crate::Vault::esign_approve_once_digest`]. Held responses carry

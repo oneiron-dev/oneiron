@@ -109,6 +109,12 @@ pub struct OutboundDispatchRequest {
     /// press pins its send's stable identity (e-sign). In memory only, never
     /// persisted; `None` everywhere else.
     pub approval_identity_ref: Option<String>,
+    /// FIX 6424 part 2a: the Linear mirror operation this dispatch sends,
+    /// set by [`crate::Vault::dispatch_linear_outbound_intent_recorded`], so
+    /// an owner's approve-once press on it pins that operation, its TASK and
+    /// its fields. In memory only, never persisted; `None` for every other
+    /// send, an ordinary Linear one included.
+    pub linear_mirror: Option<crate::linear_sync::LinearEffectRequest>,
     pub intent: OutboundIntent,
     pub actor: OutboundDispatchActor,
     pub gate: OutboundDispatchGate,
@@ -190,6 +196,7 @@ impl OutboundDispatchRequest {
             intent_ref: intent_ref.into(),
             ledger_identity_ref: None,
             approval_identity_ref: None,
+            linear_mirror: None,
             intent,
             actor,
             gate,

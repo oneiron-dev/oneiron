@@ -392,6 +392,10 @@ side_tables! {
     /// verified preflight (OF-427 C4); the value is the other side's 32-byte digest. Key: tag
     /// byte (1 delivery key's digest, 2 body digest) + 32-byte digest.
     LINEAR_WEBHOOK_BINDING: VaultMeta b"linear.webhook_binding.v1/" Raw Engine;
+    /// An owner press one actor's admission of a Linear mirror operation spent, kept for that
+    /// operation's retry (FIX 6424 part 2a): the actor's role. Key: 32-byte operation id + the
+    /// press's 32-byte approve-once digest.
+    LINEAR_EFFECT_APPROVAL: VaultMeta b"linear:effect_approval:v1/" Raw;
     /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
     /// operation id.
     LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;

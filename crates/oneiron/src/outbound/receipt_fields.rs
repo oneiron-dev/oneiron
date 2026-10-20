@@ -287,7 +287,9 @@ pub(super) fn append_window_receipt_fields(
 
 /// Assemble the audit receipt and caller-visible result from one gate verdict.
 /// `approval_digest` is the approve-once digest the Gate composed for the
-/// send's effect, carried only while the Gate holds it (FIX 6424).
+/// send's effect, carried only while the Gate holds it (FIX 6424); the
+/// holding decision's own digest, from the chokepoint, names it when set (a
+/// co-actor's hold, FIX 6424 part 2a).
 pub(super) fn dispatch_result_receipt(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
@@ -310,12 +312,15 @@ pub(super) fn dispatch_result_receipt(
         suppression_receipt,
         // Already folded into the admission's seat decision by the pipeline.
         ceiling_count: _,
+        held_approval_digest,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
     let gate_outcome = gate_outcome_kind.as_str().to_owned();
     // FIX 6424: a send the Gate holds for the owner names the digest his
     // approve-once press on it must carry.
-    let approval_digest = approval_digest.filter(|_| gate_outcome_kind == GateOutcome::Pending);
+    let approval_digest = held_approval_digest
+        .or(approval_digest)
+        .filter(|_| gate_outcome_kind == GateOutcome::Pending);
     if let Some(receipt) = suppression_receipt {
         return OutboundDispatchResult {
             outcome,

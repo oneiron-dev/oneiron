@@ -15,13 +15,22 @@
 //! matched on, the grant echo, budgets, connector settings and the consent
 //! precedence never read the target, and an effect that carries none (mail,
 //! code waits, artifact publish, brief share, task cancel, and the families
-//! FIX 6424's second part pins) composes exactly the digest it composed
+//! FIX 6424's last part pins) composes exactly the digest it composed
 //! before. No target names a provider id the send has not been given yet. A
 //! failure-signal batch pins once the next pass carries a held batch's ref
 //! and content (FIX 6679).
+//!
+//! FIX 6424 part 2a (Engine 10-20 21:0x) adds a Linear issue mutation, on
+//! the outbound dispatch door and on the mirror's direct admission of both
+//! its actors, and a campaign enrollment's outbound leg. A press on either
+//! family, once its admission spent it, is kept for that same send's retry
+//! ([`ApprovalTarget::keeps_spent_press`]), so the retry reuses it.
 
 use crate::calendar::CalendarInvitePayload;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::gate::ExternalEffectGateInput;
+use crate::linear_sync::{LinearEffectRequest, MirroredTaskFields};
+use crate::outbound_intent_ledger::PinnedApprovalFamily;
 
 /// The BLAKE3 domain of the target pin.
 const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once.target.v1";
@@ -84,6 +93,107 @@ pub(crate) enum ApprovalTarget {
         content_ref: Option<String>,
         send_ref: String,
     },
+    /// A Linear issue create or update through the outbound dispatch door
+    /// (CALLS `FIX 6424 ordinary Linear target without mirror facts`): its
+    /// canonical verb, its original transport target (the team a create
+    /// goes to, the issue an update names), its content ref, the send's
+    /// stable logical ref (the logical send a schedule's ask names and its
+    /// executor spends, CALLS `FIX 6424 scheduled ask stable identity`), and
+    /// the mirror operation's facts when the mirror door supplies them. A
+    /// generic caller supplies none and is asked for none.
+    LinearDispatch {
+        verb: String,
+        target: String,
+        content_ref: Option<String>,
+        send_ref: String,
+        mirror: Option<LinearMirrorFacts>,
+    },
+    /// A Linear mirror mutation one of its two actors speaks for (OF-427):
+    /// the host scheduler and the TASK revision's writer each press their
+    /// own digest over these same facts (CALLS `FIX 6424 Linear dual actor
+    /// asks`).
+    LinearMirror(LinearMirrorFacts),
+    /// A campaign enrollment's outbound leg (CALLS `FIX 6424 campaign event
+    /// row versus logical event`).
+    Campaign(CampaignLegFacts),
+}
+
+/// The facts one Linear mirror operation pins (Engine 10-20 17:4x): its
+/// operation id, the nonce, which names the TASK, its revision and the
+/// linked issue; the TASK; the issue an update names (a create names none:
+/// the bridge picks the team, and the issue does not exist yet); and the
+/// exact mirrored fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LinearMirrorFacts {
+    operation_id: [u8; 32],
+    task_ref: EntityId,
+    issue: Option<(String, String)>,
+    fields: MirroredTaskFields,
+}
+
+impl LinearMirrorFacts {
+    /// The facts `request`, the exact mutation the host sends, pins.
+    pub(crate) fn of(request: &LinearEffectRequest) -> Self {
+        Self {
+            operation_id: request.operation_id,
+            task_ref: request.task_ref,
+            issue: request
+                .issue
+                .as_ref()
+                .map(|issue| (issue.issue_id.clone(), issue.team_id.clone())),
+            fields: request.fields.clone(),
+        }
+    }
+
+    fn hash(&self, hasher: &mut blake3::Hasher) {
+        field(hasher, &bytes_to_hex_lower(&self.operation_id));
+        field(hasher, &self.task_ref.to_hex());
+        optional(hasher, self.issue.as_ref().map(|(issue, _)| issue.as_str()));
+        optional(hasher, self.issue.as_ref().map(|(_, team)| team.as_str()));
+        field(hasher, &self.fields.title);
+        optional(hasher, self.fields.description.as_deref());
+        optional(
+            hasher,
+            self.fields
+                .priority
+                .map(|priority| priority.to_string())
+                .as_deref(),
+        );
+        optional(hasher, self.fields.assignee_ref.as_deref());
+        field(hasher, &self.fields.status);
+    }
+}
+
+/// The facts one campaign enrollment's outbound leg pins (Engine 10-20
+/// 21:0x ruling 6): the logical event (query, campaign, recipient entity,
+/// epoch), never the event row that carried it; the program step; the
+/// consequence id and its durable call sequence, the nonce; and the digest
+/// of the frozen outbound body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CampaignLegFacts {
+    pub(crate) query_ref: EntityId,
+    pub(crate) campaign_ref: EntityId,
+    pub(crate) entity_ref: EntityId,
+    pub(crate) epoch: u64,
+    pub(crate) program_ref: EntityId,
+    pub(crate) step_ref: EntityId,
+    pub(crate) consequence_id: [u8; 16],
+    pub(crate) call_seq: u64,
+    pub(crate) payload_digest: [u8; 32],
+}
+
+impl CampaignLegFacts {
+    fn hash(&self, hasher: &mut blake3::Hasher) {
+        field(hasher, &self.query_ref.to_hex());
+        field(hasher, &self.campaign_ref.to_hex());
+        field(hasher, &self.entity_ref.to_hex());
+        field(hasher, &self.epoch.to_string());
+        field(hasher, &self.program_ref.to_hex());
+        field(hasher, &self.step_ref.to_hex());
+        field(hasher, &bytes_to_hex_lower(&self.consequence_id));
+        field(hasher, &self.call_seq.to_string());
+        field(hasher, &bytes_to_hex_lower(&self.payload_digest));
+    }
 }
 
 /// One prepared request on the common outbound adapter, as its canonical
@@ -107,8 +217,9 @@ pub(crate) struct OutboundSendFacts<'a> {
 impl ApprovalTarget {
     /// The target one send on the common outbound adapter pins, by its
     /// connector's family. Mail keeps its own canonical digest (native and
-    /// member mail) or stays outside FIX 6424's non-mail census, and Linear
-    /// is pinned by its second part: those carry none. A connector the
+    /// member mail) or stays outside FIX 6424's non-mail census, and a
+    /// Linear send's [`Self::LinearDispatch`] is built by its producer from
+    /// the request's stable identity: those carry none here. A connector the
     /// registry gains later pins as a communication until it is given its
     /// own variant.
     pub(crate) fn for_outbound(facts: &OutboundSendFacts<'_>) -> Option<Self> {
@@ -161,6 +272,37 @@ impl ApprovalTarget {
     /// 20:4x).
     pub(crate) fn freezes_send_ref_of(connector: &str) -> bool {
         connector == ESIGN_CONNECTOR || connector == FAILURE_SIGNALS_CONNECTOR
+    }
+
+    /// Whether a press on this target, once the admission it released spent
+    /// it, is kept for that same send's retry (Engine 10-20 21:0x ruling 8,
+    /// CALLS `FIX 6424 pinned Pending proof retention`): a Linear mutation,
+    /// for each of its actors, and a campaign leg. The retry reuses the kept
+    /// press only while its own pinned digest is the kept one.
+    pub(crate) fn keeps_spent_press(&self) -> bool {
+        matches!(
+            self,
+            Self::LinearDispatch { .. } | Self::LinearMirror(_) | Self::Campaign(_)
+        )
+    }
+
+    /// The family a dispatch's kept press is filed under beside its ledger
+    /// row, typed by its target, never by its connector: a campaign leg
+    /// rides any channel. `None` for every other target.
+    pub(crate) fn pinned_family(&self) -> Option<PinnedApprovalFamily> {
+        match self {
+            Self::LinearDispatch { .. } => Some(PinnedApprovalFamily::LinearDispatch),
+            Self::Campaign(_) => Some(PinnedApprovalFamily::CampaignLeg),
+            _ => None,
+        }
+    }
+
+    /// The approve-once digest a held `effect` names, 64 lower-hex: the
+    /// Gate's own composer over that very input. `None` for an effect whose
+    /// family pins no target.
+    pub(crate) fn held_digest(effect: &ExternalEffectGateInput) -> Option<String> {
+        effect.provenance.approval_target.as_ref()?;
+        super::external_effect_approval_digest(effect).map(|digest| digest.to_hex())
     }
 
     /// `operation_kind` named by this one send, the shape native mail's
@@ -228,6 +370,36 @@ impl ApprovalTarget {
                 field(&mut hasher, endpoint);
                 optional(&mut hasher, content_ref.as_deref());
                 field(&mut hasher, send_ref);
+            }
+            Self::LinearDispatch {
+                verb,
+                target,
+                content_ref,
+                send_ref,
+                mirror,
+            } => {
+                field(&mut hasher, "linear_dispatch");
+                field(&mut hasher, verb);
+                field(&mut hasher, target);
+                optional(&mut hasher, content_ref.as_deref());
+                field(&mut hasher, send_ref);
+                match mirror {
+                    Some(facts) => {
+                        hasher.update(&[1]);
+                        facts.hash(&mut hasher);
+                    }
+                    None => {
+                        hasher.update(&[0]);
+                    }
+                }
+            }
+            Self::LinearMirror(facts) => {
+                field(&mut hasher, "linear_mirror");
+                facts.hash(&mut hasher);
+            }
+            Self::Campaign(facts) => {
+                field(&mut hasher, "campaign");
+                facts.hash(&mut hasher);
             }
         }
         hasher.finalize()

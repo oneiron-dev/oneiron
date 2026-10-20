@@ -3,7 +3,7 @@ use crate::Vault;
 use crate::consent::EffectDigest;
 use crate::gate::{
     ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateProvenanceHandles,
-    OutboundSendFacts,
+    LinearMirrorFacts, OutboundSendFacts,
 };
 use crate::outbound::capability::{OutboundVerbContract, normalize_key};
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
@@ -17,7 +17,7 @@ pub(super) fn gate_input(
         actor: request.actor.gate_actor(),
         provenance: GateProvenanceHandles {
             mail_content_ref: request.intent.content_ref.clone(),
-            approval_target: approval_target(request),
+            approval_target: approval_target(request, &verb_contract.kind),
             ..request.actor.provenance()
         },
         verb: verb_contract.kind.clone(),
@@ -44,9 +44,23 @@ pub(super) fn gate_input(
 /// FIX 6424: the one send an owner's approve-once press on `request`
 /// approves, read off the canonical request: its original transport target
 /// (never the counterparty alias), its logical send ref, and its family's
-/// facts.
-pub(super) fn approval_target(request: &OutboundDispatchRequest) -> Option<ApprovalTarget> {
+/// facts. A Linear send (part 2a) pins its canonical `verb`, its target and
+/// content ref, its stable logical send ref, and the mirror operation's facts
+/// only when the mirror door supplies them.
+pub(super) fn approval_target(
+    request: &OutboundDispatchRequest,
+    verb: &str,
+) -> Option<ApprovalTarget> {
     let connector = normalize_key(&request.intent.channel);
+    if connector == LINEAR_CONNECTOR {
+        return Some(ApprovalTarget::LinearDispatch {
+            verb: verb.to_owned(),
+            target: request.intent.target.clone(),
+            content_ref: request.intent.content_ref.clone(),
+            send_ref: stable_send_ref(request).to_owned(),
+            mirror: request.linear_mirror.as_ref().map(LinearMirrorFacts::of),
+        });
+    }
     ApprovalTarget::for_outbound(&OutboundSendFacts {
         connector: &connector,
         target: &request.intent.target,
@@ -57,6 +71,9 @@ pub(super) fn approval_target(request: &OutboundDispatchRequest) -> Option<Appro
         calendar_invite: request.calendar_invite.as_ref(),
     })
 }
+
+/// The connector a Linear issue mutation rides (FIX 6424 part 2a).
+const LINEAR_CONNECTOR: &str = "linear";
 
 /// FIX 6424 (Engine 10-20 20:4x): the logical send ref a press on `request`
 /// pins. A family whose press is recomposed from its frozen ledger bytes
@@ -71,6 +88,14 @@ fn approval_send_ref<'r>(request: &'r OutboundDispatchRequest, connector: &str) 
     if !ApprovalTarget::freezes_send_ref_of(connector) {
         return &request.intent_ref;
     }
+    stable_send_ref(request)
+}
+
+/// The send's stable logical identity: the logical send a schedule's ask
+/// names, else its ledger identity, else its intent ref. A Linear send pins
+/// it too (CALLS `FIX 6424 scheduled ask stable identity`), so a scheduled
+/// ask and its executor's spend name one logical send.
+fn stable_send_ref(request: &OutboundDispatchRequest) -> &str {
     request
         .approval_identity_ref
         .as_deref()
@@ -85,8 +110,10 @@ fn approval_send_ref<'r>(request: &'r OutboundDispatchRequest, connector: &str) 
 /// family's target and logical send ref. A held dispatch result, e-sign view
 /// and schedule receipt carry the same digest as `approval_digest`; pass its
 /// `to_hex()` as the press's `effect_digest`. `None` for a send whose family
-/// does not pin its target: mail keeps its own canonical digest, and Linear
-/// is FIX 6424's second part. A digest composed by hand from
+/// does not pin its target: mail keeps its own canonical digest. A Linear
+/// send's digest pins its stable logical send (FIX 6424 part 2a); the mirror
+/// door's names its operation too, through `linear_mirror`, which the door
+/// sets. A digest composed by hand from
 /// [`crate::consent::EffectFacts`] with no target releases none of these
 /// families' sends. It reads and records nothing else.
 /// # Errors

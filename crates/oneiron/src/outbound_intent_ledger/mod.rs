@@ -6,6 +6,7 @@
 
 mod codec;
 mod dispatch;
+mod pinned_approval;
 mod resolution;
 mod store;
 mod types;
@@ -27,6 +28,9 @@ pub(crate) use self::dispatch::execute_outbound_call;
 #[cfg(test)]
 use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
+pub(crate) use self::pinned_approval::{
+    PinnedApproval, PinnedApprovalFamily, keep_pinned_approval_in_txn, pinned_retry_approval,
+};
 pub(crate) use self::resolution::{
     ConnectorIntentBinding, IntentResolution, RetryDisposition, UnconfirmedDelivery,
 };
