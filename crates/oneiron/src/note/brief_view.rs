@@ -147,9 +147,13 @@ impl Vault {
             listed,
         )?;
         if let Some(view) = rendered.value.as_mut() {
-            view.born_with = self
-                .share_travel(&share_id)?
-                .project(self.born_with_text_for_another(&id, None)?);
+            // A prompt only from the sources the viewer reads here (FIX 6054).
+            let (born_with, sources) =
+                self.shared_brief_born_with(&share_id, &viewer, narrowing, &id, frame, read)?;
+            view.born_with = born_with;
+            if let Some(sources) = sources {
+                rendered.receipt.restrict_with(&sources);
+            }
         }
         Ok(rendered)
     }

@@ -18,6 +18,7 @@ use crate::{Result, Vault};
 pub mod agent_pack;
 mod agent_pack_export;
 mod pack_notice;
+mod reader_prompts;
 
 pub use self::agent_pack::{
     AGENT_PACK_TRAVEL_SCHEMA, AgentPackKnowledge, AgentPackPolicy, AgentPackSkill,
