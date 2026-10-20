@@ -73,7 +73,7 @@ pub(crate) use self::response_bodies::{
     retire_step_claim_in_rows, retire_step_claim_in_txn, step_claim_carriage,
 };
 pub(crate) use self::step_state::{
-    erase_step_state_owner_in_txn, step_state_carriage, step_state_owners,
+    erase_step_state_owner_in_txn, owner_gone_in_txn, step_state_carriage, step_state_owners,
 };
 
 #[cfg(test)]

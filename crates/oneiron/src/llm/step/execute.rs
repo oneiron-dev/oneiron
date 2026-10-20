@@ -299,12 +299,15 @@ async fn durable_step(
         }
     };
     // FIX 1662: the request is kept before it is sent, for an exact replay
-    // of a failure; a capture that fails never fails the step.
+    // of a failure; a capture that fails never fails the step. It stamps the
+    // owners the Started row stamps, and keeps nothing for one gone by the
+    // time it writes (FIX 6659).
     crate::self_heal::blocked_reports::capture_durable_step(
         ctx.vault,
         ctx.attempt_id,
         step_hash,
         ctx.envelope_actor.entity_ref(),
+        ctx.subject,
         &request,
         ctx.now_ms,
     );

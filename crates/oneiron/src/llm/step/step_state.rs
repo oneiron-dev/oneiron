@@ -274,7 +274,8 @@ pub(super) fn step_state_write_owned(
 /// in this same write (FIX 6226). An erase is sticky: a row an erase took
 /// is never written again. When an owner the row stamps is gone here, the
 /// row keeps its erased skeleton, with no payload, so a late answer never
-/// lands after the erase that took its owner.
+/// lands after the erase that took its owner. Either way, an owner's erase
+/// takes the step's kept requests too (FIX 6659).
 pub(super) fn step_state_put_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -287,9 +288,10 @@ pub(super) fn step_state_put_in_txn(
         .get(vault, &*wtxn, &key)?
         .is_some_and(|prior| prior.erased)
     {
+        remove_erased_sources_in_txn(vault, wtxn, attempt_id, step_hash, &row.owners)?;
         return Ok(StepStateDisposition::Erased);
     }
-    if !row.erased && !owner_gone_in_txn(vault, &*wtxn, &row.owners)? {
+    if !row.erased && !owner_gone_in_txn(vault, &*wtxn, &row.owners.ids())? {
         STEP_STATE.put(vault, wtxn, &key, row)?;
         return Ok(StepStateDisposition::Kept);
     }
@@ -302,31 +304,59 @@ pub(super) fn step_state_put_in_txn(
         erased: true,
     };
     STEP_STATE.put(vault, wtxn, &key, &skeleton)?;
+    remove_erased_sources_in_txn(vault, wtxn, attempt_id, step_hash, &row.owners)?;
     Ok(StepStateDisposition::Erased)
 }
 
-/// Whether an owner `owners` stamps is gone in `txn`, by the markers a
-/// program step's actor is read by (FIX 5710): a deletion of its row other
-/// than an archive, or its hard-delete or identity soft-delete marker. An
-/// archive is reversible and withholds nothing.
-fn owner_gone_in_txn(
+/// Whether an owner of `owners` is gone in `txn`, by the markers a program
+/// step's actor is read by (FIX 5710): a deletion of its row other than an
+/// archive, or its hard-delete or identity soft-delete marker. An archive is
+/// reversible and withholds nothing. A step's request capture keeps nothing
+/// for an owner gone by this same check (FIX 6659).
+pub(crate) fn owner_gone_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    owners: &StepStateOwners,
+    owners: &[EntityId],
 ) -> Result<bool> {
-    for owner in owners.ids() {
-        if crate::ports::removed_in_txn(&vault.store, txn, &owner)?
+    for owner in owners {
+        if crate::ports::removed_in_txn(&vault.store, txn, owner)?
+            || owner_erased_in_txn(vault, txn, owner)?
             || vault
                 .store
-                .port_deletion_marked(txn, DeletionMarker::HardDelete, &owner)?
-            || vault
-                .store
-                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, &owner)?
+                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, owner)?
         {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+/// Whether `owner` was erased in `txn`: its hard-delete marker.
+fn owner_erased_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, owner: &EntityId) -> Result<bool> {
+    vault
+        .store
+        .port_deletion_marked(txn, DeletionMarker::HardDelete, owner)
+}
+
+/// The erase of an owner `owners` stamps takes every request kept for the
+/// step (FIX 6659), each lease and call of it, in `wtxn`, beside the scrub
+/// its erase ran. A soft delete keeps them, as it keeps the rest of its
+/// owner's rows for a restore: only an erase takes them.
+fn remove_erased_sources_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+    owners: &StepStateOwners,
+) -> Result<()> {
+    for owner in owners.ids() {
+        if owner_erased_in_txn(vault, &*wtxn, &owner)? {
+            return crate::self_heal::blocked_reports::remove_step_sources_in_txn(
+                vault, wtxn, attempt_id, step_hash,
+            );
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn step_state_read(

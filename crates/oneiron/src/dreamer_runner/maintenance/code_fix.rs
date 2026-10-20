@@ -24,8 +24,9 @@
 //! durable run, replays from the source its run's host kept (FIX 2343); one
 //! whose caller never gave this engine a model request keeps its work, its
 //! replay unavailable. Every text a question reads goes whole, measured.
-use std::cell::OnceCell;
+use std::cell::RefCell;
 use std::ops::Bound;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -283,11 +284,13 @@ struct CoachReplay<'a> {
     evidence: &'a [EntityId],
     /// Each candidate's id and the instruction it adds.
     candidates: Vec<(String, String)>,
-    /// The request the failing call sent, as the vault kept it (FIX 1662).
-    exact: Option<ExactReplayRequest>,
+    /// The request the failing call sent, as the vault kept it (FIX 1662),
+    /// dropped once its copy is gone (FIX 6659): it is never sent again.
+    exact: RefCell<Option<ExactReplayRequest>>,
     /// The real failing call and the agent's reply to it, once a replay
     /// reproduced the failure; `None` when it did not, or could not run.
-    baseline: OnceCell<Option<Baseline>>,
+    /// One the kept request ran is dropped with it (FIX 6659).
+    baseline: RefCell<Option<Option<Rc<Baseline>>>>,
 }
 
 /// The real failing call replayed: the conversation its questions read, the
@@ -353,27 +356,65 @@ impl CoachReplay<'_> {
         })
     }
 
+    /// The kept request, read again from the vault just before it is sent
+    /// (FIX 6659): when an erase took its copy since the job read it, or the
+    /// copy no longer reads as it did, it is dropped and never sent again.
+    /// `None` once dropped, and when the vault kept none.
+    fn live_exact(&self) -> Result<Option<ExactReplayRequest>> {
+        if self.exact.borrow().is_none() {
+            return Ok(None);
+        }
+        let live = exact_replay_request(self.vault, &self.job.origin)?;
+        let mut kept = self.exact.borrow_mut();
+        if *kept == live {
+            return Ok(live);
+        }
+        *kept = None;
+        Ok(None)
+    }
+
     /// The real failing call replayed once for every candidate: the request
     /// it sent, when the vault kept it and the host sends it as kept, else
     /// the call rebuilt from the failure's text (FIX 1662). A failure the
     /// replay does not reproduce cannot say whether a candidate fixed it.
-    fn baseline(&self) -> Result<Option<&Baseline>> {
-        if let Some(baseline) = self.baseline.get() {
-            return Ok(baseline.as_ref());
-        }
-        let ran = match self.exact_baseline()? {
-            Some(ran) => Some(ran),
-            None => self.rebuilt_baseline()?,
+    /// Beside a baseline the kept request ran, that request as read again
+    /// just now; one whose copy is gone is dropped with it, and the call is
+    /// rebuilt (FIX 6659).
+    fn baseline(&self) -> Result<Option<(Rc<Baseline>, Option<ExactReplayRequest>)>> {
+        let ran = self.baseline.borrow().clone();
+        let ran = match ran {
+            Some(ran) => ran,
+            None => {
+                let ran = match self.exact_baseline()? {
+                    Some(ran) => Some(ran),
+                    None => self.rebuilt_baseline()?,
+                }
+                .map(Rc::new);
+                *self.baseline.borrow_mut() = Some(ran.clone());
+                ran
+            }
         };
-        Ok(self.baseline.get_or_init(|| ran).as_ref())
-    }
-
-    /// The kept request sent again, when it reproduces the failure.
-    fn exact_baseline(&self) -> Result<Option<Baseline>> {
-        let Some(exact) = &self.exact else {
+        let Some(baseline) = ran else {
             return Ok(None);
         };
-        let Some(before) = self.host.reply_exact(exact)? else {
+        if baseline.fidelity == ReplayFidelity::Rebuilt {
+            return Ok(Some((baseline, None)));
+        }
+        if let Some(exact) = self.live_exact()? {
+            return Ok(Some((baseline, Some(exact))));
+        }
+        *self.baseline.borrow_mut() = None;
+        drop(baseline);
+        self.baseline()
+    }
+
+    /// The kept request sent again, when it reproduces the failure: read
+    /// again just before it is sent (FIX 6659).
+    fn exact_baseline(&self) -> Result<Option<Baseline>> {
+        let Some(exact) = self.live_exact()? else {
+            return Ok(None);
+        };
+        let Some(before) = self.host.reply_exact(&exact)? else {
             return Ok(None);
         };
         let conversation = request_conversation(&exact.request);
@@ -407,7 +448,8 @@ impl CoachReplay<'_> {
     /// How the baseline ran, once one reproduced the failure.
     fn fidelity(&self) -> Option<ReplayFidelity> {
         self.baseline
-            .get()
+            .borrow()
+            .as_ref()
             .and_then(Option::as_ref)
             .map(|baseline| baseline.fidelity)
     }
@@ -447,17 +489,16 @@ impl CodeFixReplay for CoachReplay<'_> {
         let Some((_, fix)) = self.candidates.iter().find(|(id, _)| id == candidate_id) else {
             return Ok(ShadowRun::Unavailable);
         };
-        let Some(baseline) = self.baseline()? else {
+        let Some((baseline, exact)) = self.baseline()? else {
             return Ok(ShadowRun::Unavailable);
         };
         let (conversation, before) = (&baseline.conversation, &baseline.before);
         // The fix runs the way the failure was replayed: on the kept request
-        // when that reproduced it (FIX 1662), else on the rebuilt call.
-        let after = match (&self.exact, baseline.fidelity) {
-            (Some(exact), ReplayFidelity::Exact | ReplayFidelity::ExactMasked) => {
-                self.host.reply_exact(&with_fix(exact, fix))?
-            }
-            _ => {
+        // when that reproduced it (FIX 1662) and its copy is still kept
+        // (FIX 6659), else on the rebuilt call.
+        let after = match exact {
+            Some(exact) => self.host.reply_exact(&with_fix(&exact, fix))?,
+            None => {
                 let instructions = &self.job.source.instructions;
                 let system = [instructions.as_str(), fix.as_str()]
                     .into_iter()
@@ -1009,8 +1050,8 @@ impl Vault {
             decisions,
             evidence: &evidence,
             candidates,
-            exact,
-            baseline: OnceCell::new(),
+            exact: RefCell::new(exact),
+            baseline: RefCell::new(None),
         };
         let scrubber = CoachScrubber {
             vault: self,
@@ -1084,8 +1125,8 @@ impl Vault {
             decisions,
             evidence: &evidence,
             candidates: missing.to_vec(),
-            exact,
-            baseline: OnceCell::new(),
+            exact: RefCell::new(exact),
+            baseline: RefCell::new(None),
         };
         self.replay_candidates(source, &replay, &settled.example)
     }

@@ -23,7 +23,9 @@
 //! hash of the request sent says whether it is the request as sent. A
 //! capture that fails never fails the call or the report: its replay is then
 //! not exact. An erase of an actor takes its step rows and the receipt rows
-//! of its reports.
+//! of its reports. A step row stamps each owner of its step (FIX 6659): its
+//! actor, its subject and, once the step logs, its terminal claim. An erase
+//! of any of them takes the row, and none is kept for an owner already gone.
 
 use serde::{Deserialize, Serialize};
 
@@ -213,8 +215,24 @@ pub(crate) struct StepReplaySource {
     pub(crate) request: KeptRequest,
     /// The actor whose call it was: the step's host-owned envelope actor.
     pub(crate) actor: EntityId,
+    /// What the step was about: its context's subject, as its step-state
+    /// row stamps it (FIX 6659).
+    pub(crate) subject: Option<EntityId>,
+    /// The terminal `dreamer.step` claim that logged the step, bound in the
+    /// write that files it (FIX 6659); `None` until then.
+    pub(crate) claim: Option<EntityId>,
     /// Unix milliseconds it was kept.
     pub(crate) captured_at_ms: u64,
+}
+
+impl StepReplaySource {
+    /// Every owner the row stamps: an erase of any of them takes it.
+    fn owners(&self) -> Vec<EntityId> {
+        [Some(self.actor), self.subject, self.claim]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
 }
 
 /// The canonical hash of `request`.
@@ -301,21 +319,23 @@ pub(crate) fn blocked_source_in(
 
 /// Keeps the request a durable step is about to send (FIX 1662), before the
 /// call, under the attempt's lease generation, for the replay of a failure on
-/// a deployment that exports (the only one a code fix runs on). Best effort:
-/// a capture that fails is logged by kind and never fails the step, whose
-/// replay is then not exact.
+/// a deployment that exports (the only one a code fix runs on). The row
+/// stamps the owners the step's Started row stamps, its `actor` and its
+/// `subject` (FIX 6659). Best effort: a capture that fails is logged by kind
+/// and never fails the step, whose replay is then not exact.
 pub(crate) fn capture_durable_step(
     vault: &Vault,
     attempt: AttemptId,
     step: [u8; 32],
     actor: EntityId,
+    subject: EntityId,
     request: &LlmRequest,
     now_ms: u64,
 ) {
     if !vault.config.failure_signals.exports() {
         return;
     }
-    if let Err(error) = keep_durable_step(vault, attempt, step, actor, request, now_ms) {
+    if let Err(error) = keep_durable_step(vault, attempt, step, actor, subject, request, now_ms) {
         tracing::warn!(
             kind = ?error.kind(),
             "a step's request was not kept; its replay is not exact"
@@ -328,6 +348,7 @@ fn keep_durable_step(
     attempt: AttemptId,
     step: [u8; 32],
     actor: EntityId,
+    subject: EntityId,
     request: &LlmRequest,
     now_ms: u64,
 ) -> Result<()> {
@@ -346,9 +367,17 @@ fn keep_durable_step(
             stored: step,
         },
         actor,
+        subject: Some(subject),
+        claim: None,
         captured_at_ms: now_ms,
     };
     vault.with_write_txn_grouped(|txn| {
+        // An owner gone here keeps nothing (FIX 6659), checked in this same
+        // write by the step-state rows' own check, so an erase that commits
+        // after the step started never finds a copy written after it.
+        if crate::llm::owner_gone_in_txn(vault, &*txn, &row.owners())? {
+            return Ok(());
+        }
         let mut row = row;
         STEPS.admit(vault, txn, &key, &mut row)?;
         let mut row = STEPS.decode_value(&STEPS.encode_value(&row)?)?;
@@ -379,10 +408,88 @@ pub(crate) fn step_sources_in(
     Ok(rows)
 }
 
+/// The key prefix every row of `attempt`'s `step` shares: each lease
+/// generation and call of it.
+fn step_prefix(attempt: AttemptId, step: &[u8; 32]) -> Vec<u8> {
+    let mut prefix = Vec::with_capacity(STEP_KEY_LEN);
+    prefix.push(STEP_TAG);
+    prefix.extend_from_slice(attempt.as_bytes());
+    prefix.extend_from_slice(step);
+    prefix
+}
+
+/// Binds the terminal claim `claim` that logs `step` of `attempt` to every
+/// request kept for the step (FIX 6659), each lease and call of it, in the
+/// claim's own write, so an erase of the claim takes them once the
+/// step-state row that names it is gone. A row that does not decode names
+/// no owner and stays as it is. A binding that fails takes the step's kept
+/// requests instead, so none is kept unbound: the claim files as before,
+/// and the step's replay is then not exact.
+pub(crate) fn bind_step_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    step: &[u8; 32],
+    claim: EntityId,
+) -> Result<()> {
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    match bind_claim_in_txn(vault, &mut savepoint, attempt, step, claim) {
+        Ok(()) => {
+            savepoint.commit()?;
+            Ok(())
+        }
+        Err(error) => {
+            drop(savepoint);
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a step's kept request was not bound to its claim; it is not kept"
+            );
+            remove_step_sources_in_txn(vault, wtxn, attempt, step)
+        }
+    }
+}
+
+/// Stamps `claim` on each step row of `step` of `attempt` that decodes.
+fn bind_claim_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    step: &[u8; 32],
+    claim: EntityId,
+) -> Result<()> {
+    let mut bound = Vec::new();
+    for row in STEPS.iter_raw_from(&vault.store, &*wtxn, &step_prefix(attempt, step))? {
+        let (key, bytes) = row?;
+        if let Some(key) = StepSourceKey::decode_key(&key)
+            && let Ok(mut source) = STEPS.decode_value(&bytes)
+        {
+            source.claim = Some(claim);
+            bound.push((key, source));
+        }
+    }
+    for (key, source) in &bound {
+        STEPS.put(vault, wtxn, key, source)?;
+    }
+    Ok(())
+}
+
+/// Takes every request kept for `step` of `attempt` (FIX 6659), each lease
+/// generation and call of it, in `wtxn`.
+pub(crate) fn remove_step_sources_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    step: &[u8; 32],
+) -> Result<()> {
+    STEPS.delete_from(&vault.store, wtxn, &step_prefix(attempt, step))?;
+    Ok(())
+}
+
 /// An erase of `actor` takes, in the erase's own writer, each receipt row of
 /// a report witnessed for it (its request is that actor's run's) and each
-/// step row of a call it made, with the request each keeps. A row that does
-/// not decode names no actor and stays as it is.
+/// step row that stamps it as an owner (FIX 6659): a call it made, a step
+/// about it, or one its terminal claim logged, with the request each keeps.
+/// A row that does not decode names no owner and stays as it is.
 pub(crate) fn erase_blocked_source_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -400,7 +507,7 @@ pub(crate) fn erase_blocked_source_actor_in_txn(
             }
         } else if let Some(step) = StepSourceKey::decode_key(&key)
             && let Ok(source) = STEPS.decode_value(&bytes)
-            && source.actor == *actor
+            && source.owners().contains(actor)
         {
             steps.push(step);
         }
