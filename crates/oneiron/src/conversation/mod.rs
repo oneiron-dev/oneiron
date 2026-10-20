@@ -21,7 +21,6 @@ pub use chat_breakpoint::{
     ChatBreakpoint, ChatBreakpointRung, ChatBreakpointStale, chat_breakpoint,
     chat_breakpoint_stands, keep_chat_breakpoint,
 };
-#[cfg(test)]
 pub(crate) use deletion::ROOM_ERASURES;
 pub(crate) use deletion::{
     guard_room_message_delete, pin_room_message_edge, record_author, replay_room_message_tombstone,

@@ -41,7 +41,8 @@ use super::create_origin::{
 };
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 use super::create_validation::{
-    task_body_in_txn, task_create_proposal_value, validate_task_create, validate_task_create_in,
+    admit_task_parent, task_body_in_txn, task_create_proposal_value, validate_task_create,
+    validate_task_create_in,
 };
 use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask};
 use super::highway::{
@@ -426,6 +427,7 @@ impl Memory<'_> {
         let key = qualified_key(via, &post.intent_key, "intent key")?;
         let now = self.vault().now_recorded_at();
         post.brief.admit_references(self, "tasks.create")?;
+        admit_task_parent(self, post.parent_ref)?;
         let type_ref = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             post.brief.validate_in(self.vault(), &txn)?;
