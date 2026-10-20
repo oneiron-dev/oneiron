@@ -21,6 +21,19 @@ pub struct ModelManifestReplace {
     pub teacher_approval: Option<TeacherProbeApproval>,
 }
 
+/// Binds the Oneironer the server has loaded. The binding's identity is the
+/// loaded slot's; these guards only compare with it, and a mismatch refuses.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OneironerBind {
+    /// The checkpoint the caller expects the loaded Oneironer to serve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_checkpoint_sha16: Option<String>,
+    /// The stack the caller expects the loaded Oneironer to serve.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_stack_sha16: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelRouteRead {
@@ -136,6 +149,45 @@ impl Vault {
         )?;
         txn.commit()?;
         Ok(input.manifest)
+    }
+
+    /// Binds `model`, the Oneironer a host has loaded, into the current
+    /// manifest under this writer: `extraction_encoder` takes it in the
+    /// Oneironer slot at `tier`, else at its row's current tier, and the
+    /// Oneironer route is pinned on the device. Every other role, route, the
+    /// verdict and the seat policy stay. The proof, the saved teacher
+    /// approval and the manifest guards run here as a replace runs them, and
+    /// so does the rest of that write: a stale encoder export is dropped and
+    /// resident route overrides clear. The returned manifest is the one this
+    /// transaction published. A vault with no manifest is refused.
+    pub fn bind_oneironer_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        model: &ModelId,
+        tier: Option<&ModelTierRef>,
+    ) -> Result<ModelManifest> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let mut manifest =
+            read_manifest(&self.store, &txn)?.ok_or_else(|| invalid("manifest not configured"))?;
+        let current = manifest.binding(ModelRole::ExtractionEncoder)?;
+        let row = super::ModelBinding {
+            model: model.clone(),
+            slot: ModelSlot::Oneironer,
+            tier: tier.unwrap_or(&current.tier).clone(),
+            // The on-device pin is the narrowest route: no route model is
+            // narrower than it.
+            route_models: BTreeMap::new(),
+            disposition: current.disposition,
+            reads_audio: current.reads_audio,
+        };
+        manifest.roles.insert(ModelRole::ExtractionEncoder, row);
+        manifest
+            .routes
+            .insert(ModelSlot::Oneironer, ModelLocality::OnDevice);
+        self.write_model_manifest_in_txn(&mut txn, &manifest, None, None)?;
+        txn.commit()?;
+        Ok(manifest)
     }
 
     pub fn model_route_as_owner(

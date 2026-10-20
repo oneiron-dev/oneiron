@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1083 facade rows, 3692 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1035.
+// UniFFI census: 1085 facade rows, 3704 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1037.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -40287,6 +40287,24 @@ pub struct ModelManifestReplace {
     pub teacher_approval: Option<TeacherProbeApproval>,
 }
 
+/// `oneiron::llm::manifest::doors::OneironerBind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OneironerBind {
+    #[serde(
+        rename = "expected_checkpoint_sha16",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_checkpoint_sha16: Option<String>,
+    #[serde(
+        rename = "expected_stack_sha16",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_stack_sha16: Option<String>,
+}
+
 /// `oneiron::llm::manifest::doors::ModelRouteRead`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -56400,6 +56418,137 @@ pub enum ActionFact {
     },
 }
 
+/// `oneiron_browser::switch::SwitchComponent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SwitchComponent {
+    #[serde(rename = "url")]
+    Url,
+    #[serde(rename = "cookies")]
+    Cookies,
+    #[serde(rename = "cookie")]
+    Cookie,
+    #[serde(rename = "local_storage")]
+    LocalStorage,
+    #[serde(rename = "session_storage")]
+    SessionStorage,
+    #[serde(rename = "storage")]
+    Storage,
+    #[serde(rename = "scroll")]
+    Scroll,
+    #[serde(rename = "tab")]
+    Tab,
+}
+
+/// `oneiron_browser::switch::SwitchCarried`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SwitchCarried {
+    #[serde(rename = "component")]
+    pub component: SwitchComponent,
+    #[serde(rename = "origin", default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(rename = "count", default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+}
+
+/// `oneiron_browser::switch::SwitchLoss`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SwitchLoss {
+    #[serde(rename = "not_collected")]
+    NotCollected,
+    #[serde(rename = "engine_refuses")]
+    EngineRefuses,
+    #[serde(rename = "engine_ignores")]
+    EngineIgnores,
+    #[serde(rename = "limit")]
+    Limit,
+    #[serde(rename = "host_capacity")]
+    HostCapacity,
+    #[serde(rename = "read_failed")]
+    ReadFailed,
+    #[serde(rename = "seed_failed")]
+    SeedFailed,
+    #[serde(rename = "readback_mismatch")]
+    ReadbackMismatch,
+    #[serde(rename = "redirected")]
+    Redirected,
+    #[serde(rename = "not_web_page")]
+    NotWebPage,
+    #[serde(rename = "other_tab")]
+    OtherTab,
+}
+
+/// `oneiron_browser::switch::SwitchNotCarried`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SwitchNotCarried {
+    #[serde(rename = "component")]
+    pub component: SwitchComponent,
+    #[serde(rename = "origin", default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(rename = "cookies", default, skip_serializing_if = "Option::is_none")]
+    pub cookies: Option<Vec<String>>,
+    #[serde(rename = "attribute", default, skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<String>,
+    #[serde(rename = "count", default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u64>,
+    #[serde(rename = "reason")]
+    pub reason: SwitchLoss,
+}
+
+/// `oneiron_browser::switch::SwitchStage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SwitchStage {
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "attach")]
+    Attach,
+    #[serde(rename = "cookies")]
+    Cookies,
+    #[serde(rename = "navigate")]
+    Navigate,
+}
+
+/// `oneiron_browser::switch::SwitchOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum SwitchOutcome {
+    #[serde(rename = "switched")]
+    Switched,
+    #[serde(rename = "unchanged")]
+    Unchanged,
+    #[serde(rename = "failed")]
+    Failed {
+        #[serde(rename = "stage")]
+        stage: SwitchStage,
+        #[serde(rename = "code")]
+        code: String,
+        #[serde(rename = "detail")]
+        detail: String,
+    },
+}
+
+/// `oneiron_browser::switch::EngineSwitchRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EngineSwitchRecord {
+    #[serde(rename = "from")]
+    pub from: BrowserEngine,
+    #[serde(rename = "to")]
+    pub to: BrowserEngine,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "url")]
+    pub url: String,
+    #[serde(rename = "carried", default, skip_serializing_if = "Option::is_none")]
+    pub carried: Option<Vec<SwitchCarried>>,
+    #[serde(
+        rename = "not_carried",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub not_carried: Option<Vec<SwitchNotCarried>>,
+    #[serde(rename = "outcome")]
+    pub outcome: SwitchOutcome,
+}
+
 /// `oneiron_browser::EffectReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EffectReceipt {
@@ -56457,6 +56606,12 @@ pub struct EffectReceipt {
     pub engine: Option<BrowserEngine>,
     #[serde(rename = "fact", default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<ActionFact>,
+    #[serde(
+        rename = "engine_switch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub engine_switch: Option<EngineSwitchRecord>,
 }
 
 /// `oneiron_browser::library::LibraryCard`.
@@ -57530,6 +57685,52 @@ pub struct BrowserAnswerHandoverOutput {
     pub engine: Option<BrowserEngine>,
     #[serde(flatten)]
     pub flattened: HandoverOutput,
+}
+
+/// `oneiron_browser::switch::SwitchEngineInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchEngineInput {
+    #[serde(rename = "engine")]
+    pub engine: BrowserEngine,
+    #[serde(rename = "reason")]
+    pub reason: String,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SwitchEngineInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSwitchEngineInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SwitchEngineInput,
+}
+
+/// `oneiron_browser::switch::SwitchEngineOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SwitchEngineOutput {
+    #[serde(rename = "receipt")]
+    pub receipt: EffectReceipt,
+    #[serde(
+        rename = "observation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observation: Option<ObservationPage>,
+}
+
+/// `oneiron_browser::answer::BrowserAnswer` with `T` = `SwitchEngineOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BrowserAnswerSwitchEngineOutput {
+    #[serde(rename = "takeover", default, skip_serializing_if = "Option::is_none")]
+    pub takeover: Option<TakeoverRecord>,
+    #[serde(rename = "switched", default, skip_serializing_if = "Option::is_none")]
+    pub switched: Option<TabSwitch>,
+    #[serde(rename = "engine", default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
+    #[serde(flatten)]
+    pub flattened: SwitchEngineOutput,
 }
 
 /// `oneiron::code_run::run_verbs::MemorySupersedeInput`.

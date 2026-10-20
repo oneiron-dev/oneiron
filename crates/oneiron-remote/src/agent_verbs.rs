@@ -2332,6 +2332,9 @@ impl OneironClient {
                 "vault.models.manifest.replace" => remote_agent_verb_output::<
                     oneiron::llm::manifest::ModelManifest,
                 >(client, verb, &input),
+                "vault.models.oneironer.bind" => remote_agent_verb_output::<
+                    oneiron::llm::manifest::ModelManifest,
+                >(client, verb, &input),
                 "vault.models.routes.read" => remote_agent_verb_output::<
                     oneiron::llm::manifest::doors::ModelRouteView,
                 >(client, verb, &input),
@@ -3326,6 +3329,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "self.browser.handover" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserHandoverOutput,
+                >(client, verb, &input),
+                "self.browser.switch_engine" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserSwitchEngineOutput,
                 >(client, verb, &input),
                 "vault.claims.supersede" => remote_agent_verb_output::<
                     oneiron::code_run::MemoryWriteOutput,
@@ -12562,6 +12568,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.models.manifest.replace", value)
     }
+    pub fn vault_models_oneironer_bind(
+        &self,
+        input: &oneiron::llm::manifest::doors::OneironerBind,
+    ) -> Result<oneiron::llm::manifest::ModelManifest, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.oneironer.bind", value)
+    }
     pub fn vault_models_routes_read(
         &self,
         input: &oneiron::llm::manifest::doors::ModelRouteRead,
@@ -16563,6 +16581,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.browser.handover", value)
+    }
+    pub fn self_browser_switch_engine(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserSwitchEngineInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserSwitchEngineOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.switch_engine", value)
     }
     pub fn vault_claims_supersede(
         &self,

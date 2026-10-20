@@ -3746,6 +3746,11 @@ export_facade! {
     let output = client.vault_models_manifest_replace(&input)?;
     crate::codec::lift_record("vault.models.manifest.replace", &output)
 };
+"vault.models.oneironer.bind" => fn vault_models_oneironer_bind(&self, input: OneironerBind) -> ModelManifest = |client| {
+    let input: oneiron::llm::manifest::doors::OneironerBind = crate::codec::lower_record("vault.models.oneironer.bind", input)?;
+    let output = client.vault_models_oneironer_bind(&input)?;
+    crate::codec::lift_record("vault.models.oneironer.bind", &output)
+};
 "vault.models.routes.read" => fn vault_models_routes_read(&self, input: ModelRouteRead) -> ModelRouteView = |client| {
     let input: oneiron::llm::manifest::doors::ModelRouteRead = crate::codec::lower_record("vault.models.routes.read", input)?;
     let output = client.vault_models_routes_read(&input)?;
@@ -5350,6 +5355,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserHandoverInput> = crate::codec::lower_record("self.browser.handover", input)?;
     let output = client.self_browser_handover(&input)?;
     crate::codec::lift_record("self.browser.handover", &output)
+};
+"self.browser.switch_engine" => fn self_browser_switch_engine(&self, input: LiveRunRequestSwitchEngineInput) -> BrowserAnswerSwitchEngineOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserSwitchEngineInput> = crate::codec::lower_record("self.browser.switch_engine", input)?;
+    let output = client.self_browser_switch_engine(&input)?;
+    crate::codec::lift_record("self.browser.switch_engine", &output)
 };
 "vault.claims.supersede" => fn vault_claims_supersede(&self, input: LiveRunRequestMemorySupersedeInput) -> MemoryWriteOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemorySupersedeInput> = crate::codec::lower_record("vault.claims.supersede", input)?;

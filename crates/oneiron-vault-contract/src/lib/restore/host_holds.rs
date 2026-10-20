@@ -23,6 +23,15 @@
 //! family's id. A cursor that names another id answers `export_changed`:
 //! the supervisor starts again from the first page and never splices two
 //! families. No family is kept between pages, and none is cut short.
+//!
+//! Confirm (FIX 6820): a cursor at the family's end, its offset equal to
+//! `family_bytes`, asks for no bytes. It exports the family again as any
+//! page does and answers `exported`, with no data and no next cursor, while
+//! the family is still the cursor's id, and `export_changed` once it is
+//! not. It is the supervisor's last call before it sends the restore input,
+//! with the source still frozen: on `export_changed` it discards the pages
+//! it holds, pages again from the first and confirms that family. A confirm
+//! carries no family bytes and stands in for no page.
 
 use serde::{Deserialize, Serialize};
 
@@ -109,6 +118,12 @@ impl ManagedRestoreHostHolds {
 
 /// Where a continuation page of `host_order_holds` starts: the byte offset
 /// into the family, and the id of the family the pages before it came from.
+/// At the family's end (`offset` equal to `family_bytes`) it is the confirm
+/// (FIX 6820), the supervisor's last call before it sends the restore input,
+/// with the source still frozen: `exported` with no data and no next cursor
+/// says the family is still that id's; on `export_changed` the supervisor
+/// discards the pages it holds and pages again from `null`. Any other
+/// answer confirms nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HostHoldsCursor {
@@ -137,7 +152,7 @@ pub enum HostOrderHoldsNotProven {
     /// The family is not the one the cursor's pages came from: the
     /// supervisor starts again from the first page.
     ExportChanged,
-    /// The cursor is at or past the family's end.
+    /// The cursor is past the family's end. One at its end is the confirm.
     CursorInvalid,
 }
 
@@ -152,7 +167,8 @@ pub enum HostOrderHoldsNotProven {
 pub enum HostOrderHoldsExport {
     /// `data` is the family's bytes from `offset`; the family is
     /// `family_bytes` long, and `next_cursor` is the page to ask for next,
-    /// `null` once this page reaches the end.
+    /// `null` once this page reaches the end. The answer to a confirm has
+    /// `offset` equal to `family_bytes`, no `data` and no `next_cursor`.
     Exported {
         identity: ManagedRestoreIdentity,
         source: HostHoldsSource,
@@ -175,7 +191,8 @@ impl HostOrderHoldsExport {
     /// The page of `family`, the family's bytes as they were just exported,
     /// at `cursor` (its start for none), sized so the whole answer fits a
     /// ctl line: `export_changed` for a cursor that names another family,
-    /// `cursor_invalid` for one at or past this one's end.
+    /// `cursor_invalid` for one past this one's end, and for one at its end,
+    /// the confirm, a page with no bytes and no next cursor.
     pub fn page(
         identity: &ManagedRestoreIdentity,
         source: &HostHoldsSource,
@@ -193,8 +210,10 @@ impl HostOrderHoldsExport {
             Some(cursor) if cursor.family_id != family_id => {
                 return Ok(not_proven(HostOrderHoldsNotProven::ExportChanged));
             }
+            // At the end it is the confirm: the page below has no bytes and
+            // no next cursor.
             Some(cursor) => match usize::try_from(cursor.offset) {
-                Ok(start) if start < family.len() => start,
+                Ok(start) if start <= family.len() => start,
                 _ => return Ok(not_proven(HostOrderHoldsNotProven::CursorInvalid)),
             },
         };
@@ -245,8 +264,10 @@ impl HostOrderHoldsExport {
     }
 
     /// Checks an `exported` page's shape: that its offset, length and next
-    /// cursor agree with the family's length and id and move forward. The
-    /// supervisor checks the reassembled bytes against `family_id` itself.
+    /// cursor agree with the family's length and id and move forward. Only
+    /// the confirm, at the family's end with no next cursor, carries no
+    /// bytes: an empty family's one page is such a page. The supervisor
+    /// checks the reassembled bytes against `family_id` itself.
     pub fn validate(&self) -> anyhow::Result<()> {
         if let Self::Exported {
             family_id,
@@ -262,8 +283,8 @@ impl HostOrderHoldsExport {
                 .filter(|end| end <= family_bytes)
                 .ok_or_else(|| anyhow::anyhow!("a host-order holds page runs past its family"))?;
             anyhow::ensure!(
-                !data.0.is_empty() || *family_bytes == 0,
-                "a host-order holds page carries bytes unless its family has none"
+                !data.0.is_empty() || (*offset == *family_bytes && next_cursor.is_none()),
+                "a host-order holds page carries bytes unless it confirms its family's end"
             );
             anyhow::ensure!(
                 match next_cursor {

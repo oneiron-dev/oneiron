@@ -432,6 +432,13 @@ pub struct ServeConfig {
     /// `--publisher-training-intake-origin`, argv only: the intake the
     /// self-host shipper reaches, `https://oneiron.dev` by default.
     pub publisher_training_intake_origin: String,
+    /// `--shared-model-root`, managed and argv only: the node's read-only
+    /// shared model root as its check accepted it, where a model directory
+    /// the settings file names may lie
+    /// ([`oneiron_vault_contract::settings_paths::SharedModelRoot`]). Unset
+    /// on a plain serve, and where the supervisor declared none or its
+    /// check ignored the one declared.
+    pub shared_model_root: Option<oneiron_vault_contract::settings_paths::SharedModelRoot>,
 }
 
 impl Default for ServeConfig {
@@ -512,6 +519,7 @@ impl Default for ServeConfig {
             publisher_training_self_host_shipper: false,
             publisher_training_intake_origin: crate::conversation_training::DEFAULT_INTAKE_ORIGIN
                 .to_owned(),
+            shared_model_root: None,
         }
     }
 }
@@ -609,6 +617,7 @@ impl fmt::Debug for ServeConfig {
                 "publisher_training_intake_origin",
                 &self.publisher_training_intake_origin,
             )
+            .field("shared_model_root", &self.shared_model_root)
             .finish()
     }
 }

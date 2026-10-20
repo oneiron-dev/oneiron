@@ -1743,6 +1743,7 @@ fn mcp_agent_verb_input(
         "vault.skills.outcomes.get" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.read" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.replace" => a.spec.clone().ok_or_else(invalid),
+        "vault.models.oneironer.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.models.routes.read" => a.spec.clone().ok_or_else(invalid),
         "vault.models.routes.replace" => a.spec.clone().ok_or_else(invalid),
         "vault.models.roles.read" => a.spec.clone().ok_or_else(invalid),
@@ -2064,6 +2065,7 @@ fn mcp_agent_verb_input(
         "self.browser.library.retired" => a.spec.clone().ok_or_else(invalid),
         "self.browser.library.run" => a.spec.clone().ok_or_else(invalid),
         "self.browser.handover" => a.spec.clone().ok_or_else(invalid),
+        "self.browser.switch_engine" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.supersede" => a.spec.clone().ok_or_else(invalid),
         "self.fold" => a.spec.clone().ok_or_else(invalid),
         "self.compact" => a.spec.clone().ok_or_else(invalid),
@@ -4425,6 +4427,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.models.manifest.replace" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.models.oneironer.bind" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.models.routes.read" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -5384,6 +5389,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.browser.handover" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.browser.switch_engine" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.supersede" => {
@@ -16188,6 +16196,21 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.models.oneironer.bind" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.models.oneironer.bind", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::manifest::doors::OneironerBind =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_models_oneironer_bind(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.models.routes.read" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.models.routes.read", &input)
@@ -20838,6 +20861,36 @@ async fn execute_agent_verb_row(
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(
                     &memory,
                     "self.browser.handover",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.browser.switch_engine" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.browser.switch_engine", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::BrowserSwitchEngineInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_browser_switch_engine(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.switch_engine",
                 ),
                 input,
             )
