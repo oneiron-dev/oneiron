@@ -244,6 +244,8 @@ impl Vault {
                         "replicated resolution row desugars to ResolveProposal",
                     ));
                 };
+                // Deferred: the effective projection runs this rule once the
+                // proposal is here (SCAN C040).
                 let Some(entity_type) = self.get_entity_type_in_txn(rtxn, &proposal)? else {
                     return Ok(());
                 };

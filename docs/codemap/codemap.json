@@ -6108,7 +6108,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -6119,6 +6119,16 @@
      "purpose": "Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/text.rs",
+     "purpose": "A text's mask on write (OF-560): each span the door's text rules place, and each value custody already…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -13495,21 +13505,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CapsuleContent",
       "CapsuleHost",
       "CapsuleRungBinding",
       "ExecutorStepStart",
       "ExposureKind",
       "ExposureSlot",
       "StepReplayCapsule",
+      "StoredSpan",
       "TaskExposure"
      ],
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
-      "crate-vis": 5,
-      "enum": 2,
-      "fn": 4,
-      "struct": 5
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 6,
+      "struct": 6
      }
     },
     {
@@ -13785,8 +13797,28 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 11,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/admit.rs",
+     "purpose": "A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/erase.rs",
+     "purpose": "The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -19617,7 +19649,7 @@
      "path": "src/deletion/erase/markers.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -19627,7 +19659,7 @@
      "path": "src/deletion/erase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -19658,6 +19690,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/erase/scope_probes.rs",
+     "purpose": "One decision-ledger scan for a tombstone batch's missing-id probes (SCAN C049)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -19726,7 +19768,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 11
      }
     },
@@ -26274,7 +26316,7 @@
      "path": "src/failure_signals/code_fix/exact.rs",
      "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -30000,7 +30042,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4
      }
     },
@@ -37561,9 +37603,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/note/citation_erase.rs",
-     "purpose": "Hard-erase dependency fences",
+     "purpose": "Citation scrubs of deleted sources: a delete's default mode and the hard-erase dependency fences",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -37573,7 +37615,7 @@
      "path": "src/note/citation_scrub.rs",
      "purpose": "Pin-only live-state rebuild",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -37652,7 +37694,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 9
      }
     },
@@ -43441,7 +43483,7 @@
      "path": "src/receipt/archive_source/access.rs",
      "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -49812,7 +49854,7 @@
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -51314,6 +51356,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeadlineJob"
+     ],
+     "path": "src/store/deadline_jobs.rs",
+     "purpose": "Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Diagnostics"
      ],
      "path": "src/store/diagnostics.rs",
@@ -51406,6 +51463,16 @@
      "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/ledger/erasure_scan.rs",
+     "purpose": "The ERASE completeness scan for many claims at once (SCAN C049): one tombstone batch's missing-id probes…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51830,9 +51897,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 1,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -63747,7 +63814,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63908,7 +63975,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 106,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64111,7 +64178,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64965,7 +65032,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 112,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65191,7 +65258,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4050,
+   "source_files": 4056,
    "test_files": 902
   },
   "oneiron-android": {
