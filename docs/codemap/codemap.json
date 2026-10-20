@@ -10949,10 +10949,22 @@
      "path": "src/channel_identity_lifecycle.rs",
      "purpose": "ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 3,
-      "fn": 8,
+      "fn": 10,
+      "re-export": 1,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_lifecycle/approval.rs",
+     "purpose": "FIX 6424 part 3 (2b, Engine 10-20 21:0x rulings 1 and 5, CALLS `FIX 6424 channel-identity request nonce` and…",
+     "surface": {
+      "crate-vis": 14,
+      "fn": 1
      }
     },
     {
@@ -17331,7 +17343,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 12
+      "re-export": 14
      }
     },
     {
@@ -25736,7 +25748,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 3,
       "struct": 2,
       "trait": 1
@@ -27708,9 +27720,55 @@
      "surface": {
       "enum": 2,
       "fn": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrainingPieceState",
+      "TrainingTransport"
+     ],
+     "path": "src/feedback/conversation_training/anonymous.rs",
+     "purpose": "The anonymous training window's side of local custody (TL-6, FIX 5813): where each anonymous piece stands at…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnonymousApplied",
+      "AnonymousRefusal"
+     ],
+     "path": "src/feedback/conversation_training/anonymous/apply.rs",
+     "purpose": "Signed piece receipts applied to anonymous custody (TL-6; CALLS TL6_ANON_RECEIPT_APPLICATION)",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousStatusWork",
+      "AnonymousUploadWork",
+      "AnonymousWithdrawalWork"
+     ],
+     "path": "src/feedback/conversation_training/anonymous/pages.rs",
+     "purpose": "The self-host shipper's pages over anonymous custody (TL-6): the pieces to upload, the codes to withdraw and…",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -27782,7 +27840,7 @@
      "path": "src/feedback/conversation_training/purge.rs",
      "purpose": "The training purge (TRAINING-LINK = C, TL-5, the engine half): before an erase destroys the vault, every…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -27790,6 +27848,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnonymousReceiptView",
       "PersonTrainingReceipts",
       "PersonTrainingSubmission",
       "TrainingCustody",
@@ -27801,7 +27860,7 @@
      "surface": {
       "enum": 1,
       "fn": 4,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -27819,6 +27878,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/reconcile/receipts_v2.rs",
+     "purpose": "The intake's V2 receipts (C2, C3, C5), applied per scope: each scope keeps its own cursor, and no scope's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -27829,6 +27898,16 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/release/prepare.rs",
+     "purpose": "An offer's preparation: its hold in local custody, then its seal and its signed manifest (OF-420 A2…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -28451,7 +28530,7 @@
      "path": "src/gate/effect/approval_target.rs",
      "purpose": "FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -40872,7 +40951,18 @@
      "path": "src/outbound_chokepoint/types.rs",
      "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/approval.rs",
+     "purpose": "FIX 6424 part 3 (2b, Engine 10-20 21:0x rulings 1, 7 and 8): an owner's approve-once press on one scoped-MCP…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
      }
     },
     {
@@ -40894,7 +40984,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ConnectorAwaitingInput",
@@ -40987,9 +41077,9 @@
      "path": "src/outbound_consent/execution.rs",
      "purpose": "Scoped-call execution, post-effect decision, and result transport",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -41002,7 +41092,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -65426,7 +65516,7 @@
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation"
     },
     "channel_identity_lifecycle": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -65888,7 +65978,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 26,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66168,9 +66258,9 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
@@ -66786,7 +66876,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4184,
+   "source_files": 4191,
    "test_files": 902
   },
   "oneiron-android": {

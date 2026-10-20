@@ -34,7 +34,9 @@
 //! afresh under the next generation at the vault's next training writer
 //! (FIX 5892): the months of older generations keep their scopes, so an
 //! erase still purges them whole, but their codes cannot be made again, so
-//! their withdrawals are counted unavailable.
+//! their hosted withdrawals are counted unavailable. An anonymous piece
+//! keeps its C in its custody row, so a restore that brought that row back
+//! still withdraws it one by one.
 
 use std::collections::BTreeSet;
 
@@ -141,14 +143,21 @@ pub(super) fn code_set(
     codes
 }
 
-/// What a restore that brought no training link key reports (FIX 5892): the
-/// key is made afresh at the vault's next training write, and what that
-/// costs. It names no key, scope, code or id.
+/// What a restore that brought no training link key reports (FIX 5892;
+/// CALLS TL6_RESTORE_NOTICE): the key is made afresh at the vault's next
+/// training write, and what that costs. A donation whose custody row the
+/// restore brought back keeps its stored C, so an anonymous one is still
+/// withdrawn one by one; an older hosted one's codes cannot be made again.
+/// It names no key, scope, code or id.
 pub(crate) const TRAINING_LINK_RESTORE_NOTICE: &str = "This restore brought no training link key. \
                                                        A fresh one will be made. Training \
-                                                       donations made before this restore can no \
-                                                       longer be withdrawn one by one from this \
-                                                       vault; an erase still purges them all.";
+                                                       donations whose records this restore \
+                                                       brought back can still be withdrawn one \
+                                                       by one from this vault. Older donations \
+                                                       shared through Oneiron Cloud hosting may \
+                                                       no longer be withdrawn one by one; an \
+                                                       erase still purges every donation this \
+                                                       vault recorded.";
 
 /// K, for a writer: minted on the vault's first training use, with
 /// `link_minted` set on `state`, which the caller writes in this same
@@ -239,9 +248,10 @@ fn link_retired() -> Error {
 }
 
 /// K's readiness rule, its own and beside the claim key's, never inside it:
-/// K retires only once the intake's `removed` receipt for the purge is in
-/// (TL-5). Never at the purge's creation or spooling, at switch-off, on a
-/// source or person erase, at reap, or on a timer.
+/// K retires only once the purge is done by its one predicate (TL-5, TL-6):
+/// every hosted scope's `removed` receipt and every anonymous piece's signed
+/// `removed` in. Never at the purge's creation or spooling, at switch-off,
+/// on a source or person erase, at reap, or on a timer.
 fn link_retirement_ready(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     custody::purge_removed(vault, txn)
 }
@@ -272,8 +282,9 @@ impl Vault {
     /// Mints K afresh, under the next generation, when a restore that
     /// brought no custody head left its slot missing (FIX 5892): the first
     /// step of every upkeep and offer pass, a writer only when one is due.
-    /// Withdrawals of the orphaned generation are then counted unavailable
-    /// rather than stopping the pass.
+    /// Hosted withdrawals of the orphaned generation are then counted
+    /// unavailable rather than stopping the pass; an anonymous piece keeps
+    /// its stored C, and its withdrawal still goes.
     ///
     /// # Errors
     /// Storage and custody faults.

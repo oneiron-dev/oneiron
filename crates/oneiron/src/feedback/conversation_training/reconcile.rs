@@ -5,24 +5,28 @@
 //! or any selected message), which gets an id-only forget control, and
 //! every world in play: one that no longer reads everywhere, or no longer
 //! exists, gets a world control. Whatever they withdraw is purged from local
-//! custody and from `offers/`. Controls name codes and ids only, and are
-//! written whatever the learning state. A withdrawal that reaches
+//! custody and from `offers/`, and every anonymous piece among it (TL-6)
+//! takes its withdrawal intent in the same write: its stored C goes out
+//! whatever its generation, and no control names it. Controls name codes
+//! and ids only, and are written whatever the learning state. A withdrawal that reaches
 //! submissions of several months is one control per month, each riding that
 //! month's scope and naming that month's codes (TRAINING-LINK = C). The
 //! vault's setting turned off, or a person opting out, withdraws nothing
 //! (FIX 5502 owner rulings): it stops new sharing, and what was shared
 //! follows the intake's retention.
 //!
-//! Receipts apply per scope: each scope keeps its own cursor, and no
-//! scope's publisher sequence is compared with another's. Every scope rides
-//! one (month, link generation) pair, and every control rides its own pair's
-//! scope. A withdrawal that needs the codes of an orphaned generation (its
-//! key lost with a restore that brought none, FIX 5892) is recorded nowhere
-//! and never written; each pass counts those unavailable, while a purge,
-//! which carries no codes, still goes for every generation's scopes. A receipt for a
-//! scope this vault never used is refused and left where it is. The writer
-//! that applies the last `removed` receipt of the purge (TL-5) stages the
-//! training link key's retirement; the pass finishes it after the commit.
+//! Receipts apply per scope (`receipts_v2`): each scope keeps its own
+//! cursor, and no scope's publisher sequence is compared with another's.
+//! Every scope rides one (month, link generation) pair, and every control
+//! rides its own pair's scope. A hosted withdrawal that needs the codes of
+//! an orphaned generation (its key lost with a restore that brought none,
+//! FIX 5892) is recorded nowhere and never written; each pass counts those
+//! unavailable, while a purge, which carries no codes, still goes for every
+//! generation's scopes, and an anonymous piece's withdrawal goes under its
+//! stored C. A receipt for a scope this vault never used is refused and
+//! left where it is. The writer that applies the last `removed` receipt of
+//! the purge (TL-5) stages the training link key's retirement; the pass
+//! finishes it after the commit.
 //!
 //! It runs at every export tick and once after every commit that stored an
 //! authority row ([`Vault::reconcile_training_after_authority_ingest`]),
@@ -30,13 +34,14 @@
 //! writes them. Nothing is signed into the authority log: the signed choice
 //! and its fold are as they were.
 
+mod receipts_v2;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use oneiron_vault_contract::conversation_training::{
     TRAINING_CONTROL_TYPE, TRAINING_SCHEMA_VERSION, TRAINING_WITHDRAWAL_NOTE,
     TrainingControlBodyV2, TrainingControlChangeV2, TrainingControlV2, TrainingForgetSourceV2,
-    TrainingPurgeScopeV2, TrainingReceiptBodyV2, TrainingReceiptStatusV2, TrainingReceiptSubjectV2,
-    TrainingWorldEligibilityV2, control_file_name,
+    TrainingPurgeScopeV2, TrainingReceiptStatusV2, TrainingWorldEligibilityV2, control_file_name,
 };
 
 use zeroize::Zeroizing;
@@ -48,14 +53,15 @@ use crate::error::{Error, Result};
 use crate::ports::TombstoneStoreRead;
 use crate::registry::ENTITY_TYPE_WORLD;
 
-use super::crypto::{IntakeReceiptKey, receipt_verifies, sign_training_payload};
+use super::anonymous::{self, TrainingTransport};
+use super::crypto::{IntakeReceiptKey, sign_training_payload};
 use super::custody::{
-    self, ControlChange, ControlCustody, ReceiptMark, SubmissionCustody, SubmissionState, UsedRun,
-    put_control_in, put_submission_in, record_control_in,
+    self, ControlChange, ControlCustody, SubmissionCustody, SubmissionState, put_control_in,
+    put_submission_in, record_control_in,
 };
 use super::lifecycle::{
-    PublisherTrainingLifecycle, ReceivedTrainingReceipt, SignedTrainingControl, TrainingControlId,
-    TrainingScope, TrainingSubmissionId, TrainingUnavailable,
+    PublisherTrainingLifecycle, SignedTrainingControl, TrainingControlId, TrainingScope,
+    TrainingSubmissionId, TrainingUnavailable,
 };
 use super::link;
 
@@ -353,56 +359,6 @@ impl Vault {
         Ok(plan)
     }
 
-    /// Applies the intake's receipts the key authenticates, each for one of
-    /// this vault's scopes and past that scope's cursor, by scope and in
-    /// publisher order within it, then removes their files. A receipt for a
-    /// scope this vault never used, or not signed by the key, stays where it
-    /// is and is named.
-    fn apply_training_receipts(
-        &self,
-        sink: &dyn PublisherTrainingLifecycle,
-        key: &IntakeReceiptKey,
-        upkeep: &mut TrainingUpkeep,
-    ) -> Result<()> {
-        let cursors = {
-            let txn = self.store.env.read_txn()?;
-            custody::state(self, &txn)?.cursors()
-        };
-        let page = sink.receipts(&cursors)?;
-        for file in &page.stale {
-            sink.retire_receipt(file)?;
-        }
-        let mut accepted: Vec<(TrainingScope, ReceivedTrainingReceipt)> = Vec::new();
-        for received in page.receipts {
-            let scope = cursors
-                .iter()
-                .find(|cursor| cursor.scope.to_hex() == received.receipt.body.scope)
-                .map(|cursor| cursor.scope);
-            match scope {
-                Some(scope) if receipt_verifies(key, &received.receipt) => {
-                    accepted.push((scope, received));
-                }
-                _ => upkeep.receipts_refused.push(received.file),
-            }
-        }
-        if accepted.is_empty() {
-            return Ok(());
-        }
-        accepted
-            .sort_by_key(|(scope, received)| (*scope, received.receipt.body.publisher_sequence));
-        self.with_write_txn_grouped(|txn| {
-            for (_, received) in &accepted {
-                apply_receipt_in(self, txn, &received.receipt.body)?;
-            }
-            Ok(())
-        })?;
-        for (_, received) in &accepted {
-            sink.retire_receipt(&received.file)?;
-        }
-        upkeep.receipts_applied = accepted.len();
-        Ok(())
-    }
-
     /// Purges the files of every submission whose bytes may go: withheld,
     /// withdrawn, or published and retired by the intake's receipt. Returns
     /// how many it purged.
@@ -482,7 +438,10 @@ impl Vault {
 /// pair; a gone source's forget control to every pair its withdrawn
 /// published submissions were prepared in. Each rides its pair's scope at
 /// its next ordinal, in this one writer with the withdrawal; none goes to
-/// an orphaned generation, whose rows still stand withdrawn.
+/// an orphaned generation, whose rows still stand withdrawn. Every
+/// anonymous piece it withdraws takes its withdrawal intent in the same
+/// write, whatever its generation, and rides no control: only hosted
+/// submissions place a world control or join a forget control.
 fn apply_plan(vault: &Vault, txn: &mut heed::RwTxn<'_>, plan: &Plan, now: u64) -> Result<usize> {
     let mut recorded = 0;
     let mut withdraw: BTreeMap<TrainingSubmissionId, Withdrawal> = BTreeMap::new();
@@ -490,7 +449,9 @@ fn apply_plan(vault: &Vault, txn: &mut heed::RwTxn<'_>, plan: &Plan, now: u64) -
     for world in &plan.worlds {
         let months: BTreeSet<(&str, u32)> = retained
             .iter()
-            .filter(|(_, row)| row.worlds.contains(world))
+            .filter(|(_, row)| {
+                row.transport == TrainingTransport::Hosted && row.worlds.contains(world)
+            })
             .map(|(_, row)| (row.month.as_str(), row.generation))
             .collect();
         for pair in months {
@@ -519,13 +480,17 @@ fn apply_plan(vault: &Vault, txn: &mut heed::RwTxn<'_>, plan: &Plan, now: u64) -
         let Some(how) = withdraw.get(&id) else {
             continue;
         };
-        if *how == Withdrawal::Forget && row.published_at.is_some() {
+        if *how == Withdrawal::Forget
+            && row.published_at.is_some()
+            && row.transport == TrainingTransport::Hosted
+        {
             forgets
                 .entry((row.source, row.month.clone(), row.generation))
                 .or_default()
                 .push(id.0);
         }
         row.state = SubmissionState::Withdrawn;
+        anonymous::withdraw(&mut row);
         put_submission_in(vault, txn, id, &row)?;
     }
     for ((source, month, generation), submissions) in forgets {
@@ -589,8 +554,12 @@ fn world_counts(
     Ok(fold.world_privacy(world).read == EffectiveRead::Everywhere)
 }
 
-/// Whether a submission's files may go now.
+/// Whether a submission's files may go now: an anonymous piece's by its own
+/// retention (CALLS TL6_ANON_FILE_RETENTION), a hosted one's by C2's.
 fn purge_due(row: &SubmissionCustody) -> bool {
+    if row.transport == TrainingTransport::Anonymous {
+        return anonymous::files_due(row);
+    }
     match row.state {
         SubmissionState::Held => false,
         SubmissionState::Withheld | SubmissionState::Withdrawn => true,
@@ -603,98 +572,6 @@ fn purge_due(row: &SubmissionCustody) -> bool {
             TrainingReceiptStatusV2::RemovalPending => false,
         }),
     }
-}
-
-/// Applies one authenticated receipt in its scope: past that scope's
-/// cursor, its subject's mark when the subject rides the same scope, and
-/// each used run on the submissions it names (C3). A receipt for a scope
-/// this vault never used applies nothing.
-fn apply_receipt_in(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    body: &TrainingReceiptBodyV2,
-) -> Result<()> {
-    let mut state = custody::state(vault, txn)?;
-    let link_generation = state.link_generation;
-    let Some(entry) = state
-        .months
-        .iter_mut()
-        .find(|entry| oneiron_vault_contract::hex(&entry.scope) == body.scope)
-    else {
-        return Ok(());
-    };
-    if body.publisher_sequence <= entry.receipt_cursor {
-        return Ok(());
-    }
-    entry.receipt_cursor = body.publisher_sequence;
-    let (month, generation) = (entry.month.clone(), entry.generation);
-    custody::put_state_in(vault, txn, &state)?;
-    let mark = ReceiptMark {
-        status: body.status,
-        attested: body.no_human_read.is_some(),
-        sequence: body.publisher_sequence,
-    };
-    match &body.subject {
-        TrainingReceiptSubjectV2::Submission(id) => {
-            if let Some(id) = TrainingSubmissionId::from_hex(id)
-                && let Some(mut row) = custody::submission(vault, txn, id)?
-                && row.month == month
-                && row.generation == generation
-            {
-                row.receipt = Some(mark);
-                put_submission_in(vault, txn, id, &row)?;
-            }
-        }
-        TrainingReceiptSubjectV2::Control(id) => {
-            if let Some(id) = TrainingControlId::from_hex(id)
-                && let Some(mut row) = custody::control(vault, txn, id)?
-                && row.month == month
-                && row.generation == generation
-            {
-                row.receipt = Some(mark);
-                put_control_in(vault, txn, id, &row)?;
-                if row.change == ControlChange::PurgeScope
-                    && mark.status == TrainingReceiptStatusV2::Removed
-                    && custody::purge_removed(vault, txn)?
-                {
-                    // TL-5: the last purge control is removed; the training
-                    // link key may retire. Finished after this write commits.
-                    vault
-                        .store
-                        .stage_training_link_retirement_in_txn(txn, link_generation)?;
-                }
-            }
-        }
-    }
-    record_used_runs_in(vault, txn, body)
-}
-
-/// Each run a receipt names, appended to the submissions it used (C3).
-fn record_used_runs_in(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    body: &TrainingReceiptBodyV2,
-) -> Result<()> {
-    for run in &body.used_runs {
-        for submission in &run.submissions {
-            let Some(id) = TrainingSubmissionId::from_hex(submission) else {
-                continue;
-            };
-            let Some(mut row) = custody::submission(vault, txn, id)? else {
-                continue;
-            };
-            if row.used_runs.iter().any(|used| used.run_id == run.run_id) {
-                continue;
-            }
-            row.used_runs.push(UsedRun {
-                run_id: run.run_id.clone(),
-                model: run.model.clone(),
-                used_at: run.used_at,
-            });
-            put_submission_in(vault, txn, id, &row)?;
-        }
-    }
-    Ok(())
 }
 
 /// A control's change as the wire spells it: raw ids coded for `month`
