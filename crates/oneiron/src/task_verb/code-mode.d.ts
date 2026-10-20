@@ -1671,7 +1671,7 @@ declare namespace Sdk {
   type SpaceMoveState = "open" | { swapped_in: { at: number; by_owner: boolean } } | { kept: { at: number; timed_out: boolean } } | { undone: { at: number } };
   type PairedInterval = { mean: number; low: number; high: number };
   type NotWorse = "not_worse" | "worse" | "unknown";
-  type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse };
+  type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse; canary?: PairedInterval | null; canary_verdict?: NotWorse | null; set_version?: string | null; rubric?: string | null; card?: SufficiencyCard | null };
   type SpaceMoveCheck = { checked_at: number; kinds: KindProbeCheck[]; verdict: NotWorse };
   type SpaceMove = { candidate: string; incumbent: SpaceRef; kinds: InputKind[]; margin?: number | null; started_at: number; state: SpaceMoveState; last_check?: SpaceMoveCheck | null };
   type EmbeddingSpacesView = { spaces: EmbeddingSpace[]; text_index: EmbeddingSpace; slots: Record<string, string>; moves: SpaceMove[]; probes: Record<string, number> };
@@ -1682,10 +1682,10 @@ declare namespace Sdk {
   type EmbeddingSpaceCandidateRequest = { candidate: string };
   type EmbeddingSpaceMoveOutcome = "filling" | "swapped_in" | "kept" | "undecided";
   type EmbeddingSpaceMoveChecked = { outcome: EmbeddingSpaceMoveOutcome; check?: SpaceMoveCheck | null };
-  type SpaceProbe = { kind: InputKind; query: string; family: EntityId; targets: EntityId[]; author: string; written_at: number };
+  type SpaceProbe = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets: EntityId[]; author: string; written_at: number; cohort?: number | null };
   type EmbeddingSpaceProbe = SpaceProbe & { id: string };
   type EmbeddingSpaceProbes = { probes: EmbeddingSpaceProbe[] };
-  type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; family: EntityId; targets?: EntityId[]; author: string };
+  type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets?: EntityId[]; author: string };
   type EmbeddingSpaceProbeDeleteRequest = { id: string };
   type EmbeddingSpaceProbeDeleted = { ok: boolean };
   type PolicyOutputContract = "binary" | "category_json" | "rationale_json";
@@ -5079,7 +5079,7 @@ declare const vault: Sdk.VaultHost & {
       delete(input: Sdk.EmbeddingSpaceProbeDeleteRequest): Promise<Sdk.EmbeddingSpaceProbeDeleted | StoredResult>;
       /** Every stored embedding space probe with its id. */
       list(input: Sdk.EmptyRequest): Promise<Sdk.EmbeddingSpaceProbes | StoredResult>;
-      /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
+      /** Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author. */
       put(input: Sdk.EmbeddingSpaceProbePutRequest): Promise<Sdk.EmbeddingSpaceProbe | StoredResult>;
     };
     /** Drops a declared space that no slot binds and no open move names, with its vector rows. */

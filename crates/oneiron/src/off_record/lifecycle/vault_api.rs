@@ -246,6 +246,15 @@ impl Vault {
         self.store.off_record_sessions.any_live()
     }
 
+    /// The registry key of every live off-record stretch, in key order, for
+    /// an engine pass that binds each ([`OffRecordSessionVault::bind`]) to
+    /// work beside it: the host's embed pass over live rooms (FIX 2345).
+    /// Keys only, read from RAM; a stretch that closes after the read no
+    /// longer binds.
+    pub(crate) fn live_off_record_session_keys(&self) -> Vec<String> {
+        self.store.off_record_sessions.live_keys()
+    }
+
     /// Takes the session back off record (ARCH-0052 D5 / K10). Rows already
     /// in the room stay in the room across the flip.
     ///

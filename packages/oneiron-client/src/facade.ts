@@ -2651,7 +2651,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.embedding_spaces.move_undo": { description: "Binds a swapped-in move incumbent again.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.move_abandon": { description: "Ends an open embedding space move with no swap.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.probes.list": { description: "Every stored embedding space probe with its id.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.embedding_spaces.probes.put": { description: "Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.embedding_spaces.probes.put": { description: "Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.embedding_spaces.probes.delete": { description: "Removes one stored embedding space probe by its id.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.policy.owner.get": { description: "The owner reads the content-policy configuration, default manifest hash and effective off/on state.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.policy.owner.configure": { description: "The owner configures or toggles content policy against the current manifest hash without changing other policy tables.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4537,7 +4537,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         probes: {
           /** Every stored embedding space probe with its id. */
           list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.embedding_spaces.probes.list">[K] => invoke("vault.embedding_spaces.probes.list", input, options, newInvocation()),
-          /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
+          /** Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author. */
           put: (input: Facade.EmbeddingSpaceProbePutRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.put">[K] => invoke("vault.embedding_spaces.probes.put", input, options, newInvocation()),
           /** Removes one stored embedding space probe by its id. */
           delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest, options?: O): FacadeReturns<"vault.embedding_spaces.probes.delete">[K] => invoke("vault.embedding_spaces.probes.delete", input, options, newInvocation()),
