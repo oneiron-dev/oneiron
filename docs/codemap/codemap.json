@@ -42911,8 +42911,7 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 9,
       "struct": 3
@@ -53901,7 +53900,7 @@
      "path": "src/sync/ingest/tombstone.rs",
      "purpose": "The tombstone classification every replicated tombstone takes before replay",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -55090,7 +55089,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/tombstone_pass.rs",
