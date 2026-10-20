@@ -25,6 +25,7 @@
 
 mod body;
 mod born_from;
+pub(crate) mod checkpoint;
 mod create;
 pub mod deck_creation;
 mod deck_doors;
