@@ -181,7 +181,8 @@ impl RunGuestSession for DesktopSession {
 }
 
 /// Starts one run's guest from a pinned image through the engine's tier
-/// selector, behind the run's egress proxy, and receipts its manifest.
+/// selector, behind the run's egress proxy, on `command`, and receipts its
+/// manifest.
 fn start_run_guest(
     vault: &Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
@@ -189,7 +190,7 @@ fn start_run_guest(
     image: &str,
     limits: GuestLimits,
     fixture: Option<&PathBuf>,
-    entry: &str,
+    command: &[std::ffi::OsString],
 ) -> Result<(SessionTransport, Arc<dyn EgressRelay>), BrowserError> {
     use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
     use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
@@ -217,7 +218,7 @@ fn start_run_guest(
         .with_fixture(fixture.cloned()),
     );
     let transport = backend
-        .start_session(&spec, &[entry.into()], Arc::clone(&relay))
+        .start_session(&spec, command, Arc::clone(&relay))
         .map_err(|e| unavailable(e.to_string()))?;
     vault
         .append_sandbox_manifest_receipt(run_id, &transport.manifest)
@@ -570,7 +571,7 @@ impl RunBrowser {
                 &self.guest.image,
                 self.guest.limits,
                 self.guest.fixture.as_ref(),
-                "/usr/local/bin/oneiron-browser-guest",
+                &self.guest.engine.guest_argv(),
             )?;
             let started =
                 BrowserSession::attach(&self.guest, transport, relay, self.handles.charge())?;
@@ -653,7 +654,7 @@ impl RunDesktop {
                 &self.guest.image,
                 self.guest.limits,
                 None,
-                "/usr/local/bin/oneiron-desktop-guest",
+                &["/usr/local/bin/oneiron-desktop-guest".into()],
             )?;
             *session = Some(DesktopSession::attach(&self.guest, transport)?);
         }
