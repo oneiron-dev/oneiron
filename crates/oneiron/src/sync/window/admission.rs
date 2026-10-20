@@ -15,9 +15,10 @@ use crate::sync::loro_support::{TombstoneIndex, map_for_each_value_bytes, map_ge
 use crate::sync::selector::validate_sync_identity_body;
 use crate::{Error, Result};
 
-/// Refuses diagnostic and secret-custody carriers and identity-shaped FACET
-/// bodies before a full-window update can mutate the live document,
-/// materialize rows, persist bytes or fan out to another peer.
+/// Refuses diagnostic and secret-custody carriers, identity-shaped FACET
+/// bodies and a write under a strict cut's barrier key (FIX 6520) before a
+/// full-window update can mutate the live document, materialize rows,
+/// persist bytes or fan out to another peer.
 ///
 /// Inspect the incoming operation range, not just final map state: a put
 /// followed by a delete still carries the refused body in wire history.
@@ -191,6 +192,8 @@ fn validate_window_update(
         if let Some(error) = refused {
             return Err(error);
         }
+        // FIX 6520: and no value under a key the strict cut's barrier removes.
+        super::shallow::refuse_held_barrier_keys(&candidate)?;
         // OF-422: every custody transition the snapshot holds is the owner's.
         crate::sync::custody::admit_custody_map(
             vault,
@@ -260,6 +263,7 @@ fn validate_window_update(
             if let Some(error) = at_root {
                 return Err(error);
             }
+            super::shallow::refuse_held_barrier_keys(&root)?;
             crate::sync::custody::admit_custody_map(
                 vault,
                 key,
@@ -388,6 +392,8 @@ fn validate_window_update(
         else {
             continue;
         };
+        // FIX 6520: no peer writes under a barrier key; its removal still ships.
+        super::shallow::refuse_barrier_write(&op.container, &map_key)?;
         if op.container == births {
             crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
         } else if op.container == custody {

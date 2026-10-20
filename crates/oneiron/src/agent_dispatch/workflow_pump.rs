@@ -75,7 +75,8 @@ impl AgentDispatcher<'_> {
             // the leaves already settled keep their saved results.
             self.settle_child_in_txn(&mut txn, &active.id, now)?;
             self.settle_child_in_txn(&mut txn, &root, now)?;
-            RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
+            // FIX 2314: through the vault's custody door, as admission wrote it.
+            RECORD.put(self.vault, &mut txn, &root, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
             // FIX 4391: a bound run's TASK settles after this commit, in a
@@ -135,7 +136,7 @@ impl AgentDispatcher<'_> {
             record.active = self.enqueue_workflow_step(&mut txn, &record, ordinal + 1, now)?;
             WorkflowProgress::Advanced(record.active)
         };
-        RECORD.put(&self.vault.store, &mut txn, &root, &record)?;
+        RECORD.put(self.vault, &mut txn, &root, &record)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         if progress == WorkflowProgress::Completed && record.intent.task.is_some() {

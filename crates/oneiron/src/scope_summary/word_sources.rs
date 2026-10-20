@@ -5,6 +5,7 @@ use crate::edge::EdgeKind;
 use crate::error::{Error, RecordError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
+use crate::store::StoreRead;
 use crate::{EntityId, Vault};
 use heed::RoTxn;
 
@@ -27,12 +28,39 @@ pub(crate) fn word_sources_in(
     id: &EntityId,
     raw: &[u8],
 ) -> Result<WordSources> {
+    word_sources_through_in(vault, &vault.store.read(), txn, id, raw)
+}
+
+/// [`word_sources_in`], an epoch's `DerivedFrom` and dependency sources and
+/// the epoch itself resolved through `dbs` as well as base when `dbs` is a
+/// session's composed view (FIX 6548): every base source stays, and one the
+/// overlay alone holds is named too. An epoch with no source in either is
+/// still its own.
+pub(crate) fn word_sources_through_in(
+    vault: &Vault,
+    dbs: &StoreRead<'_>,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<WordSources> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let names = |needle: &[u8]| body.windows(needle.len()).any(|window| window == needle);
     let epoch = match header.entity_type {
-        ENTITY_TYPE_SUMMARY => crate::compaction::stored_epoch_in(&vault.store, txn, id, body)?,
+        ENTITY_TYPE_SUMMARY => {
+            match crate::compaction::stored_epoch_in(&vault.store, txn, id, body)? {
+                crate::compaction::StoredEpoch::Unresolved if dbs.is_union() => {
+                    crate::compaction::stored_epoch_in(dbs, txn, id, body)?
+                }
+                epoch => epoch,
+            }
+        }
         _ => crate::compaction::StoredEpoch::No,
+    };
+    let dependencies = || {
+        base_and_view(vault, dbs, |read| {
+            crate::ports::dependency_sources_in(read, txn, id)
+        })
     };
     let sources = match header.entity_type {
         // A pointer no head stands for may be an epoch summary's, whose
@@ -45,9 +73,8 @@ pub(crate) fn word_sources_in(
         // epoch among them carries its own. A run that had read and said
         // nothing yet wrote one from its own steps alone.
         ENTITY_TYPE_SUMMARY if epoch == crate::compaction::StoredEpoch::Yes => {
-            let sources = vault
-                .store
-                .port_edges(
+            let sources = base_and_view(vault, dbs, |read| {
+                read.port_edges(
                     txn,
                     id,
                     EdgeDirection::Out,
@@ -55,7 +82,8 @@ pub(crate) fn word_sources_in(
                     None,
                 )?
                 .map(|edge| edge.map(|edge| edge.target))
-                .collect::<Result<Vec<_>>>()?;
+                .collect::<Result<Vec<_>>>()
+            })?;
             if sources.is_empty() {
                 return Ok(WordSources::Own);
             }
@@ -70,7 +98,7 @@ pub(crate) fn word_sources_in(
             super::body_covers_in_txn(vault, txn, id, header.entity_type, body).and_then(|covers| {
                 covers
                     .map(|mut covers| {
-                        covers.extend(crate::ports::dependency_sources_in(&vault.store, txn, id)?);
+                        covers.extend(dependencies()?);
                         covers.sort_unstable();
                         covers.dedup();
                         Ok(covers)
@@ -90,7 +118,7 @@ pub(crate) fn word_sources_in(
     Ok(match sources {
         Ok(Some(mut sources)) if !sources.is_empty() => {
             if header.entity_type == ENTITY_TYPE_SUMMARY {
-                sources.extend(crate::ports::dependency_sources_in(&vault.store, txn, id)?);
+                sources.extend(dependencies()?);
                 sources.sort_unstable();
                 sources.dedup();
             }
@@ -106,4 +134,20 @@ pub(crate) fn word_sources_in(
         ) => WordSources::Unresolved,
         Err(error) => return Err(error),
     })
+}
+
+/// `read` on base, then through `dbs` too when it is a session's composed
+/// view (FIX 6548): base sources stay, and the overlay's own are added.
+fn base_and_view(
+    vault: &Vault,
+    dbs: &StoreRead<'_>,
+    read: impl Fn(&StoreRead<'_>) -> Result<Vec<EntityId>>,
+) -> Result<Vec<EntityId>> {
+    let mut sources = read(&vault.store.read())?;
+    if dbs.is_union() {
+        sources.extend(read(dbs)?);
+        sources.sort_unstable();
+        sources.dedup();
+    }
+    Ok(sources)
 }

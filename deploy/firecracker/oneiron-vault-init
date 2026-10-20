@@ -1,21 +1,27 @@
 #!/bin/sh
 # PID 1 of a vault VM's engine image (VAULT-VM = B; built, not yet adopted).
-# Install it as /sbin/oneiron-vault-init in the read-only rootfs. The VM
-# profile's boot_args name the vault: oneiron.vault=<name> oneiron.owner=<hex>.
-# The vault's own disk is the second drive, /dev/vdb, formatted ext4.
+# Install it as /sbin/oneiron-vault-init in the read-only rootfs
+# (deploy/firecracker/build.py). The VM profile's boot_args name the vault:
+# oneiron.vault=<name> oneiron.owner=<hex>. The vault's own disk is the second
+# drive, /dev/vdb, ext4 with its encrypt feature.
+#
+# This shell only mounts, then hands over to /usr/bin/oneiron-vm-init, the
+# root bootstrap (FIX 6308). It takes the vault's binding and fscrypt key on
+# the host's provision connection, lays out the encrypted storage
+# (/vault/storage, with the data directory /vault/storage/data, and the key
+# directory /vault/keys, both the vault UID's), rebuilds /etc/oneiron/vault-uids
+# from the binding, makes /run/oneiron and its voice directory (FIX 2391) the
+# vault UID's, and runs the engine as that UID with the flags below.
 set -eu
 mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 mount -t tmpfs -o mode=0755 run /run
-mkdir -p /run/oneiron /vault
-# The voice loop's socket directory: --voice-socket lies in it, and it must be
-# owner-only (FIX 2391).
-mkdir -p -m 0700 /run/oneiron/voice
+# The UID table's directory: a root-owned tmpfs over the read-only image's
+# mountpoint, so the table is rebuilt from the host's binding on every cold
+# boot and never persists.
+mount -t tmpfs -o mode=0755,nosuid,nodev,noexec oneiron /etc/oneiron
 mount -t ext4 -o noatime /dev/vdb /vault
-# This install's key slots: on the vault's own disk, so they outlive the VM,
-# and outside its data directory, /config and /run.
-mkdir -p -m 0700 /vault/keys
 
 vault=""
 owner=""
@@ -55,8 +61,9 @@ fi
 # The vault's managed settings, on the read-only third drive (/dev/vdc) when
 # the VM profile names a config_disk: each file present becomes its flag.
 # settings.toml is the owner's settings in the server's config schema; the
-# files its paths name sit beside it or under /vault/data (the contract's
-# VM_GUEST_CONFIG_DIR and VM_GUEST_DATA_DIR, which --data-dir below matches).
+# files its paths name sit beside it or under /vault/storage/data (the
+# contract's VM_GUEST_CONFIG_DIR and VM_GUEST_DATA_DIR, the --data-dir that
+# oneiron-vm-init passes).
 if [ "$config" = "1" ]; then
   mkdir -p /config
   mount -t ext4 -o ro,noatime /dev/vdc /config
@@ -93,20 +100,19 @@ if [ "$config" = "1" ]; then
   done
 fi
 
-# The credential frame and the ready byte ride the vsock boot port; the host
-# reaches HTTP and ctl through vsock ports the engine bridges onto these paths.
-/usr/bin/oneiron-server serve --managed-by-hypnos --vsock-guest \
-  --contract-version 3 \
-  --vault-name "$vault" \
-  --derivation-owner "$owner" \
-  --data-dir /vault/data \
-  --keystore-dir /vault/keys \
+# The provision prelude, the credential frame and the ready byte ride the
+# vsock boot port; the host reaches HTTP and ctl through vsock ports the
+# engine bridges onto these paths. oneiron-vm-init refuses the boot when the
+# host's binding names another vault or owner than these boot arguments, and
+# itself passes the engine its vault, owner, --data-dir and --keystore-dir.
+/usr/bin/oneiron-vm-init --vault-name "$vault" --derivation-owner "$owner" -- \
   --voice-socket /run/oneiron/voice/voice.sock \
   --http-socket /run/oneiron/http.sock \
   --ctl-socket /run/oneiron/ctl.sock \
   --hypnos-socket /run/oneiron/hypnos.sock "$@" || true
 
-# The engine has drained and flushed. Ending PID 1 ends the VM.
+# The engine has drained and flushed, and oneiron-vm-init removed the
+# vault's key. Ending PID 1 ends the VM.
 sync
 umount /config 2>/dev/null || true
 umount /vault || true
