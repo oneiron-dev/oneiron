@@ -20,6 +20,11 @@
 //!   monthly.
 //! - [`code`]: keyed BLAKE3 under derive_key(`oneiron.training.code.v2`, K)
 //!   of the kind ([`SOURCE`], [`PERSON`] or [`WORLD`]), the id and the month.
+//! - [`piece_code`]: C, a submission's code for the anonymous training
+//!   window (TL-6), the same digest of kind [`PIECE`], the submission id's
+//!   16 raw bytes and its month. It is made once, at the submission's first
+//!   preparation under K at its generation, and kept in its custody row:
+//!   never made again, and never logged.
 //!
 //! Every input part is framed as its length, a big-endian `u32`, then its
 //! bytes. Once K is minted (`link_minted` in the training state, set in the
@@ -53,6 +58,8 @@ pub(super) const SOURCE: &str = "source";
 pub(super) const PERSON: &str = "person";
 /// The kind of a world's code.
 pub(super) const WORLD: &str = "world";
+/// The kind of a submission's piece code, C (TL-6).
+pub(super) const PIECE: &str = "piece";
 /// The month a time past the four-digit calendar reads as, so months still
 /// sort as text.
 const LAST_MONTH: &str = "9999-12";
@@ -98,6 +105,18 @@ pub(super) fn code(key: &[u8; 32], kind: &str, id: &EntityId, month: &str) -> [u
         key,
         CODE_CONTEXT,
         &[kind.as_bytes(), id.as_bytes().as_slice(), month.as_bytes()],
+    )
+}
+
+/// C, the piece code of `submission`, first prepared in `month`, under
+/// `key`: the anonymous window's only handle on the piece (TL-6). The kind
+/// [`PIECE`] in the framing keeps it apart from every source, person and
+/// world code.
+pub(super) fn piece_code(key: &[u8; 32], submission: &[u8; 16], month: &str) -> [u8; 32] {
+    keyed_digest(
+        key,
+        CODE_CONTEXT,
+        &[PIECE.as_bytes(), submission, month.as_bytes()],
     )
 }
 
