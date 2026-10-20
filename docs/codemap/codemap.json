@@ -6586,18 +6586,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignDeliveryLink",
-      "EsignDeliveryMint"
+      "EsignDeliveryMint",
+      "EsignDeliveryWait"
      ],
      "path": "src/blob_artifact/esign/delivery_capability.rs",
      "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
      "surface": {
       "crate-vis": 3,
-      "enum": 1,
-      "fn": 3,
+      "enum": 2,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -6712,7 +6713,7 @@
      "purpose": "Claims are the document state machine",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 3
      }
     },
@@ -6812,7 +6813,7 @@
      "path": "src/blob_artifact/esign/notice_scope.rs",
      "purpose": "FIX 6220: a world-, facet- or record-scoped credential sends its own e-sign notices…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -53555,7 +53556,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 5
      }
     },
@@ -53582,7 +53583,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 7,
       "re-export": 3,
@@ -53687,6 +53688,16 @@
      "purpose": "This machine's key custody to its residence home (KS-4A2, FIX 5685): the residence member of the required…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/home_handoff.rs",
+     "purpose": "The old home's end of a home handoff on the residence RPC lane (FIX 5661 C2a)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -53803,6 +53814,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/connection/home_handoff.rs",
+     "purpose": "FIX 5661 C2a: the old home's delivery worker",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -54144,6 +54165,16 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/home_handoff/delivery.rs",
+     "purpose": "FIX 5661 C2a: what delivery asks of the carrier, additive beside C1",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/home_handoff/envelope.rs",
      "purpose": "The sealed handoff and its ack",
      "surface": {
@@ -54167,7 +54198,7 @@
      "path": "src/sync/home_handoff/mod.rs",
      "purpose": "FIX 5661 C1: the typed home-to-home handoff carrier",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -54187,7 +54218,7 @@
      "path": "src/sync/home_handoff/store.rs",
      "purpose": "The carrier's four side tables and their typed access",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 23
      }
     },
     {
@@ -54207,7 +54238,7 @@
      "path": "src/sync/home_handoff/transfer.rs",
      "purpose": "The carrier's steps: the drain request an election records, the fence a registered table's write asks, the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -54765,7 +54796,7 @@
       "const": 2,
       "crate-vis": 12,
       "fn": 14,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 2
      }
     },
@@ -54945,6 +54976,19 @@
      "surface": {
       "crate-vis": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HomeHandoffStanding"
+     ],
+     "path": "src/sync/residence/home_handoff.rs",
+     "purpose": "The new home's doors for a home handoff (FIX 5661 C2a): the target end of `residence.home_handoff.status`…",
+     "surface": {
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -65618,7 +65662,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 213,
+     "files": 217,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65816,7 +65860,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4101,
+   "source_files": 4105,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85715,6 +85759,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/livequery/residence/home_handoff.rs",
+     "purpose": "`residence.home_handoff.status`, `.part` and `.commit`: this node as the new home a home handoff moves to…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery/residence/machine_history.rs",
      "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
      "surface": {
@@ -89420,7 +89474,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -89597,7 +89651,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 900,
+   "source_files": 901,
    "test_files": 182
   },
   "oneiron-spawn": {

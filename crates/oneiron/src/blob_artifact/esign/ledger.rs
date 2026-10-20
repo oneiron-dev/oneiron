@@ -55,6 +55,15 @@ fn chain_in(
     txn: &heed::RoTxn<'_>,
     document: EntityId,
 ) -> Result<(Vec<EsignEventRow>, bool)> {
+    chain_read_in(vault, txn, document)?
+}
+/// [`chain_in`], the store's own failure (the outer error) apart from a
+/// chain that does not read (the inner one).
+fn chain_read_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+) -> Result<Result<(Vec<EsignEventRow>, bool)>> {
     let mut rows = BTreeMap::new();
     let mut held = false;
     for id in vault.claims_for_subject_in_txn(txn, &document)? {
@@ -64,7 +73,10 @@ fn chain_in(
         if !body.predicate.starts_with("esign.") {
             continue;
         }
-        let row = decode_event(&body)?;
+        let row = match decode_event(&body) {
+            Ok(row) => row,
+            Err(unreadable) => return Ok(Err(unreadable)),
+        };
         held |= !crate::gate::claim_consolidation_eligible_in_txn(
             &vault.store,
             txn,
@@ -72,9 +84,13 @@ fn chain_in(
             crate::gate::ConsolidationReader::EsignLedger,
         )?;
         if rows.insert(row.sequence, row).is_some() {
-            return Err(invalid("forked document event sequence"));
+            return Ok(Err(invalid("forked document event sequence")));
         }
     }
+    Ok(linked(rows).map(|output| (output, held)))
+}
+/// `rows`, by sequence, as one hash chain from the first event.
+fn linked(rows: BTreeMap<u64, EsignEventRow>) -> Result<Vec<EsignEventRow>> {
     let mut previous = [0; 32];
     let mut previous_at = 0;
     let mut output = Vec::new();
@@ -89,7 +105,7 @@ fn chain_in(
         previous_at = row.at;
         output.push(row);
     }
-    Ok((output, held))
+    Ok(output)
 }
 fn awaits_owner_answer() -> Error {
     invalid("a document event awaits its owner's answer")
@@ -168,6 +184,21 @@ pub(super) fn read_in(
     let (rows, held) = chain_in(vault, txn, document)?;
     let state = fold(&rows)?.ok_or_else(|| invalid("unknown signing document"))?;
     Ok((state, rows, held))
+}
+/// What a queued delivery reads of `document` (FIX 6423): the state its
+/// whole chain folds to and whether an event in it awaits its owner's
+/// answer, or `None` when that chain does not read or folds to no document.
+/// # Errors
+/// The store's own failure.
+pub(super) fn delivery_chain_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+) -> Result<Option<(EsignState, bool)>> {
+    let Ok((rows, held)) = chain_read_in(vault, txn, document)? else {
+        return Ok(None);
+    };
+    Ok(fold(&rows).ok().flatten().map(|state| (state, held)))
 }
 /// Whether an event of `document` awaits its owner's answer.
 pub(super) fn held_in(vault: &Vault, txn: &heed::RoTxn<'_>, document: EntityId) -> Result<bool> {

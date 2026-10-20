@@ -30,7 +30,10 @@
 //!   sender delivers that URL as given and keeps no copy of it once its
 //!   send is retired. The base is `oauth_resource_indicator`; without a
 //!   valid https one, or without the send's authority, the delivery stays
-//!   queued and unexported, its reason logged.
+//!   queued and unexported, its reason logged. So does one whose document
+//!   has an event awaiting its owner's answer (`document_awaits_owner`) or
+//!   whose trail no longer reads (`document_unreadable`), on its own: the
+//!   other deliveries are still claimed and written (FIX 6423).
 //! - The sender answers with `esign-delivery-<key>.ack.json`. It carries
 //!   `schema_version` 2, the envelope's `dedupe_key`, `attempt_id`,
 //!   `lease_owner`, `attempt_count` and `payload_sha256`, a `status` of
@@ -569,6 +572,9 @@ impl Outbox {
         let link = match minted {
             EsignDeliveryMint::Minted(link) => link,
             EsignDeliveryMint::Held(reason) => return Ok(LinkedEnvelope::Held(reason)),
+            // FIX 6423: its document keeps this one delivery waiting, logged
+            // with its typed reason; the other leases go on.
+            EsignDeliveryMint::Waits(wait) => return Ok(LinkedEnvelope::Held(wait.code())),
             EsignDeliveryMint::Settled(reason) => return Ok(LinkedEnvelope::Settled(reason)),
         };
         let link = SigningLink::new(base, &link.capability, link.hard_expires_at);

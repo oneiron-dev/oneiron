@@ -280,6 +280,8 @@ impl SyncConnection {
                 }
 
                 _ = sealed_relay.tick() => {
+                    // The home handoff's delivery round (FIX 5661 C2a).
+                    self.home_handoff_wake.notify_one();
                     if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();

@@ -52,77 +52,124 @@ struct NoticeSink<'a> {
     attempt: &'a AttemptRecord,
     notice: &'a EsignNotice,
     now: u64,
-    /// The caller's credential scope, judged again in the snapshot that
-    /// queues the delivery (FIX 6220, `notice_scope`).
-    in_scope: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+    /// Whether the caller's credential scope still reaches the notice's
+    /// document (FIX 6220, `notice_scope`), judged again in the writer that
+    /// records the send's gate decision and in the snapshot that queues the
+    /// delivery (FIX 6404).
+    in_scope: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
+    /// The store's or a read's own failure in the delivery-queue write: the
+    /// dispatch's error, never a changed binding (FIX 6404).
+    error: Option<crate::Error>,
+}
+/// Why the sink queued no delivery for its notice.
+enum NotQueued {
+    /// The notice's binding or lease changed since its claim.
+    Changed,
+    /// The store's or a read's own failure.
+    Failed(crate::Error),
+}
+impl From<crate::Error> for NotQueued {
+    fn from(error: crate::Error) -> Self {
+        Self::Failed(error)
+    }
+}
+impl NoticeSink<'_> {
+    /// Queues the notice's delivery under `txn`, its claim, scope, recipient,
+    /// event and seal read again there.
+    fn queue_delivery_in(&self, txn: &mut heed::RwTxn<'_>) -> std::result::Result<(), NotQueued> {
+        let queue = AttemptQueue::new(self.vault);
+        let Some(current) = queue.get_in_write_txn(txn, self.attempt.id)? else {
+            return Err(NotQueued::Changed);
+        };
+        if current.kind != ESIGN_NOTICE_ATTEMPT_KIND
+            || current.payload != self.attempt.payload
+            || current.state != AttemptState::Leased
+            || current.lease_owner != self.attempt.lease_owner
+            || current.attempt_count != self.attempt.attempt_count
+            || !(self.in_scope)(txn)?
+        {
+            return Err(NotQueued::Changed);
+        }
+        let document = EntityId::from_hex(&self.notice.document)?;
+        let state = state_in(self.vault, txn, document)?;
+        if state
+            .document
+            .recipients
+            .iter()
+            .all(|r| r.id != self.notice.recipient || r.email != self.notice.email)
+        {
+            return Err(NotQueued::Changed);
+        }
+        let rows = events_in(self.vault, txn, document)?;
+        if !rows.iter().any(|row| {
+            hash(row).is_ok_and(|h| {
+                Some(crate::entity_id::bytes_to_hex_lower(&h)) == self.notice.event_ref
+            })
+        }) {
+            return Err(NotQueued::Changed);
+        }
+        if let Some(generation) = &self.notice.generation {
+            let Some(manifest) =
+                super::seal::CANONICAL.get_bytes(&self.vault.store, txn, &document)?
+            else {
+                return Err(NotQueued::Changed);
+            };
+            let sealed: super::SealedDocument =
+                serde_json::from_slice(&manifest).map_err(|_| invalid("notice seal schema"))?;
+            if &sealed.attempt_ref != generation
+                || (self.notice.transition == "completed"
+                    && self.notice.sealed_items != sealed.items)
+            {
+                return Err(NotQueued::Changed);
+            }
+        }
+        crate::ports::JobQueue::port_job_enqueue(
+            self.vault,
+            txn,
+            EnqueueAttempt {
+                kind: "esign.delivery".into(),
+                payload: self.attempt.payload.clone(),
+                dedupe_key: self.attempt.dedupe_key.clone(),
+                run_id: None,
+                now: self.now,
+            },
+        )?;
+        Ok(())
+    }
 }
 impl OutboundExecutionSink for NoticeSink<'_> {
     fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        let result = self.vault.with_write_txn_grouped(|txn| {
-            let queue = AttemptQueue::new(self.vault);
-            let current = queue
-                .get_in_write_txn(txn, self.attempt.id)?
-                .ok_or_else(|| invalid("notice attempt missing"))?;
-            if current.kind != ESIGN_NOTICE_ATTEMPT_KIND
-                || current.payload != self.attempt.payload
-                || current.state != AttemptState::Leased
-                || current.lease_owner != self.attempt.lease_owner
-                || current.attempt_count != self.attempt.attempt_count
-            {
-                return Err(invalid("notice lease changed"));
-            }
-            (self.in_scope)(txn)?;
-            let document = EntityId::from_hex(&self.notice.document)?;
-            let state = state_in(self.vault, txn, document)?;
-            if state
-                .document
-                .recipients
-                .iter()
-                .all(|r| r.id != self.notice.recipient || r.email != self.notice.email)
-            {
-                return Err(invalid("notice recipient changed"));
-            }
-            let rows = events_in(self.vault, txn, document)?;
-            if !rows.iter().any(|row| {
-                hash(row).is_ok_and(|h| {
-                    Some(crate::entity_id::bytes_to_hex_lower(&h)) == self.notice.event_ref
-                })
-            }) {
-                return Err(invalid("notice event missing"));
-            }
-            if let Some(generation) = &self.notice.generation {
-                let manifest = super::seal::CANONICAL
-                    .get_bytes(&self.vault.store, txn, &document)?
-                    .ok_or_else(|| invalid("notice seal missing"))?;
-                let sealed: super::SealedDocument =
-                    serde_json::from_slice(&manifest).map_err(|_| invalid("notice seal schema"))?;
-                if &sealed.attempt_ref != generation
-                    || (self.notice.transition == "completed"
-                        && self.notice.sealed_items != sealed.items)
-                {
-                    return Err(invalid("superseded sealed notice"));
-                }
-            }
-            crate::ports::JobQueue::port_job_enqueue(
-                self.vault,
-                txn,
-                EnqueueAttempt {
-                    kind: "esign.delivery".into(),
-                    payload: self.attempt.payload.clone(),
-                    dedupe_key: self.attempt.dedupe_key.clone(),
-                    run_id: None,
-                    now: self.now,
-                },
-            )?;
-            Ok(())
-        });
+        let result = self
+            .vault
+            .try_with_write_txn_grouped(|txn| self.queue_delivery_in(txn));
         match result {
             Ok(()) => OutboundExecutionOutcome::delivered_to_channel(format!(
                 "esign-notice:{}",
                 self.notice.document
             ))
             .with_receipt_field("delivery_health", "enqueued"),
-            Err(_) => OutboundExecutionOutcome::failed("esign_notice_binding_or_lease_changed"),
+            Err(NotQueued::Changed) => {
+                OutboundExecutionOutcome::failed("esign_notice_binding_or_lease_changed")
+            }
+            // Nothing was queued: a definite non-delivery to OF-327, and the
+            // error itself to the dispatch, which surfaces it.
+            Err(NotQueued::Failed(error)) => {
+                self.error = Some(error);
+                OutboundExecutionOutcome::failed("esign_notice_not_queued")
+            }
+        }
+    }
+
+    /// The caller's credential scope, judged by the same predicate and read
+    /// as the delivery's snapshot, in the writer that records the send's
+    /// gate decision before it records one (FIX 6404): no Allow is recorded
+    /// for a notice that snapshot would refuse. A document out of reach gets
+    /// the refusal the door gives it; a failed read is its own error.
+    fn admit_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if (self.in_scope)(txn)? {
+            Ok(())
+        } else {
+            Err(super::notice_scope::unreached())
         }
     }
 }
@@ -155,17 +202,21 @@ impl Vault {
         attempt: &AttemptRecord,
         request: OutboundDispatchRequest,
     ) -> std::result::Result<crate::outbound::OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_esign_notice_in_scope(attempt, request, &|_| Ok(()))
+        self.dispatch_esign_notice_in_scope(attempt, request, &|_| Ok(true))
     }
 
     /// [`Self::dispatch_esign_notice`] for a caller whose credential scope
-    /// `in_scope` judges again in the snapshot that queues the delivery
-    /// (FIX 6220): one it no longer admits there is a failed send.
+    /// `in_scope` judges again (FIX 6220, 6404): in the writer that records
+    /// the send's gate decision, where a scope that no longer reaches the
+    /// document records no decision and is refused as the door refuses it,
+    /// and in the snapshot that queues the delivery, where it is a failed
+    /// send. A store or read failure in that snapshot is the dispatch's
+    /// error: nothing is queued and the claim stays the caller's to return.
     pub(super) fn dispatch_esign_notice_in_scope(
         &self,
         attempt: &AttemptRecord,
         mut request: OutboundDispatchRequest,
-        in_scope: &dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
+        in_scope: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
     ) -> std::result::Result<crate::outbound::OutboundDispatchResult, OutboundDispatchError> {
         let notice = decode(attempt)?;
         let principal = notice
@@ -239,19 +290,28 @@ impl Vault {
             }
             Ok(())
         };
+        let mut sink = NoticeSink {
+            vault: self,
+            attempt,
+            notice: &notice,
+            now,
+            in_scope,
+            error: None,
+        };
         let recorded = self.dispatch_outbound_intent_with_recorded_observation(
             request,
-            &mut NoticeSink {
-                vault: self,
-                attempt,
-                notice: &notice,
-                now,
-                in_scope,
-            },
+            &mut sink,
             (actor, actor_class),
             key,
             preflight,
         )?;
+        // FIX 6404: the delivery-queue write's own failure surfaces here. The
+        // send stays a retryable non-delivery on the OF-327 ledger, and the
+        // notice's lease is returned by the caller as the same try, as for
+        // any other dispatch error.
+        if let Some(error) = sink.error.take() {
+            return Err(error.into());
+        }
         if recorded.replayed {
             return Ok(recorded.result);
         }
