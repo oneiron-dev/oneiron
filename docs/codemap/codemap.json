@@ -2668,8 +2668,8 @@
      "path": "src/authority/checkpoint_policy.rs",
      "purpose": "Who may attest a portable authority checkpoint (OF-469, checkpoint v2): the eligible roots and the quorum…",
      "surface": {
-      "const": 3,
-      "crate-vis": 3,
+      "const": 4,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -3470,7 +3470,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 32,
-      "re-export": 57
+      "re-export": 59
      }
     },
     {
@@ -3535,7 +3535,22 @@
      "path": "src/authority/owner_key_enrollment.rs",
      "purpose": "The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EnrolledOwnerKey",
+      "OwnerKeyEnrollment",
+      "OwnerKeyEnrollmentReceipt"
+     ],
+     "path": "src/authority/owner_key_enrollment_door.rs",
+     "purpose": "The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -25782,7 +25797,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 3,
       "struct": 2,
       "trait": 1
@@ -25868,7 +25883,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 2,
       "trait": 1
      }
@@ -65464,7 +65479,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66922,7 +66937,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4194,
+   "source_files": 4195,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83664,6 +83679,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/owner_key_enrollment_routes.rs",
+     "purpose": "`/v1/owner/owner-signing-keys`: the owner enrols a device's own Ed25519 owner signing key on the vault's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/owner_work_routes.rs",
      "purpose": "`/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736)",
      "surface": {
@@ -90682,7 +90707,7 @@
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -90726,14 +90751,15 @@
       "UsageMode",
       "UsageRecordResult",
       "UsageRollup",
+      "UsageRollupStatus",
       "UsageRun",
       "UsageTokenCounts"
      ],
      "path": "src/usage/model.rs",
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
-      "crate-vis": 3,
-      "enum": 4,
+      "crate-vis": 4,
+      "enum": 5,
       "fn": 9,
       "struct": 10
      }
@@ -90745,6 +90771,17 @@
      "path": "src/usage/pricing.rs",
      "purpose": "Catalog list prices as fixed-point usage rates",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/usage/rollup.rs",
+     "purpose": "The derived per-vault rollup, kept from the stamped events",
+     "surface": {
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -91425,7 +91462,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 481,
+     "files": 482,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91831,7 +91868,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91875,7 +91912,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 962,
+   "source_files": 964,
    "test_files": 182
   },
   "oneiron-spawn": {

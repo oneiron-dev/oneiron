@@ -32,10 +32,20 @@
 
 use super::*;
 
+/// The policy hook of CALLS "FIX 5896 enrolled key custody" (Engine 10-20
+/// 08:0x): an owner's enrolled device key starts its own custody line. Its
+/// predecessor authorizes it but is not its custody ancestor, so a key a
+/// hosted vault's custodial root signed in is still the owner's: the
+/// dispatcher upserts it with no admitter edge. `false` is the inherited
+/// line, where the predecessor admits it and its custody passes on.
+pub(super) const ENROLLED_OWNER_KEY_STARTS_OWN_CUSTODY: bool = true;
+
 /// The `OwnerKeyEnroll` judge, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
-/// participant check. On `Ok` the dispatcher applies the op (`upsert_device`
-/// with the predecessor as the key's admitter) and advances the predecessor's
+/// participant check. On `Ok` the dispatcher applies the op (`upsert_device`,
+/// with no admitter edge from the predecessor under
+/// [`ENROLLED_OWNER_KEY_STARTS_OWN_CUSTODY`]: the predecessor's signature is
+/// the key's authorization, not its custody) and advances the predecessor's
 /// sequence; the carrier's install key keeps its own sequence.
 pub(super) fn judge_owner_key_enroll(
     state: &FoldState,

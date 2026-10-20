@@ -175,7 +175,9 @@ impl SpaceProbeEncoder for ServerProbeEncoder<'_> {
 /// Local-vision seat for an image, and for an audio document the chat seat
 /// again, from the transcript the media transcribe seat hears. Each call is
 /// one admitted role call the Dreamer pays for, as a stewardship draft is;
-/// a transcription runs on the media meter.
+/// a transcription runs on the media meter. A third-party seat reads stored
+/// image or audio bytes only on the owner's egress opt-in
+/// ([`ServerProbeAuthor::media_egress`]).
 struct ServerProbeAuthor<'a> {
     server: &'a SyncServer,
     role: ModelRole,
@@ -194,17 +196,38 @@ fn author_label(model: &ModelId) -> String {
 }
 
 impl ServerProbeAuthor<'_> {
-    /// `document`'s transcript from the media transcribe seat, admitted by
-    /// the vault's inference policy as an `ai.transcribe` call is; `None`
-    /// when it hears no words.
-    fn transcribe(&self, document: &MediaEmbeddingInput<'_>) -> oneiron::Result<Option<String>> {
-        let Some((model, locality)) = &self.transcriber else {
-            return Ok(None);
+    /// The host's media egress gate for this author (FIX 6743): there only
+    /// while the owner's `[models] extraction_egress` opt-in permits the call
+    /// that reads a stored document's bytes, the media transcribe seat's for
+    /// audio and the seat's own for an image, so a third-party author is
+    /// handed stored media; `None` otherwise, which the engine refuses for a
+    /// third-party media author as before.
+    fn media_egress(&self) -> Option<MediaEgress> {
+        let request = match &self.transcriber {
+            Some((model, locality)) => {
+                self.transcription(model, *locality, Vec::new()).admission_request()
+            }
+            None => self.probe_request(Vec::new()),
         };
+        self.server
+            .extraction_egress
+            .as_deref()
+            .is_some_and(|egress| egress.permits(&request))
+            .then_some(MediaEgress)
+    }
+
+    /// The media transcribe seat's call on `parts`, before the vault's
+    /// inference policy admits it.
+    fn transcription(
+        &self,
+        model: &ModelId,
+        locality: ModelLocality,
+        parts: Vec<MediaPart>,
+    ) -> MediaRequest {
         let purpose = CallPurpose::Other {
             name: PROBE_PURPOSE.to_owned(),
         };
-        let mut request = MediaRequest {
+        MediaRequest {
             model: model.clone(),
             envelope: CallEnvelope {
                 seat_effort: None,
@@ -213,17 +236,65 @@ impl ServerProbeAuthor<'_> {
                 purpose,
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
-                locality: *locality,
+                locality,
             },
             operation: AiOperation::Transcribe,
-            parts: vec![MediaPart::Audio {
-                media_type: document.media_type.to_owned(),
-                bytes: document.bytes.to_vec(),
-            }],
+            parts,
             references: Vec::new(),
             params: BTreeMap::new(),
             voice: None,
+        }
+    }
+
+    /// The seat's probe call on `content`, the stored item as it reads it.
+    fn probe_request(&self, content: Vec<ContentPart>) -> LlmRequest {
+        let purpose = CallPurpose::Other {
+            name: PROBE_PURPOSE.to_owned(),
         };
+        LlmRequest {
+            model: self.model.clone(),
+            envelope: CallEnvelope {
+                seat_effort: None,
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(PROBE_PURPOSE.to_owned())),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: self.locality,
+            },
+            messages: vec![
+                LlmMessage {
+                    role: LlmMessageRole::System,
+                    content: vec![ContentPart::Text {
+                        text: PROBE_INSTRUCTION.to_owned(),
+                    }],
+                },
+                LlmMessage {
+                    role: LlmMessageRole::User,
+                    content,
+                },
+            ],
+            tools: Vec::new(),
+            params: BTreeMap::new(),
+            provider_options: BTreeMap::new(),
+        }
+    }
+
+    /// `document`'s transcript from the media transcribe seat, admitted by
+    /// the vault's inference policy as an `ai.transcribe` call is; `None`
+    /// when it hears no words.
+    fn transcribe(&self, document: &MediaEmbeddingInput<'_>) -> oneiron::Result<Option<String>> {
+        let Some((model, locality)) = &self.transcriber else {
+            return Ok(None);
+        };
+        let mut request = self.transcription(
+            model,
+            *locality,
+            vec![MediaPart::Audio {
+                media_type: document.media_type.to_owned(),
+                bytes: document.bytes.to_vec(),
+            }],
+        );
         let context = HostInferenceContext {
             binding: HostInferenceBinding::Advertised {
                 model: model.clone(),
@@ -302,36 +373,7 @@ impl SpaceProbeAuthor for ServerProbeAuthor<'_> {
                 None => return Ok(None),
             },
         };
-        let purpose = CallPurpose::Other {
-            name: PROBE_PURPOSE.to_owned(),
-        };
-        let request = LlmRequest {
-            model: self.model.clone(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                scope: Default::default(),
-                tier: TierPrecedence::for_purpose(&purpose, ModelTierRef(PROBE_PURPOSE.to_owned())),
-                purpose,
-                class: CallClass::BestEffort,
-                response_format: ResponseFormat::Text,
-                locality: self.locality,
-            },
-            messages: vec![
-                LlmMessage {
-                    role: LlmMessageRole::System,
-                    content: vec![ContentPart::Text {
-                        text: PROBE_INSTRUCTION.to_owned(),
-                    }],
-                },
-                LlmMessage {
-                    role: LlmMessageRole::User,
-                    content: vec![part],
-                },
-            ],
-            tools: Vec::new(),
-            params: BTreeMap::new(),
-            provider_options: BTreeMap::new(),
-        };
+        let request = self.probe_request(vec![part]);
         let vault = &self.server.vault;
         let call = self
             .server
@@ -436,10 +478,13 @@ impl SyncServer {
                 }
                 continue;
             };
-            match self
-                .vault
-                .author_space_probes(kind, &author, PROBE_AUTHOR_BATCH)
-            {
+            let egress = author.media_egress();
+            match self.vault.author_space_probes_admitted(
+                kind,
+                &author,
+                PROBE_AUTHOR_BATCH,
+                egress.as_ref().map(|gate| gate as &dyn EgressPredicate),
+            ) {
                 Ok(report) => {
                     if probe_author_failing(kind, false) {
                         tracing::info!(?kind, "space probes are written again");
@@ -449,6 +494,7 @@ impl SyncServer {
                             ?kind,
                             written = report.written,
                             held = report.held,
+                            withheld = report.withheld,
                             "space probes written"
                         );
                     }
