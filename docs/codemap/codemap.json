@@ -69251,7 +69251,7 @@
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -69279,7 +69279,17 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/change.rs",
+     "purpose": "The change check (FIX 6680, BROWSER-SPLIT)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -69289,7 +69299,7 @@
      "path": "src/driver/handles.rs",
      "purpose": "Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -69300,6 +69310,35 @@
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrowserEngine"
+     ],
+     "path": "src/engine.rs",
+     "purpose": "The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt…",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActionFact",
+      "ActionTarget",
+      "NoEffectReason",
+      "ViewportPoint"
+     ],
+     "path": "src/fact.rs",
+     "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…",
+     "surface": {
+      "enum": 2,
+      "struct": 2
      }
     },
     {
@@ -69365,7 +69404,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 8,
+      "re-export": 10,
       "struct": 41,
       "trait": 2
      }
@@ -69477,7 +69516,7 @@
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 22,
+      "fn": 23,
       "struct": 2
      }
     }
@@ -69512,11 +69551,25 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
+    },
+    "engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt…"
+    },
+    "fact": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…"
     },
     "library": {
      "files": 1,
@@ -69570,7 +69623,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 15,
+   "source_files": 18,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -91256,8 +91309,10 @@
       "ActExecution",
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
+      "ActionFact",
       "ActionModePolicy",
       "ActionModeRule",
+      "ActionTarget",
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -91554,6 +91609,7 @@
       "BrowserAnswerProposeOutput",
       "BrowserAnswerScreenshotOutput",
       "BrowserAnswerWaitForOutput",
+      "BrowserEngine",
       "BudgetDenied",
       "BudgetExhaustionPolicy",
       "BudgetHoldNotice",
@@ -93236,6 +93292,7 @@
       "NearCopyFlag",
       "NeighborhoodGraphAtom",
       "NerSpan",
+      "NoEffectReason",
       "NoShowRecoveryRule",
       "NodeKind",
       "NodeMove",
@@ -94772,6 +94829,7 @@
       "VerdictMode",
       "VersionReconciliation",
       "ViewInput",
+      "ViewportPoint",
       "VisibleFilePolicy",
       "VoiceBankClipInput",
       "VoiceBankInspectRequest",
@@ -94930,8 +94988,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 888,
-      "struct": 2796
+      "enum": 891,
+      "struct": 2798
      }
     },
     {
