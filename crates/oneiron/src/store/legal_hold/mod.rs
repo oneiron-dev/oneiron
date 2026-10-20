@@ -597,6 +597,18 @@ pub(crate) fn drop_pending_erase_in_txn(
     Ok(())
 }
 
+/// Who confirmed the erase of `record` that waits, as its row records them
+/// (FIX 6099): `None` when no erase of it waits.
+pub(crate) fn pending_erase_by_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Option<Option<String>>> {
+    Ok(PENDING_ERASES
+        .get(dbs, txn, record)?
+        .map(|pending| pending.confirmed_by))
+}
+
 /// Links `record`'s coming deletion receipt to `hold`, for its "erase
 /// completed" event (C4).
 pub(crate) fn link_erase_in_txn(

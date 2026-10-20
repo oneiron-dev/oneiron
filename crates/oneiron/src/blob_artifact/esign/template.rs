@@ -72,12 +72,25 @@ pub struct PreparedContent {
     pub fields: Vec<EsignField>,
     pub generated_from_template: bool,
 }
-/// The output is a pristine original. Store it as an immutable artifact version,
-/// then use the ordinary ceremony and verified seal path. The pack is not HTML.
+/// [`prepare_content_within`] at the `[limits] esign_stream_decode_bytes`
+/// row's default, for a caller holding no vault.
 pub fn prepare_content(
     source: ContentSource<'_>,
     pack: &FieldGeographyPack,
     item: u32,
+) -> Result<PreparedContent> {
+    let stream_decode_bytes = crate::limit_ask::EngineLimit::EsignStreamDecodeBytes.default_bound();
+    prepare_content_within(source, pack, item, stream_decode_bytes)
+}
+/// The output is a pristine original. Store it as an immutable artifact version,
+/// then use the ordinary ceremony and verified seal path. The pack is not HTML.
+/// A host passes its `[limits] esign_stream_decode_bytes` row as
+/// `stream_decode_bytes` ([`crate::Vault::esign_stream_decode_bytes`]).
+pub fn prepare_content_within(
+    source: ContentSource<'_>,
+    pack: &FieldGeographyPack,
+    item: u32,
+    stream_decode_bytes: u64,
 ) -> Result<PreparedContent> {
     // An upload of any size is inspected whole (Rule 5); only the PDF codec's
     // and format's bounds refuse it.
@@ -88,7 +101,7 @@ pub fn prepare_content(
             merge_fields,
         } => (render_html_template(template, merge_fields)?, true),
     };
-    let pages = render::inspect_pdf_pages(&bytes)?;
+    let pages = render::inspect_pdf_pages_within(&bytes, stream_decode_bytes)?;
     if pack.schema_version != 1 {
         return Err(ContentTemplateError::Geometry);
     }
