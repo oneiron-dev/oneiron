@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::shape::{
-    CoreWriteTextField, core_body_for_write, core_text_pairs, core_write_times, encode_core_body,
-    entity_id, optional_entity_id, text_pairs,
+    AnnouncementAuthority, CoreWriteTextField, core_body_for_write, core_text_pairs,
+    core_write_times, encode_core_body, entity_id, optional_entity_id, text_pairs,
 };
 use crate::WriteActor;
 use crate::conversation_dag::{AddressMode, AppendRecord, AppendedRecord, QuoteSpan};
@@ -92,12 +92,17 @@ impl From<AppendedRecord> for DagRecordAppendReceipt {
 }
 
 impl DagRecordAppendInput {
-    /// The append door's input, bylined `actor`.
+    /// The append door's input, bylined `actor`, a platform announcement
+    /// only at the owner's `announcement`.
     /// # Errors
     /// A bad id, interval or body.
-    pub fn append_record(&self, actor: WriteActor) -> MemoryResult<AppendRecord> {
+    pub fn append_record(
+        &self,
+        actor: WriteActor,
+        announcement: AnnouncementAuthority,
+    ) -> MemoryResult<AppendRecord> {
         let times = core_write_times(self.occurred_start, self.occurred_end, self.learned_at)?;
-        let body = core_body_for_write(ENTITY_TYPE_TURN, &self.body);
+        let body = core_body_for_write(ENTITY_TYPE_TURN, &self.body, announcement);
         Ok(AppendRecord {
             conversation: entity_id(&self.conversation, "conversation")?,
             parent: optional_entity_id(self.parent.as_deref(), "parent")?,
@@ -147,14 +152,31 @@ impl DagRecordAppendInput {
 impl Memory<'_> {
     /// `vault.conversations.records.append`: one TURN on the DAG, bylined
     /// the bound actor, through the append door that checks each named
-    /// reference on this handle's read lane.
+    /// reference on this handle's read lane. It is a platform announcement
+    /// only while the bound actor is a live owner.
     /// # Errors
     /// A bad input, or the append door's refusal.
     pub fn conversations_records_append(
         &self,
         input: &DagRecordAppendInput,
     ) -> MemoryResult<DagRecordAppendReceipt> {
-        let append = input.append_record(WriteActor::new(self.actor(), self.actor_class()))?;
+        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
+        self.conversations_records_append_at(input, announcement)
+    }
+
+    /// [`Self::conversations_records_append`] at the `announcement` a served
+    /// door resolved from its credential (FIX 5968).
+    /// # Errors
+    /// As [`Self::conversations_records_append`].
+    pub fn conversations_records_append_at(
+        &self,
+        input: &DagRecordAppendInput,
+        announcement: AnnouncementAuthority,
+    ) -> MemoryResult<DagRecordAppendReceipt> {
+        let append = input.append_record(
+            WriteActor::new(self.actor(), self.actor_class()),
+            announcement,
+        )?;
         Ok(self.vault().append_dag_record(self, &append)?.into())
     }
 }
