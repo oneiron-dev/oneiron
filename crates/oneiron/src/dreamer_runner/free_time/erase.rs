@@ -42,6 +42,19 @@ pub(crate) fn erase_free_time_actor_in_txn(
     Ok(())
 }
 
+/// Whether an erase removed `agent` (FIX 5661): a home move lands none of an
+/// erased agent's free-time rows, as no writer after its erase does. A move
+/// never fences the erase itself: it takes this node's rows, frozen history
+/// included, and a later move carries no copy back.
+#[cfg(feature = "sync")]
+pub(super) fn erased_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: &EntityId,
+) -> Result<bool> {
+    crate::ports::removed_in_txn(&vault.store, txn, agent)
+}
+
 /// The attempts `actor`'s cycles queued, read before any row goes; `None`
 /// when no cycle row lies under its key. Items are bound in the commit that
 /// writes their cycle, so an actor with no cycle row has no item binding.

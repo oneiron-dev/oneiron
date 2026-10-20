@@ -65,6 +65,8 @@ mod resident;
 mod room_join;
 mod run_objectives;
 mod spend_calibration;
+#[cfg(feature = "sync")]
+pub(crate) mod spend_handoff;
 mod spend_lease;
 mod spend_record;
 mod task_type_tree;

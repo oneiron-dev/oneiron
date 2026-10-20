@@ -394,10 +394,24 @@ impl DreamerRunnerStore<'_> {
         mut input: AdmitDreamerAttempt,
         route: Option<&mut dyn FnMut(&AttemptRecord) -> Option<String>>,
     ) -> Result<DreamerKindAdmissionResult> {
+        // FIX 5661: while this node drains its free-time rows toward a home
+        // move, or froze them for one, a free-time item whose try never
+        // started waits queued and inert for the move to carry it, bound
+        // through C1's guard before any lease. A try that started, and other
+        // work of its queue, are admitted as before, so the drain finishes.
+        #[cfg(feature = "sync")]
+        let fenced = super::free_time_items_fenced_in_txn(self.vault, wtxn, queue_kind)?;
+        #[cfg(not(feature = "sync"))]
+        let fenced = false;
         let candidate = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind() {
             self.ready_macro_candidate_in_txn(wtxn, &input)?
         } else if queue_kind == DREAMER_TURN_PROGRAM_ATTEMPT_KIND {
             self.ready_unparked_program_in_txn(wtxn, input.now)?
+        } else if fenced {
+            self.attempts
+                .ready_kind_matching_in_txn(wtxn, queue_kind, input.now, |record| {
+                    Ok(!super::free_time_item_waits_unstarted(record))
+                })?
         } else {
             self.attempts
                 .ready_kind_candidate_in_txn(wtxn, queue_kind, input.now)?
@@ -464,9 +478,11 @@ impl DreamerRunnerStore<'_> {
             now: input.now,
         };
         // A candidate chosen on its own row (a MACRO bucket, a program's
-        // park) is claimed by id, never as whichever row of its kind is next.
+        // park, work beside a fenced free-time item) is claimed by id, never
+        // as whichever row of its kind is next.
         let claim = if queue_kind == DreamerConsolidationScope::Macro.attempt_kind()
             || queue_kind == DREAMER_TURN_PROGRAM_ATTEMPT_KIND
+            || fenced
         {
             crate::ports::JobQueue::port_job_claim_id(
                 self.vault,

@@ -217,7 +217,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut next: Option<u64> = None;
         for row in POLICY.iter_from(&self.store, &txn, &[])? {
-            let (agent, policy) = row?;
+            let (agent, record) = row?;
+            // A cleared policy's row is only its witness (FIX 5661).
+            let Some(policy) = record.policy else {
+                continue;
+            };
             let floor = due_floor(CLOCK.get(&self.store, &txn, &agent)?, &policy);
             if let Some(at) = boundary_after(&policy.schedule, floor)? {
                 next = Some(next.map_or(at, |next| next.min(at)));
@@ -233,6 +237,14 @@ impl Vault {
     /// boundary that cannot open is passed and logged, never retried in a
     /// loop. Returns how many opened.
     ///
+    /// On a new home, a home move's carried state adopted before this pass
+    /// (FIX 5661, `handoff`) is what it reads: the carried clock is the due
+    /// floor and the carried cycle takes its boundary, so the home opens no
+    /// fresh cycle and no second allowance for it, while a later boundary
+    /// still ends it. Each opening writer reads both again, so an adoption
+    /// that lands after the scan is kept too. With no carried state, or an
+    /// incomplete one, the home opens as before.
+    ///
     /// # Errors
     /// A store read or write that fails.
     pub fn enqueue_due_free_time_cycles(&self, now: u64, local_node_id: u64) -> Result<usize> {
@@ -240,7 +252,10 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let mut due = Vec::new();
             for row in POLICY.iter_from(&self.store, &txn, &[])? {
-                let (agent, policy) = row?;
+                let (agent, record) = row?;
+                let Some(policy) = record.policy else {
+                    continue;
+                };
                 let floor = due_floor(CLOCK.get(&self.store, &txn, &agent)?, &policy);
                 if let Some(boundary) = boundary_at_or_before(&policy.schedule, now)?
                     && boundary > floor
@@ -318,7 +333,11 @@ fn open_cycle_in_txn(
     if !home_in_txn(vault, txn, local_node_id)? {
         return Ok(Opened::NotHome);
     }
-    let Some(policy) = effective_policy(POLICY.get(&vault.store, txn, &agent)?) else {
+    let Some(policy) = effective_policy(
+        POLICY
+            .get(&vault.store, txn, &agent)?
+            .and_then(|record| record.policy),
+    ) else {
         return Ok(Opened::Passed);
     };
     if boundary <= due_floor(CLOCK.get(&vault.store, txn, &agent)?, &policy) {
@@ -433,13 +452,9 @@ fn enqueue_item_in_txn(
     item: EntityId,
     now: u64,
 ) -> Result<AttemptId> {
-    let queue_kind = match kind {
-        FreeTimeKind::ForHuman => DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND,
-        FreeTimeKind::OwnTime => DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
-    };
     let attempt = match DreamerRunnerStore::new(vault).enqueue_free_time_item_in_txn(
         txn,
-        queue_kind,
+        item_queue_kind(kind),
         cycle.agent,
         cycle.cycle,
         now,
@@ -483,6 +498,73 @@ fn enqueue_item_in_txn(
         },
     )?;
     Ok(attempt)
+}
+
+/// The queue an item of `kind` waits in: the for-human queue, or the
+/// resident's dreaming as its own time.
+pub(super) fn item_queue_kind(kind: FreeTimeKind) -> &'static str {
+    match kind {
+        FreeTimeKind::ForHuman => DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND,
+        FreeTimeKind::OwnTime => DREAMER_RESIDENT_DREAM_ATTEMPT_KIND,
+    }
+}
+
+/// FIX 5661: queues again here an item a home move carried, whose try never
+/// started on its old home: the same attempt id, kind and payload, under the
+/// resident's stamp, beside its carried binding. Unlike a fresh opening
+/// ([`enqueue_item_in_txn`]) it opens no root and reserves no scope: the
+/// cycle's root and the item's own scope came carried, with the original
+/// cap and what was spent and held. `false`: other work holds the item's
+/// place here.
+#[cfg(feature = "sync")]
+pub(super) fn resume_item_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: &FreeTimeItemBinding,
+    enqueued_at: u64,
+) -> Result<bool> {
+    let attempt = AttemptId::from_bytes(&binding.attempt)?;
+    if !DreamerRunnerStore::new(vault).resume_free_time_item_in_txn(
+        txn,
+        item_queue_kind(binding.kind),
+        binding.agent,
+        binding.cycle,
+        attempt,
+        enqueued_at,
+    )? {
+        return Ok(false);
+    }
+    ITEM.put(&vault.store, txn, &attempt, binding)?;
+    Ok(true)
+}
+
+/// FIX 5661: lands a cycle a home move carried, as its old home kept it:
+/// its opening, its state, its note and its choice. The note is the agent's
+/// own words, admitted at the side-row wall here too; a note the wall
+/// refuses is dropped and the cycle lands.
+#[cfg(feature = "sync")]
+pub(super) fn put_carried_cycle_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    cycle: &FreeTimeCycle,
+) -> Result<()> {
+    let key = (cycle.agent, cycle.boundary);
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match CYCLE.put(&vault.store, &mut savepoint, &key, cycle) {
+        Ok(()) => savepoint.commit()?,
+        Err(error) => {
+            drop(savepoint);
+            tracing::warn!(
+                kind = ?error.kind(),
+                agent = %cycle.agent.to_hex(),
+                "a carried free-time note was not admitted"
+            );
+            let mut cycle = cycle.clone();
+            cycle.owner_note = None;
+            CYCLE.put(&vault.store, txn, &key, &cycle)?;
+        }
+    }
+    Ok(())
 }
 
 /// Ends `agent`'s open cycle, if any, at `now`.

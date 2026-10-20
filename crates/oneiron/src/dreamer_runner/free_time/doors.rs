@@ -336,7 +336,12 @@ pub fn free_time_policy_as_owner(
     let agent = entity("agent", &input.agent)?;
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
-    Ok(policy_view(agent, POLICY.get(&vault.store, &txn, &agent)?))
+    // A cleared policy's row is only its witness (FIX 5661): it reads as
+    // none, revision 0 and Disabled, as before.
+    let row = POLICY
+        .get(&vault.store, &txn, &agent)?
+        .and_then(|record| record.policy);
+    Ok(policy_view(agent, row))
 }
 
 /// Sets, or with no policy clears, one agent's free-time policy as the owner,
