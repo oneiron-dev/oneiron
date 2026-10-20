@@ -248,7 +248,7 @@ impl Memory<'_> {
                 txn,
                 &value,
             )?;
-            let view = self.lifted_view(view, || Ok(keys))?;
+            let view = self.lifted_view_in_txn(txn, view, || Ok(keys))?;
             self.produced_from([note]);
             Ok((Some(view), gate))
         })?;

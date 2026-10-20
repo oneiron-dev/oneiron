@@ -388,6 +388,7 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
         }
         SelfCall::Fold(fold) if !fold.writes() => VerbDomain::Read,
         SelfCall::AgentVerb(verb) if !verb.verb.writes() => VerbDomain::Read,
+        SelfCall::Repo(call) if !call.writes() => VerbDomain::Read,
         _ => VerbDomain::Write,
     }
 }
@@ -580,6 +581,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
         SelfCall::Team(team) => to_json(team)?,
         SelfCall::TeamSubmit(submit) => to_json(submit)?,
         SelfCall::WorkflowDispatch(request) => to_json(request.as_ref())?,
+        SelfCall::Repo(call) => to_json(call)?,
     })
 }
 
@@ -990,6 +992,9 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
             validate_context_spec(&spec).map_err(|error| error.to_string())?;
             SelfCall::Context(SelfContextCall::new(spec))
         }
+        // A run repo row is rewritten only into its own row's input; the
+        // binding is rebuilt at dispatch (FIX 6867).
+        SelfCall::Repo(call) => SelfCall::Repo(call.rewrite(args)?),
         // A reader's source and finding, and a summary's members, are
         // resolved by the host before the hooks run: a rewrite would name a
         // result nothing resolved.
