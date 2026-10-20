@@ -17,6 +17,8 @@ use super::types::RepoForkHash;
 use super::worktree::{ensure_repo_parent_dirs_no_symlink, write_repo_file_no_symlink};
 use crate::error::CodeError;
 
+mod pinned;
+
 const MAX_REPO_MUTATION_SNAPSHOT_FILES: usize = 100_000;
 const MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES: u64 = 32 * 1024 * 1024;

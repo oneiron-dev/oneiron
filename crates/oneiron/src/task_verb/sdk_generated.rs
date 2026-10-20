@@ -6119,6 +6119,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.code.snapshots.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSnapshotsGetInput,
+                >(),
+            ),
+            (
+                "self.code.snapshots.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSnapshotsReadInput,
+                >(),
+            ),
+            (
+                "self.code.symbols.definitions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSymbolsDefinitionsInput,
+                >(),
+            ),
+            (
+                "self.code.views.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoViewsGetInput,
+                >(),
+            ),
+            (
+                "self.code.views.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoViewsReadInput,
+                >(),
+            ),
+            (
+                "self.code.merge_queue.observe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoMergeQueueObserveInput,
+                >(),
+            ),
+            (
+                "self.code.snapshots.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSnapshotsIngestInput,
+                >(),
+            ),
+            (
+                "self.code.work.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoWorkOpenInput,
+                >(),
+            ),
+            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),

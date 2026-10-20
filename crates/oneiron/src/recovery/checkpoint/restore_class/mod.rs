@@ -169,6 +169,17 @@ fn owner_agent_grant_row(value: &[u8]) -> bool {
         .and_then(|body| crate::federation::decode_federation_grant_body(body).ok())
         .is_some_and(|grant| grant.owner_agent)
 }
+
+/// Whether the `vault_meta` family declared at `prefix` is keyed by one
+/// try's bare attempt id and goes with that try (FIX 6577): the resident's
+/// stamp the try runs as, and its run-tree row.
+fn keyed_by_try(prefix: &[u8]) -> bool {
+    [
+        crate::side_table::DREAMER_RESIDENT_ATTEMPT.prefix,
+        crate::side_table::DREAMER_RUN_TREE.prefix,
+    ]
+    .contains(&prefix)
+}
 const ACCESS_GRANTS: Class = refuse("access grants");
 const SECRET_CUSTODY: Class = refuse("secret custody");
 const CONNECTOR_KEYS: Class = refuse("connector keys");
@@ -413,6 +424,9 @@ enum Rows {
     ByFamily,
     /// By entity kind ([`ENTITY_KINDS`]).
     ByKind,
+    /// By attempt (FIX 6577): a free-time try [`Classes`] names is live, as
+    /// the item binding it runs under is; every other attempt is content.
+    Attempts,
     /// One class for the whole database.
     Whole(Class),
     /// No canonical rows: rebuilt after every restore, never in an image.
@@ -431,8 +445,10 @@ const DATABASES: &[(&str, Rows)] = &[
     ("edges_in", Rows::Whole(CONTENT)),
     // Index compatibility pins of the content the image carries.
     ("hnsw_meta", Rows::Whole(CONTENT)),
-    // Durable job intents (unleased at snapshot) and the sync send queue.
-    ("job_records", Rows::Whole(CONTENT)),
+    // Durable job intents (unleased at snapshot): the free-time tries follow
+    // their live bindings, every other attempt is content.
+    ("job_records", Rows::Attempts),
+    // The sync send queue.
     ("sync_queue", Rows::Whole(CONTENT)),
     ("type_index", Rows::Rebuilt),
     ("vectors", Rows::Rebuilt),
@@ -489,11 +505,18 @@ pub(super) struct Classes {
     /// The home tables whose live rows did not read or decode: each keeps
     /// its own class, so the image wins where that is content.
     home_unreadable: Vec<&'static str>,
+    /// The `job_records` keys of every free-time try in `current` or the
+    /// image (FIX 6577): they restore live, following the item bindings a
+    /// home move carries, and so do the rows keyed by them
+    /// ([`keyed_by_try`]). Empty when the live rows did not read: the
+    /// image's tries and their rows then stand, noted as `job_records`.
+    free_time_attempts: BTreeSet<Vec<u8>>,
 }
 
 impl Classes {
     /// The table, with the kinds `current` registered at run time, its own
-    /// serving machine, and the home tables' rows over `image`'s.
+    /// serving machine, and the home tables' rows and the free-time tries
+    /// over `image`'s.
     pub(super) fn new(
         current: &crate::Vault,
         image: &BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>,
@@ -534,12 +557,27 @@ impl Classes {
         #[cfg(feature = "sync")]
         let crate::sync::home_handoff::HomeManaged {
             keys: home_managed,
-            unreadable: home_unreadable,
+            unreadable: mut home_unreadable,
         } = crate::sync::home_handoff::restore_managed_keys(current, image)?;
+        // The free-time tries, with their stamps and run-tree rows, follow
+        // their live bindings (FIX 6577). Live rows that do not read leave
+        // them content, noted as a home table's.
+        #[cfg(feature = "sync")]
+        let free_time_attempts = crate::dreamer_runner::free_time_attempt_restore_keys(
+            current, image,
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the free-time attempts' live rows did not read; they restore from the image"
+            );
+            home_unreadable.push("job_records");
+            BTreeSet::new()
+        });
         #[cfg(not(feature = "sync"))]
-        let (home_managed, home_unreadable) = {
+        let (home_managed, home_unreadable, free_time_attempts) = {
             let _ = image;
-            (BTreeMap::new(), Vec::new())
+            (BTreeMap::new(), Vec::new(), BTreeSet::new())
         };
         Ok(Self {
             vault_meta,
@@ -551,6 +589,7 @@ impl Classes {
             revoked_agent_grants,
             home_managed,
             home_unreadable,
+            free_time_attempts,
         })
     }
 
@@ -631,12 +670,23 @@ impl Classes {
                     {
                         (LIVE, prefix.len())
                     }
+                    Some((prefix, _))
+                        if database == "vault_meta"
+                            && keyed_by_try(prefix)
+                            && key.strip_prefix(prefix).is_some_and(|attempt| {
+                                self.free_time_attempts.contains(attempt)
+                            }) =>
+                    {
+                        (LIVE, prefix.len())
+                    }
                     Some((prefix, class)) if key.starts_with(prefix) => {
                         (self.binding_class(database, key, class), prefix.len())
                     }
                     _ => (UNCLASSIFIED_ROWS, 0),
                 }
             }
+            Some(Rows::Attempts) if self.free_time_attempts.contains(key) => (LIVE, 0),
+            Some(Rows::Attempts) => (CONTENT, 0),
             Some(Rows::Whole(class)) => (class, 0),
             Some(Rows::Rebuilt) | None => (UNCLASSIFIED_ROWS, 0),
         }
@@ -669,7 +719,7 @@ impl Classes {
             .iter()
             .find(|(name, _)| *name == database)
             .is_none_or(|(_, rows)| {
-                matches!(rows, Rows::ByKind | Rows::ByFamily)
+                matches!(rows, Rows::ByKind | Rows::ByFamily | Rows::Attempts)
                     || matches!(rows, Rows::Whole(class) if *class != CONTENT)
             })
     }

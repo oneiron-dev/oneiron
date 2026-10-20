@@ -16,7 +16,7 @@ use oneiron::memory::extraction::ExtractionEncoder;
 use oneiron::tagging::{TaggingBackoff, TaggingReconciler};
 
 use super::core::SyncServer;
-use super::housekeeping::{HousekeepingAdmission, admit_every_pass};
+use super::housekeeping::{PassControl, admit_every_pass};
 use crate::oneironer::endpoint::ProbeOutcome;
 
 /// Ceiling on the worker's own backoff while the tagger is down.
@@ -43,32 +43,40 @@ impl SyncServer {
 
     /// Starts the worker, or returns `None` when no tagger is configured.
     pub(crate) fn spawn_tagging_worker(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
-        self.spawn_tagging_worker_admitted(admit_every_pass())
+        self.spawn_tagging_worker_admitted(PassControl::unpaused(admit_every_pass()))
     }
 
     /// Starts the worker on a host with a write freeze: the start that
     /// releases stale leases and each drain pass are admitted through
-    /// `admit`, and hold that admission on their blocking thread through
+    /// `pass`'s admission, and hold it on their blocking thread through
     /// every marker they settle. A refused pass tags nothing and waits.
+    /// While `pass` is paused (FIX 6902), a running pass claims no next
+    /// marker and ends as a pass with nothing more ready does.
     pub(crate) fn spawn_tagging_worker_admitted(
         self: &Arc<Self>,
-        admit: HousekeepingAdmission,
+        pass: PassControl,
     ) -> Option<tokio::task::JoinHandle<()>> {
         self.tagger.as_ref()?;
         let server = Arc::clone(self);
-        Some(tokio::spawn(async move { server.tag_forever(admit).await }))
+        Some(tokio::spawn(async move { server.tag_forever(pass).await }))
     }
 
-    async fn tag_forever(self: Arc<Self>, admit: HousekeepingAdmission) {
+    async fn tag_forever(self: Arc<Self>, control: PassControl) {
         // Subscribed before the first pass, so a commit between that pass and
         // the first wait still wakes the loop.
         let mut wake = oneiron::attempt_queue::AttemptQueue::new(self.vault()).subscribe();
-        let Some(reconciler) = self.prepare_tagging(&admit).await else {
+        let Some(reconciler) = self.prepare_tagging(&control).await else {
             return;
         };
+        let admit = control.admission();
         let idle = self.tagger.as_ref().map_or(MIN_IDLE, |slot| {
             Duration::from_millis(slot.config().idle_interval_ms).max(MIN_IDLE)
         });
+        // The reconciler claims at least one marker a pass.
+        let batch = self
+            .tagger
+            .as_ref()
+            .map_or(1, |slot| slot.config().batch_size.max(1));
         let mut backoff = FIRST_BACKOFF;
         // The earliest retry a pass of this worker scheduled that no later
         // pass has reached: the next wake when no commit comes first.
@@ -84,9 +92,10 @@ impl SyncServer {
             let started = reconciler.now();
             let pass = Arc::clone(&reconciler);
             let server = Arc::clone(&self);
+            let pause = control.clone();
             let outcome = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                pass.drain_once_with(|trace| {
+                pass.drain_until_paused(&|| pause.paused(), |trace| {
                     if let Some(slot) = server.tagger.as_ref() {
                         slot.log(trace);
                     }
@@ -95,6 +104,13 @@ impl SyncServer {
             .await;
             match outcome {
                 Ok(Ok(pass)) => {
+                    if pass.paused {
+                        tracing::debug!(
+                            settled = pass.traces.len(),
+                            batch_left = batch.saturating_sub(pass.traces.len()),
+                            "tagging pass paused by the reap freeze; unclaimed markers stay ready"
+                        );
+                    }
                     // A retry due when this pass began was claimable by it.
                     next_retry = next_retry
                         .filter(|at| *at > started)
@@ -138,14 +154,16 @@ impl SyncServer {
         }
     }
 
-    /// Waits until the tagger answers as the configured one and `admit`
+    /// Waits until the tagger answers as the configured one and `control`
     /// admits the start, then builds the reconciler and returns this
-    /// worker's stale leases from a previous process to the queue. `None`
-    /// when the tagger is refused.
+    /// worker's stale leases from a previous process to the queue, until
+    /// `control` pauses; the first pass releases what is left. `None` when
+    /// the tagger is refused.
     async fn prepare_tagging(
         self: &Arc<Self>,
-        admit: &HousekeepingAdmission,
+        control: &PassControl,
     ) -> Option<Arc<TaggingReconciler>> {
+        let admit = control.admission();
         let mut backoff = FIRST_BACKOFF;
         let admission = loop {
             if !self.tagger_still_configured().await {
@@ -163,6 +181,7 @@ impl SyncServer {
             backoff = (backoff * 2).min(MAX_BACKOFF);
         };
         let server = Arc::clone(self);
+        let pause = control.clone();
         let built = tokio::task::spawn_blocking(move || {
             let _admission = admission;
             let slot = server
@@ -179,7 +198,7 @@ impl SyncServer {
                     first_secs: config.retry_backoff_secs,
                     max_secs: config.max_retry_backoff_secs,
                 });
-            match reconciler.release_stale_leases() {
+            match reconciler.release_stale_leases_until_paused(&|| pause.paused()) {
                 Ok(0) => {}
                 Ok(released) => tracing::info!(
                     released,

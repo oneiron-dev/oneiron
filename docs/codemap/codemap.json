@@ -2668,8 +2668,8 @@
      "path": "src/authority/checkpoint_policy.rs",
      "purpose": "Who may attest a portable authority checkpoint (OF-469, checkpoint v2): the eligible roots and the quorum…",
      "surface": {
-      "const": 3,
-      "crate-vis": 3,
+      "const": 4,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -3470,7 +3470,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 32,
-      "re-export": 57
+      "re-export": 59
      }
     },
     {
@@ -3535,7 +3535,22 @@
      "path": "src/authority/owner_key_enrollment.rs",
      "purpose": "The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EnrolledOwnerKey",
+      "OwnerKeyEnrollment",
+      "OwnerKeyEnrollmentReceipt"
+     ],
+     "path": "src/authority/owner_key_enrollment_door.rs",
+     "purpose": "The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -13421,7 +13436,7 @@
      "path": "src/code_run/dispatcher/envelope.rs",
      "purpose": "Write-envelope construction, gate bodies and the write-gate checks every memory verb clears",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -13515,6 +13530,16 @@
      "surface": {
       "crate-vis": 10,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/repo.rs",
+     "purpose": "`self.code.*` (FIX 6867, L11 G1 PR2a): a leased agent run's repo rows",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -13690,7 +13715,7 @@
      "surface": {
       "crate-vis": 22,
       "mod": 7,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -13835,6 +13860,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "RepoRunCall"
+     ],
+     "path": "src/code_run/repo_calls.rs",
+     "purpose": "The run repo rows as typed calls (FIX 6867, L11 G1 PR2a): one variant a row, carrying that row's closed…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/code_run/result_read/arm.rs",
      "purpose": "A shadow arm's reads of its own results (PR-S1, FIX 1661/2144): the card, the verdict and the facets a run's…",
@@ -13928,7 +13967,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/run_verb_call.rs",
@@ -15427,10 +15466,20 @@
      "path": "src/code_view/mod.rs",
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 6,
       "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_view/run.rs",
+     "purpose": "The one view materializer (moved from `mod.rs`, FIX 6867 G1 PR2a): an owner's or trusted caller's view, and…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -15561,6 +15610,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/codebase/store/ingest_writer.rs",
+     "purpose": "The local-repo import's one checked writer (moved from `store/mod.rs`, FIX 6867 G1 PR2a): the owner's and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -15577,7 +15636,7 @@
      "path": "src/codebase/store/mod.rs",
      "purpose": "Vault persistence for codebase snapshots: ingest methods, transactions, and index keys",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 14,
       "fn": 9
      }
     },
@@ -19238,7 +19297,7 @@
      "path": "src/conversation/visibility/private_sources.rs",
      "purpose": "The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -22783,7 +22842,7 @@
       "const": 7,
       "crate-vis": 3,
       "fn": 14,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 10
      }
     },
@@ -22803,12 +22862,39 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DigestPrivateSource"
+     ],
+     "path": "src/dreamer_runner/maintenance/digest/private_sources.rs",
+     "purpose": "The proactivity digest's screen of private thread words (FIX 6411; FIX 6381 and 6383: \"never the words\")",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/digest/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProactivityDigestView"
+     ],
+     "path": "src/dreamer_runner/maintenance/digest/view.rs",
+     "purpose": "A delivered proactivity digest as one viewer reads it (FIX 6411)",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -25782,7 +25868,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 3,
       "struct": 2,
       "trait": 1
@@ -25816,8 +25902,18 @@
       "const": 4,
       "crate-vis": 39,
       "enum": 1,
-      "fn": 18,
+      "fn": 16,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space/bindings.rs",
+     "purpose": "The kind slot binding doors (OF-370; ARCH-0019 `#kind-slots`, `#default-bindings`)",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -25868,7 +25964,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 2,
       "trait": 1
      }
@@ -27769,10 +27865,10 @@
      "path": "src/feedback/conversation_training/anonymous.rs",
      "purpose": "The anonymous training window's side of local custody (TL-6, FIX 5813): where each anonymous piece stands at…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27793,6 +27889,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnonymousFilesSeen",
+      "PieceFilesProblem"
+     ],
+     "path": "src/feedback/conversation_training/anonymous/files.rs",
+     "purpose": "A released anonymous offer whose outbox files ship nothing (FIX 6916): a manifest or chunk file the…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AnonymousStatusWork",
       "AnonymousUploadWork",
       "AnonymousWithdrawalWork"
@@ -27801,6 +27913,7 @@
      "purpose": "The self-host shipper's pages over anonymous custody (TL-6): the pieces to upload, the codes to withdraw and…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 4,
       "struct": 3
      }
@@ -27879,7 +27992,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnonymousReceiptView",
@@ -34303,7 +34416,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 11,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -34866,6 +34979,16 @@
      "path": "src/llm/seat/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/solo.rs",
+     "purpose": "Solo admission (INF 1): a call an own server runs alone, with nothing batched beside it",
+     "surface": {
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -36721,7 +36844,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 20,
-      "mod": 25,
+      "mod": 26,
       "re-export": 55
      }
     },
@@ -37161,6 +37284,70 @@
      "surface": {
       "crate-vis": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoRunAnswer",
+      "RepoRunBinding"
+     ],
+     "path": "src/memory/repo_doors/mod.rs",
+     "purpose": "The run repo doors (FIX 6867, L11 G1 PR2a): a leased agent run's own reads of the repos its owner's Grant…",
+     "surface": {
+      "crate-vis": 11,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/repo_doors/reads.rs",
+     "purpose": "The run repo doors' reads: snapshots and their files and definitions at the commit the run's full ref names…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoMergeQueueObserveInput",
+      "RepoMergeQueueObserveOutput",
+      "RepoRunStamp",
+      "RepoSnapshotView",
+      "RepoSnapshotsGetInput",
+      "RepoSnapshotsIngestInput",
+      "RepoSnapshotsReadInput",
+      "RepoSnapshotsReadOutput",
+      "RepoSymbolsDefinitionsInput",
+      "RepoSymbolsDefinitionsOutput",
+      "RepoViewsGetInput",
+      "RepoViewsReadInput",
+      "RepoViewsReadOutput",
+      "RepoWorkFile",
+      "RepoWorkOpenInput",
+      "RepoWorkView"
+     ],
+     "path": "src/memory/repo_doors/types.rs",
+     "purpose": "The run repo doors' closed inputs and per-row outputs (FIX 6867, G1 PR2a), and the run stamp a run's own…",
+     "surface": {
+      "struct": 16,
+      "type": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/repo_doors/work.rs",
+     "purpose": "`self.code.snapshots.ingest` and `self.code.work.open`, the ref contract the run doors share (CALLS \"FIX…",
+     "surface": {
+      "crate-vis": 8,
+      "fn": 2
      }
     },
     {
@@ -46169,6 +46356,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/snapshot/pinned.rs",
+     "purpose": "The pinned base a run's work opens from (FIX 6867, G1 PR2a): the tree of one immutable commit, read from the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56741,7 +56938,7 @@
      "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
      "surface": {
       "crate-vis": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -57713,7 +57910,7 @@
      "path": "src/task_verb/highway_types.rs",
      "purpose": "The task highway's typed calls, durable handles, outcomes and status view (OF-220)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 6,
       "fn": 1,
       "struct": 10
@@ -65464,7 +65661,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65639,7 +65836,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 122,
+     "files": 124,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65660,14 +65857,14 @@
      "purpose": "—"
     },
     "code_view": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set"
     },
     "codebase": {
-     "files": 12,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65905,7 +66102,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 101,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65954,7 +66151,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66024,7 +66221,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66220,7 +66417,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 115,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66241,7 +66438,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 223,
+     "files": 227,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66465,7 +66662,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66922,7 +67119,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4194,
+   "source_files": 4209,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69579,6 +69776,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/overrun.rs",
+     "purpose": "A message the pipe cannot take whole (FIX 6851): one past the 32 MiB bound fails only its own call, or is…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69606,6 +69813,16 @@
      "purpose": "CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/websocket/gate.rs",
+     "purpose": "The frame gate between a Lightpanda guest's bytes and its WebSocket (FIX 6851, `oversize_message_policy`)…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69674,6 +69891,16 @@
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/row_metadata.rs",
+     "purpose": "Where a link row goes, a heading row's level and a row's datetimes, from the outline's own candidates and…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -69762,7 +69989,6 @@
       "RoutineAsk",
       "RoutineDecider",
       "RoutineReply",
-      "Row",
       "ScreenshotInput",
       "ScreenshotOutput",
       "ScreenshotTrigger",
@@ -69788,8 +70014,8 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 11,
-      "struct": 41,
+      "re-export": 12,
+      "struct": 40,
       "trait": 2
      }
     },
@@ -69860,7 +70086,7 @@
      "path": "src/outline.rs",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -69887,6 +70113,22 @@
      "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)",
      "surface": {
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Row",
+      "RowFieldGap",
+      "RowGapField",
+      "RowGapReason"
+     ],
+     "path": "src/row.rs",
+     "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…",
+     "surface": {
+      "enum": 2,
+      "struct": 2
      }
     },
     {
@@ -69979,7 +70221,7 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -69993,7 +70235,7 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -70055,6 +70297,13 @@
      "layout": "file",
      "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)"
     },
+    "row": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…"
+    },
     "session": {
      "files": 4,
      "impl_vault": false,
@@ -70072,7 +70321,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 28,
+   "source_files": 32,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -75476,8 +75725,8 @@
      "path": "src/lib/backend.rs",
      "purpose": "Backend assembly: config, backend struct, LlmBackend impl, and capability gating",
      "surface": {
-      "crate-vis": 2,
-      "fn": 7,
+      "crate-vis": 3,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -82869,7 +83118,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -82879,7 +83128,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs/browser_guest.rs",
      "purpose": "A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -83656,6 +83905,16 @@
      "notable": [],
      "path": "src/api/owner_routes/model_setting_routes.rs",
      "purpose": "`/v1/owner/settings/models`: the owner's model settings",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/owner_key_enrollment_routes.rs",
+     "purpose": "`/v1/owner/owner-signing-keys`: the owner enrols a device's own Ed25519 owner signing key on the vault's…",
      "surface": {
       "crate-vis": 1
      }
@@ -86500,7 +86759,7 @@
      "path": "src/conversation_training/shipper/stream.rs",
      "purpose": "A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -86514,7 +86773,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_training/shipper/walks.rs",
@@ -90682,7 +90941,7 @@
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -90726,14 +90985,15 @@
       "UsageMode",
       "UsageRecordResult",
       "UsageRollup",
+      "UsageRollupStatus",
       "UsageRun",
       "UsageTokenCounts"
      ],
      "path": "src/usage/model.rs",
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
-      "crate-vis": 3,
-      "enum": 4,
+      "crate-vis": 4,
+      "enum": 5,
       "fn": 9,
       "struct": 10
      }
@@ -90745,6 +91005,17 @@
      "path": "src/usage/pricing.rs",
      "purpose": "Catalog list prices as fixed-point usage rates",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/usage/rollup.rs",
+     "purpose": "The derived per-vault rollup, kept from the stamped events",
+     "surface": {
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -91425,7 +91696,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 481,
+     "files": 482,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91831,7 +92102,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91875,7 +92146,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 962,
+   "source_files": 964,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94870,6 +95141,9 @@
       "RoutineOutcome",
       "Row",
       "RowBirth",
+      "RowFieldGap",
+      "RowGapField",
+      "RowGapReason",
       "RowSplice",
       "RsiBudgetConfig",
       "RsiBudgetRead",
@@ -95786,8 +96060,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 898,
-      "struct": 2812
+      "enum": 900,
+      "struct": 2813
      }
     },
     {
