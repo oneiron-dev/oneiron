@@ -3,8 +3,11 @@ mod approval_target;
 mod effect_consent;
 mod effect_contacts;
 mod effect_grants;
+mod effect_pair;
 
-pub(crate) use self::approval_target::{ApprovalTarget, OutboundSendFacts};
+pub(crate) use self::approval_target::{
+    ApprovalTarget, CampaignLegFacts, LinearMirrorFacts, OutboundSendFacts,
+};
 pub(super) use self::effect_consent::{
     external_effect_action_requirement, external_effect_composed_effect,
     external_effect_consent_context, native_mail_cold_composed_effect,
@@ -17,6 +20,7 @@ use self::effect_grants::{
     channel_identity_envelope_reservation_in_txn, standing_outbound_grant_for_effect,
     touch_standing_outbound_grant_in_txn,
 };
+pub(crate) use self::effect_pair::{PairAdmission, check_external_effect_policy_pair};
 
 use crate::connector_key::{
     self, ConnectorKeyStatus, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
@@ -766,104 +770,6 @@ pub(crate) fn record_external_effect_policy(
     store.diagnostics.gate.record_decision(&decision);
 
     Ok((decision_id, decision))
-}
-
-/// Two actor-bound effects for one logical external mutation. Both live
-/// grants and connector budgets must allow it. Budget keys are preflighted
-/// together, then debited once per distinct key inside this one write txn;
-/// an exhausted second key never consumes the first key's allowance.
-pub(crate) fn check_external_effect_policy_pair(
-    store: &Store,
-    wtxn: &mut heed::RwTxn<'_>,
-    scheduler: &ExternalEffectGateInput,
-    writer: &ExternalEffectGateInput,
-    policy: &PolicyManifestResolution,
-    new_effect: bool,
-) -> Result<Option<GateDecisionId>> {
-    let context = if new_effect {
-        ApprovalContext::FirstAdmission
-    } else {
-        ApprovalContext::Observe
-    };
-    let mut host =
-        evaluate_external_effect_policy(store, wtxn, scheduler, policy, None, None, context)?;
-    let mut authored =
-        evaluate_external_effect_policy(store, wtxn, writer, policy, None, None, context)?;
-    if host.outcome() != GateOutcome::Allow || authored.outcome() != GateOutcome::Allow {
-        record_external_effect_policy(store, wtxn, host)?;
-        record_external_effect_policy(store, wtxn, authored)?;
-        return Ok(None);
-    }
-    let same_key = matches!(
-        (host.budget_target.as_ref(), authored.budget_target.as_ref()),
-        (Some(a), Some(b)) if a.key_id == b.key_id
-    );
-    // Two per-grant keys of one catalog share its pool: the authored key
-    // meets only its own rows, so the effect debits the pool once (ONE-1794).
-    let shared_pool = !same_key
-        && match (host.budget_target.as_ref(), authored.budget_target.as_ref()) {
-            (Some(a), Some(b)) => connector_key::shares_budget_pool(store, wtxn, &a.key, &b.key)?,
-            _ => false,
-        };
-    if new_effect {
-        let now = crate::ports::recorded_at_in_txn(store, wtxn)?;
-        for index in 0..2 {
-            if index == 1 && same_key {
-                continue;
-            }
-            let pool = !(index == 1 && shared_pool);
-            let exhausted_preflight = {
-                let governance = if index == 0 { &host } else { &authored };
-                match governance.budget_target.as_ref() {
-                    Some(target) => connector_key::preflight_effector_budgets_pooled(
-                        store,
-                        wtxn,
-                        &target.key_id,
-                        &target.key,
-                        &target.governing_connector,
-                        true,
-                        now,
-                        pool,
-                    )?
-                    .is_some(),
-                    None => false,
-                }
-            };
-            if exhausted_preflight {
-                // The regular charger applies suspend-on-exhaust without
-                // debiting an exhausted key. No other key has been charged.
-                let denied = if index == 0 { &mut host } else { &mut authored };
-                let (_, exhausted) =
-                    charge_admitted_external_effect(store, wtxn, denied, true, pool)?;
-                if !exhausted {
-                    return Err(crate::error::Error::InvariantViolation(
-                        "linear effect budget preflight diverged",
-                    ));
-                }
-                denied.deny_budget_exhausted();
-                record_external_effect_policy(store, wtxn, host)?;
-                record_external_effect_policy(store, wtxn, authored)?;
-                return Ok(None);
-            }
-        }
-        for (index, governance) in [&mut host, &mut authored].into_iter().enumerate() {
-            if index == 1 && same_key {
-                continue;
-            }
-            let pool = !(index == 1 && shared_pool);
-            let (_, exhausted) =
-                charge_admitted_external_effect(store, wtxn, governance, true, pool)?;
-            if exhausted {
-                // Fail the transaction rather than persisting a partial debit.
-                return Err(crate::error::Error::InvariantViolation(
-                    "linear effect budget changed inside admission transaction",
-                ));
-            }
-        }
-    }
-    let (id, _) = record_external_effect_policy(store, wtxn, host)?;
-    record_external_effect_policy(store, wtxn, authored)?;
-    Ok(Some(id))
 }
 
 /// Governance surface for external-effect callers that finalize the decision in

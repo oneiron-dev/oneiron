@@ -159,7 +159,8 @@ impl OutboundDispatchPipeline {
             payload,
             ..
         } = prepared;
-        let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
+        let effect =
+            super::govern::gate_input(&request, verb_contract, policy_risk, payload.as_deref());
         let approval_digest = super::govern::approval_digest(&effect);
         let verdict = super::effect::execute_admitted(super::effect::EffectInput {
             vault,
@@ -248,7 +249,10 @@ impl OutboundDispatchPipeline {
         // Calendar authority is read under the outbound writer, not prepared
         // from a snapshot before it acquires the publication transaction.
         let authorization = PreparedAuthorization::None;
-        let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
+        // FIX 6424 part 2a: a Linear send's press pins the payload frozen
+        // above, the bytes its ledger row and every retry compare.
+        let effect =
+            super::govern::gate_input(&request, verb_contract, policy_risk, payload.as_deref());
         // FIX 6424: the digest an owner's press on this send names, carried
         // by the result while the Gate holds it.
         let approval_digest = super::govern::approval_digest(&effect);

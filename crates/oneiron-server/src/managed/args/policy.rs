@@ -20,6 +20,8 @@ const NO_TUNING_LAYER_REASON: &str = "managed mode reads the owner's settings fr
 
 const NO_TENANT_LAYER_REASON: &str = "the supervisor binds the vault's tenant identity, privacy posture and key custody; contract v1 has no managed override for them";
 
+const NO_ARTIFACT_DOMAINS_REASON: &str = "a managed vault's artifact origin answers on its internal authority alone (<vault-name>.artifact.invalid); the edge checks public names and forwards to it";
+
 /// What managed mode does with one `ServeArgs` field.
 #[derive(Debug, Clone, Copy)]
 enum ArgvUse {
@@ -204,6 +206,18 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.publisher_training_outbox_dir.is_some(),
         ArgvUse::Read,
     ),
+    // Read, and inactive here (TL-6): `serve_config` keeps the self-host
+    // shipper off, as the supervisor pushes the intake's keys and ships.
+    (
+        "publisher-training-self-host-shipper",
+        |args| args.publisher_training_self_host_shipper,
+        ArgvUse::Read,
+    ),
+    (
+        "publisher-training-intake-origin",
+        |args| args.publisher_training_intake_origin.is_some(),
+        ArgvUse::Read,
+    ),
     // The supervisor's bindings for the guests' container CLIs, the pack
     // organ directory and the mesh listener (WILL-PLAN L14 rows 05, 14).
     (
@@ -221,6 +235,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "mesh-relays",
         |args| args.mesh_relays.is_some(),
+        ArgvUse::Read,
+    ),
+    // The node's read-only shared model root (FIX 6828).
+    (
+        "shared-model-root",
+        |args| args.shared_model_root.is_some(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.
@@ -242,16 +262,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "artifact-domains",
         |args| args.artifact_domains.is_some(),
-        ArgvUse::Read,
+        ArgvUse::Refused(NO_ARTIFACT_DOMAINS_REASON),
     ),
     (
         "artifact-http-socket",
         |args| args.artifact_http_socket.is_some(),
-        ArgvUse::Read,
-    ),
-    (
-        "artifact-public-slug",
-        |args| args.artifact_public_slug.is_some(),
         ArgvUse::Read,
     ),
     (

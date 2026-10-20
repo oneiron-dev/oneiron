@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::federation::derivation::DerivationOwner;
-use oneiron_vault_contract::artifact_origin::valid_app_label;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
 use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
@@ -44,9 +43,6 @@ pub enum ManagedError {
     #[error("--vault-name {name:?} is not a DNS label")]
     InvalidVaultName { name: String },
 
-    #[error("--artifact-public-slug {slug:?} is not a DNS label free of `--`")]
-    InvalidArtifactPublicSlug { slug: String },
-
     #[error("--derivation-owner must be a 32-byte account or organization id in hexadecimal")]
     InvalidDerivationOwner,
 
@@ -73,11 +69,6 @@ pub enum ManagedError {
 
     #[error("--artifact-http-socket must be an absolute path")]
     RelativeArtifactSocket,
-
-    #[error(
-        "--artifact-domains names where the artifact origin answers; it needs --artifact-http-socket"
-    )]
-    ArtifactDomainsWithoutSocket,
 
     #[error("--{flag} must be a non-negative file descriptor, got {value}")]
     InvalidFd { flag: &'static str, value: i32 },
@@ -174,9 +165,11 @@ pub enum SettingsRefusal {
     /// A key named by an environment variable, which managed mode never reads.
     #[error("it names a key in the environment, which managed mode never reads")]
     EnvironmentSecret,
-    /// A path that does not lie in this vault's own storage.
+    /// A path that lies neither in this vault's own storage nor, for a model
+    /// directory, in the supervisor's shared model root as its bundle's own
+    /// directory.
     #[error(
-        "an owner path must be absolute, hold no `~` or `..`, exist, and lie under the vault's data directory or the settings file's own directory"
+        "an owner path must be absolute, hold no `~` or `..`, exist, and lie under the vault's data directory or the settings file's own directory, or, for a model directory, be its bundle's own directory `<root>/<class>/<stack_sha16>` in the supervisor's read-only shared model root, named by the stack the settings pin beside it and by its manifest"
     )]
     OutsideVault,
     /// A key the server's config schema does not have.
@@ -229,16 +222,9 @@ pub struct ManagedArgs {
     /// `maximum_tier` decides, then `MANAGED_MAXIMUM_TIER_DEFAULT`.
     pub maximum_tier: bool,
     /// The artifact origin's socket (`--artifact-http-socket`), when the
-    /// supervisor gave the vault one.
+    /// supervisor gave the vault one. The origin answers on the vault's
+    /// internal authority alone, bound to `vault_name` (FIX 6716).
     pub artifact_socket: Option<PathBuf>,
-    /// The domains the artifact origin answers under, as the cloud named
-    /// them: `<slug>.<domain>` and `<app>--<slug>.<domain>`.
-    pub artifact_domains: Vec<String>,
-    /// The vault's public slug (`--artifact-public-slug`), the one label its
-    /// artifact origin answers to under those domains (FIX 5389). Never the
-    /// vault name, which is its local id: without a slug no vault host
-    /// answers, and `/a/` still serves.
-    pub artifact_public_slug: Option<String>,
     /// The owner's settings file (`--settings-file`), in the server's own
     /// config schema (`managed::settings`).
     pub settings_file: Option<PathBuf>,
@@ -279,6 +265,10 @@ pub struct ManagedArgs {
     /// The mesh's private relays (`--mesh-relays`); direct paths only
     /// without them.
     pub mesh_relays: Vec<String>,
+    /// The node's shared model root as the supervisor declared it
+    /// (`--shared-model-root`), checked when the start configures
+    /// (`managed::settings`): one that fails is ignored with a warning.
+    pub shared_model_root: Option<PathBuf>,
 }
 
 impl ManagedArgs {
@@ -389,16 +379,6 @@ impl ManagedArgs {
             escrow_outbox: args.escrow_outbox_dir.clone(),
             maximum_tier: args.maximum_tier.unwrap_or(MANAGED_MAXIMUM_TIER_DEFAULT),
             artifact_socket: args.artifact_http_socket.clone(),
-            artifact_domains: args
-                .artifact_domains
-                .iter()
-                .flatten()
-                .map(|domain| {
-                    oneiron_vault_contract::artifact_origin::normalize_artifact_domain(domain)
-                })
-                .filter(|domain| !domain.is_empty())
-                .collect(),
-            artifact_public_slug: args.artifact_public_slug.clone(),
             settings_file: args.settings_file.clone(),
             voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),
@@ -416,6 +396,9 @@ impl ManagedArgs {
             mesh_relays: crate::config::normalize_list(
                 args.mesh_relays.clone().unwrap_or_default(),
             ),
+            // Not among the absolute paths refused below: a root that fails
+            // its check is ignored, never a refused start.
+            shared_model_root: args.shared_model_root.clone(),
         };
         if managed
             .artifact_socket
@@ -423,14 +406,6 @@ impl ManagedArgs {
             .is_some_and(std::path::Path::is_relative)
         {
             return Err(ManagedError::RelativeArtifactSocket);
-        }
-        if managed.artifact_socket.is_none() && !managed.artifact_domains.is_empty() {
-            return Err(ManagedError::ArtifactDomainsWithoutSocket);
-        }
-        if let Some(slug) = &managed.artifact_public_slug
-            && !valid_app_label(slug)
-        {
-            return Err(ManagedError::InvalidArtifactPublicSlug { slug: slug.clone() });
         }
         if managed
             .keystore_dir
@@ -642,18 +617,21 @@ impl ManagedArgs {
             esign_delivery_outbox_dir: self.esign_delivery_outbox.clone(),
             // The supervisor's training outbox, when it ships for one.
             publisher_training_outbox_dir: self.publisher_training_outbox.clone(),
+            // Read and inactive whatever argv says (TL-6): the supervisor
+            // pushes the intake's keys and ships, so this vault never fetches
+            // the intake's descriptor or ships through the anonymous window.
+            publisher_training_self_host_shipper: false,
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
             config.log_level = log_level;
         }
-        // The artifact origin serves this vault at its public slug under each
-        // domain the supervisor gave, and never at its vault name, the local
-        // id (FIX 5389): without a slug it answers no vault host, and `/a/`
-        // still serves.
+        // The artifact origin answers on this vault's internal authority,
+        // `<vault_name>.artifact.invalid` and `<app>.<vault_name>.artifact.invalid`,
+        // and on no artifact domain (FIX 6716): the edge checks the public
+        // name and forwards that authority, so no public name reaches here.
         if self.artifact_socket.is_some() {
-            config.artifact_domains = self.artifact_domains.clone();
-            config.artifact_vault_name = self.artifact_public_slug.clone();
+            config.artifact_internal_vault_id = Some(self.vault_name.clone());
         }
         config
     }

@@ -1207,6 +1207,14 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
     let begun = crate::server::blocking(|| {
+        // The sitting keeps who answered it and who asked (FIX 2015), so its
+        // distill can name them once presence is gone. A failed write never
+        // stops the answer.
+        if let Some(key) = session_key
+            && let Err(error) = vault.bind_session_answer(key, agent)
+        {
+            tracing::warn!(kind = ?error.kind(), "the answer's sitting kept no speakers");
+        }
         let memory = answer_memory(&vault, agent, session_key);
         match &open {
             AnswerOpen::Turn(turn) => memory.begin_message_stream(turn, Some(mode)),

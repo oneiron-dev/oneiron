@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::restore::{ManagedRestoreIdentity, RestoreStatus};
+use super::restore::{
+    HostHoldsCursor, HostHoldsSource, HostOrderHoldsExport, ManagedRestoreIdentity, RestoreStatus,
+};
 use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
 use super::{
@@ -119,6 +121,28 @@ pub enum CtlRequest {
     /// (`Ok { ok: false }`), which a supervisor reads as not supported and
     /// prepares with `prepare_reap`.
     PrepareIdleReap,
+    /// Appended last (FIX 1485): this vault's whole host-order legal hold
+    /// family, for the cold restore attempt `identity` names to carry
+    /// ([`CtlResponse::HostOrderHolds`],
+    /// [`host_holds`](crate::restore::host_holds)). The supervisor asks the
+    /// source under its reap freeze, before the control plane's fence;
+    /// `source` must name this vault, and `cursor` is the page to read from,
+    /// `null` or absent for the first. A read: it writes no hold and changes
+    /// no reap state. Build floor: as the restore input's `host_holds`; a v3
+    /// vault built before it answers it as an unknown request
+    /// (`Ok { ok: false }`), which is never a family. A `cursor` at the
+    /// family's end is the confirm (FIX 6820): the supervisor's last call
+    /// before it sends the restore input, with the source still frozen,
+    /// answered with no bytes while the family is still the cursor's and
+    /// `export_changed` once it is not. It has its own build floor
+    /// ([`CONTRACT_VERSION`](crate::CONTRACT_VERSION)): a v3 vault built
+    /// before it answers a confirm `cursor_invalid`, which confirms nothing.
+    HostOrderHolds {
+        identity: ManagedRestoreIdentity,
+        source: HostHoldsSource,
+        #[serde(default)]
+        cursor: Option<HostHoldsCursor>,
+    },
 }
 
 impl CtlRequest {
@@ -135,6 +159,14 @@ impl CtlRequest {
                 anyhow::ensure!(
                     valid_owner_signing_challenge(challenge),
                     "recover_owner_signing requires a 64-digit lowercase hex challenge"
+                );
+            }
+            CtlRequest::HostOrderHolds {
+                identity, source, ..
+            } => {
+                anyhow::ensure!(
+                    HostOrderHoldsExport::fits(identity, source),
+                    "host_order_holds names an attempt and source that leave no room in a line"
                 );
             }
             CtlRequest::PrepareReap
@@ -467,11 +499,11 @@ pub enum CtlResponse {
     /// `settings_paths_revision` is the revision of the owner-path rule the
     /// vault boots by
     /// ([`SETTINGS_PATHS_REVISION`](crate::settings_paths::SETTINGS_PATHS_REVISION),
-    /// FIX 5187), and `artifact_public_slug_revision` that of its artifact
-    /// origin's public slug binding
-    /// ([`ARTIFACT_PUBLIC_SLUG_REVISION`](crate::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION),
-    /// FIX 5389), never the slug itself. `slim_recovery_revision` is that of
-    /// the supervisor SLIM recovery surface
+    /// FIX 5187), and `artifact_internal_host_revision` that of the internal
+    /// authority its artifact origin answers on
+    /// ([`ARTIFACT_INTERNAL_HOST_REVISION`](crate::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION),
+    /// FIX 6716). `slim_recovery_revision` is that of the supervisor SLIM
+    /// recovery surface
     /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION),
     /// FIX 5186): `slim_status`, `unslim` and `Shed.wait_id`.
     /// `vm_outbox_revision` is that of a vault VM's outbox carrier
@@ -504,7 +536,7 @@ pub enum CtlResponse {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "super::version::observed_revision"
         )]
-        artifact_public_slug_revision: Option<u32>,
+        artifact_internal_host_revision: Option<u32>,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
@@ -615,13 +647,26 @@ pub enum CtlResponse {
     PrepareIdleReap {
         idle_reap: IdleReapWire,
     },
+    /// Appended last (FIX 1485): the answer to
+    /// [`CtlRequest::HostOrderHolds`] ([`HostOrderHoldsExport`]). Its one
+    /// required field {host_order_holds} is disjoint from every variant
+    /// above, {idle_reap} included, and it carries no `ok` for the reason
+    /// `Slim` carries none. A supervisor parses this shape alone for the
+    /// request it sent and runs [`CtlResponse::validate`]: any other answer
+    /// is not proven, never an empty family. A confirm's `exported` answer
+    /// carries no bytes: it confirms the pages before it and is never an
+    /// empty family.
+    HostOrderHolds {
+        host_order_holds: HostOrderHoldsExport,
+    },
 }
 
 impl CtlResponse {
     /// Validate SLIM status, residency, numerics, and blocker combinations,
     /// the shape of `PrepareReap.training`, the residency an `Unslim` left,
-    /// the shape of a `RestoreStatus` page and of a `PrepareIdleReap`
-    /// answer ([`IdleReapWire::validate`]), after parsing. Existing
+    /// the shape of a `RestoreStatus` page, of a `PrepareIdleReap` answer
+    /// ([`IdleReapWire::validate`]) and of a `HostOrderHolds` page, after
+    /// parsing. Existing
     /// responses keep their prior validation requirements;
     /// `PrepareReap.next_wake` still uses
     /// [`validate_wake_entries`](crate::validate_wake_entries).
@@ -634,6 +679,9 @@ impl CtlResponse {
         }
         if let CtlResponse::PrepareIdleReap { idle_reap } = self {
             idle_reap.validate()?;
+        }
+        if let CtlResponse::HostOrderHolds { host_order_holds } = self {
+            host_order_holds.validate()?;
         }
         if let CtlResponse::Unslim { unslim } = self {
             anyhow::ensure!(

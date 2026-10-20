@@ -4105,6 +4105,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.models.oneironer.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::manifest::doors::OneironerBind,
+                >(),
+            ),
+            (
                 "vault.models.routes.read",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::manifest::doors::ModelRouteRead,
@@ -5967,6 +5973,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.browser.switch_engine",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserSwitchEngineInput,
+                    >,
+                >(),
+            ),
+            (
                 "vault.claims.supersede",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>,
@@ -6597,6 +6611,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.propose_deck",
     "vault.models.manifest.read",
     "vault.models.manifest.replace",
+    "vault.models.oneironer.bind",
     "vault.models.routes.read",
     "vault.models.routes.replace",
     "vault.models.roles.read",
@@ -6830,6 +6845,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.library.retired",
     "self.browser.library.run",
     "self.browser.handover",
+    "self.browser.switch_engine",
     "self.report_blocked",
     "self.focus.refresh",
     "self.focus.subscribe",
@@ -8329,6 +8345,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.models.manifest.replace" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
+        "vault.models.oneironer.bind" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
+        }
         "vault.models.routes.read" => crate::code_run::vault_read::request_schema::<
             crate::llm::manifest::doors::ModelRouteView,
         >(),
@@ -9039,6 +9058,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.browser.handover" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserHandoverOutput,
+        >(),
+        "self.browser.switch_engine" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserSwitchEngineOutput,
         >(),
         "self.report_blocked" => {
             crate::code_run::vault_read::request_schema::<crate::code_run::ReportBlockedOutput>()
@@ -14378,6 +14400,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.models.oneironer.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.models.routes.read" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16613,6 +16642,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.browser.handover" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.switch_engine" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19197,6 +19233,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.models.manifest.replace" => {
             let _input: crate::llm::manifest::doors::ModelManifestReplace = decode(value.clone())?;
         }
+        "vault.models.oneironer.bind" => {
+            let _input: crate::llm::manifest::doors::OneironerBind = decode(value.clone())?;
+        }
         "vault.models.routes.read" => {
             let _input: crate::llm::manifest::doors::ModelRouteRead = decode(value.clone())?;
         }
@@ -20344,6 +20383,11 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::task_verb::sdk::BrowserHandoverInput,
             > = decode(value.clone())?;
         }
+        "self.browser.switch_engine" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserSwitchEngineInput,
+            > = decode(value.clone())?;
+        }
         "vault.claims.supersede" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::code_run::MemorySupersedeInput,
@@ -20449,6 +20493,9 @@ pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryRe
         }
         "self.browser.handover" => {
             let _input: crate::task_verb::sdk::BrowserHandoverInput = decode(value.clone())?;
+        }
+        "self.browser.switch_engine" => {
+            let _input: crate::task_verb::sdk::BrowserSwitchEngineInput = decode(value.clone())?;
         }
         "self.desktop.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
@@ -21910,6 +21957,9 @@ pub fn invoke(
         "vault.models.manifest.replace" => {
             encode(vault_models_manifest_replace(memory, decode(value)?)?)
         }
+        "vault.models.oneironer.bind" => {
+            encode(vault_models_oneironer_bind(memory, decode(value)?)?)
+        }
         "vault.models.routes.read" => encode(vault_models_routes_read(memory, decode(value)?)?),
         "vault.models.routes.replace" => {
             encode(vault_models_routes_replace(memory, decode(value)?)?)
@@ -22457,6 +22507,7 @@ pub fn invoke(
         }
         "self.browser.library.run" => encode(self_browser_library_run(memory, decode(value)?)?),
         "self.browser.handover" => encode(self_browser_handover(memory, decode(value)?)?),
+        "self.browser.switch_engine" => encode(self_browser_switch_engine(memory, decode(value)?)?),
         "vault.claims.supersede" => encode(vault_claims_supersede(memory, decode(value)?)?),
         "self.fold" => encode(self_fold(memory, decode(value)?)?),
         "self.compact" => encode(self_compact(memory, decode(value)?)?),
@@ -22627,6 +22678,12 @@ pub fn invoke_browser(
             let input: crate::task_verb::sdk::BrowserHandoverInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = oneiron_browser::BrowserAnswer::of(driver.handover(input)?);
+            serde_json::to_value(output)
+        }
+        "self.browser.switch_engine" => {
+            let input: crate::task_verb::sdk::BrowserSwitchEngineInput =
+                serde_json::from_value(value).map_err(invalid)?;
+            let output = oneiron_browser::BrowserAnswer::of(driver.switch_engine(input)?);
             serde_json::to_value(output)
         }
         "self.desktop.open" => {
@@ -28961,6 +29018,12 @@ pub fn vault_models_manifest_replace(
 ) -> MemoryResult<crate::llm::manifest::ModelManifest> {
     crate::task_verb::sdk::replace_model_manifest(memory, input)
 }
+pub fn vault_models_oneironer_bind(
+    memory: &Memory<'_>,
+    input: crate::llm::manifest::doors::OneironerBind,
+) -> MemoryResult<crate::llm::manifest::ModelManifest> {
+    crate::task_verb::sdk::host_only(memory, "vault.models.oneironer.bind", &input)
+}
 pub fn vault_models_routes_read(
     memory: &Memory<'_>,
     input: crate::llm::manifest::doors::ModelRouteRead,
@@ -31778,6 +31841,12 @@ pub fn self_browser_handover(
     input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserHandoverInput>,
 ) -> MemoryResult<crate::task_verb::sdk::BrowserHandoverOutput> {
     crate::task_verb::sdk::host_only(memory, "self.browser.handover", &input)
+}
+pub fn self_browser_switch_engine(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserSwitchEngineOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.switch_engine", &input)
 }
 pub fn vault_claims_supersede(
     memory: &Memory<'_>,

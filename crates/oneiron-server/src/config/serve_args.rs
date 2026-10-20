@@ -179,20 +179,14 @@ pub struct ServeArgs {
     pub maximum_tier: Option<bool>,
 
     /// Managed mode: the unix socket the vault's artifact origin listens on,
-    /// an absolute path the supervisor chose and routes `<slug>.<domain>` to
-    /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
-    /// serves `/a/` on its API socket alone.
+    /// an absolute path the supervisor chose. The edge forwards this vault's
+    /// artifact names to it on the vault's internal authority,
+    /// `<vault-name>.artifact.invalid` and `<app>.<vault-name>.artifact.invalid`
+    /// (`oneiron_vault_contract::artifact_origin`, FIX 6716), the one host it
+    /// answers on. Without it a managed vault serves `/a/` on its API socket
+    /// alone.
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
-
-    /// Managed mode: the vault's public slug, the DNS label free of `--` its
-    /// artifact origin answers to under every artifact domain
-    /// (`<slug>.<domain>`, `<app>--<slug>.<domain>`), as the supervisor's
-    /// slug map names it (FIX 5389). The vault name, its local id, never
-    /// names a public host: without a slug the origin answers no vault host
-    /// and serves `/a/` alone.
-    #[arg(long = "artifact-public-slug", requires = "managed_by_hypnos")]
-    pub artifact_public_slug: Option<String>,
 
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
@@ -202,8 +196,9 @@ pub struct ServeArgs {
     /// leaf the supervisor owns (the listener, ingress and auth, tenant
     /// identity, custody, sockets, the key directory), a key named by an
     /// environment variable, and an owner path outside the vault's data
-    /// directory and this file's own directory are refused. Without it a
-    /// managed vault runs on the defaults.
+    /// directory and this file's own directory (a model directory may lie
+    /// in `--shared-model-root` instead) are refused. Without it a managed
+    /// vault runs on the defaults.
     #[arg(long = "settings-file")]
     pub settings_file: Option<PathBuf>,
 
@@ -266,6 +261,19 @@ pub struct ServeArgs {
     #[arg(long = "publisher-training-outbox-dir")]
     pub publisher_training_outbox_dir: Option<PathBuf>,
 
+    /// Plain serve: the self-host training shipper (TL-6), off without it.
+    /// With `--publisher-training-outbox-dir`, the vault fetches the intake's
+    /// public descriptor at start and hourly, installs its keys in the
+    /// outbox and writes offers for the anonymous training window. Managed
+    /// serve reads it and leaves it inactive: the supervisor ships there.
+    #[arg(long = "publisher-training-self-host-shipper")]
+    pub publisher_training_self_host_shipper: bool,
+
+    /// The intake the self-host shipper reaches: an HTTPS origin (HTTP only
+    /// on loopback), `https://oneiron.dev` without it.
+    #[arg(long = "publisher-training-intake-origin")]
+    pub publisher_training_intake_origin: Option<String>,
+
     /// Managed mode: the browser guest's container CLI, an absolute path on
     /// the vault's own host or root filesystem, which the supervisor binds.
     /// It stands as `[browser] runtime` when the settings file has a
@@ -302,6 +310,16 @@ pub struct ServeArgs {
     )]
     pub mesh_relays: Option<Vec<String>>,
 
+    /// Managed mode: the node's shared model root, an absolute path where
+    /// the supervisor installs each model bundle once for every vault,
+    /// owned by root and writable by no vault's UID
+    /// (`oneiron_vault_contract::settings_paths::SharedModelRoot`). A model
+    /// directory the settings file names may be a bundle's own directory
+    /// there, `<root>/<class>/<stack_sha16>`. A root that fails its check is
+    /// ignored with a warning, never a refused start.
+    #[arg(long = "shared-model-root", requires = "managed_by_hypnos")]
+    pub shared_model_root: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -318,6 +336,8 @@ pub struct ServeArgs {
     /// Comma-separated domains whose subdomains name vaults on the artifact
     /// listener: `<vault>.<domain>/<artifact>/…` serves that vault's synced,
     /// pinned artifacts. DNS, certificates and the edge stay static config.
+    /// Managed mode refuses it: a managed vault answers on its internal
+    /// authority alone.
     #[arg(long = "artifact-domains", value_delimiter = ',', num_args = 1..)]
     pub artifact_domains: Option<Vec<String>>,
 
@@ -567,7 +587,6 @@ impl fmt::Debug for ServeArgs {
             .field("escrow_outbox_dir", &self.escrow_outbox_dir)
             .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
-            .field("artifact_public_slug", &self.artifact_public_slug)
             .field("settings_file", &self.settings_file)
             .field("voice_socket", &self.voice_socket)
             .field("seal_key_file", &self.seal_key_file)
@@ -581,11 +600,20 @@ impl fmt::Debug for ServeArgs {
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
             )
+            .field(
+                "publisher_training_self_host_shipper",
+                &self.publisher_training_self_host_shipper,
+            )
+            .field(
+                "publisher_training_intake_origin",
+                &self.publisher_training_intake_origin,
+            )
             .field("browser_runtime", &self.browser_runtime)
             .field("desktop_runtime", &self.desktop_runtime)
             .field("organ_dir", &self.organ_dir)
             .field("mesh_bind", &self.mesh_bind)
             .field("mesh_relays", &self.mesh_relays)
+            .field("shared_model_root", &self.shared_model_root)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

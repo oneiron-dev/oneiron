@@ -25,7 +25,7 @@ pub enum PreferredResponse {
 pub(super) fn validate_blind(preferences: &[BlindPreference]) -> Result<()> {
     if preferences.is_empty() || preferences.len() > 32 {
         return Err(invalid(
-            "contrastive audit requires 1..=32 frozen near-tie preferences",
+            "contrastive audit requires 1..=32 frozen blind preferences",
         ));
     }
     let mut seen = BTreeSet::new();

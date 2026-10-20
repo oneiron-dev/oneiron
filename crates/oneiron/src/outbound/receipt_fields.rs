@@ -287,7 +287,9 @@ pub(super) fn append_window_receipt_fields(
 
 /// Assemble the audit receipt and caller-visible result from one gate verdict.
 /// `approval_digest` is the approve-once digest the Gate composed for the
-/// send's effect, carried only while the Gate holds it (FIX 6424).
+/// send's effect, carried only while the Gate holds it (FIX 6424); the
+/// holding decision's own digest, from the chokepoint, names it when set (a
+/// co-actor's hold, FIX 6424 part 2a).
 pub(super) fn dispatch_result_receipt(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
@@ -310,12 +312,19 @@ pub(super) fn dispatch_result_receipt(
         suppression_receipt,
         // Already folded into the admission's seat decision by the pipeline.
         ceiling_count: _,
+        held_approval_digest,
+        held_approval_actor,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
     let gate_outcome = gate_outcome_kind.as_str().to_owned();
     // FIX 6424: a send the Gate holds for the owner names the digest his
-    // approve-once press on it must carry.
+    // approve-once press on it must carry, and (part 2a) whose press it is.
+    let (approval_digest, approval_actor) = match held_approval_digest {
+        Some(digest) => (Some(digest), held_approval_actor),
+        None => (approval_digest, request.actor.actor_entity_ref),
+    };
     let approval_digest = approval_digest.filter(|_| gate_outcome_kind == GateOutcome::Pending);
+    let approval_actor = approval_actor.filter(|_| approval_digest.is_some());
     if let Some(receipt) = suppression_receipt {
         return OutboundDispatchResult {
             outcome,
@@ -323,6 +332,7 @@ pub(super) fn dispatch_result_receipt(
             gate_outcome,
             gate_reason_codes,
             approval_digest,
+            approval_actor,
             receipt,
             resolution,
             effector_budget: None,
@@ -559,6 +569,7 @@ pub(super) fn dispatch_result_receipt(
         gate_outcome,
         gate_reason_codes,
         approval_digest,
+        approval_actor,
         receipt,
         resolution,
         effector_budget,

@@ -27,14 +27,11 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// managed backup facts on `Ping`
 /// ([`ManagedBackupFacts`](crate::ManagedBackupFacts)) carry a build floor
 /// too: a v3 vault built before it sends none, which a supervisor reads as
-/// unknown. So do the revisions of the shared owner-path rule
-/// (`settings_paths_revision`, FIX 5187) and of the artifact origin's public
-/// slug binding (`artifact_public_slug_revision`, FIX 5389) on `Ping`; the
-/// latter's `--artifact-public-slug` flag is passed only to an installed
-/// engine at or after its floor, since a `Ping` comes after the flags are
-/// parsed. The supervisor SLIM recovery surface (FIX 5186) carries a build
-/// floor too: the `slim_status` and `unslim` ctl requests and the optional
-/// `wait_id` on `Shed`, proven by `slim_recovery_revision` on `Ping`
+/// unknown. So does the revision of the shared owner-path rule
+/// (`settings_paths_revision`, FIX 5187) on `Ping`. The supervisor SLIM
+/// recovery surface (FIX 5186) carries a build floor too: the `slim_status`
+/// and `unslim` ctl requests and the optional `wait_id` on `Shed`, proven by
+/// `slim_recovery_revision` on `Ping`
 /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION)).
 /// A v3 vault built before it answers either request as unknown and ignores
 /// a `wait_id`, shedding unguarded, so a supervisor relies on that guard only
@@ -51,8 +48,43 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// with its backup ([`CtlRequest::PrepareIdleReap`](crate::CtlRequest::PrepareIdleReap))
 /// carries a build floor too, proven by `prepare_idle_reap: true` in `Ping`'s
 /// managed backup facts; a v3 vault built before it answers it as an
-/// unknown request. Supervisor and vault move to v3 together; no v2 reader
-/// is kept.
+/// unknown request. The host-order legal holds a cold restore carries
+/// ([`host_holds`](crate::restore::host_holds), FIX 1485: the source's
+/// `host_order_holds` ctl request, the restore input's optional
+/// `host_holds` and the receipt's `host_holds`) carry a build floor too, at
+/// the engine revision they merged in: a supervisor asks a source for its
+/// family, hands one on the input pipe and reads a receipt only with
+/// installed engines at or after it. A v3 vault built before it answers the
+/// request as an unknown request, which is never a family, and refuses an
+/// input that carries one as an unknown field; the receipt's new required
+/// field rides v3 with no version move, and no reader of a receipt without
+/// it is kept. The managed artifact origin's internal authority
+/// ([`ArtifactInternalHost`](crate::artifact_origin::ArtifactInternalHost),
+/// FIX 6716) carries a build floor too, at the engine revision it merged in,
+/// proven by `artifact_internal_host_revision` on `Ping`. An engine at or
+/// after it answers only on `<vault_id>.artifact.invalid` and
+/// `<app>.<vault_id>.artifact.invalid`, and refuses `--artifact-public-slug`
+/// and a managed `--artifact-domains`, as a vault VM profile refuses its
+/// `artifact_domains` and `artifact_public_slug` keys; one before it answers
+/// only at the slug those flags named. A `Ping` comes after the flags are
+/// parsed, so a supervisor pins installed engines and VM images at or after
+/// the floor before it stops passing them, and opens artifact ingress only
+/// once the vault reports the revision. The confirm on `host_order_holds`
+/// ([`HostHoldsCursor`](crate::restore::HostHoldsCursor), FIX 6820: a cursor
+/// at the family's end, answered with no bytes while the family is still
+/// the cursor's) carries a build floor too, at the engine revision it
+/// merged in: a supervisor confirms a source's family only on an installed
+/// engine at or after it, and a v3 vault built before it answers a confirm
+/// `cursor_invalid`, which confirms nothing. The shared model root
+/// ([`SharedModelRoot`](crate::settings_paths::SharedModelRoot), FIX 6828:
+/// `--shared-model-root` and the model directories it admits) carries a
+/// build floor too, at the engine revision it merged in, proven by
+/// `settings_paths_revision` 2 on `Ping`. An engine before it refuses the
+/// flag before it touches anything, and a model directory in the root as
+/// outside the vault, so a supervisor passes the flag, and publishes a
+/// model directory in the root, only with installed engines at or after
+/// the floor. Supervisor and vault move to v3 together; no v2 reader is
+/// kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

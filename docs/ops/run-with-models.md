@@ -215,7 +215,10 @@ names the field and never its value:
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
   every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
-  `[linear] response_dir`, which the vault derives itself.
+  `[linear] response_dir`, which the vault derives itself. A managed vault's
+  artifact origin answers on its internal authority alone
+  (`<vault_id>.artifact.invalid`); the edge checks public labels and composes
+  public URLs.
   The supervisor passes the voice loop's socket as `--voice-socket`, the key
   directory as `--keystore-dir`, the host's public https origin as
   `--oauth-resource-indicator <url>` and the URLs a recovery kit dials as
@@ -1833,10 +1836,11 @@ desktop does: parked between `execute_code` entries and through a pumped
 run's durable wait, with its cart and login, and ended with the run or on
 the same idle limits.
 
-The owner sees every tab of the browser. A popup or a tab a link opens (an
-OAuth sign-in window, a `target=_blank` link) is followed, reaches the
-network through the run's proxy as the first page does, and comes to the
-front at the owner's next look while the owner holds the browser. `GET`
+On Chromium the owner sees every tab of the browser. A popup or a tab a
+link opens (an OAuth sign-in window, a `target=_blank` link) is followed,
+reaches the network through the run's proxy as the first page does, and
+comes to the front at the owner's next look while the owner holds the
+browser. `GET`
 lists each browser's `tabs` (`{tab, url, title, front}`); `screen` and
 `input` take an optional `"tab"`, which the holder brings to the front. The
 tab the owner leaves in front is the one the agent's verbs read after the
@@ -1844,12 +1848,79 @@ return; a front tab that closes gives way to the tab that opened it. `GET
 /v1/owner/browsers/stream?run=<hex>` streams the front tab as the desktop's
 stream does, with a `tabs` event when the tabs change.
 
-The agent's own verbs follow the tabs too. A tab the agent's click opens
-comes to the front once it loads, and the click's observation reads it
-whole; a tab opened between calls comes to the front at the next verb; and
-a front tab that closes while the agent drives it gives way to the tab that
-opened it, else the newest. The next answer names the move as `switched`
-(`{tab, url, title, from, why}`, `why` being `opened` or `closed`).
+On Chromium the agent's own verbs follow the tabs too. A tab the agent's
+click opens comes to the front once it loads, and the click's observation
+reads it whole; a tab opened between calls comes to the front at the next
+verb; and a front tab that closes while the agent drives it gives way to
+the tab that opened it, else the newest. The next answer names the move as
+`switched` (`{tab, url, title, from, why}`, `why` being `opened` or
+`closed`). Lightpanda serves one page per guest and follows no popup: a
+verb that meets a second tab, or a new tab once its only page closed,
+refuses `browser_unsupported`, as `click_at` does there, and the refusal's
+detail names `self.browser.switch_engine` as the way to Chromium.
+
+A run's browser starts on the engine the `[browser]` section's `engine`
+names: `lightpanda`, the default and the engine agents start on, or
+`chromium`. Every browser answer names the engine that ran it as `engine`,
+read verbs included, and so does every effect receipt. An act whose page
+showed no change at all within about a second of its input answers at once
+with a `fact` on its observation and its receipt: `click_no_effect` (a
+`click` or `click_at`), `type_no_effect` (a `type` or `select` whose
+target's value did not move either) or `navigate_no_effect` (an `open`
+whose navigation started nothing), each with the engine, the target or URL,
+the reason `no_observable_change` and `window_ms`. A fact is never a
+refusal: the act still answers and is receipted, a batch runs on, and
+nothing changes engine by itself. A Lightpanda guest takes CDP messages up
+to the egress door's `max_response_bytes` in base64 plus 1 MiB, so one
+setting moves both.
+
+`self.browser.switch_engine({engine, reason})` moves the run's browser to
+the other engine when the model decides a page does not work on this one.
+It carries the page's URL, its cookies, the local and session storage of
+every top-level origin its tab visited, and its scroll position. The
+current origin's stores are read at the switch; every other origin's come
+from the session's last read of them while a document of it stood: right
+before each act's input (inside the change check's mark, in its window),
+once each act's or open's page settled, before a person's input in a
+takeover and when they hand the browser back, and on Chromium as each
+document is left (a `pagehide` listener in an isolated world of the
+driver's own, which no page script sees). Lightpanda 1.0.0 fires no
+`pagehide`, so writes a page made after its last read, before it was left,
+are not seen. The new engine's guest starts as the first one did (its own
+fence, the run's egress door); it takes the cookies first, then each
+origin's storage, one origin after another and the current one last,
+written into a one-shot document of that origin which the host answers
+itself, so no page script runs before it, and read back key by key; then
+it loads the URL, scrolls, and reads the page whole. The answer carries
+the switch's `receipt` (verb `switch_engine`), whose `engine_switch` is its
+record (`{from, to, reason, url, carried, not_carried, outcome}`), and the
+new page's `observation`. A carried store names its origin, its item
+count, its `phase` (`pre_input`, `post_act`, `exit`, `hand_back` or
+`switch_export`) and `after_receipt`, the last receipt the run had landed
+when it was read. `not_carried` lists, by component, origin, cookie
+`name@domain` and attribute, never a value, what the new engine does not
+hold exactly and why: Lightpanda refuses some cookie attributes (a
+priority other than Medium, `sameParty`, `sourceScheme`, `sourcePort`) and
+ignores `partitionKey`; an origin no read caught reads `never_sampled`;
+one whose page may have written after its last read reads
+`departure_tail_unobserved`, with that read's `after_receipt`; a store that
+gave no answer, threw or was past the bounds reads `context_lost`,
+`read_exception` or `limit`; an origin the session's snapshots gave up to
+stay within their bounds (64 origins a tab, 64 MiB in all, oldest read
+first) reads `evicted_oldest`; an in-page frame of another origin reads
+`cross_origin_frame`, a sandboxed page `opaque_origin`, a file or data
+page `not_web_page`, and a Lightpanda page that relaxed `document.domain`
+`effective_origin_mismatch`; a store that did not read back as written
+reads `readback_mismatch`; the browser's other tabs read `other_tab`. The
+browser switches all the same. A switch fails
+(`outcome` `{state: "failed", stage, code, detail}`) only when the new
+engine's guest does not start, its driver does not attach, it refuses the
+cookies or it does not load the URL; the page then stays on its engine as
+it was. The engine already running answers `unchanged`. Each switch,
+switched, unchanged or failed, is one receipt in the run's sequence. The
+run keeps its press policy and spent batches, its receipts, its takeover
+record and its library; handles, observations and held images start anew
+on the new engine, so its first read is whole.
 
 Each row of a browser observation carries `ref`, a live handle
 (`h<token>:<n>`), and `locator`, its semantic name built from its role,
@@ -2377,6 +2448,20 @@ The named tier's row sets `model_dir` and the identity keys. `oneiron init
 the first row. A vault whose manifest binds `extraction_encoder` at another
 tier's checkpoint stops tagging and names that tier in the log.
 
+`device = "cuda"` opens only in a server built with candle's CUDA kernels,
+and a named device never falls back to the CPU: a build without them refuses
+at startup (`oneironer engine candle/cuda does not run on this machine`).
+`oneiron-server` has no `cuda` feature, since `--all-features` would then
+build CUDA everywhere. On a host with the CUDA toolkit (`nvcc` on `PATH`),
+build with candle's own features:
+
+```sh
+cargo build --release -p oneiron-server --features candle-core/cuda,candle-nn/cuda
+```
+
+`deploy/install-oneiron-server.sh` adds the same features when
+`ONEIRON_CUDA=1` is set. Its default build, and every CI build, has none.
+
 The extraction teacher is offline by default. It runs the Dreamer's
 extraction passes and teaches the tagger, and the manifest refuses a served
 call through it (chat, checks, routing, voice). To route a seat to it, set
@@ -2396,3 +2481,45 @@ oneiron oneironer publish --manifest candidate.json --export export.json --check
 ```
 
 `publish` prints the configured tier that serves the student, if any.
+
+`publish` opens the vault itself, so it runs only with the server stopped,
+never on a managed vault. On a running server the owner binds the tagger it
+has loaded through `vault.models.oneironer.bind`:
+
+```http
+POST /v1/core/facade/vault.models.oneironer.bind
+Content-Type: application/json
+
+{"expected_checkpoint_sha16": "0123456789abcdef"}
+```
+
+- The binding is the tagger the server has loaded, never one the caller
+  names: its model, `oneironer/local@<checkpoint_sha16>`, in the `oneironer`
+  slot, at the section's named `tier`, else at the tier the row already
+  holds. That is the binding the tagger checks the vault against, so the
+  loaded tagger is the one selected.
+- Both input fields are optional and only compare. `expected_checkpoint_sha16`
+  and `expected_stack_sha16` must match the loaded checkpoint and stack, or
+  the call is refused. `{}` binds whatever is loaded.
+- One write sets `roles.extraction_encoder` and
+  `routes.oneironer = "on_device"` in the current manifest and keeps every
+  other role, route, the verdict and the seat policy. It is the guarded write
+  `vault.models.manifest.replace` runs: the owner's proof is checked again
+  inside it, the saved teacher approval must still pass under the live probe
+  policy, the manifest checks must pass, an encoder export the new binding
+  no longer matches is dropped, and every resident route override is
+  cleared. It publishes no encoder export. The answer is the manifest it
+  published.
+- A vault with no manifest is refused (`manifest not configured`): one row
+  cannot make a complete v2 manifest or its teacher approval. The door also
+  refuses when no Oneironer slot is loaded, when the slot is disabled, is not
+  `provider = "local"` or has no loaded model card, when a guard does not
+  match, and when the caller is not the vault's owner.
+
+A vault with no manifest tags with the host's `[oneironer]` section as its
+selection, and `vault.models.roles.invoke` serves `extraction_encoder` from
+that section for it. Its receipt names the loaded tagger: role
+`extraction_encoder`, slot `oneironer`, revision the configured
+`checkpoint_sha16`, route `on_device`, the section's provider, and the named
+tier, else `extraction_encoder`. Every other role, and every role of a vault
+with a manifest, is served from the manifest as before.

@@ -753,6 +753,7 @@ pub enum AgentVerb {
     VaultSkillsOutcomesGet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
+    VaultModelsOneironerBind,
     VaultModelsRoutesRead,
     VaultModelsRoutesReplace,
     VaultModelsRolesRead,
@@ -1094,6 +1095,7 @@ pub enum AgentVerb {
     SelfBrowserLibraryRetired,
     SelfBrowserLibraryRun,
     SelfBrowserHandover,
+    SelfBrowserSwitchEngine,
     VaultClaimsSupersede,
     SelfFold,
     SelfCompact,
@@ -1859,6 +1861,7 @@ impl AgentVerb {
         Self::VaultSkillsOutcomesGet,
         Self::VaultModelsManifestRead,
         Self::VaultModelsManifestReplace,
+        Self::VaultModelsOneironerBind,
         Self::VaultModelsRoutesRead,
         Self::VaultModelsRoutesReplace,
         Self::VaultModelsRolesRead,
@@ -2200,6 +2203,7 @@ impl AgentVerb {
         Self::SelfBrowserLibraryRetired,
         Self::SelfBrowserLibraryRun,
         Self::SelfBrowserHandover,
+        Self::SelfBrowserSwitchEngine,
         Self::VaultClaimsSupersede,
         Self::SelfFold,
         Self::SelfCompact,
@@ -2988,6 +2992,7 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
             Self::VaultModelsManifestRead => "vault.models.manifest.read",
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
+            Self::VaultModelsOneironerBind => "vault.models.oneironer.bind",
             Self::VaultModelsRoutesRead => "vault.models.routes.read",
             Self::VaultModelsRoutesReplace => "vault.models.routes.replace",
             Self::VaultModelsRolesRead => "vault.models.roles.read",
@@ -3337,6 +3342,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfBrowserHandover => "self.browser.handover",
+            Self::SelfBrowserSwitchEngine => "self.browser.switch_engine",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
             Self::SelfCompact => "self.compact",
@@ -4104,6 +4110,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultModelsRolesRead
@@ -4425,6 +4432,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -4480,6 +4488,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -5237,6 +5246,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultModelsRolesRead
@@ -5558,6 +5568,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -6465,6 +6476,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultModelsRolesRead
@@ -6772,6 +6784,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -7241,6 +7254,7 @@ impl AgentVerb {
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultSkillsAttributionSettle
                 | Self::VaultSkillsAttributionEvidenceRecord
@@ -7420,6 +7434,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -8231,6 +8246,7 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
             Self::VaultModelsRoutesReplace => &["spec"],
             Self::VaultModelsRolesRead => &["spec"],
@@ -8572,6 +8588,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
+            Self::SelfBrowserSwitchEngine => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -9338,6 +9355,7 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
             Self::VaultModelsRoutesReplace => &["spec"],
             Self::VaultModelsRolesRead => &["spec"],
@@ -9679,6 +9697,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
+            Self::SelfBrowserSwitchEngine => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -11900,6 +11919,9 @@ impl AgentVerb {
             Self::VaultModelsManifestReplace => {
                 "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."
             }
+            Self::VaultModelsOneironerBind => {
+                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."
+            }
             Self::VaultModelsRoutesRead => {
                 "Reads one independent model slot route with its manifest pin and effective resident narrowing."
             }
@@ -12872,6 +12894,9 @@ impl AgentVerb {
             }
             Self::SelfBrowserHandover => {
                 "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
+            }
+            Self::SelfBrowserSwitchEngine => {
+                "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."
             }
             Self::VaultClaimsSupersede => {
                 "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."

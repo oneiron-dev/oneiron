@@ -6641,6 +6641,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_models_oneironer_bind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.oneironer.bind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_models_routes_read(
         &self,
         input: serde_json::Value,
@@ -9563,6 +9572,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.browser.handover", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_switch_engine(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.switch_engine", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

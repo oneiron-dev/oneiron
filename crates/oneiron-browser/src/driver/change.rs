@@ -18,7 +18,13 @@
 //!
 //! The DOM's mutations are counted by one `MutationObserver` per document,
 //! started by the first mark on it.
+//!
+//! Where the session keeps storage snapshots, the mark's one evaluation also
+//! reads the page's stores (`storage`, BROWSER-SPLIT PR3b); that part is
+//! taken off before the mark is kept, so the check compares only what it
+//! always did, and the polls never read it.
 
+use super::storage::{MarkRead, split_mark};
 use super::{CdpDriver, POLL, target_id};
 use crate::{ActionFact, ActionTarget, BrowserEngine, NoEffectReason, Row, ViewportPoint};
 use serde_json::{Value, json};
@@ -117,9 +123,14 @@ pub(super) fn navigation_started(answer: &Value) -> bool {
 impl CdpDriver {
     /// The page's signals right before an act's input; none when a read
     /// failed or did not answer in the window, and the act then proves
-    /// nothing.
+    /// nothing. The page's stores, read with them, go to the session's
+    /// snapshots.
     pub(super) fn mark(&self, watch: &Watch<'_>) -> Option<Mark> {
-        self.signals(watch, Instant::now() + CHANGE_CHECK_WINDOW)
+        let deadline = Instant::now() + CHANGE_CHECK_WINDOW;
+        let mut read = MarkRead::NotRun;
+        let mark = self.signals(watch, deadline, Some(&mut read));
+        self.keep_mark_read(read, deadline);
+        mark
     }
 
     /// Reads the page at the driver's poll from `sent`, when the input
@@ -135,7 +146,7 @@ impl CdpDriver {
         let deadline = sent + CHANGE_CHECK_WINDOW;
         loop {
             std::thread::sleep(POLL);
-            if self.signals(watch, deadline)? != *mark {
+            if self.signals(watch, deadline, None)? != *mark {
                 return None;
             }
             let watched = sent.elapsed();
@@ -145,15 +156,35 @@ impl CdpDriver {
         }
     }
 
-    /// Every signal of the front tab, each read answered by `deadline`.
-    fn signals(&self, watch: &Watch<'_>, deadline: Instant) -> Option<Mark> {
+    /// Every signal of the front tab, each read answered by `deadline`;
+    /// for a mark, its `stores` read too, taken off the page's signals.
+    fn signals(
+        &self,
+        watch: &Watch<'_>,
+        deadline: Instant,
+        stores: Option<&mut MarkRead>,
+    ) -> Option<Mark> {
         // A tab whose navigation events are not counted proves nothing.
         let navigations = self.pipe.navigations(&self.session)?;
-        let page = self.signal(
-            "Runtime.evaluate",
-            json!({"expression": PAGE_SIGNALS, "returnByValue": true}),
-            deadline,
-        )?;
+        let marked = stores.and_then(|read| {
+            let expression = self.mark_signals(PAGE_SIGNALS)?;
+            Some((expression, read))
+        });
+        let page = match marked {
+            Some((expression, read)) => {
+                let answer = self.signal(
+                    "Runtime.evaluate",
+                    json!({"expression": expression, "returnByValue": true}),
+                    deadline,
+                );
+                split_mark(answer, read)?
+            }
+            None => self.signal(
+                "Runtime.evaluate",
+                json!({"expression": PAGE_SIGNALS, "returnByValue": true}),
+                deadline,
+            )?,
+        };
         let value = match watch {
             Watch::Entry(_, node) => self.signal(
                 "Runtime.callFunctionOn",

@@ -216,8 +216,9 @@ pub fn receipt_id(receipt: &[u8]) -> String {
 }
 
 /// How many receipt bytes fit as hex in a line that holds `empty` with no
-/// data yet; refused when not even one does.
-fn line_room(empty: &impl Serialize) -> anyhow::Result<usize> {
+/// data yet; refused when not even one does. A host-order family's pages
+/// (`host_holds`) are sized by it too.
+pub(super) fn line_room(empty: &impl Serialize) -> anyhow::Result<usize> {
     let room = MAX_CTL_LINE.saturating_sub(serde_json::to_vec(empty)?.len()) / 2;
     anyhow::ensure!(room > 0, "a restore's identity leaves no room in a line");
     Ok(room)

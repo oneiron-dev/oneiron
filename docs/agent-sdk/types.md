@@ -3120,6 +3120,8 @@ class Oneiron:
         @property
         def manifest(self) -> "Oneiron._VaultModelsManifestVerbs": ...
         @property
+        def oneironer(self) -> "Oneiron._VaultModelsOneironerVerbs": ...
+        @property
         def routes(self) -> "Oneiron._VaultModelsRoutesVerbs": ...
         @property
         def roles(self) -> "Oneiron._VaultModelsRolesVerbs": ...
@@ -3134,6 +3136,9 @@ class Oneiron:
             """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
         def replace(self, spec: Facade.ModelManifestReplace) -> Facade.ModelManifest:
             """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+    class _VaultModelsOneironerVerbs:
+        def bind(self, spec: Facade.OneironerBind) -> Facade.ModelManifest:
+            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."""
     class _VaultModelsRoutesVerbs:
         def read(self, spec: Facade.ModelRouteRead) -> Facade.ModelRouteView:
             """Reads one independent model slot route with its manifest pin and effective resident narrowing."""
@@ -3795,6 +3800,8 @@ class Oneiron:
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.BrowserHandoverOutput:
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
+        def switch_engine(self, spec: Facade.LiveRunRequest[Facade.SwitchEngineInput]) -> Facade.BrowserSwitchEngineOutput:
+            """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
     class _SelfBrowserLibraryVerbs:
         def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.BrowserLibraryFindOutput:
             """The replay library's programs for a site, or for the attached run's open page's site."""

@@ -1,6 +1,6 @@
 //! The ctl dispatcher: every parsed ctl request a managed vault answers.
 
-use oneiron_vault_contract::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION;
+use oneiron_vault_contract::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION;
 use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
 use oneiron_vault_contract::slim_control::SLIM_RECOVERY_REVISION;
 use oneiron_vault_contract::{
@@ -46,7 +46,7 @@ impl ManagedState {
                 readiness: self.readiness.clone(),
                 managed_backup: self.backup_facts.clone(),
                 settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
-                artifact_public_slug_revision: Some(ARTIFACT_PUBLIC_SLUG_REVISION),
+                artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),
                 slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
                 vm_outbox_revision: self.vm_outbox_revision,
             }),
@@ -143,6 +143,19 @@ impl ManagedState {
             // Past the write gate, as `prepare_reap`: it freezes the vault
             // itself, and a frozen vault answers it too.
             CtlRequest::PrepareIdleReap => self.prepare_idle_reap().await,
+            // A read under the reap freeze, never through the write gate,
+            // which refuses exactly when frozen: it writes no hold and the
+            // vault stays frozen.
+            CtlRequest::HostOrderHolds {
+                identity,
+                source,
+                cursor,
+            } => {
+                let host_order_holds = self
+                    .host_order_holds(&identity, &source, cursor.as_ref())
+                    .await?;
+                Ok(CtlResponse::HostOrderHolds { host_order_holds })
+            }
         }
     }
 }

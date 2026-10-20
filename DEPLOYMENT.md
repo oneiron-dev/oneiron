@@ -26,6 +26,10 @@ curl -fsSL https://raw.githubusercontent.com/oneiron-dev/oneiron/main/deploy/ins
 Set `ONEIRON_GIT_BRANCH`, `ONEIRON_GIT_TAG`, or `ONEIRON_GIT_REV` to install
 a specific branch, tag, or revision.
 
+On a Linux host with the CUDA toolkit, set `ONEIRON_CUDA=1` to add
+`--features candle-core/cuda,candle-nn/cuda` for an embedder or Oneironer
+`device = "cuda"`. The default install builds no CUDA.
+
 The local daemon convention is:
 
 ```text
@@ -68,13 +72,19 @@ withdrawals and scope changes, written whatever the learning state) and
 removes). An uploader ships `offers/` and `controls/` and writes `receipts/`;
 the file formats are `oneiron_vault_contract::conversation_training`. Offers
 are sealed to the intake's public key in `intake-recipient.v1` in the outbox
-directory, and receipts are checked against the Ed25519 key in
-`intake-receipt-key.v1`. With no recipient key the vault writes no offer and
+directory, and receipts are checked against the Ed25519 keys in
+`intake-receipt-key.v1`: the current key's 32 raw bytes, then, while a rotation
+drains, the previous key's. With no recipient key the vault writes no offer and
 logs offers as unavailable, naming the missing file, while withdrawals still
-flow; with no receipt key it applies no receipt. A self-hosted vault also needs
-its account binding to the intake (the device-code registration), which this
-build does not have, so a self-hosted outbox writes withdrawals only for now.
-Without the flag no outbox runs and nothing is shared.
+flow; with no receipt key it applies no receipt. A self-hosted vault writes
+offers only with `--publisher-training-self-host-shipper` as well, which is off
+by default: its offers go to the anonymous training window, with no account.
+The vault then fetches the intake's public descriptor from `https://oneiron.dev`
+(`--publisher-training-intake-origin` names another HTTPS origin) at start and
+hourly, writes both key files from it, and keeps the last pair through a failed
+fetch. This build does not upload those offers yet. Without the shipper flag a
+self-hosted outbox writes withdrawals only. Without the outbox flag no outbox
+runs and nothing is shared.
 
 ## Config
 
@@ -162,12 +172,16 @@ each domain's subdomains to the artifact port. A subdomain that names no vault
 here answers exactly as a forbidden artifact does (the artifact 404), and so
 does every refusal from this vault there. Other hosts keep plain `/a/`. A
 device publishes to this server by syncing: a pinned pointer reaches it once
-window sync has delivered the bytes and rows it names. Managed serve takes
-`--artifact-domains` beside `--artifact-http-socket` and refuses
-`--artifact-vault-name`: it answers only at the public slug the supervisor
-names with `--artifact-public-slug` (`<slug>.<domain>`), never at its vault
-name or vault_id, and without a slug no subdomain answers while `/a/` still
-serves.
+window sync has delivered the bytes and rows it names. Managed serve refuses
+`--artifact-domains` and `--artifact-vault-name`: on `--artifact-http-socket`
+it answers on its internal authority alone,
+`<vault_id>.artifact.invalid/<artifact>/...` and
+`<app>.<vault_id>.artifact.invalid/...` for its own `--vault-name`, and `/a/`
+still serves. The managed edge checks the public label (`<slug>` or
+`<app>--<slug>`, one DNS label of at most 63 bytes), maps the slug to the
+vault id, rewrites the request's Host and URI authority to that internal
+authority, and composes every public URL: no public name reaches the vault,
+and no response names the internal one.
 
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the

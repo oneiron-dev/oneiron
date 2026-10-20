@@ -1,4 +1,4 @@
-//! A browser session: one Chromium guest in a container and the CDP driver
+//! A browser session: one browser guest in a container and the CDP driver
 //! attached to it, with the host's rules in front of the driver.
 //!
 //! The browser runs only inside the isolated guest, never as a process on
@@ -43,11 +43,28 @@
 //! many rows as fit one page, and `next` names the cursor `observe` reads
 //! the rest from.
 //!
-//! The session records the engine it attached (FIX 6680): today's pipe
-//! guest runs Chromium. Every receipt names it, with the act's fact when
-//! the page showed no change; such an act is receipted as every act is.
+//! The session runs the engine its guest names (FIX 6680): Lightpanda, the
+//! one an agent starts on, over the WebSocket its guest's relay carries, or
+//! Chromium over its debugging pipe; the fence proof, lease and retention
+//! are the same for both. Every receipt names the engine, with the act's
+//! fact when the page showed no change; such an act is receipted as every
+//! act is.
+//!
+//! The model moves the page to the other engine with `switch_engine`
+//! (`switch`): the host's starter starts the target guest, and the target
+//! replaces only the session's engine group (`guest`); the run's state
+//! stays, the storage snapshots of the origins its tabs visited with it
+//! (`storage`).
 
-use crate::cdp::Pipe;
+mod guest;
+pub(crate) mod storage;
+pub(crate) mod switch;
+
+pub use guest::{BrowserGuestStarter, StartedGuest};
+
+use self::guest::EngineGuest;
+use self::storage::{Collector, OriginSnapshots};
+use self::switch::OriginHistory;
 use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
 use crate::retention::HandleRetention;
@@ -60,8 +77,9 @@ use crate::{
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
     Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
     ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SelectInput, SendPolicy, TabSwitch, Takeover, TakeoverRecord, TypeInput,
-    ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
+    ScreenshotTrigger, SelectInput, SendPolicy, StoragePhase, SwitchEngineInput,
+    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput,
+    WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -114,6 +132,8 @@ pub struct BrowserGuest {
     pub policy: SendPolicy,
     /// A host directory served read-only on the guest's loopback, for checks.
     pub fixture: Option<PathBuf>,
+    /// The engine the guest starts and the driver speaks to.
+    pub engine: BrowserEngine,
 }
 
 pub struct BrowserSession {
@@ -130,36 +150,43 @@ pub struct BrowserSession {
     takeover: Takeover,
     /// The takeover that ended since the agent's last answer.
     returned: Option<TakeoverRecord>,
+    /// How the host starts a switch's target guest; none where the host
+    /// gave none (its readiness check), and `switch_engine` is refused.
+    starter: Option<Box<dyn BrowserGuestStarter>>,
+    /// The top-level origins the session's tabs visited, across switches.
+    history: OriginHistory,
+    /// Their stores as last read, across switches; none where the host gave
+    /// no starter, so no switch.
+    snapshots: Option<Collector>,
 }
 
 impl BrowserSession {
     /// The engine selects and proves a backend before attaching the browser.
     /// A lower driver crate must never silently select a weaker backend.
     /// The session's live-handle registry is charged to the host's memory
-    /// floor through `retention` (C013).
+    /// floor through `retention` (C013). A session given the host's
+    /// `starter` serves `switch_engine`.
     pub fn attach(
         config: &BrowserGuest,
         transport: SessionTransport,
         relay: Arc<dyn EgressRelay>,
         retention: Box<dyn HandleRetention>,
+        starter: Option<Box<dyn BrowserGuestStarter>>,
     ) -> Result<Self, BrowserError> {
-        if transport.manifest.fence_unproven || transport.manifest.fence_proof.is_none() {
-            return Err(BrowserError::Unavailable(
-                "browser session fence unproven".to_owned(),
-            ));
-        }
-        let SessionTransport {
-            reader,
-            writer,
-            manifest,
-            lease,
-        } = transport;
-        let driver = CdpDriver::attach(
-            Pipe::with_egress(reader, writer, Some(relay)),
-            BrowserEngine::Chromium,
-            config.wait_cap,
+        let started = StartedGuest {
+            transport,
+            relay,
             retention,
-        )?;
+        };
+        let snapshots = starter
+            .as_ref()
+            .map(|starter| OriginSnapshots::collector(starter.state_charge()));
+        let sink = snapshots.as_ref().map(OriginSnapshots::sink);
+        let EngineGuest {
+            driver,
+            lease,
+            manifest,
+        } = EngineGuest::attach(config.engine, started, config.wait_cap, sink)?;
         Ok(Self {
             driver,
             guest: lease,
@@ -172,6 +199,9 @@ impl BrowserSession {
             receipt_sink: None,
             takeover: Takeover::Agent,
             returned: None,
+            starter,
+            history: OriginHistory::default(),
+            snapshots,
         })
     }
 
@@ -354,6 +384,7 @@ impl BrowserSession {
         }
         self.driver.tabs(false)?;
         self.bring_up(tab)?;
+        self.driver.checkpoint(StoragePhase::PreInput);
         self.driver.person_input(input)?;
         let Takeover::Held { inputs, .. } = &mut self.takeover else {
             return Err(BrowserError::GuestLost);
@@ -402,6 +433,7 @@ impl BrowserSession {
         // person left it: no tab they opened, and no move from before,
         // counts as the agent's.
         let _ = self.driver.tabs(false);
+        self.driver.checkpoint(StoragePhase::HandBack);
         self.driver.know_tabs();
         self.returned = Some(record.clone());
         Ok(record)
@@ -474,11 +506,14 @@ impl BrowserSession {
     /// Its verbs follow the tabs first: a tab opened since its last call
     /// (a popup a script opened late) comes to the front, and a front tab
     /// that closed gives way to its opener. A look at the tabs that fails
-    /// leaves the front where it was, for the verb's own answer.
+    /// leaves the front where it was, for the verb's own answer; a tab a
+    /// Lightpanda guest cannot follow is the verb's refusal.
     fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
         self.agent_has()?;
         self.guest_up()?;
-        let _ = self.driver.follow();
+        if let (_, Some(refused)) = self.driver.follow_or_refusal() {
+            return Err(refused);
+        }
         Ok(&mut self.driver)
     }
 
@@ -533,6 +568,7 @@ impl BrowserSession {
             screenshot_evidence: None,
             engine: Some(self.driver.engine()),
             fact: observation.fact.clone(),
+            engine_switch: None,
         };
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.
@@ -547,6 +583,7 @@ impl BrowserSession {
             self.receipt_sink = Some(sink);
         }
         self.receipts.push(receipt.clone());
+        self.landed();
         observation.receipt = Some(receipt);
     }
 }
@@ -835,6 +872,13 @@ impl BrowserDriver for BrowserSession {
             reason,
             asked_at_ms,
         })
+    }
+
+    fn switch_engine(
+        &mut self,
+        input: SwitchEngineInput,
+    ) -> Result<SwitchEngineOutput, BrowserError> {
+        self.switch_to(input)
     }
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {

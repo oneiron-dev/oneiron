@@ -37,6 +37,7 @@
 //! blob artifact version when the receipt is made ([`ReceiptWriter`]), so it
 //! outlives the guest's image queue and the guest.
 
+mod browser_guest;
 mod receipt_evidence;
 mod session_write;
 
@@ -57,7 +58,8 @@ use oneiron::browser_library::{
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
-    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, AgentVerbRefusalWords, RunCall,
+    SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
 use oneiron::llm::decision::{AnswerContract, DecisionRung, RoutineOutcome};
@@ -181,7 +183,8 @@ impl RunGuestSession for DesktopSession {
 }
 
 /// Starts one run's guest from a pinned image through the engine's tier
-/// selector, behind the run's egress proxy, and receipts its manifest.
+/// selector, behind the run's egress proxy, on `command`, and receipts its
+/// manifest.
 fn start_run_guest(
     vault: &Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
@@ -189,7 +192,7 @@ fn start_run_guest(
     image: &str,
     limits: GuestLimits,
     fixture: Option<&PathBuf>,
-    entry: &str,
+    command: &[std::ffi::OsString],
 ) -> Result<(SessionTransport, Arc<dyn EgressRelay>), BrowserError> {
     use oneiron::code_sandbox::{SandboxGuestTier, microvm::select_backend_for_session};
     use oneiron_container::{GuestSeccomp, GuestSpec, ImageRef};
@@ -217,7 +220,7 @@ fn start_run_guest(
         .with_fixture(fixture.cloned()),
     );
     let transport = backend
-        .start_session(&spec, &[entry.into()], Arc::clone(&relay))
+        .start_session(&spec, command, Arc::clone(&relay))
         .map_err(|e| unavailable(e.to_string()))?;
     vault
         .append_sandbox_manifest_receipt(run_id, &transport.manifest)
@@ -563,17 +566,13 @@ impl RunBrowser {
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
-            let (transport, relay) = start_run_guest(
+            // The session keeps the starter its engine switches take.
+            let started = browser_guest::start_run_browser(
                 &self.vault,
                 self.run_id,
-                &self.guest.runtime,
-                &self.guest.image,
-                self.guest.limits,
-                self.guest.fixture.as_ref(),
-                "/usr/local/bin/oneiron-browser-guest",
+                &self.guest,
+                &self.handles,
             )?;
-            let started =
-                BrowserSession::attach(&self.guest, transport, relay, self.handles.charge())?;
             *session = Some(started);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
@@ -653,7 +652,7 @@ impl RunDesktop {
                 &self.guest.image,
                 self.guest.limits,
                 None,
-                "/usr/local/bin/oneiron-desktop-guest",
+                &["/usr/local/bin/oneiron-desktop-guest".into()],
             )?;
             *session = Some(DesktopSession::attach(&self.guest, transport)?);
         }
@@ -735,7 +734,7 @@ impl RunGuests {
         let answer =
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
-                Err(refusal) => return Ok(Err(refusal)),
+                Err(refused) => return Ok(Err(AgentVerbRefusal { code: refused.code })),
             };
         match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         {
@@ -749,6 +748,8 @@ impl RunGuests {
 
     /// The facade and MCP host doors already crossed the row's hooks. They
     /// take this same guest admission and driver without firing hooks twice.
+    /// A refusal carries its code, and for `browser_unsupported` the
+    /// engine's words naming the verb that serves it (FIX 6862).
     #[expect(
         clippy::too_many_arguments,
         reason = "the admitted caller and run are separate axes"
@@ -762,9 +763,9 @@ impl RunGuests {
         memory: &Memory<'_>,
         asker: VerdictAsker,
         by: oneiron::EntityId,
-    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusalWords>> {
         if let Err(refusal) = self.admits(call.verb, server) {
-            return Ok(Err(refusal));
+            return Ok(Err(browser_guest::code_words(refusal.code)));
         }
         let verb = call.verb.as_str();
         let desktop = verb.starts_with("self.desktop.");
@@ -776,9 +777,6 @@ impl RunGuests {
         .ok_or(oneiron::Error::InvariantViolation(
             "admitted guest has no run",
         ))?;
-        let browser_refused = |error: BrowserError| AgentVerbRefusal {
-            code: error.code().to_owned(),
-        };
         let writer = ReceiptWriter::new(server, asker.clone(), origin, memory.invocation(), run_id);
         let decider = LadderDecider {
             server: Arc::clone(server),
@@ -800,7 +798,7 @@ impl RunGuests {
         };
         let output = match called {
             Ok(output) => output,
-            Err(error) => return Ok(Err(browser_refused(error))),
+            Err(error) => return Ok(Err(browser_guest::refusal_words(&error))),
         };
         // An effect's answer carries its receipt, naming the page it acted on.
         if let Some(receipt) = output.get("receipt") {
