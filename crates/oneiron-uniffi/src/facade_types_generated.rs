@@ -1250,6 +1250,12 @@ pub enum NotificationKind {
     WorldPrivacyProposed,
     #[serde(rename = "weave_digest_settings_changed")]
     WeaveDigestSettingsChanged,
+    #[serde(rename = "thread_walk_in")]
+    ThreadWalkIn,
+    #[serde(rename = "thread_history_opened")]
+    ThreadHistoryOpened,
+    #[serde(rename = "thread_join_requested")]
+    ThreadJoinRequested,
 }
 
 /// `oneiron::inbox::notification::NotificationSource`.

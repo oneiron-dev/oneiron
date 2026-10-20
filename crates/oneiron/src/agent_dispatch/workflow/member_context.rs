@@ -138,7 +138,7 @@ impl AgentDispatcher<'_> {
         };
         let memory = kept(&projection.memory_sections);
         let chat = kept(&projection.chat_sections);
-        Ok(projection.lane_narrowed(memory, chat))
+        Ok(projection.binder_narrowed(memory, chat))
     }
 }
 
