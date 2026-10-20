@@ -8,9 +8,11 @@
 //! An admitted MESSAGE, a ready document, or an `authored_by`/`belongs_to`
 //! change on either end retries the obligations it is an end of, and every
 //! recovery pass retries them all. Admission, a stored pair, a terminal
-//! rejection, an erased end or the link's removal settle one.
+//! rejection, an erased end or the link's removal settle one. A pair check
+//! that fails on retry, a body that does not resolve included, leaves its
+//! obligation owed and logged: the write that woke it still commits.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use loro::event::MapDelta;
 
@@ -145,7 +147,7 @@ pub(in crate::sync) fn settle_regenerates(
 
 /// Retries one owed link on the rows stored now, through the same pair
 /// check and edge door its carrier used. A missing row or axis keeps it
-/// owed; every other verdict settles it.
+/// owed, as does a pair check that fails; every other verdict settles it.
 fn retry_row(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &str) -> Result<()> {
     let Some(value) = vault
         .store
@@ -172,7 +174,22 @@ fn retry_row(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &str) -> Result<()> 
     if crate::edge::regeneration_stored(&vault.store, txn, &src, &tgt)? {
         return settle_regenerates(vault, txn, window, &src, &tgt);
     }
-    let rejected = match crate::edge::regeneration_pair(&vault.store, txn, &src, &tgt)? {
+    let verdict = match crate::edge::regeneration_pair(&vault.store, txn, &src, &tgt) {
+        Ok(verdict) => verdict,
+        // A retry never aborts the write that woke it: the link stays
+        // owed, untouched, for a later wake or recovery pass.
+        Err(error) => {
+            tracing::warn!(
+                window,
+                src = %src.to_hex(),
+                tgt = %tgt.to_hex(),
+                error = %error,
+                "regenerates link stays owed: its pair check failed on retry"
+            );
+            return Ok(());
+        }
+    };
+    let rejected = match verdict {
         Regeneration::Pending => return Ok(()),
         Regeneration::Erased => None,
         Regeneration::Refuses => Some(crate::edge::reserved_regenerates()),
@@ -292,35 +309,4 @@ pub(super) fn retry_all_regenerates(vault: &Vault, txn: &mut heed::RwTxn<'_>) ->
         retry_row(vault, txn, &row)?;
     }
     Ok(())
-}
-
-/// The pairs `window` owes with an end in `ids`, read after their commit,
-/// so their carried keys can be re-presented. A failed read re-presents
-/// none: that commit's own wake retried them already.
-pub(super) fn owed_in_window(
-    vault: &Vault,
-    window: &str,
-    ids: &HashSet<EntityId>,
-) -> HashSet<(EntityId, EntityId)> {
-    let owed = (|| -> Result<HashSet<_>> {
-        let txn = vault.store.env.read_txn()?;
-        let mut owed = HashSet::new();
-        for id in ids {
-            for row in owed_by(vault, &txn, id)? {
-                let (owner, src, tgt) = parse_obligation(&row)?;
-                if owner == window {
-                    owed.insert((src, tgt));
-                }
-            }
-        }
-        Ok(owed)
-    })();
-    owed.unwrap_or_else(|error| {
-        tracing::warn!(
-            window,
-            error = %error,
-            "regenerates obligations not re-presented"
-        );
-        HashSet::new()
-    })
 }
