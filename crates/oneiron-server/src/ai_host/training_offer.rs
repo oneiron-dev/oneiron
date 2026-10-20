@@ -19,7 +19,8 @@
 //! The check is fixed code: no model call.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
-use oneiron::learning::learning_estimate;
+use oneiron::learning::learning_estimate_with_sources;
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::manifest::{MODEL_ROLES, ModelRole};
 use oneiron::llm::registry::ModelRegistryRow;
 use oneiron::skill_optimize::offer_pilot::{
@@ -30,21 +31,23 @@ use oneiron::skill_optimize::{
     ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
     OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
     model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers,
+    training_offer_checks, training_offer_skill_id, training_offers, union_source_rows,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
 use serde::Deserialize;
 
-use super::code_fix::{HostModels, clip, message};
+use super::code_fix::{HostModels, message};
 use crate::config::models::role_key;
 use crate::server::SyncServer;
 use crate::usage::SeatUsage;
 
+mod check;
 mod cost;
 mod pilot;
 mod sources;
 mod unverifiable;
+pub(super) use check::check;
 use cost::{candidate_monthly, monthly, payback};
 use sources::Sources;
 use unverifiable::{Alone, Unverifiable};
@@ -57,14 +60,6 @@ const WINDOW_SECS: u64 = 30 * DAY_SECS;
 const MONTH_SECS: u64 = 30 * DAY_SECS;
 /// When an offer's promise is checked, after it is made.
 const CHECK_AFTER_SECS: u64 = 30 * DAY_SECS;
-/// Seats one job asks about, the busiest first.
-const SEAT_BATCH: usize = 8;
-/// Options one brief carries: stock models, and recipes that ran before. The
-/// offer keeps the rest as its alternatives.
-const MAX_STOCK: usize = 12;
-const MAX_RECIPES: usize = 4;
-/// Earlier offers for the seat the brief carries, the newest.
-const PRIOR_OFFERS: usize = 8;
 /// The catalog's per-million list prices carry no currency; they are read as
 /// this one.
 const CATALOG_CURRENCY: &str = "USD";
@@ -74,9 +69,6 @@ const COST_TOLERANCE: f64 = 0.10;
 const OFFER_CALL_PURPOSE: &str = "coach_training_offer";
 /// What one job's calls may spend.
 const BUDGET_UNITS: u64 = 1 << 20;
-/// How much of a model's display name or a cohort's rubric revision the
-/// Coach's brief shows; the offer keeps the revision whole.
-const REF_BYTES: usize = 256;
 /// What the offer says of its prices, beside the Coach's risk.
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
     token counts, cached prompt tokens at each model's quoted cache rates, or at its input price \
@@ -91,7 +83,7 @@ const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced 
 /// The offer skill's file the Coach runs; the seat goes as data.
 const SKILL_FILE: &str = "SKILL.md";
 
-/// Raises at most one offer for each of the busiest served seats.
+/// Raises at most one offer for each served seat, the busiest first.
 pub(super) fn draft(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
@@ -127,7 +119,8 @@ pub(super) fn draft(
         return Ok(());
     }
     seats.sort_by(|a, b| b.3.calls.cmp(&a.3.calls).then(a.0.cmp(&b.0)));
-    seats.truncate(SEAT_BATCH);
+    // Every served seat is asked about (Rule 5): how many is measured.
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, seats.len() as u64);
     // A model the catalog refresh left uncounted is counted before it is
     // priced (OF-577).
     if let Some(ratios) = runtime.token_ratios() {
@@ -177,25 +170,40 @@ pub(super) fn draft(
         return Ok(());
     };
     let offer_skill = (loaded.entity, loaded.record.version.clone());
-    // The offer skill's own record on this model: how its checked offers held.
-    let record = learning_estimate(vault, &offer_skill_cell(vault, loaded.entity, &executor)?)?
-        .map_or(
-            serde_json::Value::Null,
-            |estimate| serde_json::json!({ "estimate": estimate.value, "runs": estimate.runs }),
-        );
+    // The offer skill's own record on this model: how its checked offers
+    // held, read from the head claim it names (FIX 5760).
+    let cell = offer_skill_cell(vault, loaded.entity, &executor)?;
+    let (record, record_rows) = match learning_estimate_with_sources(vault, &cell)? {
+        Some((estimate, rows)) => (
+            serde_json::json!({ "estimate": estimate.value, "runs": estimate.runs }),
+            rows,
+        ),
+        None => (serde_json::Value::Null, Vec::new()),
+    };
     for (role, model, locality, usage) in seats {
         let Some(brief) = Brief::gather(
-            vault, &registry, &runs, role, &model, locality, usage, &record, now,
+            vault,
+            &registry,
+            &runs,
+            role,
+            &model,
+            locality,
+            usage,
+            (&record, record_rows.as_slice()),
+            now,
         )?
         else {
             continue;
         };
-        let Some(text) = models.generate(
+        // The call reads the brief and the offer skill's body (FIX 5760).
+        let read = union_source_rows([brief.sources.rows(), Some(vec![offer_skill.0])]);
+        let Some(text) = models.generate_sourced(
             models.coach(),
             vec![
                 message(LlmMessageRole::System, instruction.clone()),
                 message(LlmMessageRole::User, brief.data().to_string()),
             ],
+            read,
         )?
         else {
             // No seat took the call: the next night asks again.
@@ -267,7 +275,7 @@ impl Brief {
         model: &str,
         locality: ModelLocality,
         usage: SeatUsage,
-        record: &serde_json::Value,
+        (record, record_rows): (&serde_json::Value, &[EntityId]),
         now: u64,
     ) -> oneiron::Result<Option<Self>> {
         let seat = model_role_seat(role);
@@ -292,10 +300,14 @@ impl Brief {
                 && usage.metered_since.is_some_and(|since| since <= from),
             receipt_refs: usage.refs.clone(),
         };
-        // The seat's metered calls are named by receipt key and the catalog's
-        // models by name, not by row (FIX 5482).
+        // The seat's metered calls, as each one's settlement froze its rows,
+        // and every catalog row the pricing and the option filters read,
+        // chosen or not (FIX 5760).
         let mut sources = Sources::new();
-        sources.unknown();
+        sources.set(usage.source_rows.as_deref());
+        for row in registry {
+            sources.set(row.source_rows.as_deref());
+        }
         let baseline_monthly = monthly(current, &workload, &usage);
         let mut stock: Vec<Choice> = registry
             .iter()
@@ -341,7 +353,7 @@ impl Brief {
                     data: serde_json::json!({
                         "kind": "switch",
                         "model": row.catalog.model.as_str(),
-                        "display_name": clip(&row.catalog.display_name, REF_BYTES),
+                        "display_name": row.catalog.display_name,
                         "locality": row.catalog.locality,
                         "backend": backend,
                         "licence": licence,
@@ -353,37 +365,23 @@ impl Brief {
                 })
             })
             .collect();
-        // The cheapest first, unknown prices last; the cheapest local option
-        // stays beside any paid one.
+        // The cheapest first, unknown prices last. Every option rides whole
+        // (Rule 5).
         stock.sort_by(|a, b| match (a.monthly, b.monthly) {
             (Some(a), Some(b)) => a.total_cmp(&b),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
-        if let Some(local) = stock
-            .iter()
-            .position(|choice| choice.destination == ComputeDestination::OnDevice)
-            && local >= MAX_STOCK
-        {
-            let choice = stock.remove(local);
-            stock.insert(MAX_STOCK - 1, choice);
-        }
-        stock.truncate(MAX_STOCK);
         let mut recipes: Vec<Choice> = Vec::new();
         let mut seat_runs: Vec<&TrainingRun> = runs
             .iter()
             .filter(|run| run.plan.role == role && run.plan.seat == seat)
             .collect();
         seat_runs.sort_by_key(|run| std::cmp::Reverse((run.created_at, run.id)));
-        // A training run keeps no set of the rows its plan and scores came from.
-        if !seat_runs.is_empty() {
-            sources.unknown();
-        }
         for run in &seat_runs {
-            if recipes.len() == MAX_RECIPES {
-                break;
-            }
+            // Each seat run is read for its recipe, kept or not (FIX 5760).
+            sources.set(run.source_rows.as_deref());
             let Some(base) = base_pin(run) else {
                 continue;
             };
@@ -435,6 +433,7 @@ impl Brief {
         if choices.is_empty() {
             return Ok(None);
         }
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, choices.len() as u64);
         pilot::brief(vault, &seat, &incumbent, &mut choices, &mut sources)?;
         for (index, choice) in choices.iter_mut().enumerate() {
             choice.id = format!("option-{}", index + 1);
@@ -444,13 +443,23 @@ impl Brief {
             .into_iter()
             .rev()
             .find(|cohort| cohort.retired_at.is_none());
-        // A cohort's cases name their receipts by key.
-        if cohort.is_some() {
-            sources.unknown();
+        // The cohort's cases and labels, as the ledger keeps their rows
+        // (FIX 5760); a lineage read that fails leaves them unknown.
+        if let Some(cohort) = &cohort {
+            let read = vault.eval_cohort_source_rows(&cohort.id).ok().flatten();
+            sources.set(read.as_deref());
         }
+        // Names and the rubric revision ride whole (Rule 5).
+        let longest = registry
+            .iter()
+            .map(|row| row.catalog.display_name.len())
+            .chain(cohort.iter().map(|cohort| cohort.rubric_revision.len()))
+            .max()
+            .unwrap_or(0);
+        let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         let cohort_data = cohort.as_ref().map_or(serde_json::Value::Null, |cohort| {
             serde_json::json!({
-                "rubric_revision": clip(&cohort.rubric_revision, REF_BYTES),
+                "rubric_revision": cohort.rubric_revision,
                 "families": cohort.families.len(),
                 "cases": cohort.cases.len(),
                 "reference": cohort.reference,
@@ -473,8 +482,9 @@ impl Brief {
         };
         let earlier = training_offers(vault, Some(&seat))?;
         let previous = earlier.last().map(|(offer, _)| offer.id);
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, earlier.len() as u64);
         let mut prior = Vec::new();
-        for (offer, answer) in earlier.iter().rev().take(PRIOR_OFFERS) {
+        for (offer, answer) in earlier.iter().rev() {
             let checks = training_offer_checks(vault, &offer.id)?;
             sources.set(offer.source_rows.as_deref());
             for check in &checks {
@@ -492,10 +502,8 @@ impl Brief {
                 })).collect::<Vec<_>>(),
             }));
         }
-        // The skill's record names the checks it learned from by key.
-        if !record.is_null() {
-            sources.unknown();
-        }
+        // The skill's record, from the head claim it was read from (FIX 5760).
+        sources.set(Some(record_rows));
         let incumbent_data = serde_json::json!({
             "model": incumbent.model,
             "revision": incumbent.revision,
@@ -665,124 +673,4 @@ fn offered_model(offer: &TrainingOffer) -> &str {
         OfferCandidate::Stock { model, .. } => &model.model,
         OfferCandidate::TrainRecipe { base, .. } => &base.model,
     }
-}
-
-/// Checks one approved offer's promise against the seat's metered calls.
-pub(super) fn check(
-    server: &SyncServer,
-    admitted: &DreamerAdmittedAttempt,
-    now: u64,
-) -> oneiron::Result<()> {
-    let vault = server.vault();
-    let id = coach_offer_check_target(admitted)?;
-    let Some(offer) = training_offer(vault, &id)? else {
-        return Ok(());
-    };
-    if !training_offer_checks(vault, &id)?.is_empty() {
-        return Ok(());
-    }
-    // A promise is checked only after a yes.
-    let Some(answer) = training_offers(vault, Some(&offer.seat))?
-        .into_iter()
-        .find(|(row, _)| row.id == id)
-        .and_then(|(_, answer)| answer)
-    else {
-        return Ok(());
-    };
-    let Some(intent) = answer.intent.as_ref() else {
-        return Ok(());
-    };
-    // A whole window after the yes; until then the check waits.
-    let from = now.saturating_sub(WINDOW_SECS);
-    if from < answer.at {
-        return Ok(());
-    }
-    let Some(role) = seat_model_role(&offer.seat) else {
-        return Unverifiable::unread(Alone::NoModelRole, vault, admitted, &offer, now);
-    };
-    // The model the yes asked for: the stock model, or the custom one bound
-    // from the exact run the yes handed off.
-    let approved = match intent {
-        OfferIntent::Switch { to, .. } => to.model.clone(),
-        OfferIntent::Train { .. } => {
-            let run = match offer_training_handoff(vault, &id)? {
-                Some(handoff) => vault.training_run(&handoff.run)?,
-                None => None,
-            };
-            let Some(run) = run.filter(|run| run.state == TrainingState::Bound) else {
-                return Unverifiable::unread(Alone::NotBound, vault, admitted, &offer, now);
-            };
-            run.plan.output_binding.model.as_str().to_owned()
-        }
-    };
-    let Some(meter) = server.vault_usage() else {
-        return Unverifiable::unread(Alone::NoMeter, vault, admitted, &offer, now);
-    };
-    let (owner, vault_id) = (meter.owner(), meter.vault_id());
-    let usage = server
-        .usage_ledger
-        .seat_usage(owner, vault_id, &role_key(role), Some(&approved), from, now)
-        .map_err(|_| Error::InvalidConfig("the seat's usage could not be read".into()))?;
-    // Metered throughout, or a later night reads it. With the seat's calls on
-    // another model counted out, none of the approved model's left, or some
-    // the check cannot price or sum, it closes unverifiable.
-    if usage.metered_since.is_some_and(|since| since > from) {
-        return Ok(());
-    }
-    if let Some(outcome) = Unverifiable::of(&usage) {
-        return outcome.record(vault, admitted, &offer, &approved, usage.refs, now);
-    }
-    let comparable = usage.currency.as_deref() == Some(offer.cost.currency.as_str());
-    let observed = comparable
-        .then(|| usage.cost_amount as f64 / 1e9 * MONTH_SECS as f64 / (now - from) as f64);
-    let cost_held = observed
-        .zip(offer.cost.monthly_after)
-        .map(|(observed, promised)| observed <= promised * (1.0 + COST_TOLERANCE));
-    // An offer that carried a measured card also promised the score, which
-    // no meter reads: a kept cost then leaves the promise unknown.
-    let held = match cost_held {
-        Some(false) => Some(false),
-        Some(true) if offer.evidence.card.is_none() => Some(true),
-        _ => None,
-    };
-    let note = format!(
-        "{} calls on {approved} over the {} days to the check, all priced{}; promised {} {} a \
-         month, within {}%.",
-        usage.calls,
-        WINDOW_SECS / DAY_SECS,
-        if comparable {
-            String::new()
-        } else {
-            format!(
-                " in {}, not the offer's {}",
-                usage.currency.as_deref().unwrap_or("no currency"),
-                offer.cost.currency
-            )
-        },
-        offer
-            .cost
-            .monthly_after
-            .map_or_else(|| "an unknown".to_owned(), |after| format!("{after:.2}")),
-        offer.cost.currency,
-        COST_TOLERANCE * 100.0,
-    );
-    // The check reads the offer, with its own set, and the seat's metered
-    // calls, named by receipt key only (FIX 5482).
-    let mut sources = Sources::new();
-    sources.set(offer.source_rows.as_deref());
-    sources.unknown();
-    let check = vault.run_coach_offer_check(
-        admitted,
-        OfferCheckInput {
-            receipt_refs: usage.refs,
-            observed_monthly_cost: observed,
-            observed_score: None,
-            held,
-            note: Some(note),
-            source_rows: sources.rows(),
-        },
-        now,
-    )?;
-    tracing::debug!(offer = %id.to_hex(), held = ?check.held, "the Coach checked an offer's promise");
-    Ok(())
 }

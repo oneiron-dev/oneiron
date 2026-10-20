@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/coach_host/seal_checks.rs` | src | s | 1 crate-vis | — | The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession… |
 | `src/ai_host/coach_host/type_tree_upkeep.rs` | src | s | 1 crate-vis | — | The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the… |
 | `src/ai_host/coach_host/weave_digest_settings.rs` | src | s | 1 crate-vis | — | The host's digest settings drafter (FIX 5609, ARCH-0026): the Coach's model, on its own seat or else the… |
-| `src/ai_host/code_fix.rs` | src | m | 9 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
+| `src/ai_host/code_fix.rs` | src | m | 10 crate-vis | — | The host Coach's code fixes (DEC-0005 FIX6, OF-380) |
 | `src/ai_host/code_mode.rs` | src | m | 1 crate-vis | — | MCP `execute_code` on the served vault: the checked-in QuickJS component, run by the engine executor on the… |
 | `src/ai_host/compaction.rs` | src | m | 10 crate-vis | — | Compaction for code mode's runs (agent-runtime-v1 §d7) |
 | `src/ai_host/compaction/chat.rs` | src | s | 7 crate-vis | — | A self agent's chat compaction (FIX 4465 D, Engine D4): the conversation constructor of the shared writer… |
@@ -65,9 +65,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/tests.rs` | test | m | — | — | The host's start-up decisions and one real Dreamer pass on its own trigger, against the local fake model… |
 | `src/ai_host/trained_serving.rs` | src | s | 2 crate-vis | — | Whether this host serves a trained checkpoint its role binds (OF-577, FIX 857) |
 | `src/ai_host/training_offer.rs` | src | m | 2 crate-vis | — | The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads… |
+| `src/ai_host/training_offer/check.rs` | src | s | 1 crate-vis | — | The check of one approved offer's promise against the seat's metered calls: fixed code, no model call |
 | `src/ai_host/training_offer/cost.rs` | src | s | 3 crate-vis | — | Fixed-code projection on the same dated workload, with each tokenizer |
 | `src/ai_host/training_offer/pilot.rs` | src | s | 2 crate-vis | — | Measured per-seat pilot evidence beside the production offer skill's brief |
-| `src/ai_host/training_offer/sources.rs` | src | s | 6 crate-vis | — | The rows a Coach brief or check is gathered from (FIX 5482), ids only |
+| `src/ai_host/training_offer/sources.rs` | src | s | 5 crate-vis | — | The rows a Coach brief or check is gathered from (FIX 5482), ids only |
 | `src/ai_host/training_offer/unverifiable.rs` | src | m | 5 crate-vis | — | The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406, 6475, 6477) |
 | `src/ai_host/training_pack.rs` | src | s | 3 crate-vis | — | An owner-authorized training run on the host (OF-577, OF-552) |
 | `src/ai_host/turn_actions.rs` | src | m | 1 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
@@ -862,11 +863,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/settings.rs` | src | m | 6 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
 | `src/managed/shed.rs` | src | s | 3 crate-vis | — | Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the… |
 | `src/managed/state_serve.rs` | src | XL | 3 struct · 17 fn · 1 type · 1 const · 18 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
+| `src/managed/state_serve/admission.rs` | src | s | 17 crate-vis | — | The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until… |
 | `src/managed/state_serve/boot_keys.rs` | src | s | 3 crate-vis | — | The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its… |
 | `src/managed/state_serve/control.rs` | src | s | 1 fn · 2 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/state_serve/idle_backup.rs` | src | m | 4 crate-vis | — | The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC) |
 | `src/managed/state_serve/read_only.rs` | src | s | 1 crate-vis | — | The reap freeze's whitelist of requests a frozen vault still answers |
-| `src/managed/state_serve/reap.rs` | src | s | 4 fn · 4 crate-vis | — | The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`… |
+| `src/managed/state_serve/reap.rs` | src | s | 4 fn · 6 crate-vis | — | The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`… |
 | `src/managed/state_serve/reap/host_holds.rs` | src | s | 1 crate-vis | — | The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its… |
 | `src/managed/state_serve/relay_delete.rs` | src | s | 3 crate-vis | — | The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`… |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 7 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
@@ -1025,7 +1027,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/seat_login.rs` | src | L | 12 struct · 10 fn | OfficialCliSeatExecutor, OfficialRunnerSeatSettings, OfficialSeatDreamerExecutor, RunnerPolicySeatRow, RunnerPolicySurface, RunnerProviderRow, RunnerSeatDreamerExecutor, RunnerSeatPolicySettings +4 | Host surface for official subscription seats (OF-375) |
 | `src/runtime/secret_destinations.rs` | src | m | 4 struct · 5 fn · 1 const | RunSecretDestinations, SecretDestination, SecretDestinations, ServedSecretDelivery | T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the… |
 | `src/runtime/staged_input.rs` | src | s | 1 struct | WorkdirStager | The host half of a BYOA run's staged job (`oneiron::dispatch_byoa`'s staged input): the job is written whole… |
-| `src/runtime/usage.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | VaultUsage | Trusted-host attribution of served run settlements to one vault |
+| `src/runtime/usage.rs` | src | m | 1 struct · 3 fn · 2 crate-vis | VaultUsage | Trusted-host attribution of served run settlements to one vault |
 | `src/runtime/usage/pricing.rs` | src | s | 3 crate-vis | — | The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that… |
 | `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 6 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
@@ -1041,7 +1043,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/core/usage.rs` | src | s | 2 fn | — | The usage meter the trusted host binds to this vault before work starts |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |
 | `src/server/embedding.rs` | src | m | 7 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
-| `src/server/housekeeping.rs` | src | m | 13 crate-vis | — | The host's half of the engine's housekeeping |
+| `src/server/housekeeping.rs` | src | m | 19 crate-vis | — | The host's half of the engine's housekeeping |
 | `src/server/housekeeping_tests.rs` | test | m | — | — | Done-means for host housekeeping: a running server, its lifecycle loop on a short tick over a vault on a… |
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |
@@ -1069,7 +1071,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/resident_pump/pattern_launch.rs` | src | m | 3 crate-vis | — | A leased agent's own pattern runs, and its planned leader's frozen pack (DOOR-111 S4c-4, S4c-5) |
 | `src/server/run_host_door.rs` | src | m | 5 crate-vis | — | A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own… |
 | `src/server/slip_transport_tests.rs` | test | s | — | — | Slip-only transport admission with a historical receipt-key registry row |
-| `src/server/space_move.rs` | src | m | 5 crate-vis | — | The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`… |
+| `src/server/space_move.rs` | src | m | 6 crate-vis | — | The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`… |
 | `src/server/tagging.rs` | src | s | 3 crate-vis | — | The tagging worker: the one thing that drives the engine's tagging reconciler |
 | `src/server/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/server/wave_door.rs` | src | s | 3 crate-vis | — | The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner… |
@@ -1081,7 +1083,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_credentials.rs` | src | m | 13 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
-| `src/usage/ledger.rs` | src | m | 4 struct · 7 fn · 1 crate-vis | CycleSettlements, SeatUsage, UnpricedCache, UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
+| `src/usage/ledger.rs` | src | m | 4 struct · 7 fn · 2 crate-vis | CycleSettlements, SeatUsage, UnpricedCache, UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
 | `src/usage/limit.rs` | src | s | 2 struct · 4 fn | CachedBudgetLimit, ExchangeRate | A host-pushed limit converts once |
 | `src/usage/mod.rs` | src | s | 5 re-export | — | Provider-list metering and host-pushed vault budget limits |
 | `src/usage/model.rs` | src | m | 10 struct · 4 enum · 9 fn · 3 crate-vis | CacheDimension, Money, UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent +6 | Provider-list money facts and per-vault usage counters |

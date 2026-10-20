@@ -927,6 +927,21 @@ impl Vault {
     /// [`Error::InvalidConfig`] when no move to `candidate` is open, the candidate is still
     /// filling, or a slot it moves was rebound since it began.
     pub fn approve_space_move(&self, candidate: &str) -> Result<()> {
+        self.approve_space_move_admitted(candidate, None)
+    }
+
+    /// [`Self::approve_space_move`] for a candidate whose model runs at a third party behind the
+    /// host's media egress gate `egress` (FIX 6907): a document the gate withholds never fills the
+    /// candidate, so it does not keep the move filling, as in the move's check (FIX 6741).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::approve_space_move`].
+    pub fn approve_space_move_admitted(
+        &self,
+        candidate: &str,
+        egress: Option<&dyn EgressPredicate>,
+    ) -> Result<()> {
         let check = {
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
@@ -935,9 +950,19 @@ impl Vault {
                     "embedding space {candidate} is not declared"
                 )));
             };
+            let gate = egress
+                .map(|egress| MediaEgressGate::read(self, &rtxn, egress))
+                .transpose()?;
             let mut report = super::MediaEmbedReport::default();
             if !self
-                .media_backlog_in_txn(&rtxn, &space, &moving.kinds, 1, &mut report)?
+                .media_backlog_where_in_txn(
+                    &rtxn,
+                    &space,
+                    &moving.kinds,
+                    1,
+                    &mut report,
+                    gate.as_ref(),
+                )?
                 .is_empty()
             {
                 return Err(Error::InvalidConfig(format!(

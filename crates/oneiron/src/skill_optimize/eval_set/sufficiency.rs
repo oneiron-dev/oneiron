@@ -375,6 +375,9 @@ impl Vault {
                     reference: ask.id.to_hex(),
                     weight: 1.0,
                     at,
+                    // The ask keeps no rows its two options were read from,
+                    // and its id is no row (FIX 5761): unknown.
+                    source_rows: None,
                 },
             )
         })
