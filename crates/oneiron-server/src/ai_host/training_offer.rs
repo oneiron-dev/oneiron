@@ -73,14 +73,15 @@ const BUDGET_UNITS: u64 = 1 << 20;
 const REF_BYTES: usize = 256;
 /// What the offer says of its prices, beside the Coach's risk.
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
-    token counts, cached prompt tokens at the input price; the candidate's counts are the \
-    incumbent's scaled by how many tokens each model's tokenizer counts in one fixed passage.";
+    token counts, cached prompt tokens at each model's quoted cache rates, or at its input price \
+    where it quotes none; the candidate's counts are the incumbent's scaled by how many tokens \
+    each model's tokenizer counts in one fixed passage.";
 /// The note instead when the candidate's price is an estimate: a tokenizer
 /// of the two was never measured.
 const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced at list \
-    price on the incumbent's own token counts, cached prompt tokens at the input price, since \
-    the two models' tokenizers were not both measured; the candidate's tokenizer may count the \
-    same work differently.";
+    price on the incumbent's own token counts, cached prompt tokens at its quoted cache rates, or \
+    at its input price where it quotes none, since the two models' tokenizers were not both \
+    measured; the candidate's tokenizer may count the same work differently.";
 /// The offer skill's file the Coach runs; the seat goes as data.
 const SKILL_FILE: &str = "SKILL.md";
 
@@ -286,7 +287,7 @@ impl Brief {
         // models by name, not by row (FIX 5482).
         let mut sources = Sources::new();
         sources.unknown();
-        let baseline_monthly = monthly(current, &workload);
+        let baseline_monthly = monthly(current, &workload, &usage);
         let mut stock: Vec<Choice> = registry
             .iter()
             .filter(|row| row.catalog.model != current.catalog.model)
@@ -300,7 +301,7 @@ impl Brief {
             .filter_map(|row| {
                 let (pin, backend) = pin(row)?;
                 let licence = licence(row)?;
-                let (monthly, estimate) = candidate_monthly(current, row, &workload);
+                let (monthly, estimate) = candidate_monthly(current, row, &workload, &usage);
                 let label = format!("switch to {}", row.catalog.model.as_str());
                 Some(Choice {
                     id: String::new(),

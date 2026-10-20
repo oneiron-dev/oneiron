@@ -1,7 +1,8 @@
 //! The server's own voice loop at serve start (OF-410). `[models.voice]`'s
 //! `socket` names a private socket below the owner-only runtime directory;
-//! the sibling that carries the call's audio connects there, one call at a
-//! time, and a second connection waits for the first to end.
+//! the sibling that carries a call's audio connects there, one connection a
+//! call, and each call is served on a task of its own beside any other in
+//! flight: a second connection never waits for the first to end.
 //!
 //! A call opens with `hello{token, binding, sample_rate, channels}`: the
 //! owner's capability slip and a fresh transport binding proof, admitted by
@@ -59,7 +60,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinError, JoinHandle, JoinSet};
 
 use super::backend::CallBackend;
 use super::hello_refusal::{Refusal, refuse, refused};
@@ -204,14 +205,20 @@ impl VoiceBoot {
         Some(Self { shutdown, task })
     }
 
-    /// Stops admission, ends the call in flight through its usual teardown
-    /// and removes the socket.
+    /// Stops accepting, ends every call in flight through its usual
+    /// teardown, waits for each, then removes the socket.
     pub(crate) async fn stop(self) {
         self.shutdown.trigger();
         let _ = self.task.await;
     }
 }
 
+/// The listener: each connection it accepts is served as a call of its own
+/// ([`call`]), a task of the loop's own set, so no call waits for another to
+/// end. A call that ends, by an error or a panic among them, is logged and
+/// reaped as the loop goes; it stops neither the listener nor any other call.
+/// On the stop the loop accepts no more, every call ends through its usual
+/// teardown on the same stop, and the socket is removed once all have.
 async fn accept(
     server: Arc<SyncServer>,
     settings: VoiceSettings,
@@ -220,11 +227,20 @@ async fn accept(
     listener: tokio::net::UnixListener,
     shutdown: ManagedShutdown,
 ) {
-    // The guard removes the socket once the loop ends.
+    // The guard removes the socket once the listener and every call have
+    // ended.
     let _guard = guard;
+    let settings = Arc::new(settings);
+    let mut calls = JoinSet::new();
+    let mut stopping = shutdown.triggered();
     loop {
         let stream = tokio::select! {
-            () = shutdown.triggered() => break,
+            biased;
+            () = &mut stopping => break,
+            Some(ended) = calls.join_next(), if !calls.is_empty() => {
+                call_ended(ended);
+                continue;
+            }
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => stream,
                 Err(error) => {
@@ -233,9 +249,28 @@ async fn accept(
                 }
             },
         };
-        // One call at a time: the next connection waits in the backlog.
-        if let Err(error) = call(&server, &settings, &doors, stream, &shutdown).await {
-            tracing::warn!(%error, "voice: call ended");
+        let (server, settings, doors, shutdown) = (
+            Arc::clone(&server),
+            Arc::clone(&settings),
+            doors.clone(),
+            shutdown.clone(),
+        );
+        calls.spawn(async move { call(&server, &settings, &doors, stream, &shutdown).await });
+    }
+    // No connection is taken after the stop; each call saw the same stop.
+    drop(listener);
+    while let Some(ended) = calls.join_next().await {
+        call_ended(ended);
+    }
+}
+
+/// Logs how one call's task ended: its own error, or its panic.
+fn call_ended(ended: Result<io::Result<()>, JoinError>) {
+    match ended {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "voice: call ended"),
+        Err(error) => {
+            tracing::error!(%error, panicked = error.is_panic(), "voice: call task failed");
         }
     }
 }
@@ -246,7 +281,8 @@ fn failed(reason: impl std::fmt::Display) -> io::Error {
 
 /// One call: hello, admission, the call's host and bindings, then serving
 /// until the sibling hangs up or the server stops. A hello refused before
-/// the call is admitted is answered with its `refused` line, then closed.
+/// the call is admitted is answered with its `refused` line, then closed; a
+/// stop that comes before the hello is read answers it `unavailable`.
 async fn call(
     server: &Arc<SyncServer>,
     settings: &VoiceSettings,
@@ -320,9 +356,15 @@ async fn open(
         channels,
         room,
         roster,
-    } = tokio::time::timeout(HELLO_TIMEOUT, hello(stream))
-        .await
-        .map_err(|_| refused(Refusal::NoHello))??;
+    } = tokio::select! {
+        // The stop is looked at first: a connection accepted as the server
+        // stops, or still silent when it does, takes no hello after it.
+        biased;
+        () = shutdown.triggered() => return Err(failed("the server is stopping")),
+        read = tokio::time::timeout(HELLO_TIMEOUT, hello(stream)) => {
+            read.map_err(|_| refused(Refusal::NoHello))??
+        }
+    };
     let vault = server.vault();
     let (auth, device) = match (
         token,
