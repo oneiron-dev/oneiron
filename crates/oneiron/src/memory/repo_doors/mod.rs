@@ -197,15 +197,18 @@ pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
 pub(crate) const NO_PATHS: [&str; 0] = [];
 
 /// The act on `repo` at `git_ref` reading or changing `paths`.
-pub(crate) fn repo_target(
+pub(crate) fn repo_target<S: AsRef<str>>(
     repo: EntityId,
     git_ref: &str,
-    paths: impl IntoIterator<Item = &str>,
+    paths: impl IntoIterator<Item = S>,
 ) -> RepoTarget {
     RepoTarget {
         repo,
         git_ref: git_ref.to_owned(),
-        paths: paths.into_iter().map(str::to_owned).collect(),
+        paths: paths
+            .into_iter()
+            .map(|path| path.as_ref().to_owned())
+            .collect(),
     }
 }
 

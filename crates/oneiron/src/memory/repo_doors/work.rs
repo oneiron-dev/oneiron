@@ -145,12 +145,12 @@ impl Vault {
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
-    pub(crate) fn admitted_repo_work_in_txn(
+    pub(crate) fn admitted_repo_work_in_txn<S: AsRef<str>>(
         &self,
         txn: &heed::RoTxn<'_>,
         binding: &RepoRunBinding,
         work: EntityId,
-        paths: impl IntoIterator<Item = &str>,
+        paths: impl IntoIterator<Item = S>,
     ) -> Result<std::result::Result<RepoOwnWork, RepoAccessRefusal>> {
         let Some((receipt, stamp)) = view_receipt_in_txn(self, txn, work)?
             .and_then(|receipt| receipt.run.clone().map(|stamp| (receipt, stamp)))
