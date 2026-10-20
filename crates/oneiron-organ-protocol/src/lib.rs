@@ -12,7 +12,10 @@
 //! - `frame`: framing and descriptor passing (Unix).
 //! - `region`: sealed read-only regions (Unix).
 //! - `runtime`: the organ side, [`serve`] and the [`Organ`] trait (Unix).
+//! - [`seal`]: the seal organ's revision classification, which its verdicts
+//!   carry to the engine.
 
+pub mod seal;
 pub mod wire;
 
 #[cfg(unix)]
@@ -28,8 +31,8 @@ pub mod spin;
 
 #[cfg(unix)]
 pub use frame::{
-    FrameError, recv_frame, recv_frame_polled, recv_frame_polled_len, recv_frame_until, send_frame,
-    send_frame_if, send_frame_until,
+    FrameError, recv_frame, recv_frame_polled, recv_frame_polled_len, recv_frame_polled_reserved,
+    recv_frame_until, send_frame, send_frame_if, send_frame_until,
 };
 #[cfg(unix)]
 pub use region::{MappedRegion, SharedRegion};
