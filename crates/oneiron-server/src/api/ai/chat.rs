@@ -475,9 +475,20 @@ fn start_turn(
         .collect();
     // OF-490: the answering agent is shown its own craft after its
     // instructions, read on one snapshot; the reply's receipt keeps the
-    // exact pack once the reply is saved. A turn runs on no attempt.
+    // exact pack once the reply is saved. A turn runs on no attempt. Only
+    // the notes the caller's own read admits are shown (SCAN C009), read
+    // through the handle its self-chat log reads through.
     let craft = crate::server::blocking(|| {
-        crate::ai_host::resident_craft::snapshot_craft(&vault, &agent, vault.now_recorded_at())
+        let reader = match auth.principal_ref() {
+            Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
+            None => vault.memory(actor, class),
+        };
+        crate::ai_host::resident_craft::snapshot_craft_scoped(
+            &vault,
+            &reader,
+            &agent,
+            vault.now_recorded_at(),
+        )
     })
     .map(|craft| {
         crate::ai_host::resident_craft::join_craft(&mut messages, craft.message);

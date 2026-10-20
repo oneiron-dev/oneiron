@@ -22,9 +22,11 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 
 mod door;
+mod egress;
 mod ladder;
 
 pub use door::{WebCrawlRequest, WebFetchRequest};
+pub use egress::{HOSTED_INFRASTRUCTURE_REASON, HostedEgressGuard, HostedInfrastructureRefusal};
 mod render;
 
 use self::ladder::{CrawlWalk, FetchResultWire, crawl_failure_reason, require_renderer_slot};
@@ -304,6 +306,15 @@ pub enum WebFetchError {
         url: String,
         attempts: Vec<RendererAttemptFailure>,
     },
+
+    /// A managed (hosted) node's fetcher refused a destination that resolves
+    /// to the infrastructure it runs on (SCAN C447), before any rung ran. The
+    /// message names [`HOSTED_INFRASTRUCTURE_REASON`]; the reported URL is
+    /// credential-redacted.
+    #[error(
+        "web fetch refused (hosted_infrastructure): on a hosted node, {url} resolves to the hosting infrastructure (loopback, link-local, this node's own address or a cloud metadata endpoint); a self-hosted node fetches it"
+    )]
+    HostedInfrastructure { url: String },
 }
 
 pub type WebFetchResult<T> = std::result::Result<T, WebFetchError>;
@@ -687,6 +698,8 @@ pub struct WebFetcher {
     headless: Option<Arc<dyn Renderer>>,
     firecrawl: Option<Arc<dyn Renderer>>,
     minimum_content: MinExtractedContentBytes,
+    /// A managed node's egress guard (SCAN C447); `None` on a self-hosted one.
+    egress: Option<Arc<HostedEgressGuard>>,
 }
 
 impl WebFetcher {
@@ -703,6 +716,7 @@ impl WebFetcher {
             headless: None,
             firecrawl: None,
             minimum_content: MinExtractedContentBytes::default(),
+            egress: None,
         })
     }
 

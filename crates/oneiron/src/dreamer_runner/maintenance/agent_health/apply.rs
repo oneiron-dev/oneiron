@@ -289,6 +289,8 @@ impl Vault {
             }
             card.updated_at = now;
             CARDS.put(&self.store, txn, key, &card)?;
+            // A touched card can arm the digest on its own (FIX 1979).
+            crate::batch::queue_proactivity_change(self, txn);
             Ok(application)
         })
     }
@@ -375,6 +377,8 @@ impl Vault {
             }
             card.updated_at = now;
             CARDS.put(&self.store, txn, key, &card)?;
+            // A touched card can arm the digest on its own (FIX 1979).
+            crate::batch::queue_proactivity_change(self, txn);
             Ok(settled)
         })?;
         // A gate that failed without ruling (no judge registered, a failed
@@ -468,6 +472,8 @@ impl Vault {
             if !applied.replayed {
                 card.updated_at = now;
                 CARDS.put(&self.store, txn, &key, &card)?;
+                // A touched card can arm the digest on its own (FIX 1979).
+                crate::batch::queue_proactivity_change(self, txn);
             }
             Ok(applied)
         })?;

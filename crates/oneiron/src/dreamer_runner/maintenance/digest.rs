@@ -396,17 +396,28 @@ impl Vault {
         if self.store.proactivity_digest_suspended() {
             return Ok(None);
         }
+        let cadence_at = state
+            .last_regular
+            .map_or(0, |last| last.saturating_add(cadence.period_secs));
         if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty()
             && unseen_offers(&offers, &state).is_empty()
             && unseen_cleanup(self, &txn, &state)?.is_none()
             && unseen_note_tombstones(self, &txn, &state)?.is_none()
             && after_notice::unseen_in_txn(self, &txn, &state.applied_seen)?.is_none()
         {
-            return Ok(None);
+            // Health cards alone arm it too (FIX 1979). A card touched since
+            // the last regular digest joins the first digest whose period
+            // `[from, at)` holds it, so one touched at the deadline or later
+            // arms a second past its time, never an empty deadline that
+            // repeats.
+            let from = state.last_regular.unwrap_or(0);
+            return Ok(super::agent_health::agent_health_cards_in_txn(self, &txn)?
+                .iter()
+                .filter_map(|card| super::agent_health::card_touched_in(card, from, u64::MAX))
+                .min()
+                .map(|at| cadence_at.max(at.saturating_add(1))));
         }
-        Ok(Some(state.last_regular.map_or(0, |last| {
-            last.saturating_add(cadence.period_secs)
-        })))
+        Ok(Some(cadence_at))
     }
 
     /// The deadline source calls this on a timer wake. No owner credential is
@@ -458,9 +469,6 @@ impl Vault {
     ) -> Result<Option<ProactivityDigest>> {
         let authority = self.dreamer_authority()?.entity_ref();
         let pending_offers = crate::skill_optimize::pending_training_offers(self)?;
-        // Read before the write, as the offers are; the period's start is
-        // known once the state is.
-        let cards = self.agent_health_cards_between(0, now)?;
         self.with_write_txn_grouped(|txn| {
             let recipient = owner
                 .map(|owner| super::validate_owner_in_txn(self, txn, owner))
@@ -552,16 +560,14 @@ impl Vault {
             } else {
                 None
             };
-            // So do the health cards: each one touched in the period.
+            // So do the health cards: each one opened, updated or settled in
+            // the period `[from, now)`, read in this write's own snapshot by
+            // the test the public period reader keeps (FIX 1979).
             let health_cards: Vec<_> = if due {
                 let from = state.last_regular.unwrap_or(0);
-                cards
+                super::agent_health::agent_health_cards_in_txn(self, &*txn)?
                     .iter()
-                    .filter(|card| {
-                        card.opened_at >= from
-                            || card.updated_at >= from
-                            || card.outcome_at.is_some_and(|at| at >= from)
-                    })
+                    .filter(|card| super::agent_health::card_touched_in(card, from, now).is_some())
                     .map(super::agent_health::ConcernCardSummary::of)
                     .collect()
             } else {
@@ -574,6 +580,7 @@ impl Vault {
                 && cleanup.is_none()
                 && note_tombstones.is_none()
                 && applied.is_none()
+                && health_cards.is_empty()
             {
                 return Ok(None);
             }
@@ -716,13 +723,15 @@ impl Vault {
                     },
                 )?;
             }
-            // The vault state and board pointer follow the shared proposals;
-            // an asks-only digest is the recipient's and moves only its mark.
+            // The vault state and board pointer follow the shared news, health
+            // cards included; an asks-only digest is the recipient's and
+            // moves only its mark.
             if !digest.groups.is_empty()
                 || !digest.offers.is_empty()
                 || digest.cleanup.is_some()
                 || digest.note_tombstones.is_some()
                 || digest.applied.is_some()
+                || !digest.health_cards.is_empty()
             {
                 if due {
                     state.last_regular = Some(now);
