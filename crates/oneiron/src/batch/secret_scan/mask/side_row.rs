@@ -454,7 +454,8 @@ fn admitted(
         return refusal.map_or(Ok(None), Err);
     };
     let at = crate::ports::recorded_at_in_txn(custody.store, wtxn)?;
-    seed.0.adopt(plan.mint(&custody, wtxn, at)?.map(|(handle, _)| handle));
+    seed.0
+        .adopt(plan.mint(&custody, wtxn, at)?.map(|(handle, _)| handle));
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,
