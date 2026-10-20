@@ -171,6 +171,13 @@ pub(crate) fn read_watermark_in_txn(
 /// Call ONLY after the round's attempts are enqueued+committed — a crash
 /// before this re-scans, and idempotency rides the enqueue dedupe keys
 /// (dedupe, never a lock).
+///
+/// Every deferred temporal entry the cursor passes on its way (a TURN whose
+/// tagged MESSAGE is away from this replica, OF-534) is parked on the
+/// carrier first, in the same commit, as the in-transaction settlement
+/// parks it (FIX 3862): the first round after a promotion brings the row
+/// back takes it. When the passed turns cannot be read, that is logged and
+/// the cursor still moves, parking nothing, as it always did.
 pub fn advance_watermark(
     vault: &Vault,
     scope: DreamerConsolidationScope,
@@ -178,6 +185,23 @@ pub fn advance_watermark(
     queued: &[WorkingSetTurn],
 ) -> Result<()> {
     let mut wtxn = vault.store.env.write_txn()?;
+    let passed = read_watermark_in_txn(vault, &wtxn, scope).and_then(|current| {
+        enumerate_admissible_turns(
+            vault,
+            &wtxn,
+            scope,
+            &current,
+            Some(last_learned_at),
+            usize::MAX,
+        )
+    });
+    match passed {
+        Ok(passed) => park_deferred_in_txn(vault, &mut wtxn, &passed)?,
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "the turns a watermark advance passes were not read; none of them is parked"
+        ),
+    }
     write_watermark_position_in_txn(vault, &mut wtxn, scope, last_learned_at, None)?;
     super::redirty::consume_carriers_in_txn(
         vault,
