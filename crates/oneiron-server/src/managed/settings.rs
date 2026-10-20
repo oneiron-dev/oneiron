@@ -29,6 +29,7 @@ use crate::config::merge::{settings_schema_keys, settle_managed_settings};
 use crate::config::{EmbedderProvider, KeystoreBackend, ServeArgs, ServeConfig};
 
 use super::args::{ManagedArgs, ManagedError, SettingsRefusal};
+use super::listener::init_managed_tracing;
 
 /// The reason token of the notice that the owner's voice settings name no
 /// socket to listen on (FIX 5017).
@@ -56,6 +57,26 @@ pub(super) struct Settled {
     /// itself: the vault serves on without one, the facility named missing
     /// in its readiness (WILL-PLAN L14 row 17).
     pub(super) keystore_unbound: bool,
+}
+
+/// The configuration a managed start serves on: the one argv builds
+/// ([`ManagedArgs::serve_config`]), with the owner's settings file read and
+/// refused ([`prepare`]) and settled over it ([`settle`]), tracing started
+/// between the two.
+pub(super) fn configure(
+    args: &ServeArgs,
+    managed: &ManagedArgs,
+) -> anyhow::Result<(ServeConfig, Settled)> {
+    let mut config = managed.serve_config(args);
+    // The owner's settings file, refused leaf by leaf and settled once,
+    // before anything reads the configuration: its `[oneironer]` arms the
+    // write-time marker in `vault_config` below. Tracing starts between its
+    // refusal and its settling, at the level the settled configuration runs
+    // at (argv over the file), so what settling decides is logged.
+    let settings = prepare(managed, args, &mut config)?;
+    init_managed_tracing(log_level(settings.as_ref(), &config));
+    let settled = settle(settings, &mut config)?;
+    Ok((config, settled))
 }
 
 /// The log level the settled configuration runs at: the settings file's,
