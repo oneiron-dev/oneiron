@@ -233,7 +233,7 @@ pub fn verify_with_pins(evidence: &BackupEvidence, pins: &[CheckpointSigner]) ->
             "key header",
         ),
     ];
-    match checks.iter().find(|(holds, _)| !holds) {
+    match checks.into_iter().find(|(holds, _)| !holds) {
         Some((_, field)) => Err(Error::BackupCommitmentMismatch(field)),
         None => Ok(()),
     }

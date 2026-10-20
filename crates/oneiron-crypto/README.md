@@ -235,6 +235,34 @@ A checkpoint reference is parsed and bounded but never verifies in v1
 (`Error::CheckpointRefUnverified`): it needs a separately verified checkpoint and the
 Merkle tree rules, which are E4's.
 
+## Sealed artifact clear codec (`backup`)
+
+The engine's sealed checkpoints and backups (`ONEIRONS` files) are written by the engine;
+their clear parts are read here, once, so a host that never opens a vault reads them with
+the engine's own codec: the prelude, the key header's wire DTOs, the signed commitment and
+its digest (BLAKE3 of its exact bytes), and the dual Ed25519 + SLH-DSA-SHA2-256s check
+against a signer the reader pins.
+
+```
+v2 prelude (112 bytes)  "ONEIRONS" | u16 2 | kind u8 | engine vault id[32]
+                        | has_registry u8 | binding[32] | snapshot[32] | key header len u32
+v1 prelude (79 bytes)   as v2 without has_registry and binding (read only, never written)
+binding                 BLAKE3-derive_key("oneiron/backup-registry-binding/v1",
+                        engine vault id || u32 registry id length || registry id);
+                        absent = 0 | zero[32]
+then                    key header | ONEV frames (u32 len each) | manifest frame
+                        | u32 len | commitment | u32 len | signature record | u64 manifest offset
+```
+
+`inspect_backup` reads one artifact once from a `Read` (no seek, no whole-file buffer),
+hashing every byte (`outer_blake3`) and counting its size, each ONEV frame read through
+`Header::parse_prefix`. `verify_with_pins` checks that evidence against pinned signers and
+that the signed commitment says what the clear parts say (in v2: the binding, the key
+header's commitment and BLAKE3; the custody position is signed too). `inspect_backup_prefix`
+reads whose artifact a file is from its first bytes and never refuses a short partial. None
+of it opens a frame or proves the image; the binding attributes, only the signature
+authenticates.
+
 ## Tests
 
 - `tests/kat.rs`: published vectors against the pinned crates. ML-KEM-1024 and
