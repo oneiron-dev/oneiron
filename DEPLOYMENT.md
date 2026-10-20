@@ -68,13 +68,19 @@ withdrawals and scope changes, written whatever the learning state) and
 removes). An uploader ships `offers/` and `controls/` and writes `receipts/`;
 the file formats are `oneiron_vault_contract::conversation_training`. Offers
 are sealed to the intake's public key in `intake-recipient.v1` in the outbox
-directory, and receipts are checked against the Ed25519 key in
-`intake-receipt-key.v1`. With no recipient key the vault writes no offer and
+directory, and receipts are checked against the Ed25519 keys in
+`intake-receipt-key.v1`: the current key's 32 raw bytes, then, while a rotation
+drains, the previous key's. With no recipient key the vault writes no offer and
 logs offers as unavailable, naming the missing file, while withdrawals still
-flow; with no receipt key it applies no receipt. A self-hosted vault also needs
-its account binding to the intake (the device-code registration), which this
-build does not have, so a self-hosted outbox writes withdrawals only for now.
-Without the flag no outbox runs and nothing is shared.
+flow; with no receipt key it applies no receipt. A self-hosted vault writes
+offers only with `--publisher-training-self-host-shipper` as well, which is off
+by default: its offers go to the anonymous training window, with no account.
+The vault then fetches the intake's public descriptor from `https://oneiron.dev`
+(`--publisher-training-intake-origin` names another HTTPS origin) at start and
+hourly, writes both key files from it, and keeps the last pair through a failed
+fetch. This build does not upload those offers yet. Without the shipper flag a
+self-hosted outbox writes withdrawals only. Without the outbox flag no outbox
+runs and nothing is shared.
 
 ## Config
 

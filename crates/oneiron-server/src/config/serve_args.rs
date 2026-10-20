@@ -266,6 +266,19 @@ pub struct ServeArgs {
     #[arg(long = "publisher-training-outbox-dir")]
     pub publisher_training_outbox_dir: Option<PathBuf>,
 
+    /// Plain serve: the self-host training shipper (TL-6), off without it.
+    /// With `--publisher-training-outbox-dir`, the vault fetches the intake's
+    /// public descriptor at start and hourly, installs its keys in the
+    /// outbox and writes offers for the anonymous training window. Managed
+    /// serve reads it and leaves it inactive: the supervisor ships there.
+    #[arg(long = "publisher-training-self-host-shipper")]
+    pub publisher_training_self_host_shipper: bool,
+
+    /// The intake the self-host shipper reaches: an HTTPS origin (HTTP only
+    /// on loopback), `https://oneiron.dev` without it.
+    #[arg(long = "publisher-training-intake-origin")]
+    pub publisher_training_intake_origin: Option<String>,
+
     /// Managed mode: the browser guest's container CLI, an absolute path on
     /// the vault's own host or root filesystem, which the supervisor binds.
     /// It stands as `[browser] runtime` when the settings file has a
@@ -580,6 +593,14 @@ impl fmt::Debug for ServeArgs {
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
+            )
+            .field(
+                "publisher_training_self_host_shipper",
+                &self.publisher_training_self_host_shipper,
+            )
+            .field(
+                "publisher_training_intake_origin",
+                &self.publisher_training_intake_origin,
             )
             .field("browser_runtime", &self.browser_runtime)
             .field("desktop_runtime", &self.desktop_runtime)

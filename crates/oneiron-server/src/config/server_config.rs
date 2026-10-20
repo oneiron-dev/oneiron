@@ -412,6 +412,14 @@ pub struct ServeConfig {
     /// training outbox writes offers and withdrawals and reads the intake's
     /// receipts (OF-420). Unset, no outbox worker runs.
     pub publisher_training_outbox_dir: Option<PathBuf>,
+    /// `--publisher-training-self-host-shipper`, argv only: plain serve's
+    /// self-host training shipper (TL-6), off by default. It rides the
+    /// outbox; without one it warns once and stays inactive. Managed serve
+    /// leaves it off whatever argv says: the supervisor ships there.
+    pub publisher_training_self_host_shipper: bool,
+    /// `--publisher-training-intake-origin`, argv only: the intake the
+    /// self-host shipper reaches, `https://oneiron.dev` by default.
+    pub publisher_training_intake_origin: String,
 }
 
 impl Default for ServeConfig {
@@ -488,6 +496,9 @@ impl Default for ServeConfig {
             device_class: vault.machine_device_class,
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,
+            publisher_training_self_host_shipper: false,
+            publisher_training_intake_origin: crate::conversation_training::DEFAULT_INTAKE_ORIGIN
+                .to_owned(),
         }
     }
 }
@@ -572,6 +583,14 @@ impl fmt::Debug for ServeConfig {
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
+            )
+            .field(
+                "publisher_training_self_host_shipper",
+                &self.publisher_training_self_host_shipper,
+            )
+            .field(
+                "publisher_training_intake_origin",
+                &self.publisher_training_intake_origin,
             )
             .finish()
     }

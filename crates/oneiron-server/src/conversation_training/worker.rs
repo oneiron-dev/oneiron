@@ -9,6 +9,11 @@
 //! without admission still writes every control the vault already holds,
 //! records nothing, and leaves recording them to the next admitted tick, so
 //! what reaches `controls/` stays shippable from a cold vault.
+//!
+//! On a self-hosted vault with its shipper on, each tick first gives the
+//! intake's descriptor (`descriptor`) its turn, admitted or not: when one is
+//! due it is fetched with no lock held and installed under the outbox's
+//! lock, before the tick reads the keys.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,15 +22,18 @@ use std::time::Instant;
 use crate::feedback_redaction::OneironerFilter;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
+use super::descriptor::Descriptor;
 use super::outbox::Outbox;
 use super::{OFFER_POLL, POLL, Placement, intake_receipt_key, offer_gate};
 
-/// Starts the outbox on `dir`.
-pub(crate) fn spawn(
+/// Starts the outbox on `dir`, with the self-host shipper's `descriptor`
+/// when the shipper is on.
+pub(super) fn spawn(
     server: Arc<SyncServer>,
     admit: HousekeepingAdmission,
     dir: PathBuf,
     placement: Placement,
+    descriptor: Option<Arc<Descriptor>>,
 ) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(&server);
     drop(server);
@@ -47,10 +55,18 @@ pub(crate) fn spawn(
                 last_offers = Some(Instant::now());
             }
             let dir = Arc::clone(&dir);
+            let descriptor = descriptor.clone();
             let ran = tokio::task::spawn_blocking(move || {
                 let admitted = pass.is_some();
                 let _pass = pass;
-                tick(&server, &dir, placement, admitted, offers_due)
+                tick(
+                    &server,
+                    &dir,
+                    placement,
+                    descriptor.as_deref(),
+                    admitted,
+                    offers_due,
+                )
             })
             .await;
             match ran {
@@ -65,14 +81,19 @@ pub(crate) fn spawn(
     })
 }
 
-/// One tick.
+/// One tick, with the self-host shipper's `descriptor` when the shipper is
+/// on.
 fn tick(
     server: &SyncServer,
     dir: &Path,
     placement: Placement,
+    descriptor: Option<&Descriptor>,
     admitted: bool,
     offers_due: bool,
 ) -> anyhow::Result<()> {
+    if let Some(descriptor) = descriptor {
+        descriptor.upkeep(dir);
+    }
     let Some(outbox) = Outbox::open(dir)? else {
         return Ok(());
     };
@@ -108,7 +129,7 @@ fn tick(
     if !offers_due {
         return Ok(());
     }
-    let intake = match offer_gate(dir, placement) {
+    let intake = match offer_gate(dir, placement, descriptor.is_some()) {
         Ok(intake) => intake,
         Err(reason) => {
             tracing::info!(
