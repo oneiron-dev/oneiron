@@ -21699,7 +21699,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 12,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 6,
       "fn": 12,
       "re-export": 3,
@@ -21843,7 +21843,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 29,
+      "const": 30,
       "crate-vis": 9,
       "fn": 14,
       "trait": 1
@@ -21966,7 +21966,7 @@
      "path": "src/dreamer_runner/maintenance/curator.rs",
      "purpose": "Curator grading data and minimum-force findings",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -21979,7 +21979,8 @@
      "path": "src/dreamer_runner/maintenance/curator/approved.rs",
      "purpose": "A curator rung the owner approved (FIX 3223)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -22191,10 +22192,10 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1,
       "mod": 18,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -22292,7 +22293,7 @@
      "path": "src/dreamer_runner/maintenance/representation/proposal.rs",
      "purpose": "Pre-materialized author seam and durable maintenance execution",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 2,
       "trait": 1
