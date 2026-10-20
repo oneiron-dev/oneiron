@@ -863,11 +863,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/settings.rs` | src | m | 6 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
 | `src/managed/shed.rs` | src | s | 3 crate-vis | — | Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the… |
 | `src/managed/state_serve.rs` | src | XL | 3 struct · 17 fn · 1 type · 1 const · 18 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
+| `src/managed/state_serve/admission.rs` | src | s | 17 crate-vis | — | The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until… |
 | `src/managed/state_serve/boot_keys.rs` | src | s | 3 crate-vis | — | The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its… |
 | `src/managed/state_serve/control.rs` | src | s | 1 fn · 2 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/state_serve/idle_backup.rs` | src | m | 4 crate-vis | — | The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC) |
 | `src/managed/state_serve/read_only.rs` | src | s | 1 crate-vis | — | The reap freeze's whitelist of requests a frozen vault still answers |
-| `src/managed/state_serve/reap.rs` | src | s | 4 fn · 4 crate-vis | — | The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`… |
+| `src/managed/state_serve/reap.rs` | src | s | 4 fn · 6 crate-vis | — | The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`… |
 | `src/managed/state_serve/reap/host_holds.rs` | src | s | 1 crate-vis | — | The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its… |
 | `src/managed/state_serve/relay_delete.rs` | src | s | 3 crate-vis | — | The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`… |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 7 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
@@ -1042,7 +1043,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/core/usage.rs` | src | s | 2 fn | — | The usage meter the trusted host binds to this vault before work starts |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |
 | `src/server/embedding.rs` | src | m | 7 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
-| `src/server/housekeeping.rs` | src | m | 13 crate-vis | — | The host's half of the engine's housekeeping |
+| `src/server/housekeeping.rs` | src | m | 19 crate-vis | — | The host's half of the engine's housekeeping |
 | `src/server/housekeeping_tests.rs` | test | m | — | — | Done-means for host housekeeping: a running server, its lifecycle loop on a short tick over a vault on a… |
 | `src/server/leases.rs` | src | s | 10 crate-vis | — | Receipt-attestation registry: historical device keys, revocation and mirroring |
 | `src/server/lifecycle.rs` | src | m | 15 crate-vis | — | Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and the engine's housekeeping pass |

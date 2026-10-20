@@ -88130,6 +88130,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/state_serve/admission.rs",
+     "purpose": "The reap freeze's write admission (FIX 6902): what a served write and a background pass take, held until…",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/state_serve/boot_keys.rs",
      "purpose": "The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its…",
      "surface": {
@@ -88174,7 +88184,7 @@
      "path": "src/managed/state_serve/reap.rs",
      "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 4
      }
     },
@@ -90206,7 +90216,7 @@
      "path": "src/server/housekeeping.rs",
      "purpose": "The host's half of the engine's housekeeping",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 19
      }
     },
     {
@@ -91664,7 +91674,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 60,
+     "files": 61,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91820,7 +91830,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 960,
+   "source_files": 961,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -96231,6 +96241,7 @@
       "IdleBackupFailure",
       "IdleBackupState",
       "IdleBackupWire",
+      "IdleReapInFlight",
       "IdleReapWire"
      ],
      "path": "src/lib/managed_backup/idle_reap.rs",
@@ -96239,7 +96250,7 @@
       "const": 2,
       "enum": 2,
       "fn": 5,
-      "struct": 3
+      "struct": 4
      }
     },
     {
