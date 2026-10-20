@@ -525,8 +525,8 @@ fn scoped_draft(
     if let Some(rel) = body.rel {
         candidate = candidate.with_relationship(rel);
     }
-    if let Some(scope) = &body.scope {
-        candidate = candidate.with_scope(scope.clone());
+    if let Some(scope) = crate::claim::without_initial_weight(body.scope.clone()) {
+        candidate = candidate.with_scope(scope);
     }
     Ok((candidate.with_evidence_taint(meet)?, meet))
 }

@@ -85,6 +85,9 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
         return Err(binding_error());
     }
     let mut next = prior.clone();
+    // A successor is born at the ClaimOf weight its edge carries over, never
+    // at an initial weight its predecessor was born with.
+    next.scope = crate::claim::without_initial_weight(next.scope.take());
     match succession {
         ClaimSuccession::Weakening { confidence } => {
             if !matches!(
