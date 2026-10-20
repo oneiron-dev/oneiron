@@ -548,7 +548,13 @@ fn start_turn(
     // FIX 6794: the board rides after the stable history, right before the
     // newest User (FIX 6676's layout); a role that does not admit it with
     // the board admits the turn as it was.
+    // The board goes in at the latest user message's place: with no craft,
+    // it opens the turn's context.
+    let board_at = messages
+        .iter()
+        .rposition(|message| message.role == LlmMessageRole::User);
     let (admitted, recalled) = recall::admit(&server.ai, &vault, &seat, messages, board);
+    let turn_context = turn_context.or(board_at.filter(|_| recalled));
     let mut admitted = admitted.map_err(|refusal| match refusal {
         RoleRefusal::NoSeat => refused(
             StatusCode::SERVICE_UNAVAILABLE,
