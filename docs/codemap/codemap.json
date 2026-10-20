@@ -69308,7 +69308,17 @@
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/websocket.rs",
+     "purpose": "CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69334,7 +69344,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/driver.rs",
-     "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
+     "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref",
      "surface": {
       "crate-vis": 25
      }
@@ -69360,6 +69370,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/lightpanda.rs",
+     "purpose": "Where a Lightpanda guest differs from a Chromium one (FIX 6680, BROWSER-SPLIT), on Lightpanda 1.0.0's CDP…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69379,7 +69399,7 @@
      "purpose": "The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt…",
      "surface": {
       "enum": 1,
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -69570,7 +69590,7 @@
       "BrowserSession"
      ],
      "path": "src/session.rs",
-     "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
+     "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…",
      "surface": {
       "crate-vis": 3,
       "fn": 23,
@@ -69594,10 +69614,10 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…"
     },
     "desktop": {
@@ -69608,11 +69628,11 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
-     "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
+     "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref"
     },
     "engine": {
      "files": 1,
@@ -69675,12 +69695,12 @@
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…"
+     "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…"
     }
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 18,
+   "source_files": 20,
    "test_files": 0
   },
   "oneiron-code-check": {

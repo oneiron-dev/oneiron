@@ -13,13 +13,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/answer.rs` | src | s | 4 struct · 1 enum · 2 fn | BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause | What the run's door adds to a guest's answer (CUA-001): the record of a person's takeover that ended, and… |
 | `src/capture.rs` | src | s | 8 crate-vis | — | Repeat screenshots (AB-004) |
-| `src/cdp.rs` | src | m | 10 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
+| `src/cdp.rs` | src | m | 11 crate-vis | — | The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL… |
+| `src/cdp/websocket.rs` | src | m | 1 crate-vis | — | CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT) |
 | `src/desktop.rs` | src | XL | 3 struct · 2 enum · 16 fn | AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
-| `src/driver.rs` | src | XL | 25 crate-vis | — | The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref |
+| `src/driver.rs` | src | XL | 25 crate-vis | — | The CDP driver: one page in a browser guest, read as an outline and acted on by ref |
 | `src/driver/change.rs` | src | s | 8 crate-vis | — | The change check (FIX 6680, BROWSER-SPLIT) |
 | `src/driver/handles.rs` | src | m | 7 crate-vis | — | Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows |
+| `src/driver/lightpanda.rs` | src | s | 5 crate-vis | — | Where a Lightpanda guest differs from a Chromium one (FIX 6680, BROWSER-SPLIT), on Lightpanda 1.0.0's CDP… |
 | `src/driver/pages.rs` | src | m | 25 crate-vis | — | The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last… |
-| `src/engine.rs` | src | s | 1 enum · 1 fn | BrowserEngine | The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt… |
+| `src/engine.rs` | src | s | 1 enum · 3 fn | BrowserEngine | The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt… |
 | `src/fact.rs` | src | s | 2 struct · 2 enum | ActionFact, ActionTarget, NoEffectReason, ViewportPoint | What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page… |
 | `src/lib.rs` | src | XL | 41 struct · 9 enum · 2 trait · 12 fn · 10 const · 10 re-export | BatchInput, BatchOutput, BatchStep, BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput +44 | Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`) |
 | `src/library.rs` | src | m | 14 struct · 1 enum · 1 trait · 3 fn · 3 const · 2 crate-vis | LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput +8 | The replay library (OF-598; EIRI-ARCH-0002 "The replay library"): a solved browser run, kept as a… |
@@ -28,4 +30,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outline.rs` | src | s | 2 crate-vis | — | The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and… |
 | `src/receipt_evidence.rs` | src | s | 1 enum · 1 trait | ReceiptEvidence, ReceiptEvidenceSink | An effect receipt's screenshot kept past its session (FIX 2150) |
 | `src/retention.rs` | src | s | 1 trait | HandleRetention | The host's memory floor, as a browser session's live-handle registry meets it (C013) |
-| `src/session.rs` | src | L | 2 struct · 23 fn · 3 crate-vis | BrowserGuest, BrowserSession | A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's… |
+| `src/session.rs` | src | L | 2 struct · 23 fn · 3 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
