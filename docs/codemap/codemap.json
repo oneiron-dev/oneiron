@@ -18721,8 +18721,8 @@
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9,
+      "crate-vis": 4,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -18854,7 +18854,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConversationCreateInput",
@@ -18864,7 +18864,7 @@
      "path": "src/core_write/conversations.rs",
      "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -80872,7 +80872,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
