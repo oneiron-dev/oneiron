@@ -16076,7 +16076,7 @@
      "path": "src/connector_key/lifecycle/qualification.rs",
      "purpose": "Qualification is a vault door: callers cannot submit a self-graded report",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 4
      }
