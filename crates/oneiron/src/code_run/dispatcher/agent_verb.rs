@@ -91,9 +91,13 @@ impl HostSelfDispatcher<'_> {
             })));
         };
         // A write carries the run's TASK creator, so a TASK it creates runs
-        // inside the creator's lease tree (OF-532).
+        // inside the creator's lease tree (OF-532). `reveal.describe` judges
+        // grants with the run's project as `reveal` does (FIX 2359); a run
+        // whose binding cannot be read describes without one, as before.
         let task_host = if call.verb.writes() {
             self.task_host_binding()?
+        } else if matches!(call.verb, AgentVerb::RevealDescribe) {
+            self.task_host_binding().ok().flatten()
         } else {
             None
         };
