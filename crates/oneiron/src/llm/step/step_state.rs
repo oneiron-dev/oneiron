@@ -11,6 +11,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs};
 use crate::store::ResponseCarriage;
 use rmpv::Value;
@@ -222,9 +223,23 @@ pub(super) fn step_state_write(
         response_payload,
         now_ms,
     )
+    .map(|_| ())
 }
 
-/// Writes one step-state row, its owners stamped from its step (KS-2B1).
+/// What a step-state write kept (KS-2B1, FIX 6226).
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StepStateDisposition {
+    /// The row as it was written.
+    Kept,
+    /// The row's erased skeleton: an earlier erase took its response, or an
+    /// owner it stamps is gone here. It holds no payload, now or later; the
+    /// step is over and is never asked, or paid for, again.
+    Erased,
+}
+
+/// Writes one step-state row, its owners stamped from its step (KS-2B1),
+/// and says what it kept: a late answer for a gone owner keeps none.
 pub(super) fn step_state_write_owned(
     vault: &Vault,
     attempt_id: AttemptId,
@@ -233,11 +248,11 @@ pub(super) fn step_state_write_owned(
     owners: StepStateOwners,
     response_payload: Option<&[u8]>,
     now_ms: u64,
-) -> Result<()> {
+) -> Result<StepStateDisposition> {
     let started_at =
         step_state_read(vault, attempt_id, step_hash)?.map_or(now_ms, |row| row.started_at);
     let mut wtxn = vault.store.env.write_txn()?;
-    step_state_put_in_txn(
+    let disposition = step_state_put_in_txn(
         vault,
         &mut wtxn,
         attempt_id,
@@ -252,17 +267,66 @@ pub(super) fn step_state_write_owned(
         },
     )?;
     wtxn.commit()?;
-    Ok(())
+    Ok(disposition)
 }
 
+/// Writes `row` at `(attempt_id, step_hash)` in `wtxn`, its owners checked
+/// in this same write (FIX 6226). An erase is sticky: a row an erase took
+/// is never written again. When an owner the row stamps is gone here, the
+/// row keeps its erased skeleton, with no payload, so a late answer never
+/// lands after the erase that took its owner.
 pub(super) fn step_state_put_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     attempt_id: AttemptId,
     step_hash: &[u8; 32],
     row: &StepStateRow,
-) -> Result<()> {
-    STEP_STATE.put(vault, wtxn, &(attempt_id, *step_hash), row)
+) -> Result<StepStateDisposition> {
+    let key = (attempt_id, *step_hash);
+    if STEP_STATE
+        .get(vault, &*wtxn, &key)?
+        .is_some_and(|prior| prior.erased)
+    {
+        return Ok(StepStateDisposition::Erased);
+    }
+    if !row.erased && !owner_gone_in_txn(vault, &*wtxn, &row.owners)? {
+        STEP_STATE.put(vault, wtxn, &key, row)?;
+        return Ok(StepStateDisposition::Kept);
+    }
+    let skeleton = StepStateRow {
+        progression: row.progression,
+        started_at: row.started_at,
+        updated_at: row.updated_at,
+        response_payload: None,
+        owners: row.owners,
+        erased: true,
+    };
+    STEP_STATE.put(vault, wtxn, &key, &skeleton)?;
+    Ok(StepStateDisposition::Erased)
+}
+
+/// Whether an owner `owners` stamps is gone in `txn`, by the markers a
+/// program step's actor is read by (FIX 5710): a deletion of its row other
+/// than an archive, or its hard-delete or identity soft-delete marker. An
+/// archive is reversible and withholds nothing.
+fn owner_gone_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owners: &StepStateOwners,
+) -> Result<bool> {
+    for owner in owners.ids() {
+        if crate::ports::removed_in_txn(&vault.store, txn, &owner)?
+            || vault
+                .store
+                .port_deletion_marked(txn, DeletionMarker::HardDelete, &owner)?
+            || vault
+                .store
+                .port_deletion_marked(txn, DeletionMarker::IdentitySoftDelete, &owner)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn step_state_read(

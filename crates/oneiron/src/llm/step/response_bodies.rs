@@ -8,8 +8,9 @@
 //! authority comparison reads the same read scope before any body lands. A
 //! restore under a live instance lands the exact signed bytes, never signed
 //! or encoded again; under a retired one the claim takes the erase's shell
-//! (its header alone), its step-index rows go and it is marked soft-deleted
-//! and fenced, as a soft erase leaves it: never a response edited to empty.
+//! (its header alone), its claim projection and step-index rows go and it is
+//! marked soft-deleted and fenced, as a soft erase leaves it: never a
+//! response edited to empty.
 //! A response held in an artifact version is the artifact's ASSET body
 //! (KS-2A).
 
@@ -78,9 +79,10 @@ fn claim_of(key: &[u8]) -> Result<Option<EntityId>> {
 }
 
 /// The erased disposition of the retired claim `key` in raw image rows,
-/// beside its row's shell: its step-index rows go, as an erase deindexes
-/// it, and it is marked soft-deleted and fenced, as a soft erase marks it.
-/// Rows stay in order.
+/// beside its row's shell: its claim projection rows and its step-index
+/// rows go, as a soft erase removes and deindexes them (FIX 6231), and it is
+/// marked soft-deleted and fenced, as a soft erase marks it. Rows stay in
+/// order.
 ///
 /// # Errors
 ///
@@ -93,6 +95,7 @@ pub(crate) fn retire_step_claim_in_rows(
         return Ok(());
     };
     if let Some(rows) = databases.get_mut("vault_meta") {
+        crate::claim::remove_claim_projection_index_in_rows(rows, claim)?;
         deindex_in_rows(rows, claim)?;
     }
     if let Some(rows) = databases.get_mut("sync_state") {
@@ -110,8 +113,8 @@ pub(crate) fn retire_step_claim_in_rows(
 
 /// The erased disposition of the live claim `key` whose instance its
 /// source retired, in `wtxn` (an activation's prune): the erase's shell,
-/// its header alone, its step-index rows gone and its soft-delete marker
-/// and fence set, as a soft erase leaves it.
+/// its header alone, its claim projection and step-index rows gone (FIX 6231)
+/// and its soft-delete marker and fence set, as a soft erase leaves it.
 ///
 /// # Errors
 ///
@@ -126,6 +129,7 @@ pub(crate) fn retire_step_claim_in_txn(
     };
     let recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     store.port_entity_scrub(wtxn, &claim, ScrubbedRecord::Shell, recorded_at)?;
+    crate::claim::remove_claim_projection_index(store, wtxn, claim)?;
     super::step_claim::deindex_dreamer_step_claim(store, wtxn, &claim)?;
     SOFT_DELETED.put(store, wtxn, &HexId(claim), &Vec::new())?;
     FENCED.put(store, wtxn, &HexId(claim), &Vec::new())
