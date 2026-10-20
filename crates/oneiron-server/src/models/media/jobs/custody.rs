@@ -9,7 +9,8 @@
 //!
 //! The engine masks the row and scrubs it on an erase of an owner
 //! (`oneiron::store`); here a poll of an erased job answers its erased end,
-//! with the reason logged as a kind only.
+//! typed as `FatalLlmError::ResponseErased` (FIX 6296), with the reason
+//! logged as a kind only.
 
 use oneiron::EntityId;
 use oneiron::llm::media::{MediaJobState, MediaRequest, MediaVoice};
