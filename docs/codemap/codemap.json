@@ -62027,7 +62027,7 @@
      "path": "src/workspace_roster/rooms/thread_reads.rs",
      "purpose": "A room's threads as one reader reaches them (FIX 5545, Engine ruling 2026-10-19)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
