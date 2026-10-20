@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::restore::{ManagedRestoreIdentity, RestoreStatus};
 use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
 use super::{ManagedBackupFacts, ManagedTrainingSetting, WakeEntry, valid_owner_signing_challenge};
@@ -89,6 +90,20 @@ pub enum CtlRequest {
     /// not `reap_abort`, and a vault frozen for reap refuses it as it refuses
     /// `shed`, staying frozen. Build floor: as `Shed.wait_id`.
     Unslim,
+    /// Appended last (LC FIX 5384/5385): what this process knows of the
+    /// cold restore attempt `identity` names ([`CtlResponse::RestoreStatus`]),
+    /// for a supervisor that lost the result pipe's last frame. Its
+    /// identity's fields ride flat beside `op`; `cursor` is the receipt byte
+    /// offset to page from, `null` or absent for its start. A read: it
+    /// writes nothing and changes no reap state. Build floor: as the restore
+    /// start mode's (`restore`); a v3 vault built before it answers it as an
+    /// unknown request (`Ok { ok: false }`), which is never success.
+    RestoreStatus {
+        #[serde(flatten)]
+        identity: ManagedRestoreIdentity,
+        #[serde(default)]
+        cursor: Option<u64>,
+    },
 }
 
 impl CtlRequest {
@@ -113,7 +128,8 @@ impl CtlRequest {
             | CtlRequest::TrainingPurge
             | CtlRequest::LegalHolds
             | CtlRequest::SlimStatus
-            | CtlRequest::Unslim => {}
+            | CtlRequest::Unslim
+            | CtlRequest::RestoreStatus { .. } => {}
         }
         Ok(())
     }
@@ -554,17 +570,30 @@ pub enum CtlResponse {
     Unslim {
         unslim: UnslimWire,
     },
+    /// Appended last (LC FIX 5384/5385): the answer to
+    /// [`CtlRequest::RestoreStatus`]. Its one required field
+    /// {restore_status} is disjoint from every variant above, and it carries
+    /// no `ok` for the reason `Slim` carries none. A supervisor parses this
+    /// shape alone for the request it sent and runs
+    /// [`CtlResponse::validate`]: any other answer is not proven.
+    RestoreStatus {
+        restore_status: RestoreStatus,
+    },
 }
 
 impl CtlResponse {
     /// Validate SLIM status, residency, numerics, and blocker combinations,
-    /// the shape of `PrepareReap.training` and the residency an `Unslim`
-    /// left, after parsing. Existing responses keep their prior validation
-    /// requirements; `PrepareReap.next_wake` still uses
+    /// the shape of `PrepareReap.training`, the residency an `Unslim` left
+    /// and the shape of a `RestoreStatus` page, after parsing. Existing
+    /// responses keep their prior validation requirements;
+    /// `PrepareReap.next_wake` still uses
     /// [`validate_wake_entries`](crate::validate_wake_entries).
     pub fn validate(&self) -> anyhow::Result<()> {
         if let CtlResponse::PrepareReap { training, .. } = self {
             training.validate()?;
+        }
+        if let CtlResponse::RestoreStatus { restore_status } = self {
+            restore_status.validate()?;
         }
         if let CtlResponse::Unslim { unslim } = self {
             anyhow::ensure!(

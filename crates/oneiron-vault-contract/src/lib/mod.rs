@@ -37,6 +37,9 @@ mod managed_holder;
 mod owner_signing_recovery;
 /// Private, lease-bound live process ports.
 pub mod preview;
+/// The cold managed restore start mode: its plan, result frames, receipt,
+/// status and commit marker (LC FIX 5384/5385).
+pub mod restore;
 mod secrets;
 /// The owner paths a managed vault's settings file names, and their rule.
 pub mod settings_paths;

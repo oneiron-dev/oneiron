@@ -111,6 +111,17 @@ impl ManagedState {
                 self.guard_write()?;
                 crate::managed::shed::unslim(self.server.vault())
             }
+            // A read of the cold restore this process kept: it writes nothing
+            // and changes no reap state, so a vault frozen for reap answers
+            // it too and stays frozen.
+            CtlRequest::RestoreStatus { identity, cursor } => {
+                let restore_status = crate::managed::restore::RestoreOutcome::status(
+                    self.restore.as_deref(),
+                    &identity,
+                    cursor,
+                )?;
+                Ok(CtlResponse::RestoreStatus { restore_status })
+            }
         }
     }
 }

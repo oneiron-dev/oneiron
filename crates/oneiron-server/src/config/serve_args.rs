@@ -115,6 +115,27 @@ pub struct ServeArgs {
     #[arg(long = "custody-anchor-credentials-fd")]
     pub custody_anchor_credentials_fd: Option<i32>,
 
+    /// Managed mode's cold restore start (LC FIX 5384/5385): the vault the
+    /// plan on `--restore-input-fd` names is restored into `--data-dir` from
+    /// its signed artifact, verified and kept, then served as an ordinary
+    /// start serves it. Nothing listens before it is kept.
+    #[arg(long = "restore", requires = "managed_by_hypnos")]
+    pub restore: bool,
+
+    /// Inherited file descriptor, the read end of a pipe, carrying a cold
+    /// restore's plan: one JSON object
+    /// (`oneiron_vault_contract::restore::ManagedRestoreInput`), then EOF.
+    /// Read first, before the credential frame. It carries no secret.
+    #[arg(long = "restore-input-fd", requires = "restore")]
+    pub restore_input_fd: Option<i32>,
+
+    /// Inherited file descriptor, the write end of a pipe, that a cold
+    /// restore writes its result frames to, one JSON line each
+    /// (`oneiron_vault_contract::restore::ManagedRestoreResultFrame`), and
+    /// closes after its last.
+    #[arg(long = "restore-result-fd", requires = "restore")]
+    pub restore_result_fd: Option<i32>,
+
     /// Managed mode as a Firecracker vault VM's only process. The credential
     /// frame and the ready byte ride the vsock boot channel instead of
     /// `--credentials-fd` and `--ready-fd`, and the host reaches the HTTP and
@@ -533,6 +554,9 @@ impl fmt::Debug for ServeArgs {
                 "custody_anchor_credentials_fd",
                 &self.custody_anchor_credentials_fd,
             )
+            .field("restore", &self.restore)
+            .field("restore_input_fd", &self.restore_input_fd)
+            .field("restore_result_fd", &self.restore_result_fd)
             .field("vsock_guest", &self.vsock_guest)
             .field("keystore_dir", &self.keystore_dir)
             .field("escrow_recipient_file", &self.escrow_recipient_file)

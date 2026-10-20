@@ -142,10 +142,8 @@ pub fn read_managed_credentials(fd: RawFd) -> Result<Credentials, ManagedError> 
 /// This is what the DEK MAC covers. It is stable across content writes and
 /// changes only when the vault's storage identity does, so a wrong DEK is
 /// caught by a MAC over metadata rather than by decrypting user content.
-fn vault_meta_head_page(vault: &oneiron::Vault) -> Result<Vec<u8>, ManagedError> {
-    let report = vault
-        .doctor()
-        .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+fn vault_meta_head_page(vault: &oneiron::Vault) -> oneiron::Result<Vec<u8>> {
+    let report = vault.doctor()?;
     let abi = report.storage_abi_version;
     let schema = report.storage_schema_version;
     let analyzer = report.analyzer_manifest_hash.as_deref().unwrap_or_default();
@@ -174,33 +172,48 @@ fn verify_or_seal_dek_mac(
     vault_name: &str,
     dek: &[u8; DEK_LEN],
 ) -> Result<(), ManagedError> {
+    match check_dek_mac(vault, dek).map_err(|error| ManagedError::VaultMeta(error.to_string()))? {
+        DekMac::Matched => Ok(()),
+        DekMac::Mismatched => Err(ManagedError::DekMacMismatch {
+            vault: vault_name.to_owned(),
+            key: DEK_MAC_KEY,
+        }),
+    }
+}
+
+/// What the DEK MAC check found: the delivered DEK matched the vault's
+/// sealed MAC (or sealed it, the vault's first managed open), or did not.
+pub(super) enum DekMac {
+    Matched,
+    Mismatched,
+}
+
+/// [`verify_or_seal_dek_mac`]'s check on an open vault, a restored one's
+/// too, with a failure to read or write the vault kept as its own error and
+/// never taken for a wrong key.
+pub(super) fn check_dek_mac(
+    vault: &oneiron::Vault,
+    dek: &[u8; DEK_LEN],
+) -> oneiron::Result<DekMac> {
     let head = vault_meta_head_page(vault)?;
     let mut covered = Vec::with_capacity(DEK_MAC_CONTEXT.len() + head.len());
     covered.extend_from_slice(DEK_MAC_CONTEXT);
     covered.extend_from_slice(&head);
     let mac = blake3::keyed_hash(dek, &covered);
 
-    let stored = vault
-        .sync_state_get(DEK_MAC_KEY)
-        .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
-    match stored {
-        Some(stored) => {
-            // Constant time: a supervisor probing DEKs must not learn how many
-            // leading MAC bytes it got right.
+    match vault.sync_state_get(DEK_MAC_KEY)? {
+        // Constant time: a supervisor probing DEKs must not learn how many
+        // leading MAC bytes it got right.
+        Some(stored) => Ok(
             if bool::from(stored.as_slice().ct_eq(mac.as_bytes().as_slice())) {
-                Ok(())
+                DekMac::Matched
             } else {
-                Err(ManagedError::DekMacMismatch {
-                    vault: vault_name.to_owned(),
-                    key: DEK_MAC_KEY,
-                })
-            }
-        }
+                DekMac::Mismatched
+            },
+        ),
         None => {
-            vault
-                .sync_state_put(DEK_MAC_KEY, mac.as_bytes())
-                .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
-            Ok(())
+            vault.sync_state_put(DEK_MAC_KEY, mac.as_bytes())?;
+            Ok(DekMac::Matched)
         }
     }
 }

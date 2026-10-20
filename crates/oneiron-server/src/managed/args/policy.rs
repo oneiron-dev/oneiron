@@ -111,6 +111,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.custody_anchor_credentials_fd.is_some(),
         ArgvUse::Read,
     ),
+    ("restore", |args| args.restore, ArgvUse::Read),
+    (
+        "restore-input-fd",
+        |args| args.restore_input_fd.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "restore-result-fd",
+        |args| args.restore_result_fd.is_some(),
+        ArgvUse::Read,
+    ),
     ("vsock-guest", |args| args.vsock_guest, ArgvUse::Read),
     (
         "keystore-dir",

@@ -135,15 +135,40 @@ impl HostedDerivationCache {
             .map(Vec::as_slice)
     }
 }
+/// Why [`crate::Vault::bind_derivation_owner_checked`] did not bind.
+#[derive(Debug)]
+pub enum DerivationBindError {
+    /// Another owner is bound already; nothing was written.
+    Mismatch,
+    /// Reading or writing the binding failed.
+    Engine(crate::Error),
+}
+impl From<crate::Error> for DerivationBindError {
+    fn from(error: crate::Error) -> Self {
+        Self::Engine(error)
+    }
+}
 impl crate::Vault {
     /// Host-only initialization. The first owner binding is immutable.
     pub fn bind_derivation_owner(&self, owner: DerivationOwner) -> crate::Result<DerivationScope> {
-        self.with_write_txn_grouped(|txn| {
+        self.bind_derivation_owner_checked(owner)
+            .map_err(|error| match error {
+                DerivationBindError::Mismatch => {
+                    crate::Error::InvalidConfig("derivation owner already bound".into())
+                }
+                DerivationBindError::Engine(error) => error,
+            })
+    }
+    /// [`Self::bind_derivation_owner`] in the same transaction, with a bound
+    /// owner that is not `owner` told apart from a failure to read or write.
+    pub fn bind_derivation_owner_checked(
+        &self,
+        owner: DerivationOwner,
+    ) -> Result<DerivationScope, DerivationBindError> {
+        self.try_with_write_txn_grouped(|txn| {
             if let Some(existing) = DERIVATION_OWNER.get(&self.store, txn, &())? {
                 if existing != owner.0 {
-                    return Err(crate::Error::InvalidConfig(
-                        "derivation owner already bound".into(),
-                    ));
+                    return Err(DerivationBindError::Mismatch);
                 }
             } else {
                 self.store.seal_pending_embeddings_for_owner(txn, owner)?;

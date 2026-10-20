@@ -66,8 +66,7 @@ use crate::server::SyncServer;
 
 mod live_exchange;
 use live_exchange::{
-    Continuation, LiveSession, Reply, StreamEvent, answers, hand_over, open_reply, post_json,
-    read_reply, terminal,
+    Continuation, LiveSession, Reply, StreamEvent, hand_over, open_reply, post_json, read_reply,
 };
 
 /// Connecting to a connector's endpoint.
