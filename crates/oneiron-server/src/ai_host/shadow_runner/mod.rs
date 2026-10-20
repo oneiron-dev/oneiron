@@ -16,9 +16,10 @@
 //! bodies stay under a lease (`arm_store`) until the caller releases it.
 //!
 //! What an arm reaches: its frozen bodies, its own store, the gateway and
-//! its effect collector. No vault write path, gated write, lease, auth
-//! header or secret resolver reaches it, and nothing installs or promotes
-//! anything.
+//! its effect collector. No gated write, lease, auth header or secret
+//! resolver reaches it, and nothing installs or promotes anything. Its one
+//! write into the source vault is custody: an arm write the side-row wall
+//! admits mints its custody records there (FIX 5718 part 3, #3476).
 //!
 //! An arm's bodies are its source run's kept content (FIX 5718): the
 //! runner's sweep releases each live arm whose source actor an erase or

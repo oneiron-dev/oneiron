@@ -14215,7 +14215,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 3
      }
     },
@@ -14230,7 +14230,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/replay_capsule.rs",
@@ -25621,7 +25621,7 @@
       "crate-vis": 9,
       "enum": 3,
       "fn": 8,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 4,
       "trait": 2
      }
@@ -25698,20 +25698,23 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 1,
+      "crate-vis": 16,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SessionMediaRefusals"
+     ],
      "path": "src/embed/session_media.rs",
      "purpose": "The session-aware media door (OF-370): a media vector written while a room is off record stays in the room",
      "surface": {
-      "fn": 1
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -25727,10 +25730,20 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 32,
+      "crate-vis": 39,
       "enum": 1,
       "fn": 18,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_card.rs",
+     "purpose": "What a space move's check stands on beside its paired interval (FIX 1638; ARCH-0053 `#eval-sufficiency`…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -25751,7 +25764,7 @@
      "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
      "surface": {
       "const": 5,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 9,
       "struct": 4,
@@ -25759,7 +25772,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SpaceProbe",
@@ -25769,8 +25782,8 @@
      "path": "src/embed/space_probe.rs",
      "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
      "surface": {
-      "const": 3,
-      "crate-vis": 1,
+      "const": 4,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2,
       "trait": 1
@@ -36865,7 +36878,7 @@
      "path": "src/memory/recall/selection.rs",
      "purpose": "What one recall narrows by, resolved once from its scope (FIX 2905): the worlds, projects, facet and kinds",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -38852,7 +38865,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -38978,7 +38991,7 @@
      "path": "src/off_record/lifecycle/vault_api.rs",
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 10
      }
     },
@@ -47562,7 +47575,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/reveal/owner.rs",
@@ -65635,7 +65648,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -66603,7 +66616,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4169,
+   "source_files": 4170,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89499,7 +89512,7 @@
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {

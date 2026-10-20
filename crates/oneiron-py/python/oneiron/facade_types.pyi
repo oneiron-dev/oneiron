@@ -8159,6 +8159,11 @@ class KindProbeCheck(TypedDict):
     retest: NotRequired[PairedInterval | None]
     tolerance: NotRequired[float | None]
     verdict: NotWorse
+    canary: NotRequired[PairedInterval | None]
+    canary_verdict: NotRequired[NotWorse | None]
+    set_version: NotRequired[str | None]
+    rubric: NotRequired[str | None]
+    card: NotRequired[SufficiencyCard | None]
 class SpaceMoveCheck(TypedDict):
     checked_at: int
     kinds: list[KindProbeCheck]
@@ -8196,10 +8201,12 @@ class EmbeddingSpaceMoveChecked(TypedDict):
 class SpaceProbe(TypedDict):
     kind: InputKind
     query: str
+    query_media: NotRequired[EntityId | None]
     family: EntityId
     targets: list[EntityId]
     author: str
     written_at: int
+    cohort: NotRequired[int | None]
 class EmbeddingSpaceProbe(SpaceProbe):
     id: str
 class EmbeddingSpaceProbes(TypedDict):
@@ -8207,6 +8214,7 @@ class EmbeddingSpaceProbes(TypedDict):
 class EmbeddingSpaceProbePutRequest(TypedDict):
     kind: InputKind
     query: str
+    query_media: NotRequired[EntityId | None]
     family: EntityId
     targets: NotRequired[list[EntityId]]
     author: str

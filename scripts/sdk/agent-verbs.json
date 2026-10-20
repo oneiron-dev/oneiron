@@ -7061,7 +7061,7 @@
     },
     {
       "name": "vault.embedding_spaces.probes.put",
-      "description": "Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author.",
+      "description": "Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author.",
       "input": "crate::task_verb::sdk::EmbeddingSpaceProbePutRequest",
       "output": "crate::task_verb::sdk::EmbeddingSpaceProbe",
       "call": "crate::task_verb::sdk::put_embedding_space_probe_as(memory.vault(), &memory.embedded_owner(\"vault.embedding_spaces.probes.put\")?, input)?",
