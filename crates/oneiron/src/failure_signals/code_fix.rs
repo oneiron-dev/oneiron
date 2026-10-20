@@ -46,7 +46,7 @@ mod subject;
 pub(crate) use self::exact::exact_replay_request;
 pub use self::exact::{ExactReplayRequest, ReplayFidelity};
 pub(super) use self::queue::{
-    CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in, public_id_key,
+    CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in,
 };
 pub(crate) use self::subject::dispatch_worlds_in;
 use self::subject::{SubjectFailure, blocked_source_failure_in};

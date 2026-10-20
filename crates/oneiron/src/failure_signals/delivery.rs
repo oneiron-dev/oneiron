@@ -18,11 +18,13 @@
 //! The engine names no publisher. The host supplies the destination and the
 //! transport that carries the bytes.
 
+use std::cell::Cell;
+
 use serde::{Deserialize, Serialize};
 
 use super::Tier1FailureCount;
 use super::code_fix::CodeFixExport;
-use super::held::{HeldBatch, next_stage};
+use super::held::{BatchSend, HeldBatch};
 use crate::entity_id::EntityId;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -104,20 +106,95 @@ pub enum FailureSignalDelivery {
 
 struct BatchSink<'a, T: ?Sized> {
     transport: &'a mut T,
-    body: &'a [u8],
-    digest: &'a str,
+    vault: &'a Vault,
+    held: &'a HeldBatch,
+    /// The approve-once digest the owner's answer to a carried batch names.
+    approval_digest: Option<&'a str>,
+    /// Set once a check before the wire finds the batch may no longer
+    /// leave (FIX 6679): no wire started.
+    retired: Cell<bool>,
 }
 
 impl<T: FailureSignalTransport + ?Sized> OutboundExecutionSink for BatchSink<'_, T> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
+        // FIX 6679: an erase, a world turned private or the owner's denial
+        // since the pass read the batch keeps it off the wire.
+        match self
+            .vault
+            .failure_signal_batch_may_leave(self.held, self.approval_digest)
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                self.retired.set(true);
+                return OutboundExecutionOutcome::failed("failure_signals_batch_retired");
+            }
+            Err(_) => return OutboundExecutionOutcome::failed("failure_signals_batch_unread"),
+        }
+        let digest = self.held.digest.as_str();
         self.transport
             .send_failure_signals(&FailureSignalTransportRequest {
                 execution: request,
-                body: self.body,
-                digest: self.digest,
+                body: self.held.body.as_bytes(),
+                digest,
             })
-            .with_receipt_field("failure_signals_batch_digest", self.digest)
+            .with_receipt_field("failure_signals_batch_digest", digest)
     }
+
+    /// The same check under the writer that would record the send's gate
+    /// decision (FIX 6404): a batch that may no longer leave records none,
+    /// and no owner press is spent on it.
+    fn admit_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if self
+            .held
+            .may_still_leave_in(self.vault, txn, self.approval_digest)?
+        {
+            return Ok(());
+        }
+        self.retired.set(true);
+        Err(crate::Error::InvalidConfig(
+            "failure signal batch may no longer leave".into(),
+        ))
+    }
+}
+
+/// The dispatch request one send of `held` carries: the same intent, refs,
+/// actor and gate on every pass, so a carried batch's frozen ledger bytes
+/// and approve-once digest are its first send's (FIX 6679).
+pub(super) fn batch_request(
+    sender: EntityId,
+    held: &HeldBatch,
+    now: u64,
+) -> OutboundDispatchRequest {
+    let send_ref = held.send_ref();
+    let intent = OutboundIntent::from_trigger(
+        OutboundIntentDraft::new(
+            sender.to_hex(),
+            FAILURE_SIGNALS_SEND_VERB,
+            FAILURE_SIGNALS_CHANNEL,
+            held.endpoint.as_str(),
+        )
+        .content_ref(held.content_ref())
+        .idempotency_key(send_ref.clone()),
+        OutboundIntentTrigger::agent_immediate(send_ref.clone()),
+    );
+    let mut request = OutboundDispatchRequest::new(
+        send_ref.clone(),
+        send_ref.clone(),
+        intent,
+        // An engine-owned send, like a scoped tool call's: first-party
+        // is the class whose ceiling is Auto, and the grant still
+        // decides what it may send.
+        OutboundDispatchActor {
+            actor_class: "first_party".to_owned(),
+            actor_ref: Some(sender.to_hex()),
+            actor_entity_ref: Some(sender),
+        },
+        OutboundDispatchGate::allow_when_policy_grants(),
+        now,
+        OutboundDeliveryWindowDecision::DeliverNow,
+    );
+    request.ledger_identity_ref = Some(send_ref);
+    request
 }
 
 impl Vault {
@@ -144,9 +221,9 @@ impl Vault {
             self.pending_code_fix_records(0)?;
             return Ok(FailureSignalDelivery::Idle);
         }
-        let held = if let Some(held) = self.carried_failure_signal_batch(target)? {
+        let send = if let Some(send) = self.carried_failure_signal_batch(target, sender, now)? {
             self.keep_failure_signal_participation(sender, true, now)?;
-            held
+            send
         } else {
             let counts = self.export_tier1_failure_counts()?;
             let code_fix = self.pending_code_fix_rows(max_records)?;
@@ -154,47 +231,37 @@ impl Vault {
                 return Ok(FailureSignalDelivery::Idle);
             }
             self.keep_failure_signal_participation(sender, true, now)?;
-            let held = HeldBatch::mint(target, config.permits_training(), counts, code_fix, now)?;
+            let floor = self.store.clock.ulid()?;
+            let training = config.permits_training();
+            let held = HeldBatch::mint(target, training, counts, code_fix, floor, now)?;
             // Staged before it leaves, so a hold the owner sees keeps its batch.
             self.stage_failure_signal_batch(&held)?;
-            held
+            let request = batch_request(sender, &held, now);
+            BatchSend {
+                held,
+                request,
+                approval_digest: None,
+            }
         };
-
-        let send_ref = held.send_ref();
-        let intent = OutboundIntent::from_trigger(
-            OutboundIntentDraft::new(
-                sender.to_hex(),
-                FAILURE_SIGNALS_SEND_VERB,
-                FAILURE_SIGNALS_CHANNEL,
-                held.endpoint.as_str(),
-            )
-            .content_ref(held.content_ref())
-            .idempotency_key(send_ref.clone()),
-            OutboundIntentTrigger::agent_immediate(send_ref.clone()),
-        );
-        let mut request = OutboundDispatchRequest::new(
-            send_ref.clone(),
-            send_ref.clone(),
-            intent,
-            // An engine-owned send, like a scoped tool call's: first-party
-            // is the class whose ceiling is Auto, and the grant still
-            // decides what it may send.
-            OutboundDispatchActor {
-                actor_class: "first_party".to_owned(),
-                actor_ref: Some(sender.to_hex()),
-                actor_entity_ref: Some(sender),
-            },
-            OutboundDispatchGate::allow_when_policy_grants(),
-            now,
-            OutboundDeliveryWindowDecision::DeliverNow,
-        );
-        request.ledger_identity_ref = Some(send_ref);
+        let BatchSend {
+            held,
+            request,
+            approval_digest,
+        } = send;
         let mut sink = BatchSink {
             transport,
-            body: held.body.as_bytes(),
-            digest: &held.digest,
+            vault: self,
+            held: &held,
+            approval_digest: approval_digest.as_deref(),
+            retired: Cell::new(false),
         };
-        let result = self.dispatch_outbound_intent_recorded(request, &mut sink)?;
+        let dispatched = self.dispatch_outbound_intent_recorded(request, &mut sink);
+        let retired = sink.retired.get();
+        if retired {
+            // Nothing left: it goes with no ack (FIX 6679).
+            self.retire_failure_signal_batch()?;
+        }
+        let result = dispatched?;
         let outcome = result.outcome;
         match outcome {
             OutboundDispatchOutcome::DeliveredToChannel => {
@@ -214,9 +281,11 @@ impl Vault {
                 })
             }
             _ => {
-                match next_stage(&held, &result) {
-                    Some(stage) => self.keep_failure_signal_batch(&held, stage)?,
-                    None => self.retire_failure_signal_batch()?,
+                if !retired {
+                    match self.next_failure_signal_stage(&held, &result)? {
+                        Some(stage) => self.keep_failure_signal_batch(&held, stage)?,
+                        None => self.retire_failure_signal_batch()?,
+                    }
                 }
                 Ok(FailureSignalDelivery::NotDelivered {
                     outcome,

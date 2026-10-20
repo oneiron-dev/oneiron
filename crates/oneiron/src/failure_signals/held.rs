@@ -8,21 +8,23 @@
 //! over`). The row is custody only, never approval authority: the Gate
 //! decides every send, the carried one included, as it always does.
 //!
-//! What a pass keeps is decided by [`next_stage`]; its settlement takes
-//! exactly the quantities and records the batch froze, in one writer with
-//! the row's removal. The owner's denial of its digest, a change in what it
-//! may carry, or an actor erase retires it with no ack, and nothing is
-//! dropped: the next pass selects afresh (CALLS `FIX 6679 denied or
-//! ineligible held batch retires without ack`).
+//! What a pass does with a carried batch is read from durable facts, never
+//! from the row's own stage: its intent ledger row (absent, retryable on an
+//! owner's recorded press, or settled), and the owner's denial of its digest
+//! in the Gate's decisions since it was staged. Its settlement takes exactly
+//! the quantities and records it froze, in one writer with the row's
+//! removal. A denial, a change in what it may carry, or an actor erase
+//! retires it with no ack, and nothing is dropped: the next pass selects
+//! afresh (CALLS `FIX 6679 denied or ineligible held batch retires without
+//! ack`).
 
 use std::sync::{MutexGuard, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-use super::code_fix::{
-    CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in, public_id_key,
-};
+use super::code_fix::{CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in};
 use super::count_delivery::{CountShare, count_shares, subtract_counts_in_txn};
+use super::delivery::batch_request;
 use super::{
     CodeFixExport, FAILURE_SIGNAL_BATCH_VERSION, FailureSignalBatch, FailureSignalCounts,
     Tier1FailureCount,
@@ -32,10 +34,12 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::gate::GateOutcome;
 use crate::outbound::{
-    OutboundDispatchError, OutboundDispatchResult, outbound_dispatch_attempt_id,
+    OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult,
+    outbound_approve_once_digest, outbound_dispatch_attempt_id,
 };
 use crate::outbound_intent_ledger::{
-    IntentResolution, IntentState, RecordedOutboundOutcome, read_intent_for_attempt_in_txn,
+    IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, RecordedOutboundOutcome,
+    UnconfirmedDelivery, read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord};
@@ -59,56 +63,51 @@ pub(super) struct HeldBatch {
     pub(super) batch_id: String,
     /// Whether the deployment let the publisher train on it when it was
     /// built.
-    pub(super) training_permitted: bool,
+    training_permitted: bool,
     /// The aggregate rows and quantities it froze.
     pub(super) counts: Vec<CountShare>,
     /// The code-fix records it carries, each with the worlds its failure
     /// touched.
     pub(super) code_fix: Vec<CodeFixShare>,
+    /// A store id taken just before it was staged: every Gate decision on
+    /// it, the owner's answer included, is recorded after this one.
+    floor: [u8; 16],
     /// Seconds since the epoch.
-    pub(super) created_at: u64,
-    pub(super) stage: HeldStage,
+    created_at: u64,
+    stage: HeldStage,
 }
 
-/// Where a kept batch stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Where a kept batch stood after its last send. A record only: what a pass
+/// does with a carried batch is read from durable facts, never from this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) enum HeldStage {
-    /// Written before its send; no owner hold seen.
+    /// Written before its send.
     Staged,
-    /// The Gate holds it for the owner.
-    Held(OwnerHold),
-    /// The owner held it, the Gate admitted it, and it failed definitely:
-    /// it retries under its own ref on the press its admission recorded
-    /// (CALLS `FIX 6679 held batch retry proof`).
-    Admitted(OwnerHold),
+    /// The Gate held it for the owner.
+    Held,
+    /// Admitted on the owner's press and failed definitely: it retries
+    /// under its own ref on that recorded press (CALLS `FIX 6679 held batch
+    /// retry proof`).
+    Admitted,
 }
 
-/// How the Gate first held a batch for the owner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct OwnerHold {
-    /// The decision that first held it.
-    decision: Option<[u8; 16]>,
-    /// The approve-once digest his press names, when its family pins one.
-    approval_digest: Option<String>,
-}
-
-impl HeldStage {
-    fn owner_hold(&self) -> Option<&OwnerHold> {
-        match self {
-            Self::Held(hold) | Self::Admitted(hold) => Some(hold),
-            Self::Staged => None,
-        }
-    }
+/// One batch's send this pass: its custody, its request, and for a carried
+/// batch the approve-once digest the owner's answer to it names.
+pub(super) struct BatchSend {
+    pub(super) held: HeldBatch,
+    pub(super) request: OutboundDispatchRequest,
+    pub(super) approval_digest: Option<String>,
 }
 
 impl HeldBatch {
     /// A fresh batch of `counts` and `code_fix` for `endpoint`, under a new
-    /// random id, staged.
+    /// random id, staged after the store id `floor`.
     pub(super) fn mint(
         endpoint: &str,
         training_permitted: bool,
         counts: Vec<Tier1FailureCount>,
         code_fix: Vec<(CodeFixExport, Vec<EntityId>)>,
+        floor: [u8; 16],
         now: u64,
     ) -> Result<Self> {
         let mut id = [0u8; 16];
@@ -138,6 +137,7 @@ impl HeldBatch {
                 .collect(),
             batch_id: batch.batch_id,
             training_permitted,
+            floor,
             created_at: now,
             stage: HeldStage::Staged,
         })
@@ -158,24 +158,38 @@ impl HeldBatch {
         blake3::hash(self.body.as_bytes()).to_hex().as_str() == self.digest
     }
 
-    /// Whether `vault` may still send it now, read in `txn`: the same
-    /// endpoint and training permission, every record still queued and
-    /// public, and no owner denial of its digest since it was held.
-    fn may_leave_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>, endpoint: &str) -> Result<bool> {
-        if self.endpoint != endpoint
-            || self.training_permitted != vault.config.failure_signals.permits_training()
+    /// Whether it may still leave, read in `txn`: the training permission
+    /// it was built under, every record in it still queued and public, and
+    /// no owner denial of `approval_digest` since it was staged.
+    fn eligible_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        approval_digest: Option<&str>,
+    ) -> Result<bool> {
+        if self.training_permitted != vault.config.failure_signals.permits_training()
             || !code_fix_still_eligible_in(vault, txn, &self.code_fix)?
         {
             return Ok(false);
         }
-        let Some(OwnerHold {
-            decision,
-            approval_digest: Some(digest),
-        }) = self.stage.owner_hold()
-        else {
-            return Ok(true);
-        };
-        Ok(!owner_denied_in(vault, txn, *decision, digest)?)
+        match approval_digest {
+            Some(digest) => Ok(!owner_denied_in(vault, txn, self.floor, digest)?),
+            None => Ok(true),
+        }
+    }
+
+    /// [`Self::eligible_in`] with its custody still this batch, read in
+    /// `txn`: an erase may have retired it since the pass read it.
+    pub(super) fn may_still_leave_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        approval_digest: Option<&str>,
+    ) -> Result<bool> {
+        let live = HELD
+            .get_lenient(&vault.store, txn, &())?
+            .is_some_and(|kept| kept.batch_id == self.batch_id);
+        Ok(live && self.eligible_in(vault, txn, approval_digest)?)
     }
 }
 
@@ -188,40 +202,76 @@ impl FailureSignalCounts {
 }
 
 impl Vault {
-    /// The batch this pass carries, if any. A row that does not decode, or
-    /// whose body no longer hashes to its digest, is retired. A batch whose
-    /// send could still leave (no ledger row, or one a definite failure left
-    /// retryable) is retired when it may no longer leave; one whose row is
-    /// settled or unresolved is carried, so its replay resolves it under its
-    /// own ref with no wire before anything is selected anew.
+    /// The batch this pass carries, with its request and digest, if any. A
+    /// row that does not decode, or whose body no longer hashes to its
+    /// digest, is retired. A batch never admitted may have been held, so it
+    /// goes again while it may still leave to the same endpoint. One
+    /// admitted and failed definitely retries under its own ref only when
+    /// its admission spent the owner's press; one a grant admitted is
+    /// retired, and the pass selects afresh as it always did. One whose
+    /// ledger row is settled or unresolved is carried, so its replay
+    /// resolves it with no wire before anything is selected anew.
     pub(super) fn carried_failure_signal_batch(
         &self,
         endpoint: &str,
-    ) -> std::result::Result<Option<HeldBatch>, OutboundDispatchError> {
+        sender: EntityId,
+        now: u64,
+    ) -> std::result::Result<Option<BatchSend>, OutboundDispatchError> {
         let held = {
-            let _custody = self.store.gate_custody_read_guard()?;
             let txn = self.store.env.read_txn().map_err(Error::from)?;
-            let Some(bytes) = HELD.get_bytes(&self.store, &txn, &())? else {
+            HELD.get_bytes(&self.store, &txn, &())?.map(|bytes| {
+                HELD.decode_value(&bytes)
+                    .ok()
+                    .filter(HeldBatch::body_intact)
+            })
+        };
+        let held = match held {
+            None => return Ok(None),
+            Some(Some(held)) => held,
+            Some(None) => {
+                self.retire_failure_signal_batch()?;
                 return Ok(None);
-            };
-            match HELD.decode_value(&bytes) {
-                Ok(held) if held.body_intact() => {
-                    let attempt = outbound_dispatch_attempt_id(&held.send_ref())?;
-                    let may_wire = read_intent_for_attempt_in_txn(self, &txn, attempt, 0)?
-                        .is_none_or(|row| {
-                            row.state == IntentState::Pending
-                                && row.recorded_outcome
-                                    == Some(RecordedOutboundOutcome::DefiniteNonDelivery)
-                        });
-                    (!may_wire || held.may_leave_in(self, &txn, endpoint)?).then_some(held)
-                }
-                _ => None,
             }
         };
-        if held.is_none() {
+        let request = batch_request(sender, &held, now);
+        let approval_digest =
+            outbound_approve_once_digest(self, &request)?.map(|digest| digest.to_hex());
+        let carry = {
+            let _custody = self.store.gate_custody_read_guard()?;
+            let txn = self.store.env.read_txn().map_err(Error::from)?;
+            let attempt = outbound_dispatch_attempt_id(&held.send_ref())?;
+            let may_leave = |pressed: bool| -> Result<bool> {
+                Ok(pressed
+                    && held.endpoint == endpoint
+                    && held.eligible_in(self, &txn, approval_digest.as_deref())?)
+            };
+            match read_intent_for_attempt_in_txn(self, &txn, attempt, 0)? {
+                None => may_leave(true)?,
+                Some(row) if retryable(&row) => may_leave(row.admitted_approval.is_some())?,
+                Some(_) => true,
+            }
+        };
+        if !carry {
             self.retire_failure_signal_batch()?;
+            return Ok(None);
         }
-        Ok(held)
+        Ok(Some(BatchSend {
+            held,
+            request,
+            approval_digest,
+        }))
+    }
+
+    /// [`HeldBatch::may_still_leave_in`] on a snapshot of its own, just
+    /// before the wire.
+    pub(super) fn failure_signal_batch_may_leave(
+        &self,
+        held: &HeldBatch,
+        approval_digest: Option<&str>,
+    ) -> Result<bool> {
+        let _custody = self.store.gate_custody_read_guard()?;
+        let txn = self.store.env.read_txn()?;
+        held.may_still_leave_in(self, &txn, approval_digest)
     }
 
     /// Stages `held` before its send leaves.
@@ -229,7 +279,8 @@ impl Vault {
         self.with_write_txn_grouped(|txn| HELD.put(&self.store, txn, &(), held))
     }
 
-    /// Keeps `held` at `stage`, unless an erase retired it meanwhile.
+    /// Records that `held` stands at `stage`, unless it was retired
+    /// meanwhile.
     pub(super) fn keep_failure_signal_batch(
         &self,
         held: &HeldBatch,
@@ -239,7 +290,7 @@ impl Vault {
             return Ok(());
         }
         self.with_write_txn_grouped(|txn| {
-            let Some(mut kept) = HELD.get(&self.store, &*txn, &())? else {
+            let Some(mut kept) = HELD.get_lenient(&self.store, &*txn, &())? else {
                 return Ok(());
             };
             if kept.batch_id != held.batch_id {
@@ -250,7 +301,13 @@ impl Vault {
         })
     }
 
-    /// Retires the carried batch with no ack: its signals stay queued.
+    /// Retires the carried batch with no ack of anything its ledger row has
+    /// not settled. What the row already settled (a delivered send's
+    /// quantities and records, or the counts of a stopped send that may
+    /// have landed) is acked first in the same writer, with no wire, so
+    /// retiring never sends again what left. Every other signal stays
+    /// queued. A pass, or the participation reconcile, calls this under the
+    /// delivery lock, so no send of it is under way.
     pub(super) fn retire_failure_signal_batch(&self) -> Result<()> {
         let carried = {
             let txn = self.store.env.read_txn()?;
@@ -259,7 +316,15 @@ impl Vault {
         if !carried {
             return Ok(());
         }
-        self.with_write_txn_grouped(|txn| HELD.delete(&self.store, txn, &()).map(drop))
+        self.with_write_txn_grouped(|txn| {
+            if let Some(held) = HELD.get_lenient(&self.store, &*txn, &())?
+                && let Some(delivered) = settled_in(self, &*txn, &held)?
+            {
+                settle_in_txn(self, txn, &held, delivered)?;
+            }
+            HELD.delete(&self.store, txn, &())?;
+            Ok(())
+        })
     }
 
     /// Settles `held` in one writer with its row's removal: its frozen
@@ -272,85 +337,119 @@ impl Vault {
         held: &HeldBatch,
         delivered: bool,
     ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            settle_in_txn(self, txn, held, delivered)?;
+            HELD.delete(&self.store, txn, &())?;
+            Ok(())
+        })
+    }
+
+    /// Where a batch the dispatch neither delivered nor left ambiguous
+    /// stands, `None` to discard it (CALLS `FIX 6679 held failure-signal
+    /// batch carries over`). The Gate holding it for the owner (`pending`;
+    /// a delivery window, budget or suppression hold the Gate allowed is
+    /// not one) keeps it. So does an admitted send that failed definitely,
+    /// its ledger row still Pending, when its admission spent the owner's
+    /// press: it retries under its own ref on that press. A Gate Deny, and
+    /// every other ending, discards it, as a fresh batch always was.
+    pub(super) fn next_failure_signal_stage(
+        &self,
+        held: &HeldBatch,
+        result: &OutboundDispatchResult,
+    ) -> std::result::Result<Option<HeldStage>, OutboundDispatchError> {
+        if result.gate_outcome == GateOutcome::Pending.as_str() {
+            return Ok(Some(HeldStage::Held));
+        }
+        if result.gate_outcome == GateOutcome::Deny.as_str()
+            || !matches!(result.resolution, Some(IntentResolution::Pending { .. }))
+        {
+            return Ok(None);
+        }
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        let attempt = outbound_dispatch_attempt_id(&held.send_ref())?;
+        let pressed = read_intent_for_attempt_in_txn(self, &txn, attempt, 0)?
+            .is_some_and(|row| retryable(&row) && row.admitted_approval.is_some());
+        Ok(pressed.then_some(HeldStage::Admitted))
+    }
+}
+
+/// A ledger row a definite failure left Pending and retryable.
+fn retryable(row: &IntentLedgerRecord) -> bool {
+    row.state == IntentState::Pending
+        && row.recorded_outcome == Some(RecordedOutboundOutcome::DefiniteNonDelivery)
+}
+
+/// Takes `held`'s frozen quantities out of the aggregate in `txn`, and its
+/// code-fix records out of the queue once it was `delivered`.
+fn settle_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    held: &HeldBatch,
+    delivered: bool,
+) -> Result<()> {
+    subtract_counts_in_txn(vault, txn, &held.counts)?;
+    if delivered {
         let ids = held
             .code_fix
             .iter()
             .map(|(id, _)| id.as_str())
             .collect::<Vec<_>>();
-        self.with_write_txn_grouped(|txn| {
-            subtract_counts_in_txn(self, txn, &held.counts)?;
-            if delivered {
-                ack_code_fix_records_in_txn(self, txn, &ids)?;
-            }
-            HELD.delete(&self.store, txn, &())?;
-            Ok(())
-        })
+        ack_code_fix_records_in_txn(vault, txn, &ids)?;
     }
+    Ok(())
 }
 
-/// The stage a batch the dispatch neither delivered nor left ambiguous
-/// keeps, `None` to discard it (CALLS `FIX 6679 held failure-signal batch
-/// carries over`). The Gate holding it for the owner (`pending`; a delivery
-/// window, budget or suppression hold the Gate allowed is not one) keeps it
-/// held, under the decision that first held it. A batch the owner held
-/// stays when the Gate admitted it and it failed definitely (its ledger row
-/// still Pending: it retries under its own ref on its recorded press), and
-/// when the Gate allowed it without admitting it (a delivery window or seat
-/// hold: its press is unspent). A Gate Deny, and every other ending of a
-/// batch the owner never held, discards it, as a fresh batch always was.
-pub(super) fn next_stage(held: &HeldBatch, result: &OutboundDispatchResult) -> Option<HeldStage> {
-    let hold = held.stage.owner_hold().cloned();
-    if result.gate_outcome == GateOutcome::Pending.as_str() {
-        return Some(HeldStage::Held(hold.unwrap_or_else(|| {
-            OwnerHold {
-                decision: result
-                    .gate_decision_id
-                    .as_deref()
-                    .and_then(|id| id.strip_prefix("gate:"))
-                    .and_then(public_id_key),
-                approval_digest: result.approval_digest.clone(),
-            }
-        })));
-    }
-    let hold = hold.filter(|_| result.gate_outcome != GateOutcome::Deny.as_str())?;
-    match result.resolution {
-        Some(IntentResolution::Pending { .. }) => Some(HeldStage::Admitted(hold)),
-        None => Some(held.stage.clone()),
-        Some(_) => None,
-    }
+/// What `held`'s ledger row settled for good, read in `txn`: `Some(true)`
+/// delivered, `Some(false)` stopped with its delivery unresolved, `None`
+/// for no row, a row still Pending, one stopped undelivered, or one that
+/// does not read.
+fn settled_in(vault: &Vault, txn: &heed::RoTxn<'_>, held: &HeldBatch) -> Result<Option<bool>> {
+    let Ok(attempt) = outbound_dispatch_attempt_id(&held.send_ref()) else {
+        return Ok(None);
+    };
+    let row = match read_intent_for_attempt_in_txn(vault, txn, attempt, 0) {
+        Ok(row) => row,
+        Err(IntentLedgerError::Engine(error)) => return Err(error),
+        Err(_) => return Ok(None),
+    };
+    Ok(match row.as_ref().map(IntentResolution::from_record) {
+        Some(Ok(IntentResolution::Delivered)) => Some(true),
+        Some(Ok(IntentResolution::Stopped {
+            delivery: UnconfirmedDelivery::Unresolved,
+            ..
+        })) => Some(false),
+        _ => None,
+    })
 }
 
-/// Whether the owner denied `digest` after the decision `after` held it
-/// (every decision since, read exhaustively; all of them when the hold named
-/// none): a `gate.consent.denied` receipt whose diff handle is that digest.
+/// Whether the owner denied `digest` after the store id `after`: a
+/// `gate.consent.denied` receipt whose diff handle is that digest, every
+/// decision since read exhaustively.
 fn owner_denied_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    after: Option<[u8; 16]>,
+    after: [u8; 16],
     digest: &str,
 ) -> Result<bool> {
-    let denies = |record: &GateDecisionRecord| {
-        record.content_kind == CONSENT_CONTENT_KIND
-            && record.reason_codes.first().map(String::as_str) == Some(CONSENT_REASON_DENIED)
-            && bytes_to_hex_lower(&record.diff_handle) == digest
-    };
-    let found = match after {
-        Some(after) => vault.store.find_gate_decision_after_in_txn(
-            txn,
-            GateDecisionId::from_bytes(after),
-            denies,
-        )?,
-        None => vault.store.find_gate_decision_id_in_txn(txn, denies)?,
-    };
+    let found = vault.store.find_gate_decision_after_in_txn(
+        txn,
+        GateDecisionId::from_bytes(after),
+        |record: &GateDecisionRecord| {
+            record.content_kind == CONSENT_CONTENT_KIND
+                && record.reason_codes.first().map(String::as_str) == Some(CONSENT_REASON_DENIED)
+                && bytes_to_hex_lower(&record.diff_handle) == digest
+        },
+    )?;
     Ok(found.is_some())
 }
 
 /// An erase of `actor` retires the carried batch whole, with no ack (CALLS
 /// `FIX 6679 held batch custody table`): its counts and records may come
 /// from that actor's failures, and nothing in a frozen body is edited under
-/// its old ref. The signals stay queued; the next pass selects afresh. An id
-/// whose entity is no actor retires nothing; a row that does not decode goes
-/// by its key all the same.
+/// its old ref. The signals stay queued; the next pass selects afresh. It
+/// settles nothing: a pass may be sending the batch, and that pass settles
+/// what it sent. An id whose entity is no actor retires nothing; a row that
+/// does not decode goes by its key all the same.
 pub(crate) fn erase_held_batch_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,

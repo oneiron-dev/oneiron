@@ -116,7 +116,7 @@ fn public_keys(ids: &[&str]) -> Vec<[u8; 16]> {
 }
 
 /// The queue key behind a record's public id: 32 hex digits.
-pub(in crate::failure_signals) fn public_id_key(id: &str) -> Option<[u8; 16]> {
+fn public_id_key(id: &str) -> Option<[u8; 16]> {
     if id.len() != 32 {
         return None;
     }
