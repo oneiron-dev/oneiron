@@ -11,7 +11,8 @@
 //! the sum, or their record names no reason or does not decode. No such call
 //! is priced at zero, converted or clipped, so the month's bill is unknown.
 //! The seat's calls on another model, or on none, are counted out of every
-//! outcome, a pass or fail included, and its note says how many.
+//! outcome, a pass or fail included, and its note says how many. A close that
+//! names no receipt still waits: the check door refuses one.
 use super::{
     DAY_SECS, DreamerAdmittedAttempt, OfferCheckInput, SeatUsage, Sources, TrainingOffer, Vault,
     WINDOW_SECS,
@@ -136,7 +137,7 @@ impl Unverifiable {
     }
 
     /// Closes the check with `alone`, a reason it read no call at all: no
-    /// meter, or no Bound run.
+    /// meter, or no Bound run. It names no receipt, so for now it waits.
     pub(super) fn unread(
         alone: Alone,
         vault: &Vault,
@@ -241,6 +242,11 @@ impl Unverifiable {
         refs: Vec<String>,
         now: u64,
     ) -> oneiron::Result<()> {
+        // The check door refuses a check that names no receipt, so one with
+        // none to name waits as before until it takes one (FIX 6406, L08).
+        if refs.is_empty() {
+            return Ok(());
+        }
         let days = WINDOW_SECS / DAY_SECS;
         let promised = format!(
             "{} {}",
