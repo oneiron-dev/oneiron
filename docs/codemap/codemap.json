@@ -51459,7 +51459,7 @@
       "crate-vis": 2,
       "enum": 6,
       "fn": 3,
-      "mod": 1,
+      "mod": 2,
       "re-export": 1,
       "struct": 2
      }
@@ -51471,9 +51471,9 @@
       "OutboundWaitHost"
      ],
      "path": "src/slim/outbound_wait.rs",
-     "purpose": "A scoped live model wait over the durable step journal",
+     "purpose": "Scoped live outbound waits over the durable journals: a journaled model call and an admitted effect send",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1,
       "trait": 1
      }
@@ -51502,6 +51502,22 @@
       "enum": 7,
       "fn": 2,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EligibleWait",
+      "SupervisorShedOutcome",
+      "SupervisorSlimStatus"
+     ],
+     "path": "src/slim/supervisor.rs",
+     "purpose": "The supervisor's view of SLIM (FIX 5186): a content-free observation of the live outbound wait a shed would…",
+     "surface": {
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -65543,7 +65559,7 @@
      "purpose": "Deterministic static skill scanning and the activation risk consult"
     },
     "slim": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -65783,7 +65799,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4099,
+   "source_files": 4100,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86094,9 +86110,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/shed.rs",
-     "purpose": "Mapping the engine's shed transaction to the managed ctl contract",
+     "purpose": "Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -93861,7 +93877,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 14,
+      "mod": 15,
       "re-export": 9
      }
     },
@@ -93936,6 +93952,24 @@
      "surface": {
       "const": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EligibleWaitWire",
+      "SlimResidency",
+      "SlimStatusWire",
+      "UnslimStatus",
+      "UnslimWire"
+     ],
+     "path": "src/lib/slim_control.rs",
+     "purpose": "The supervisor's SLIM recovery surface (FIX 5186): what a vault reports of its residency and its live…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "struct": 3
      }
     },
     {
@@ -94025,7 +94059,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 29,
+     "files": 30,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94034,7 +94068,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 28,
+   "source_files": 29,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

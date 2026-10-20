@@ -28,12 +28,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/limits.rs` | src | s | 8 const | — | Wire limit constants and ready byte |
 | `src/lib/managed_backup.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 const · 1 crate-vis | CheckpointSignerObservation, CheckpointSignerUnavailable, ManagedBackupFacts | What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): the vault id its… |
 | `src/lib/managed_holder.rs` | src | m | 5 struct · 12 fn · 1 type · 6 const | ManagedOwnerAction, ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedWidenAction | Host-attested account actions: one managed widen request, and one request the vault owner makes in person… |
-| `src/lib/mod.rs` | src | s | 14 mod · 9 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `src/lib/mod.rs` | src | s | 15 mod · 9 re-export | — | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 | `src/lib/owner_signing_recovery.rs` | src | s | 2 struct · 2 fn · 2 const | OwnerSigningRecovery, OwnerSigningRecoveryAck | Owner-signing recovery (FIX 5260): an adopted vault proves, on its supervisor's challenge, that it still… |
 | `src/lib/preview.rs` | src | s | 3 struct · 1 enum · 2 fn | PreviewEndpoint, PreviewPortDeclaration, PreviewSessionManifest, PreviewStage | A session's private, lease-bound live port, distinct from artifact publication |
 | `src/lib/secrets.rs` | src | s | 2 struct · 8 fn | Credentials, TokenHex | Spawn-token hex type, credential framing, and hex codec |
 | `src/lib/settings_paths.rs` | src | s | 1 struct · 1 enum · 6 fn · 4 const | SettingsPathReason, SettingsPathRefused | The owner paths of a managed vault's settings file (`--settings-file`): the leaves that name a file or… |
 | `src/lib/settings_policy.rs` | src | s | 1 fn · 2 const | — | What a managed vault's settings file (`--settings-file`) may not set, as dotted fields of the server's… |
+| `src/lib/slim_control.rs` | src | s | 3 struct · 2 enum · 2 const | EligibleWaitWire, SlimResidency, SlimStatusWire, UnslimStatus, UnslimWire | The supervisor's SLIM recovery surface (FIX 5186): what a vault reports of its residency and its live… |
 | `src/lib/tenancy.rs` | src | s | 2 struct · 1 enum · 16 fn | VaultBinding, VaultHost, VaultTenancy | Single-vault identity and lifecycle for account and organization hosts |
 | `src/lib/tests.rs` | test | m | — | — | Wire-compat and validation test suite |
 | `src/lib/vault_uids.rs` | src | s | 1 struct · 1 enum · 4 fn · 5 const | VaultUidRow, VaultUidsError | The host's vault UID allocation table: one row per managed vault, binding its dedicated non-root UID to its… |
