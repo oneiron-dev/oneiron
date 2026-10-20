@@ -197,13 +197,6 @@ impl Vault {
         } else {
             std::collections::BTreeSet::new()
         };
-        // A delete takes its quotes out of the NOTEs that cite it first and
-        // keeps their history (C050), so the purge's eraser finds none.
-        if reason == DeleteReason::UserDelete {
-            affected.extend(crate::note::scrub_deleted_citations_in_txn(
-                self, &mut wtxn, id,
-            )?);
-        }
         let (existed, citing) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
