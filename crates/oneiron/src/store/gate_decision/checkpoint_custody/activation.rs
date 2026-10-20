@@ -1,6 +1,8 @@
 //! An owner's activation of an archived vault as a side vault of the vault
 //! that replaced it (moved out of the checkpoint custody module whole), with
-//! its bodies' prune and read back (KS-2B1, FIX 6020).
+//! its bodies' prune and read back (KS-2B1, FIX 6020), and its known-value
+//! history's (KS-3): required whole through the same plan, an erased
+//! holder's references dropped, every kept entry read back under the fork.
 //!
 //! The archive's body instances fork with its claim keys. What its source
 //! retired takes the archive's rows as an erase took the source's, and as a
@@ -33,8 +35,9 @@ use crate::side_table::{self, SideKey, SideTableDbs};
 use crate::store::key_custody::{self, CustodyBinding, LocalCustody};
 use crate::store::{
     BODY_KEYS, BodyKeyRow, INLINE_ASSETS, RESPONSE_BINDINGS, ResponseBinding, ResponseFamily,
-    Store, body_instances_in_rows, body_key_in, carrier_row, prune_retired_bodies_in_rows,
-    require_body_instances,
+    Store, body_instances_in_rows, body_key_in, carrier_row, known_history_prefixes,
+    prune_retired_bodies_in_rows, read_back_known_history, require_body_instances,
+    require_known_history,
 };
 
 /// The `vault_meta` families a body prune reads and writes: the instance
@@ -67,10 +70,9 @@ struct ArchivePrune {
 }
 
 impl ArchivePrune {
-    /// The prune of the `retired` instances among `rows`, as a restore
-    /// prunes an image's.
-    fn of(rows: &Rows, retired: &BTreeSet<[u8; 16]>) -> Result<Self> {
-        let mut kept = rows.clone();
+    /// The prune of the `retired` instances among `kept`, `rows` with the
+    /// known-value history it keeps (KS-3), as a restore prunes an image's.
+    fn of(rows: &Rows, mut kept: Rows, retired: &BTreeSet<[u8; 16]>) -> Result<Self> {
         let pruned = prune_retired_bodies_in_rows(&mut kept, retired)?;
         let after: BTreeMap<&[u8], &[u8]> = kept
             .iter()
@@ -140,13 +142,19 @@ impl Store {
             let mut prefixes = live_custody_prefixes();
             prefixes.push(GATE_DECISION_KEY_PREFIX);
             prefixes.extend(body_prefixes());
+            prefixes.extend(known_history_prefixes());
             vault_meta_rows(&self.env, &txn, &prefixes)?
         };
         let mut custody = preflight_checkpoint_rows(&rows, Some(source))?;
         // Its body instances fork with its claim keys (KS-2A): a missing one
         // refuses; a retired one's rows go before the archive is lifted.
         let retired = require_body_instances(&body_instances_in_rows(&rows)?, custody.plan_mut())?;
-        let prune = ArchivePrune::of(&rows, &retired)?;
+        // So does its known-value history (KS-3), each retained entry by
+        // exact id: a missing one refuses by name, an erased holder's
+        // references go.
+        let mut kept = rows.clone();
+        require_known_history(&mut kept, custody.plan_mut())?;
+        let prune = ArchivePrune::of(&rows, kept, &retired)?;
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;
@@ -161,6 +169,7 @@ impl Store {
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| self.read_back_bodies_in_txn(&wtxn, &prune.kept))
+            .and_then(|()| self.read_back_known_in_txn(&wtxn, &prune.kept))
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // The orders standing on its source now, not the ones it had.
             .and_then(|()| replace_host_holds_in_txn(self, &mut wtxn, source.host_holds()))
@@ -249,6 +258,22 @@ impl Store {
             }
         }
         Ok(())
+    }
+
+    /// Reads back, under the custody `txn` binds (the forked one), the
+    /// known-value index's master and every history entry `kept` names
+    /// (KS-3).
+    fn read_back_known_in_txn(&self, txn: &RoTxn<'_>, kept: &Rows) -> Result<()> {
+        let prefixes = known_history_prefixes();
+        if !kept
+            .iter()
+            .any(|(key, _)| prefixes.iter().any(|prefix| key.starts_with(prefix)))
+        {
+            return Ok(());
+        }
+        let binding: CustodyBinding =
+            key_custody::binding_in_txn(self, txn)?.ok_or_else(corrupt)?;
+        read_back_known_history(kept, &binding)
     }
 
     /// Reads every encrypted receipt in `txn` under the custody it binds.

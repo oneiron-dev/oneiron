@@ -58,8 +58,8 @@ impl CustodyVaultId {
 /// |--------|---------------------|------------------------------------------|
 /// | `0x01` | `ClaimDecision`     | claim-bound Gate decision rows (ORCB)    |
 /// | `0x02` | `BodyInstance`      | body instances (KS-2A)                   |
-/// | `0x03` | `KnownValueIndex`   | reserved: KS-3 known-value index key     |
-/// | `0x04` | `KnownValueEntry`   | reserved: KS-3 known-value holder entries |
+/// | `0x03` | `KnownValueIndex`   | the known-value index's master key (KS-3) |
+/// | `0x04` | `KnownValueEntry`   | known-value history entries, by holder (KS-3) |
 /// | `0x05` | `WorldPad`          | reserved: KS-5 world pads                |
 /// | `0x06` | `CredentialValue`   | reserved: KS-6 credential values         |
 /// | `0x07` | `CheckpointPayload` | KS-7 checkpoint payload compartments     |
@@ -77,6 +77,15 @@ pub(crate) enum CustodyKind {
     /// of the same bytes never shares a retired instance's lifetime; secret =
     /// the body file's data key (32 bytes).
     BodyInstance,
+    /// The known-value index's master key (KS-3): one per vault, so its item
+    /// is empty and it lives at generation 0; secret = the 32 random bytes
+    /// the index's fingerprint and tag keys derive from.
+    KnownValueIndex,
+    /// One known-value history entry (KS-3): item = the holding custody
+    /// record's id (16 bytes), never a name derived from a value; generation
+    /// = the holder's entry slot; secret = the index's 44-byte entry, `len
+    /// (u32be) | tag (8) | fingerprint (32)`.
+    KnownValueEntry,
     /// One owner's compartment of a checkpoint's ordinary payload (KS-7):
     /// item = subtype (1) | canonical owner (32) | incarnation (16), secret
     /// = the compartment's sealing key (32 bytes).
@@ -93,6 +102,8 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => 0x01,
             Self::BodyInstance => 0x02,
+            Self::KnownValueIndex => 0x03,
+            Self::KnownValueEntry => 0x04,
             Self::CheckpointPayload => 0x07,
             Self::TrainingLink => 0x08,
         }
@@ -102,6 +113,8 @@ impl CustodyKind {
         match tag {
             0x01 => Some(Self::ClaimDecision),
             0x02 => Some(Self::BodyInstance),
+            0x03 => Some(Self::KnownValueIndex),
+            0x04 => Some(Self::KnownValueEntry),
             0x07 => Some(Self::CheckpointPayload),
             0x08 => Some(Self::TrainingLink),
             _ => None,
@@ -113,8 +126,9 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => 16,
             Self::BodyInstance => 17,
+            Self::KnownValueEntry => 16,
             Self::CheckpointPayload => 49,
-            Self::TrainingLink => 0,
+            Self::KnownValueIndex | Self::TrainingLink => 0,
         }
     }
 
@@ -124,8 +138,10 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision
             | Self::BodyInstance
+            | Self::KnownValueIndex
             | Self::CheckpointPayload
             | Self::TrainingLink => 32,
+            Self::KnownValueEntry => 44,
         }
     }
 
@@ -135,6 +151,8 @@ impl CustodyKind {
         match self {
             Self::ClaimDecision => Error::CorruptedIndex("gate decision ORCB"),
             Self::BodyInstance => Error::CorruptedIndex("body file key custody"),
+            Self::KnownValueIndex => Error::CorruptedIndex("known-value index key custody"),
+            Self::KnownValueEntry => Error::CorruptedIndex("known-value history custody"),
             Self::CheckpointPayload => Error::CorruptedIndex("checkpoint payload custody"),
             Self::TrainingLink => Error::CorruptedIndex("training link key"),
         }
@@ -456,7 +474,9 @@ impl CustodySecret {
         Self(bytes)
     }
 
-    pub(super) fn from_bytes(bytes: Zeroizing<Vec<u8>>) -> Self {
+    /// Bytes its client computed (a known-value entry, KS-3): published as
+    /// they are, never minted.
+    pub(crate) fn from_bytes(bytes: Zeroizing<Vec<u8>>) -> Self {
         Self(bytes)
     }
 

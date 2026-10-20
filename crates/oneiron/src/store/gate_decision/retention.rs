@@ -126,18 +126,23 @@ pub(super) fn retirement_prefixes() -> [&'static [u8]; 3] {
     [retirement_prefix(), holds, host_holds]
 }
 
-/// Each claim and body instance key-retirement intent among a checkpoint's
-/// `vault_meta` rows, with whether the finisher would carry it out now: an
-/// erase's always, a sweep's unless its partition is held. A restore treats a carried-out one
-/// as done, so it never brings back a key a vault has committed to destroy.
+/// Each claim, body instance and known-value history key-retirement intent
+/// among a checkpoint's `vault_meta` rows, with whether the finisher would
+/// carry it out now: an erase's always, a sweep's unless its partition is
+/// held. A restore treats a carried-out one as done, so it never brings back
+/// a key a vault has committed to destroy.
 pub(super) fn checkpoint_retirements(
     rows: &[(Vec<u8>, Vec<u8>)],
 ) -> Result<Vec<(RetirementIntent, bool)>> {
     let mut retirements = Vec::new();
     for intent in retirements_in_rows(rows)? {
-        // A body instance retires for an erase only, which no hold defers
-        // (KS-2A): the restore treats it as done.
-        if intent.subject.kind() == CustodyKind::BodyInstance {
+        // A body instance, and a holder's known-value history (KS-3),
+        // retire for an erase only, which no hold defers (KS-2A): the
+        // restore treats it as done.
+        if matches!(
+            intent.subject.kind(),
+            CustodyKind::BodyInstance | CustodyKind::KnownValueEntry
+        ) {
             retirements.push((intent, true));
             continue;
         }
@@ -358,6 +363,20 @@ impl Vault {
         // their instances.
         #[cfg(unix)]
         self.finish_body_custody_retirements_after_commit();
+        self.finish_known_history_retirements_after_commit();
+    }
+
+    /// Post-commit door for an erase that staged a holder's known-value
+    /// history retirement (KS-3). The intent is durable, so a failure here
+    /// is retried by the next housekeeping pass and never reported as a
+    /// failure of the erase that already committed.
+    pub(crate) fn finish_known_history_retirements_after_commit(&self) {
+        if let Err(error) = self.store.finish_known_history_retirements() {
+            tracing::warn!(
+                error = %error,
+                "known-value history retirement deferred to the next housekeeping pass"
+            );
+        }
     }
 
     /// One owner maintenance pass over gate-decision retention, for a host

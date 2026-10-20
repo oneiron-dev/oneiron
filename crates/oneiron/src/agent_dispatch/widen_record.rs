@@ -12,6 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 
+use super::workflow_record::WorkflowTaskBinding;
 use super::{AgentDispatchTarget, AgentSpawnContext, DispatchAgent};
 
 /// Pending context-widen proposal record. Key: `blake3` hash of the dedupe
@@ -103,6 +104,11 @@ pub(super) struct WidenIntent {
     /// like the rest of the spawn.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<super::CommReach>,
+    /// The TASK an agent's bound workflow run realizes, and its binding
+    /// (FIX 5350): the gate runs again and the run takes the TASK only once
+    /// the board approves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<WorkflowTaskBinding>,
 }
 
 impl WidenIntent {
@@ -131,6 +137,7 @@ impl WidenIntent {
             plan: spawn.plan.clone(),
             objectives: spawn.objectives.clone(),
             comm: spawn.comm,
+            task: None,
         })
     }
 

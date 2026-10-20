@@ -165,6 +165,19 @@ pub enum ArtifactError {
          beside the backup"
     )]
     BodyKeyCustodyUnavailable { missing: usize },
+    /// A restore needs the known-value index's master key or a history entry
+    /// its rows commit to that current key custody does not hold whole
+    /// (KS-3): the restored vault would not mask what the vault masked.
+    /// Refused before anything is made; no key is minted for it and no value
+    /// is indexed again in its place. `reason` is one of
+    /// `known_value_index_missing`, `known_value_history_missing` and
+    /// `known_value_history_corrupt`; it names no value.
+    #[error(
+        "{reason}: the known-value history this restore needs is not whole in current key \
+         custody, so the restored vault would not mask what the vault masked; restore where the \
+         vault's custody is, or with its custody head beside the backup"
+    )]
+    KnownValueHistoryUnavailable { reason: &'static str },
     /// A recovery artifact was invalid, but every fresh random sibling
     /// `.invalid-<hex>` name quarantine tried was occupied.
     #[error(
@@ -271,6 +284,7 @@ impl ArtifactError {
             Self::InvalidAgentDispatchInput(_) => ErrorKind::InvalidAgentDispatchInput,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::BodyKeyCustodyUnavailable { .. } => ErrorKind::BodyKeyCustodyUnavailable,
+            Self::KnownValueHistoryUnavailable { .. } => ErrorKind::KnownValueHistoryUnavailable,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
             }
