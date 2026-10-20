@@ -163,6 +163,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::ESIGN_DISPATCH_MARKER, ESIGN_CAPABILITIES),
     (&t::ESIGN_HELD_SIGNING, ESIGN_CEREMONIES),
     (&t::ESIGN_IMAGE_BYTES_BUDGET, ESIGN_CEREMONIES),
+    // FIX 6219: the send act its notices go out under unattended is
+    // authority, so it stays as the live vault holds it (an erase that took
+    // it stays done); no image restores one.
+    (&t::ESIGN_NOTICE_SEND_ACT, LIVE),
     (&t::ESIGN_PRINCIPAL_OWNER_STAMP, ESIGN_CAPABILITIES),
     (&t::ESIGN_PRINCIPAL, ESIGN_CAPABILITIES),
     (&t::ESIGN_PUBLIC_CHECK, CONTENT),

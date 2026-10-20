@@ -108,6 +108,7 @@ mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
 mod pinned_root;
+mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod retired_signers;
@@ -321,6 +322,7 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
+pub(crate) use principal_standing::principal_standing_in_txn;
 pub(crate) use readonly_fold::AuthorityView;
 use readonly_fold::authority_log_rows_in_txn;
 use readonly_fold::authority_view_readonly_for_store_in_txn;

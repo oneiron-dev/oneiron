@@ -9,6 +9,10 @@
 //! ([`crate::Vault::dispatch_esign_notice`]): a gated send needs its press or
 //! a live Grant, and only an allowed one queues `esign.delivery` for the
 //! outbox.
+//!
+//! With no caller, the housekeeping notice worker runs this same path as the
+//! notices' recorded principal, while its recorded send act and its standing
+//! hold (FIX 6219, `notice_unattended`).
 use super::EsignNotice;
 use super::notice_dispatch::{
     ScopedNotice, claim_notice_in_txn, notice_lease_prefix, principal_notices,
@@ -107,6 +111,18 @@ impl Memory<'_> {
         let (actor, class) = (self.actor(), self.actor_class());
         crate::memory::verify_actor_binding(vault, actor, class)?;
         let scope = self.notice_scope()?;
+        self.dispatch_notices_in(document, &scope)
+    }
+
+    /// The door's sending of `document`'s due staged notices recorded for
+    /// this handle's actor, each judged in `scope`: the caller's own, or the
+    /// notice worker's binding (FIX 6219).
+    pub(super) fn dispatch_notices_in(
+        &self,
+        document: EntityId,
+        scope: &NoticeScope<'_>,
+    ) -> MemoryResult<EsignNoticesDispatchView> {
+        let (vault, actor) = (self.vault(), self.actor());
         {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             scope.admit_in(&txn, document)?;
@@ -141,7 +157,7 @@ impl Memory<'_> {
             })?;
             let outcome = match claimed {
                 ScopedNotice::Claimed(attempt, notice) => self.dispatch_claimed_notice(
-                    &scope,
+                    scope,
                     document,
                     attempt_ref,
                     &attempt,
