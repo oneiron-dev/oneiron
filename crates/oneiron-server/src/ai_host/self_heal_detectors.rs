@@ -8,20 +8,29 @@
 //! Once a `t3` detector's reviewed findings mint a T2, the pass registers it
 //! and grades its windows with it too, the reviewed examples' runs in the
 //! state, until a shipped closed-form T1 reproduces every label and retires
-//! it. The `t3` keeps running.
+//! it. The `t3` keeps running. A T2 asking with reviewed findings first tries
+//! the T2a centroid rung over the entities its positive examples retrieved,
+//! and asks its model only on a miss (FIX 2078). A `session` detector reads
+//! the conversation's own words as the owner reads them off this device
+//! (FIX 2079). A state goes whole: its size is measured, never cut.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use oneiron::EntityId;
 use oneiron::limit_ask::EngineLimit;
-use oneiron::self_heal::detector_pass::{detector_window_key, minted_window_key};
+use oneiron::self_heal::detector_pass::{
+    centroid_window_key, detector_window_key, minted_window_key,
+};
 use oneiron::self_heal::distillation::{MintedExample, MintedT2};
 use oneiron::self_heal::tiered::{
     DETECTOR_DIAL, DetectorDecisions, DetectorPolicy, ProposedDiagnostic,
 };
+use oneiron::self_heal::{CentroidCorpus, SessionText};
 use oneiron::store::RetrievalRunRecord;
 
 use crate::config::{DetectorTier, SelfHealConfig};
+use crate::decision_host::DecisionHost;
 use crate::server::SyncServer;
 
 const TICK: Duration = Duration::from_secs(300);
@@ -32,12 +41,6 @@ const DECIDE_BUDGET: Duration = Duration::from_secs(20);
 /// Runs one graded window holds at most: the engine's bound. A longer window
 /// is graded in parts of this many runs ([`parts`]).
 const WINDOW_RUNS: usize = 64;
-/// Bytes of run facts one window's state carries at most, under the ladder's
-/// state bound.
-const STATE_BYTES: usize = 60 * 1024;
-/// Of those, the bytes a minted T2's reviewed examples take at most, half
-/// for the positives and half for the negatives.
-const EXAMPLE_BYTES: usize = 16 * 1024;
 
 struct Detector {
     policy: DetectorPolicy,
@@ -45,22 +48,62 @@ struct Detector {
     window_secs: u64,
 }
 
-/// One detector a pass grades: one the owner configured, or the T2 registered
+/// A minted T2's reviewed corpus as one pass grades with it: the T2, its
+/// examples' facts for the state, and the T2a corpus they label.
+struct Reviewed {
+    minted: MintedT2,
+    examples: serde_json::Value,
+    corpus: CentroidCorpus,
+}
+
+/// One detector a pass grades: one the owner configured, a `t2` among them
+/// with the T2 its family's reviewed findings mint, or the T2 registered
 /// from a `t3` detector's reviewed findings, graded over that seed's windows.
 enum Graded<'a> {
-    Configured(&'a Detector),
+    Configured {
+        seed: &'a Detector,
+        reviewed: Option<Reviewed>,
+    },
     Minted {
         seed: &'a Detector,
-        minted: MintedT2,
         revision: [u8; 32],
-        examples: serde_json::Value,
+        reviewed: Reviewed,
     },
 }
 
 impl Graded<'_> {
     fn seed(&self) -> &Detector {
         match self {
-            Self::Configured(seed) | Self::Minted { seed, .. } => seed,
+            Self::Configured { seed, .. } | Self::Minted { seed, .. } => seed,
+        }
+    }
+
+    /// The reviewed corpus it asks with, if any.
+    fn reviewed(&self) -> Option<&Reviewed> {
+        match self {
+            Self::Configured { reviewed, .. } => reviewed.as_ref(),
+            Self::Minted { reviewed, .. } => Some(reviewed),
+        }
+    }
+
+    /// The key one window is graded under: the detector's wording at its
+    /// tier, a minted T2's corpus revision, and its T2a corpus's revision,
+    /// so a window graded before a label existed is graded afresh.
+    fn key(&self, window: &[&RetrievalRunRecord]) -> [u8; 32] {
+        let seed = self.seed();
+        let key = match self {
+            Self::Configured { reviewed: None, .. } => {
+                detector_window_key(&seed.policy, seed.tier.proposed(), window)
+            }
+            Self::Configured {
+                reviewed: Some(reviewed),
+                ..
+            } => minted_window_key(&seed.policy, &reviewed.minted.revision(), window),
+            Self::Minted { revision, .. } => minted_window_key(&seed.policy, revision, window),
+        };
+        match self.reviewed() {
+            Some(reviewed) => centroid_window_key(&key, &reviewed.corpus),
+            None => key,
         }
     }
 }
@@ -134,7 +177,10 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
         .ensure_embedded_owner_actor()
         .map_err(|error| oneiron::Error::InvalidConfig(format!("no owner principal: {error}")))?;
     let host = server.decision_host();
-    let mut pass: Vec<Graded<'_>> = detectors.iter().map(Graded::Configured).collect();
+    let mut pass: Vec<Graded<'_>> = detectors
+        .iter()
+        .filter_map(|seed| configured(vault, seed))
+        .collect();
     pass.extend(
         detectors
             .iter()
@@ -147,33 +193,13 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
             if graded == ROUND {
                 return Ok(());
             }
-            let key = match detector {
-                Graded::Configured(seed) => {
-                    detector_window_key(&seed.policy, seed.tier.proposed(), &window)
-                }
-                Graded::Minted { revision, .. } => {
-                    minted_window_key(&seed.policy, revision, &window)
-                }
-            };
+            let key = detector.key(&window);
             if vault.detector_window_graded(&key)? {
                 continue;
             }
             graded += 1;
             let window: Vec<RetrievalRunRecord> = window.into_iter().cloned().collect();
-            let examples = match detector {
-                Graded::Configured(_) => None,
-                Graded::Minted { examples, .. } => Some(examples),
-            };
-            let state = state_of(&window, examples);
-            let decisions = DetectorDecisions {
-                ladder: host.ladder().ladder(),
-                principal,
-                dial: DETECTOR_DIAL,
-                bands: host.bands(),
-                state: &state,
-                budget: DECIDE_BUDGET,
-            };
-            match grade(vault, detector, &decisions, &window) {
+            match judge(vault, host, principal, detector, &window) {
                 Ok(raised) => {
                     vault.mark_detector_window_graded(&key, now)?;
                     tracing::debug!(
@@ -194,6 +220,47 @@ fn round(server: &SyncServer, detectors: &[Detector]) -> oneiron::Result<()> {
     Ok(())
 }
 
+/// A detector the owner configured. A `t2` asks with the T2 its family's
+/// reviewed findings mint, when they mint one: the same examples and T2a
+/// corpus a registered T2 asks with. `None` while that read fails; the next
+/// pass reads it again.
+fn configured<'a>(vault: &oneiron::Vault, seed: &'a Detector) -> Option<Graded<'a>> {
+    if seed.tier != DetectorTier::T2 {
+        return Some(Graded::Configured {
+            seed,
+            reviewed: None,
+        });
+    }
+    let reviewed = vault.mint_t2(seed.policy.clone()).and_then(|minted| {
+        minted
+            .map(|minted| review_corpus(vault, minted))
+            .transpose()
+    });
+    match reviewed {
+        Ok(reviewed) => Some(Graded::Configured { seed, reviewed }),
+        // By kind only; the next pass reads it again.
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                family = %seed.policy.family,
+                "a configured T2 waits for the next pass"
+            );
+            None
+        }
+    }
+}
+
+/// A minted T2's reviewed corpus for one pass: its examples' runs, read
+/// once, as the state's facts and as the T2a corpus they label.
+fn review_corpus(vault: &oneiron::Vault, minted: MintedT2) -> oneiron::Result<Reviewed> {
+    let shown = vault.minted_t2_examples(&minted)?;
+    Ok(Reviewed {
+        corpus: vault.centroid_corpus(&shown)?,
+        examples: example_facts(&shown),
+        minted,
+    })
+}
+
 /// The T2 registered for a `t3` detector's family, when its reviewed findings
 /// mint one and no closed-form T1 has graduated it.
 fn registered<'a>(vault: &oneiron::Vault, seed: &'a Detector, now: u64) -> Option<Graded<'a>> {
@@ -209,12 +276,10 @@ fn registered<'a>(vault: &oneiron::Vault, seed: &'a Detector, now: u64) -> Optio
             if registration.graduated_to.is_some() {
                 return Ok(None);
             }
-            let examples = example_facts(&vault.minted_t2_examples(&minted)?);
             Ok(Some(Graded::Minted {
                 seed,
-                minted,
                 revision: registration.revision,
-                examples,
+                reviewed: review_corpus(vault, minted)?,
             }))
         });
     match registered {
@@ -231,24 +296,58 @@ fn registered<'a>(vault: &oneiron::Vault, seed: &'a Detector, now: u64) -> Optio
     }
 }
 
+/// Grades one window. A T2 with a reviewed corpus tries T2a first, and a
+/// match is its proposal; otherwise the detector asks its model question
+/// over the whole state its runs, reviewed examples and session text make.
+fn judge(
+    vault: &oneiron::Vault,
+    host: &DecisionHost,
+    principal: EntityId,
+    detector: &Graded<'_>,
+    runs: &[RetrievalRunRecord],
+) -> oneiron::Result<Option<ProposedDiagnostic>> {
+    let seed = detector.seed();
+    let reviewed = detector.reviewed();
+    if let Some(reviewed) = reviewed
+        && let Some(found) = vault.classify_centroid_window(&seed.policy, &reviewed.corpus, runs)?
+    {
+        return Ok(Some(found));
+    }
+    let session = match seed.tier {
+        DetectorTier::Session => Some(vault.session_judge_context(principal, runs)?),
+        DetectorTier::T2 | DetectorTier::T3 => None,
+    };
+    let examples = reviewed.map(|reviewed| &reviewed.examples);
+    let state = state_of(vault, runs, examples, session.as_ref())?;
+    let decisions = DetectorDecisions {
+        ladder: host.ladder().ladder(),
+        principal,
+        dial: DETECTOR_DIAL,
+        bands: host.bands(),
+        state: &state,
+        budget: DECIDE_BUDGET,
+    };
+    grade(vault, detector, &decisions, runs)
+}
+
 fn grade(
     vault: &oneiron::Vault,
     detector: &Graded<'_>,
     decisions: &DetectorDecisions<'_>,
     runs: &[RetrievalRunRecord],
 ) -> oneiron::Result<Option<ProposedDiagnostic>> {
-    let detector = match detector {
-        Graded::Configured(detector) => detector,
-        Graded::Minted { minted, .. } => {
-            return vault.classify_minted_t2(minted, decisions, runs);
+    let (seed, reviewed) = match detector {
+        Graded::Configured { seed, reviewed } => (seed, reviewed),
+        Graded::Minted { reviewed, .. } => {
+            return vault.classify_minted_t2(&reviewed.minted, decisions, runs);
         }
     };
-    match detector.tier {
-        DetectorTier::T3 => vault.judge_retrieval_trace(&detector.policy, decisions, runs),
-        DetectorTier::Session => vault.judge_session_quality(&detector.policy, decisions, runs),
-        DetectorTier::T2 => match vault.mint_t2(detector.policy.clone())? {
-            Some(minted) => vault.classify_minted_t2(&minted, decisions, runs),
-            None => vault.classify_prompt(&detector.policy, decisions, runs),
+    match seed.tier {
+        DetectorTier::T3 => vault.judge_retrieval_trace(&seed.policy, decisions, runs),
+        DetectorTier::Session => vault.judge_session_quality(&seed.policy, decisions, runs),
+        DetectorTier::T2 => match reviewed {
+            Some(reviewed) => vault.classify_minted_t2(&reviewed.minted, decisions, runs),
+            None => vault.classify_prompt(&seed.policy, decisions, runs),
         },
     }
 }
@@ -304,74 +403,69 @@ fn parts<'a>(window: &[&'a RetrievalRunRecord]) -> Vec<Vec<&'a RetrievalRunRecor
         .collect()
 }
 
-/// The facts of a window's runs the detector's providers read, newest runs
-/// dropped first past [`STATE_BYTES`], with a minted T2's reviewed examples.
-/// Counts, signals and grades only: no query or result text goes with them.
+/// The whole state a window's providers read: the facts of every run, a
+/// minted T2's reviewed examples, and a session's readable text. Of runs,
+/// counts, signals and grades only, no query or result text; of a session,
+/// its own words as its reader may read them off this device. Nothing is
+/// cut: past `limits.maintenance_text_bytes` or `limits.maintenance_row_items`
+/// the pass asks and reads on.
 fn state_of(
+    vault: &oneiron::Vault,
     runs: &[RetrievalRunRecord],
     examples: Option<&serde_json::Value>,
-) -> serde_json::Value {
-    let mut left = STATE_BYTES.saturating_sub(examples.map_or(0, |e| e.to_string().len()));
-    let (facts, cut) = facts_within(runs, &mut left);
-    let mut state = serde_json::json!({ "runs": facts, "cut": cut });
+    session: Option<&SessionText>,
+) -> oneiron::Result<serde_json::Value> {
+    let facts = run_facts(runs);
+    let mut items = facts.len();
+    let mut state = serde_json::json!({ "runs": facts });
     if let Some(examples) = examples {
+        items += examples["findings"].as_array().map_or(0, Vec::len);
         state["examples"] = examples.clone();
     }
-    state
+    if let Some(session) = session {
+        items += session.lines.len();
+        state["session"] = serde_json::to_value(session)
+            .map_err(|_| oneiron::Error::InvariantViolation("session text encode"))?;
+    }
+    let bytes = serde_json::to_vec(&state).map_or(0, |bytes| bytes.len());
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, bytes as u64);
+    Ok(state)
 }
 
-/// A minted T2's reviewed examples, each finding with its runs' facts, past
-/// half of [`EXAMPLE_BYTES`] a side the later findings and runs left out.
+/// A minted T2's reviewed examples, positives first, each finding with every
+/// one of its runs' facts.
 fn example_facts(examples: &[MintedExample]) -> serde_json::Value {
     let mut shown = Vec::with_capacity(examples.len());
     for positive in [true, false] {
-        let mut left = EXAMPLE_BYTES / 2;
         for example in examples.iter().filter(|e| e.positive == positive) {
-            let mut room = left;
-            let (runs, cut) = facts_within(&example.runs, &mut room);
-            let finding = serde_json::json!({
+            shown.push(serde_json::json!({
                 "finding": example.event_id.to_hex(),
                 "positive": positive,
-                "runs": runs,
-                "cut": cut,
-            });
-            let size = finding.to_string().len();
-            if runs.is_empty() || size > left {
-                break;
-            }
-            left -= size;
-            shown.push(finding);
+                "runs": run_facts(&example.runs),
+            }));
         }
     }
-    let cut = shown.len() < examples.len();
-    serde_json::json!({ "findings": shown, "cut": cut })
+    serde_json::json!({ "findings": shown })
 }
 
-/// The facts of `runs` that fit in `left` bytes, oldest first, and whether
-/// any were left out.
-fn facts_within(runs: &[RetrievalRunRecord], left: &mut usize) -> (Vec<serde_json::Value>, bool) {
-    let mut facts = Vec::with_capacity(runs.len());
-    for run in runs {
-        let fact = serde_json::json!({
-            "run": run.run_id.to_hex(),
-            "action": serde_json::to_value(&run.action).unwrap_or_default(),
-            "started_at": run.started_at,
-            "elapsed_us": run.elapsed_us,
-            "results": run.result_ids.len(),
-            "in_scope": run.total_in_scope,
-            "claims_suppressed": run.claims_suppressed,
-            "empty_reason": run.empty_reason,
-            "signals": serde_json::to_value(&run.signals).unwrap_or_default(),
-            "quality": serde_json::to_value(&run.quality).unwrap_or_default(),
-            "degradation": serde_json::to_value(&run.degradation).unwrap_or_default(),
-        });
-        let size = fact.to_string().len();
-        if size > *left {
-            break;
-        }
-        *left -= size;
-        facts.push(fact);
-    }
-    let cut = facts.len() < runs.len();
-    (facts, cut)
+/// The facts of `runs`, oldest first: counts, signals and grades only.
+fn run_facts(runs: &[RetrievalRunRecord]) -> Vec<serde_json::Value> {
+    runs.iter()
+        .map(|run| {
+            serde_json::json!({
+                "run": run.run_id.to_hex(),
+                "action": serde_json::to_value(&run.action).unwrap_or_default(),
+                "started_at": run.started_at,
+                "elapsed_us": run.elapsed_us,
+                "results": run.result_ids.len(),
+                "in_scope": run.total_in_scope,
+                "claims_suppressed": run.claims_suppressed,
+                "empty_reason": run.empty_reason,
+                "signals": serde_json::to_value(&run.signals).unwrap_or_default(),
+                "quality": serde_json::to_value(&run.quality).unwrap_or_default(),
+                "degradation": serde_json::to_value(&run.degradation).unwrap_or_default(),
+            })
+        })
+        .collect()
 }
