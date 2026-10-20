@@ -311,7 +311,11 @@ impl OffRecordSession<'_> {
             let txn = self.vault.store.env.read_txn()?;
             let windows = self.sight_in_txn(&txn, room, person, credential)?;
             let owner = crate::memory::owner_copy_in_txn(self.vault, &txn, person);
-            (windows, Hearing::in_txn(self.vault, &txn, Some(room)), owner)
+            (
+                windows,
+                Hearing::in_txn(self.vault, &txn, Some(room)),
+                owner,
+            )
         };
         let (turns, thread_roots) = gathered.finish_with_roots(Some(windows.as_slice()));
         let talk = OffRecordTalk {
