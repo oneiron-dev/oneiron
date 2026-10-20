@@ -936,7 +936,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // So is the custody anchor door's credential, on its own pipe when the
     // supervisor hands one: never the environment (FIX 5788).
     let anchor = host.custody_anchor_credentials()?;
-    let mut vault_config = config.vault_config();
+    let mut vault_config = config.base_vault_config();
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export
     // takes the managed default, and unset training follows the export.
