@@ -4,15 +4,17 @@
 //! someone this vault erased, or that differs from the held copy only in
 //! whom it names erased, settles by one rule ([`settled_in`]): it names no
 //! one where this vault's own hard-delete marker says so
-//! ([`crate::deletion::ACTOR_ERASE_CARRIER_SOURCE`]), and each slot either
-//! copy erased stays erased ([`crate::deletion::ACTOR_ERASE_CARRIER_MERGE`]).
-//! Two live people in one slot, or any other difference, still meet the
-//! immutable edit's bound. Ingest rewrites the held edit in place when the
-//! copy erases more of it, its retained revisions started over
-//! ([`super::audience_erase`]), and takes the copy in the settled form, so a
-//! late unerased copy never names an erased person again. Every export, the
-//! reverse mirror and the sweep rewrite a carrier that names more than its
-//! settled form, the window pinned history-free first. No edit is deleted.
+//! ([`crate::deletion::ACTOR_ERASE_CARRIER_SOURCE`]) or its room-person
+//! erase marker does for the edit's room, an id it never held included (FIX
+//! 6094), and each slot either copy erased stays erased
+//! ([`crate::deletion::ACTOR_ERASE_CARRIER_MERGE`]). Two live people in one
+//! slot, or any other difference, still meet the immutable edit's bound.
+//! Ingest rewrites the held edit in place when the copy erases more of it,
+//! its retained revisions started over ([`super::audience_erase`]), and
+//! takes the copy in the settled form, so a late unerased copy never names
+//! an erased person again. Every export, the reverse mirror and the sweep
+//! rewrite a carrier that names more than its settled form, the window
+//! pinned history-free first. No edit is deleted.
 
 use std::borrow::Cow;
 
@@ -87,7 +89,7 @@ fn settled_in(
 ) -> Result<Settled> {
     let mut settled = Settled {
         held: None,
-        carried: erased_here_in(vault, txn, carried)?,
+        carried: erased_here_in(vault, txn, binding.room, carried)?,
     };
     if let Some((held_binding, held)) = live_edit_in(vault, txn, id)?
         && held_binding == *binding

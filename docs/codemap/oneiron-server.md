@@ -825,7 +825,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/preview/http.rs` | src | m | 1 crate-vis | — | HTTP and WebSocket forwarding on a preview-only origin |
 | `src/managed/relay.rs` | src | m | 1 struct · 1 fn · 1 const | RelayConfig | A relay room has no engine, vault key, Loro document or inference worker |
 | `src/managed/settings.rs` | src | m | 5 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
-| `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
+| `src/managed/shed.rs` | src | s | 3 crate-vis | — | Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the… |
 | `src/managed/state_serve.rs` | src | XL | 3 struct · 21 fn · 1 type · 1 const · 17 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/state_serve/control.rs` | src | s | 1 fn | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 5 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |

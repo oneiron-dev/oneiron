@@ -138,9 +138,9 @@ fn refused(message: String) -> MemoryError {
 /// answers its first run before the TASK is read or any lane is checked
 /// (FIX 5415); another TASK, or none, under it is refused. Otherwise one
 /// writer holds the caller's proof, a member's reads of what the binding
-/// names on their own lane, its standing on the TASK, the bind gate, the
-/// run's admission with the backlink on its wrapper alone, and the
-/// wrapper's take.
+/// names on their own lane and their landing facet (FIX 5421), its standing
+/// on the TASK, the bind gate, the run's admission with the backlink on its
+/// wrapper alone, and the wrapper's take.
 pub(crate) fn dispatch_bound(
     vault: &Vault,
     caller: &WorkflowBinder<'_>,
@@ -170,6 +170,7 @@ pub(crate) fn dispatch_bound(
     }
     caller.revalidate_in_txn(vault, &txn)?;
     binder::member_reads_in(vault, &mut txn, lane.as_ref(), task, &input.target)?;
+    caller.landing_admits_in(vault, &txn, lane.as_ref(), task)?;
     admit_in_txn(vault, &txn, actor, task)?;
     caller.fund_in_txn(vault, &mut txn, actor)?;
     let outcome = dispatcher.dispatch_bound_workflow_in_txn(&mut txn, input, spawn, &bind)?;
@@ -417,7 +418,8 @@ pub(crate) fn done_question(
 /// against the TASK's done-means (`judged`, given outside the writer, or the
 /// ask a missing answer opens); a failed one reports its final failure; a
 /// cancelled or abandoned one closes the TASK so. A TASK that moved on is
-/// marked with no move. The peer-result signal goes after commit; a signal
+/// marked with no move, and so is one the move lost for good, with its
+/// reason (FIX 5291). The peer-result signal goes after commit; a signal
 /// that fails is logged and the wake pass replays it.
 pub(crate) fn settle(
     vault: &Vault,
@@ -435,6 +437,19 @@ pub(crate) fn settle(
         .task_work_memory();
     let mut txn = vault.store.env.write_txn()?;
     let receipt = if owed_in(vault, &txn, end)? {
+        // FIX 5291: a fence that refuses the binder for good, or a TASK no
+        // longer there for them, settles with its typed reason in a writer
+        // of its own, moving nothing; any other refusal rolls back below,
+        // and the next pass tries again.
+        if let Err(error) =
+            memory.workflow_try_standing_in(&txn, &try_binding(&end.wrapper), end.task)
+            && let Some(lost) = recorded_right::SettleLoss::of(&error)
+        {
+            drop(txn);
+            let dispatcher = AgentDispatcher::new(vault);
+            dispatcher.mark_workflow_task_lost(end.wrapper.id, ended.as_str(), lost.as_str())?;
+            return Ok(false);
+        }
         let right = recorded_right::binder_right_in(&memory, &txn, end, note);
         let moved = match ended {
             RunEnd::Completed | RunEnd::Failed => {
