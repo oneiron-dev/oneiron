@@ -13,12 +13,14 @@
 //! A file whose keys are of more than one custody class (FIX 6624) is read
 //! as a typed body's read is: in one group per class, each judged by the
 //! same check and asking under its own class, and the read opens only when
-//! every group does. A file whose keys are not all active and admitted to a
-//! model (T1) reads masked, with no ask.
+//! every group does; each group's ask card names the others (FIX 6738). A
+//! file whose keys are not all active and admitted to a model (T1) reads
+//! masked, with no ask.
 //!
-//! A delivered read keeps its reveal row under the id it was asked under
-//! (FIX 6623): the next ask of the same read is filed under the next id in
-//! that ask's sequence, never over a delivered row.
+//! A delivered read, and the owner's answer to an ask, keep their reveal row
+//! under the id it was asked under (FIX 6623, 6737): the next ask of the
+//! same read is filed under the next id in that ask's sequence, never over a
+//! delivered or answered row.
 //!
 //! A sealed file (a container the write door could not read whole, stored
 //! as it is and unmarked) holds keys no mark names. Its read asks for the
@@ -61,7 +63,8 @@ use crate::vault::Vault;
 const FILE_ASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_ask.v1";
 
 /// Domain of the next id in an ask's sequence, hashed from the one before:
-/// where a read asks again once its ask was delivered (FIX 6623).
+/// where a read asks again once its ask was delivered or answered (FIX 6623,
+/// 6737).
 const FILE_REASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_reask.v1";
 
 /// Domain of a typed body read's fingerprint, the hash its reveal rows name
@@ -311,7 +314,7 @@ impl Vault {
         let mut ready = Vec::with_capacity(read.groups.len());
         let mut asks = Vec::new();
         for group in &read.groups {
-            let ask = read.ask_in_txn(self, txn, group)?;
+            let ask = read.ask_in_txn(self, txn, group, now)?;
             let bound = reveal_bound(
                 &read.asker.connection(),
                 group.class,
@@ -361,21 +364,22 @@ impl Vault {
 }
 
 impl KeyRead<'_> {
-    /// The id `group` of this read asks under now: its ask's id
-    /// ([`file_ask_id`]), or past each delivered read of it, the next in
-    /// its sequence ([`open_ask_id_in_txn`]).
+    /// The id `group` of this read asks under at `now`: its ask's id
+    /// ([`file_ask_id`]), or past each delivered or answered row of it, the
+    /// next in its sequence ([`open_ask_id_in_txn`]).
     fn ask_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         group: &ReadGroup,
+        now: u64,
     ) -> Result<EntityId> {
         let base = file_ask_id(
             self.asker,
             &self.hash,
             self.per_class.then_some(group.class),
         )?;
-        open_ask_id_in_txn(vault, txn, base)
+        open_ask_id_in_txn(vault, txn, base, now)
     }
 
     /// The reveal row `group` of this read writes, in `state`, at `now`.
@@ -406,8 +410,20 @@ impl KeyRead<'_> {
                 hash: self.hash,
                 keys: group.keys.clone(),
                 leases: Vec::new(),
+                siblings: self.siblings(group),
             }),
         }
+    }
+
+    /// This read's groups other than `group`, each as its class word and its
+    /// keys' handles, which its ask card names (FIX 6738): none for a read of
+    /// one group.
+    fn siblings(&self, group: &ReadGroup) -> Vec<(String, String)> {
+        self.groups
+            .iter()
+            .filter(|other| other.class != group.class)
+            .map(|other| (other.class.as_str().to_owned(), other.handle.clone()))
+            .collect()
     }
 }
 
@@ -465,16 +481,22 @@ fn asked_plan_in_txn(
     })
 }
 
-/// The id a read whose ask's id is `base` asks under now (FIX 6623): `base`
-/// until a read of it is delivered, then the first id of its sequence, each
-/// hashed from the one before under [`FILE_REASK_DOMAIN`], whose row is not
-/// a delivered one. A delivered read keeps its row and its id; the next ask,
-/// its answer and its delivery are another row's.
-fn open_ask_id_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, base: EntityId) -> Result<EntityId> {
+/// The id a read whose ask's id is `base` asks under at `now` (FIX 6623,
+/// 6737): `base` until its row is kept ([`kept_row`]), then the first id of
+/// its sequence, each hashed from the one before under
+/// [`FILE_REASK_DOMAIN`], whose row is not. A delivered read and an owner's
+/// answer keep their row and their id; the next ask, its answer and its
+/// delivery are another row's.
+fn open_ask_id_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    base: EntityId,
+    now: u64,
+) -> Result<EntityId> {
     let mut ask = base;
     while REVEALS
         .get(&vault.store, txn, &ask)?
-        .is_some_and(|row| row.state == SecretRevealState::Delivered)
+        .is_some_and(|row| kept_row(&row, now))
     {
         ask = crate::codebase::entity_id_from_hash_material(
             FILE_REASK_DOMAIN,
@@ -482,6 +504,20 @@ fn open_ask_id_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, base: EntityId) -> R
         )?;
     }
     Ok(ask)
+}
+
+/// Whether `row` stays as it is at `now`, so the read's next ask takes the
+/// next id: a delivered read, or the owner's answer (FIX 6737), a standing
+/// one at once, and an approval once or a denial once its window has closed.
+/// In its window an approval once still opens the read and a denial still
+/// holds it masked ([`asked_plan_in_txn`]), as an open ask does; an
+/// unanswered ask past its window is asked again under its own id.
+fn kept_row(row: &RevealRow, now: u64) -> bool {
+    match row.state {
+        SecretRevealState::Delivered | SecretRevealState::ApprovedStanding => true,
+        SecretRevealState::ApprovedOnce | SecretRevealState::Denied => now >= row.expires_at,
+        SecretRevealState::Asked | SecretRevealState::Covered | SecretRevealState::Expired => false,
+    }
 }
 
 /// Each key `custody` names, once, with its class and handle, in the order

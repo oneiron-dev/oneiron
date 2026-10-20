@@ -514,6 +514,10 @@ struct FileSight {
     keys: Vec<(EntityId, String)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     leases: Vec<EntityId>,
+    /// The read's other class groups, each as its class word and its keys'
+    /// handles, value-free; none for a read of one group (FIX 6738).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    siblings: Vec<(String, String)>,
 }
 
 impl RevealRow {
