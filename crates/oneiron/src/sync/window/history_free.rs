@@ -625,6 +625,7 @@ fn scrub_for_export(
     // FIX 3877: and an origin claim carrier that names an erased actor.
     let origin_claims_scrubbed =
         crate::sync::origin_claims::scrub_origin_claims(vault, doc, Some(key))?;
+    crate::workspace_roster::scrub_audience_edits(vault, doc, Some(key))?;
     // Every update and replacement ships each held revision of a PROJECT row the window
     // carries, whatever month it was learned in (Astra #1434 F2).
     if super::project_history::carry_project_history(vault, doc)? {

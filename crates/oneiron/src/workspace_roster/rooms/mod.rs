@@ -1,5 +1,7 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
 mod audience;
+#[cfg(feature = "sync")]
+mod audience_carriers;
 mod audience_doors;
 mod audience_edit_guard;
 mod audience_erase;
@@ -40,6 +42,8 @@ pub(crate) use audience::{
     thread_audience_now_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
     thread_turn_readable_with_read_in, validate_private_audience_in,
 };
+#[cfg(feature = "sync")]
+pub(crate) use audience_carriers::{carried_audience_edit_in_txn, scrub_audience_edits};
 pub use audience_doors::{
     ThreadAudienceAddRequest, ThreadAudienceReceipt, ThreadAudienceRemoveRequest,
 };
@@ -48,10 +52,13 @@ pub(crate) use audience_edit_guard::audience_edit_unlink_refusal;
 pub(crate) use audience_edit_guard::{
     AUDIENCE_EDIT_BOUND, reject_audience_edit_delete, reject_audience_edit_unlink,
 };
-pub(crate) use audience_erase::erase_audience_edit;
+pub(crate) use audience_erase::{
+    erase_audience_actor_in_txn, erase_audience_edit, scrub_room_audience,
+};
 pub use audience_events::ThreadAudienceHistory;
 pub(crate) use audience_events::{
-    ROOM_THREAD_AUDIENCE_KEY, audience_event_put_refusal, erased_audience_edit,
+    ROOM_THREAD_AUDIENCE_KEY, audience_edit_erased_from, audience_edit_is_erased,
+    audience_event_put_refusal,
 };
 pub(crate) use audience_overlay::overlay_thread_binding_in;
 #[cfg(feature = "sync")]

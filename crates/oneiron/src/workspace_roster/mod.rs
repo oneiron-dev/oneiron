@@ -178,18 +178,17 @@ pub(crate) use project::{
 mod rooms;
 pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-#[cfg(feature = "sync")]
-pub(crate) use rooms::audience_edit_unlink_refusal;
 pub(crate) use rooms::{
-    AUDIENCE_EDIT_BOUND, erase_audience_edit, erased_audience_edit, reject_audience_edit_delete,
-    reject_audience_edit_unlink,
+    AUDIENCE_EDIT_BOUND, erase_audience_actor_in_txn, erase_audience_edit,
+    reject_audience_edit_delete, reject_audience_edit_unlink, scrub_room_audience,
 };
 pub(crate) use rooms::{
     ROOM_THREAD_AUDIENCE_KEY, ROOM_THREAD_KEY, ThreadBinding, ThreadPlace,
-    audience_event_put_refusal, names_actor_in, overlay_thread_binding_in, record_thread_admits_in,
-    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
-    thread_audience_now_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
-    thread_turn_readable_with_read_in, turn_held_back_for_in, validate_private_audience_in,
+    audience_edit_erased_from, audience_edit_is_erased, audience_event_put_refusal, names_actor_in,
+    overlay_thread_binding_in, record_thread_admits_in, require_thread_audience_in, stamp_thread,
+    thread_audience_allows_in, thread_audience_in, thread_audience_now_in, thread_binding,
+    thread_members_in, thread_root_readable_with_read_in, thread_turn_readable_with_read_in,
+    turn_held_back_for_in, validate_private_audience_in,
 };
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomPage, RoomSpeakingRole, RoomStanding,
@@ -199,6 +198,10 @@ pub use rooms::{
 pub use rooms::{
     ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
     ThreadAudienceRemoveRequest,
+};
+#[cfg(feature = "sync")]
+pub(crate) use rooms::{
+    audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,
 };
 
 pub(crate) use rooms::RoomThreadTask;

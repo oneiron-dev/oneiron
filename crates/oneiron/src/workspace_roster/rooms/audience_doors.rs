@@ -17,11 +17,21 @@
 //! the rules a new thread's audience meets, its opener aside; the Owner or an
 //! Admin adding themselves may be off the room. Adding someone already in
 //! the audience records the history chosen now. A remove names anyone, a
-//! member who left too, and may leave the audience empty. No door turns a
-//! public thread private.
+//! member who left too, and may leave the audience empty; one this vault
+//! erased, or whom the thread's edits forgot, it names by the root's
+//! stand-in for them (FIX 5640). No door turns a public thread private.
+//!
+//! # Off record
+//!
+//! An audience edit is the thread's structure, not its talk (FIX 5643): it
+//! writes base while the room is off record, as a room handle's binding and
+//! a room claim do. Audience changes persist even while talk is off record;
+//! they are not saved or discarded with the transcript.
 
 use super::audience::{ThreadBinding, names_actor_in, root_audience_in, thread_binding};
-use super::audience_events::{AudienceEvent, AudienceOp, ThreadAudienceHistory, event_body};
+use super::audience_events::{
+    AudienceEvent, AudienceOp, AudiencePerson, ThreadAudienceHistory, event_body, removed_person_in,
+};
 use super::*;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -94,7 +104,8 @@ fn unknown_thread() -> MemoryError {
 impl Memory<'_> {
     /// Adds a person to a private thread's audience (FIX 5545), sharing the
     /// whole thread or its turns from this add on: one audience edit TURN of
-    /// the thread.
+    /// the thread. Audience changes persist even while talk is off record;
+    /// they are not saved or discarded with the transcript (FIX 5643).
     pub fn rooms_thread_audience_add(
         &self,
         input: &ThreadAudienceAddRequest,
@@ -104,6 +115,8 @@ impl Memory<'_> {
 
     /// Removes a person from a private thread's audience (FIX 5545): every
     /// read of theirs ends with this edit, the thread's earlier turns too.
+    /// Audience changes persist even while talk is off record; they are not
+    /// saved or discarded with the transcript (FIX 5643).
     pub fn rooms_thread_audience_remove(
         &self,
         input: &ThreadAudienceRemoveRequest,
@@ -178,7 +191,10 @@ impl Memory<'_> {
             }
             let event = AudienceEvent {
                 root,
-                person,
+                person: match history {
+                    Some(_) => AudiencePerson::Live(person),
+                    None => removed_person_in(vault, txn, &folded, root, person)?,
+                },
                 by: crate::workspace_roster::RosterActor::Actor(actor),
                 op: if history.is_some() {
                     AudienceOp::Add

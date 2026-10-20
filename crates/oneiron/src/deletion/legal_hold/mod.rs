@@ -355,7 +355,7 @@ impl Vault {
         for record in records {
             let status = match kept.get(&record) {
                 Some(seen) => kept_status(seen, now),
-                None => match memory.safe_delete(&record.to_hex(), hard) {
+                None => match memory.owner_confirmed_erase(owner, record, hard) {
                     Ok(receipt) => erase_status(&memory, owner, receipt.receipt_ref),
                     Err(error) => {
                         failed = true;
@@ -588,7 +588,7 @@ impl Vault {
         };
         let mut erased = 0_u64;
         for record in due {
-            match self.delete_entity_with_reason(&record, super::DeleteReason::UserHardDelete) {
+            match self.due_confirmed_erase(&record) {
                 Ok(_) => {
                     self.with_write_txn_grouped(|txn| {
                         hold_store::drop_pending_erase_in_txn(&self.store, txn, &record)

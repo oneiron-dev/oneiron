@@ -739,6 +739,9 @@ impl Vault {
         };
         let reactions = progress.unheld(self, &reactions, actor, &reauthorize)?;
         crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
+        crate::workspace_roster::scrub_room_audience(self, room, person, &reauthorize, |ids| {
+            progress.unheld(self, ids, actor, &reauthorize)
+        })?;
         // The single writer closes the in-flight fence only after every
         // selected active row has completed its reason-aware deletion. A
         // failure above leaves phase 1 for a bounded retry, never free append.
