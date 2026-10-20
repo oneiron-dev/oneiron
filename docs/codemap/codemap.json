@@ -39166,6 +39166,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/retained_reasons.rs",
+     "purpose": "A push refusal's reasons, bounded where they are kept (FIX 5942)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/scan_cap_tests.rs",
@@ -64244,7 +64254,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64883,7 +64893,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4024,
+   "source_files": 4025,
    "test_files": 902
   },
   "oneiron-android": {
