@@ -331,7 +331,7 @@ pub(super) fn install_uid_table(vault: &str, uid: u32) -> Result<(), Refusal> {
     let table_path = Path::new(vault_uids::PATH);
     let (Some(parent), Some(leaf)) = (
         table_path.parent(),
-        table_path.file_name().and_then(|leaf| leaf.to_str()),
+        table_path.file_name().and_then(std::ffi::OsStr::to_str),
     ) else {
         return Err(failed(vault_uids::PATH)(std::io::Error::other(
             "the UID table has no directory",
@@ -373,7 +373,7 @@ pub(super) fn own_run_dirs(uid: u32) -> Result<(), Refusal> {
         .map_err(failed("/run"))?;
     let Some(voice_leaf) = Path::new(VM_VOICE_DIR)
         .file_name()
-        .and_then(|leaf| leaf.to_str())
+        .and_then(std::ffi::OsStr::to_str)
     else {
         return Err(failed(VM_VOICE_DIR)(std::io::Error::other("no leaf")));
     };
