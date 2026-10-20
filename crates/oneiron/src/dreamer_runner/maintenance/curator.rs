@@ -522,8 +522,9 @@ fn demote_in_place_in_txn(
 /// weakening its successor, as `owner`; then the target stands again at its
 /// prior confidence and rung: in place when the weakening closed a claim
 /// with no signed history, else as the Dreamer's fresh copy born of it, a
-/// prior stale mark signed again on the copy. The copy carries the default
-/// ClaimOf weight and no evidence, so the curator never grades it again.
+/// prior stale mark signed again on the copy. The copy is born at the
+/// target's prior ClaimOf weight, signed in its birth, and carries no
+/// evidence, so the curator never grades it again.
 pub(super) fn revert_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -558,8 +559,10 @@ pub(super) fn revert_in_txn(
 }
 
 /// Stands the target again as the Dreamer's fresh copy at its prior
-/// confidence, window end and rung, born of the target and the reverted
-/// finding.
+/// confidence, window end, rung and ClaimOf weight, born of the target and
+/// the reverted finding. The weight rides the copy's signed birth, so the
+/// copy, its birth and its history land in this one write and the weight is
+/// never patched after birth.
 fn stand_copy_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -599,7 +602,9 @@ fn stand_copy_in_txn(
         )
         .with_validity(body.valid_from, inverse.prior_valid_to),
         &body,
-    );
+    )
+    // The target's prior weight, never an initial weight its own birth carried.
+    .with_initial_claim_of_weight(inverse.prior_claim_of_weight)?;
     let dreamer = WriteActor::new(
         crate::dreamer_runner::authority::dreamer_actor_id()?,
         EdgeActorClass::System,

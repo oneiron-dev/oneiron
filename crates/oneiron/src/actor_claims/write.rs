@@ -14,7 +14,9 @@ use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION,
     ENTITY_TYPE_TURN,
 };
-use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
+use crate::skill_attribution::{
+    AttributionJudgment, AttributionVerdict, attribution_judgments, judgment_displaced_in_txn,
+};
 use crate::temporal::TimeRange;
 
 use super::candidate::is_approved_craft_verdict;
@@ -450,9 +452,17 @@ pub fn project_actor_claims_from_judgments(
         if ground_actor_claim(vault, &row, &evidence).is_err() {
             continue;
         }
-        written.push(vault.with_write_txn_grouped(|wtxn| {
-            write_actor_claim_in_txn(vault, wtxn, &row, &evidence)
-        })?);
+        // A judgment displaced since the read above authors nothing: the
+        // check runs under the writer that would write the claim (C064).
+        let landed = vault.with_write_txn_grouped(|wtxn| {
+            if judgment_displaced_in_txn(vault, wtxn, judgment.sequence)? {
+                return Ok(None);
+            }
+            write_actor_claim_in_txn(vault, wtxn, &row, &evidence).map(Some)
+        })?;
+        if let Some(id) = landed {
+            written.push(id);
+        }
     }
     Ok(written)
 }
