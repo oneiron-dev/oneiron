@@ -9,6 +9,7 @@ use crate::claim::{
     COREFERENCE_PACT_ID_LEN, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource,
     ClaimSubject,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -96,6 +97,63 @@ pub fn put_coreference_link(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<EntityId> {
+    let (claim_id, ops) = coreference_link_ops(
+        vault,
+        actor,
+        local_person,
+        other_person,
+        status,
+        occurred,
+        learned_at,
+    )?;
+    apply_coreference_ops(vault, None, ops)?;
+    Ok(claim_id)
+}
+
+/// [`put_coreference_link`] at an owner door: the actor is `owner`'s, and
+/// the writer revalidates `owner` before it writes (FIX 5950), as unlink
+/// does, so a proof revoked while the request waited commits nothing.
+pub(crate) fn put_coreference_link_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    local_person: EntityId,
+    other_person: EntityId,
+    status: CoreferenceStatus,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let (claim_id, ops) = coreference_link_ops(
+        vault,
+        &owner_actor(vault, owner)?,
+        local_person,
+        other_person,
+        status,
+        occurred,
+        learned_at,
+    )?;
+    apply_coreference_ops(vault, Some(owner), ops)?;
+    Ok(claim_id)
+}
+
+/// The precheck actor of an owner door: `owner`'s person, as a human.
+fn owner_actor(vault: &Vault, owner: &AuthenticatedOwner) -> Result<WriteActor> {
+    Ok(WriteActor::new(
+        owner.revalidate(vault)?,
+        crate::edge::EdgeActorClass::Human,
+    ))
+}
+
+/// The status claim id and the ops of [`put_coreference_link`], after its
+/// actor and endpoint checks.
+fn coreference_link_ops(
+    vault: &Vault,
+    actor: &WriteActor,
+    local_person: EntityId,
+    other_person: EntityId,
+    status: CoreferenceStatus,
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<(EntityId, Vec<BatchOp>)> {
     require_coreference_actor(vault, actor)?;
     if !vault.entity_exists(&local_person)? || !vault.entity_exists(&other_person)? {
         return Err(Error::EntityNotFound);
@@ -124,8 +182,7 @@ pub fn put_coreference_link(
         occurred,
         learned_at,
     )?);
-    apply_coreference_ops(vault, ops)?;
-    Ok(claim_id)
+    Ok((claim_id, ops))
 }
 
 /// Consents to sharing an existing coreference link into ONE pact.
@@ -151,6 +208,54 @@ pub fn coreference_share_consent(
     occurred: TimeRange,
     learned_at: u64,
 ) -> Result<EntityId> {
+    let (claim_id, ops) = coreference_share_ops(
+        vault,
+        actor,
+        local_person,
+        other_person,
+        pact_id,
+        occurred,
+        learned_at,
+    )?;
+    apply_coreference_ops(vault, None, ops)?;
+    Ok(claim_id)
+}
+
+/// [`coreference_share_consent`] at an owner door: the actor is `owner`'s,
+/// and the writer revalidates `owner` before it writes (FIX 5950).
+pub(crate) fn coreference_share_consent_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    local_person: EntityId,
+    other_person: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let (claim_id, ops) = coreference_share_ops(
+        vault,
+        &owner_actor(vault, owner)?,
+        local_person,
+        other_person,
+        pact_id,
+        occurred,
+        learned_at,
+    )?;
+    apply_coreference_ops(vault, Some(owner), ops)?;
+    Ok(claim_id)
+}
+
+/// The consent claim id and the ops of [`coreference_share_consent`], after
+/// its actor, link and endpoint checks.
+fn coreference_share_ops(
+    vault: &Vault,
+    actor: &WriteActor,
+    local_person: EntityId,
+    other_person: EntityId,
+    pact_id: &[u8; COREFERENCE_PACT_ID_LEN],
+    occurred: TimeRange,
+    learned_at: u64,
+) -> Result<(EntityId, Vec<BatchOp>)> {
     require_coreference_actor(vault, actor)?;
     let (source, target) = coreference_link_orientation(vault, local_person, other_person)?
         .ok_or(Error::EdgeNotFound)?;
@@ -168,8 +273,7 @@ pub fn coreference_share_consent(
         ClaimApprovalStatus::Approved,
     )?;
     let ops = coreference_claim_ops(claim_id, source, &body, occurred, learned_at)?;
-    apply_coreference_ops(vault, ops)?;
-    Ok(claim_id)
+    Ok((claim_id, ops))
 }
 
 /// Removes both orientations of a coreference link and retracts its live
@@ -463,8 +567,18 @@ fn coreference_claim_ops(
     ])
 }
 
-fn apply_coreference_ops(vault: &Vault, ops: Vec<BatchOp>) -> Result<()> {
+/// Applies `ops` in one writer. An owner door's `owner` is revalidated
+/// first in that writer (FIX 5950), as unlink does; a trusted native caller
+/// passes `None`.
+fn apply_coreference_ops(
+    vault: &Vault,
+    owner: Option<&AuthenticatedOwner>,
+    ops: Vec<BatchOp>,
+) -> Result<()> {
     vault.with_write_txn_grouped(|wtxn| {
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(vault, wtxn)?;
+        }
         crate::batch::apply_ops(
             &vault.store,
             &vault.config,
