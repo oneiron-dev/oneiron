@@ -965,7 +965,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/weave_report/tests.rs` | test | m | — | — | — |
 | `src/claim/scoped_read/weave_serve.rs` | src | m | 13 struct · 2 enum · 13 fn · 5 crate-vis | WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView, WeaveItemView, WeaveLinkCorrectionView, WeaveReaderKind, WeaveReaderRef +7 | The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the… |
 | `src/claim/scoped_read/weave_trigger.rs` | src | s | 1 struct · 2 fn | WeaveDigestRendered | Typed weave publication and persisted correction reads for the bound reader |
-| `src/claim/source_trust.rs` | src | m | 1 struct · 2 enum · 23 crate-vis | ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
+| `src/claim/source_trust.rs` | src | m | 1 struct · 2 enum · 26 crate-vis | ClaimDemotion, ClaimDemotionAction, ClaimDemotionRung | Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus… |
 | `src/claim/supersession_diff.rs` | src | s | 4 crate-vis | — | Immutable before/after revision bindings for accepted supersession edges |
 | `src/claim/supersession_provenance.rs` | src | s | 7 crate-vis | — | Runner-owned companion claims; structural taint mirrors also run on replay |
 | `src/claim/supersession_provenance/tests.rs` | test | s | — | — | — |
@@ -1736,7 +1736,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/type_tree_gate.rs` | src | m | 7 crate-vis | — | The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): "revised by the loop from… |
 | `src/dreamer_runner/maintenance/type_tree_prior.rs` | src | s | 6 crate-vis | — | The project tree's donor prior (ARCH-0079 #task-type, OF-420, FIX 5176): a thin leaf of a project's own tree… |
 | `src/dreamer_runner/maintenance/type_tree_upkeep.rs` | src | m | 3 struct · 1 enum · 1 trait · 3 fn · 4 const · 6 crate-vis | TeamShapeReserve, TreeGateOutcome, TypeEvidence, TypeNamer, TypeTreeUpkeepReport | Type-tree upkeep (ARCH-0079 #task-type, OF-541, OF-420): "Splits, merges and names task types from the… |
-| `src/dreamer_runner/milestone.rs` | src | m | 2 fn · 7 crate-vis | — | Durable Dreamer milestone claims: the index doors, the F4 binding check, and the pinned claim-value shape |
+| `src/dreamer_runner/milestone.rs` | src | m | 3 fn · 7 crate-vis | — | Durable Dreamer milestone claims: the index doors, the F4 binding check, and the pinned claim-value shape |
 | `src/dreamer_runner/mod.rs` | src | s | 4 mod · 14 re-export · 2 crate-vis | — | Private Dreamer runner store plus atomic admission |
 | `src/dreamer_runner/observation.rs` | src | s | 5 struct · 2 fn | WakeRecipeJobView, WakeSettlementRequest, WakeSettlementView, WakeSettlementsPage, WakeSettlementsRequest | Owner reads of recipe receipts and their Dreamer/Coach descendants |
 | `src/dreamer_runner/owner_doors.rs` | src | m | 10 struct · 4 fn · 1 crate-vis | ConsolidationHomeCandidate, ConsolidationHomeNode, ConsolidationHomePickHead, ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView, ConsolidationLineageRequest, ConsolidationLineageView +2 | The owner's doors over the private Dreamer runner (DOOR-101): which node this runner holds as the elected… |
@@ -4674,9 +4674,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_cascade/uds/tests.rs` | test | s | — | — | Source-authored socket tests |
 | `src/voice_cascade/uds/tests/bridge_tests.rs` | test | s | — | — | — |
 | `src/voice_cascade/uds/tests/socket_tests.rs` | test | s | — | — | — |
-| `src/voice_cascade/voxcpm2.rs` | src | m | 6 struct · 1 enum · 1 trait · 9 fn · 1 const · 1 mod · 1 re-export | RenderTarget, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Operation, VoxCpm2Pcm, VoxCpm2Queue, VoxCpm2Work, WarmTarget | VoxCPM2's warm, host-owned rendering seam |
+| `src/voice_cascade/voxcpm2.rs` | src | m | 6 struct · 1 enum · 1 trait · 9 fn · 1 const · 1 mod · 2 re-export | RenderTarget, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2Operation, VoxCpm2Pcm, VoxCpm2Queue, VoxCpm2Work, WarmTarget | VoxCPM2's warm, host-owned rendering seam |
 | `src/voice_cascade/voxcpm2/http.rs` | src | m | 1 struct · 1 enum · 3 fn | VoxCpm2Event, VoxCpm2HttpQueue | Loopback wire to a separately deployed, always-warm CUDA worker |
 | `src/voice_cascade/voxcpm2/http/tests.rs` | test | s | — | — | — |
+| `src/voice_cascade/voxcpm2/pcm.rs` | src | s | 1 struct · 2 fn · 6 crate-vis | VoxCpm2PcmBody | One render's PCM16LE result as it streams in from the worker (C058) |
 | `src/voice_cascade/voxcpm2/tests.rs` | test | m | — | — | — |
 | `src/voice_identity/codec_core.rs` | src | m | 29 crate-vis | — | Shared MessagePack plumbing plus origin/basis/space/consent/sample encode_/decode_ pairs kept together |
 | `src/voice_identity/codec_records.rs` | src | m | 10 crate-vis | — | Print/evidence/segment/roster encode_/decode_ pairs; roster pair is the interlocutor-seam wire shape |
@@ -4838,7 +4839,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/vault_key.rs` | src | XL | 4 struct · 4 enum · 27 fn · 20 crate-vis | EscrowRetirement, NewVaultKeyWrap, ResealedEscrowCapsule, VaultKeyEscrowCapsule, VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind | The vault data key and the wraps that unlock it (OF-570 E1) |
 | `src/world_keys/vault_key/kit.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | IssuedVaultKeyKit | The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his… |
 | `src/world_keys/wrap.rs` | src | s | 3 crate-vis | — | One world key sealed to one recipient, and opened back with the recipient's secret |
-| `src/write_envelope.rs` | src | m | 5 struct · 24 fn · 1 mod · 1 re-export · 26 crate-vis | ClaimCandidate, MachineWriteSignature, SourceLineage, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
+| `src/write_envelope.rs` | src | m | 5 struct · 24 fn · 1 mod · 1 re-export · 27 crate-vis | ClaimCandidate, MachineWriteSignature, SourceLineage, WriteEnvelope, WriteProvenance | Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping |
 | `src/write_envelope/carry_forward.rs` | src | s | 1 struct · 1 enum · 4 fn · 3 crate-vis | CarryForwardClaim, CarryForwardKind | Confidence-gated forward commitments, separate from belief consolidation and the commitment ledger |
 | `tests/build_cache.rs` | test | s | — | — | Public cache boundary: real vaults and BLOB_ARTIFACT versions only |
 | `tests/cb_oracle_common/mod.rs` | test | s | — | — | Shared fixtures for the split Context Board oracle files |

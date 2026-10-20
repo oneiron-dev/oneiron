@@ -30,7 +30,7 @@ use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteA
 use tokio::sync::{broadcast, watch};
 
 use super::payer_funding::room_launch_funding;
-use super::resident_craft::{join_craft, queue_craft, snapshot_craft};
+use super::resident_craft::{join_craft, snapshot_craft_scoped};
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
     Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, TurnCredential, after_turn,
@@ -158,19 +158,27 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
         .map(|text| text_message(LlmMessageRole::System, text))
         .collect();
     // OF-490: the answering agent is shown its own craft after its
-    // instructions, and its action's attempt names what it was shown. A call
-    // that runs as it always did loads today's craft on the attempt. Beside a
-    // reused prefix, which shows and stamps the craft it captured, today's
-    // call reads one snapshot and is stamped only if it answers.
+    // instructions, read on one snapshot, and its action's attempt names what
+    // it was shown. Only the notes the requester's own read admits are shown
+    // (SCAN C009, FIX 6102), read as the action's context is: a queued
+    // action carries no credential, so it reads as its actor. A call that
+    // runs as it always did is stamped with today's craft before it is
+    // shown, and shows none whose stamp fails. Beside a reused prefix, which
+    // shows and stamps the craft it captured, today's call is stamped only
+    // if it answers.
     let at = vault.now_recorded_at();
+    let craft =
+        blocking(|| snapshot_craft_scoped(vault, &vault.memory(actor, class), &context.agent, at));
     let today_craft = if matches!(reuse, ChatReuse::Reused(_)) {
-        blocking(|| snapshot_craft(vault, &context.agent, at)).map(|craft| {
+        craft.map(|craft| {
             join_craft(&mut messages, craft.message);
             craft.entries
         })
     } else {
-        if let Some(craft) = blocking(|| queue_craft(vault, attempt.id, &context.agent, at)) {
-            join_craft(&mut messages, craft);
+        if let Some(craft) = craft
+            && stamp_craft(vault, attempt, context.agent, &craft.entries)
+        {
+            join_craft(&mut messages, craft.message);
         }
         None
     };
@@ -309,11 +317,19 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
 
 /// Stamps craft `agent`'s call on `attempt` was shown without a load on the
 /// attempt's manifest (OF-490). A stamp that fails leaves the reply as it
-/// runs, logged.
-fn stamp_craft(vault: &Vault, attempt: &AttemptRecord, agent: EntityId, entries: &[ManifestEntry]) {
-    if let Err(error) = blocking(|| vault.record_resident_craft_exposure(attempt, &agent, entries))
-    {
-        tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a turn action's craft was not stamped on its attempt");
+/// runs, logged. Whether it stamped.
+fn stamp_craft(
+    vault: &Vault,
+    attempt: &AttemptRecord,
+    agent: EntityId,
+    entries: &[ManifestEntry],
+) -> bool {
+    match blocking(|| vault.record_resident_craft_exposure(attempt, &agent, entries)) {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a turn action's craft was not stamped on its attempt");
+            false
+        }
     }
 }
 

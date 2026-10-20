@@ -235,8 +235,8 @@ impl Vault {
         if let Some(rel) = body.rel {
             candidate = candidate.with_relationship(rel);
         }
-        if let Some(scope) = &body.scope {
-            candidate = candidate.with_scope(scope.clone());
+        if let Some(scope) = crate::claim::without_initial_weight(body.scope.clone()) {
+            candidate = candidate.with_scope(scope);
         }
         let envelope = WriteEnvelope::new(
             WriteActor::new(resident, EdgeActorClass::Agent),
@@ -583,7 +583,10 @@ fn same_claim_target(base: &ClaimBody, candidate: &ClaimBody) -> bool {
         && base.rel == candidate.rel
         && base.scope_facet == candidate.scope_facet
         && base.scope_project == candidate.scope_project
-        && base.scope == candidate.scope
+        // An edit is born at the default ClaimOf weight, whatever its base was
+        // born with: the weight is not part of the target.
+        && crate::claim::without_initial_weight(base.scope.clone())
+            == crate::claim::without_initial_weight(candidate.scope.clone())
 }
 fn claim_binding(body: &ClaimBody) -> Result<String> {
     Ok(blake3::hash(&encode_claim_body(body)?).to_hex().to_string())
