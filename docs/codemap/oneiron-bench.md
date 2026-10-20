@@ -81,10 +81,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/infer/measure.rs` | src | s | 4 crate-vis | — | One call driven through `LlmBackend::stream`, timed with `Instant` |
 | `src/infer/mod.rs` | src | m | 1 crate-vis | — | `infer` subcommand — the built-in inference bench (FIX 6559): the proof harness for each inference trick an… |
 | `src/infer/request.rs` | src | s | 4 crate-vis | — | The request one case sends, and what of it the row records |
-| `src/infer/rows.rs` | src | s | 10 crate-vis | — | Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by… |
+| `src/infer/rows.rs` | src | s | 11 crate-vis | — | Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by… |
 | `src/infer/scoring.rs` | src | s | 3 crate-vis | — | The quality check: does the reply keep the Dreamer's reply contract, and how much of the case's gold does it… |
-| `src/infer/summary.rs` | src | s | 4 crate-vis | — | One summary line per arm: the `ok` rows grouped by (arm_id, config_digest), as a markdown table and as… |
-| `src/infer/vram.rs` | src | s | 8 crate-vis | — | GPU memory, sampled: one `nvidia-smi -lms` child streams `memory.used, memory.total, name, uuid` for one… |
+| `src/infer/summary.rs` | src | m | 9 crate-vis | — | One summary line per arm: the clean rows grouped by (arm_id, config_digest), as a markdown table and as… |
+| `src/infer/vram.rs` | src | s | 9 crate-vis | — | GPU memory, sampled: one `nvidia-smi -lms` child streams `memory.used, memory.total, name, uuid` for one… |
+| `src/infer/workers.rs` | src | m | 5 crate-vis | — | The measured session's calls: `--concurrency` worker tasks on one arm, one backend and one meter, all driven… |
 | `src/interface_bench/cli_and_pinned_config.rs` | src | m | 14 crate-vis | — | Subcommand dispatch and pinned-model config parsing |
 | `src/interface_bench/config_types.rs` | src | m | 71 crate-vis | — | Campaign, task, and report DTOs plus RunSettings |
 | `src/interface_bench/eval_run.rs` | src | m | 13 crate-vis | — | Smoke, probe, and full execution plus resume validation |

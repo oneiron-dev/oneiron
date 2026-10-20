@@ -68058,7 +68058,7 @@
      "path": "src/infer/rows.rs",
      "purpose": "Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -68072,13 +68072,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/infer/summary.rs",
-     "purpose": "One summary line per arm: the `ok` rows grouped by (arm_id, config_digest), as a markdown table and as…",
+     "purpose": "One summary line per arm: the clean rows grouped by (arm_id, config_digest), as a markdown table and as…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 9
      }
     },
     {
@@ -68088,7 +68088,17 @@
      "path": "src/infer/vram.rs",
      "purpose": "GPU memory, sampled: one `nvidia-smi -lms` child streams `memory.used, memory.total, name, uuid` for one…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/workers.rs",
+     "purpose": "The measured session's calls: `--concurrency` worker tasks on one arm, one backend and one meter, all driven…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -68751,7 +68761,7 @@
      "purpose": "Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts"
     },
     "infer": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68830,7 +68840,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 122,
+   "source_files": 123,
    "test_files": 18
   },
   "oneiron-broker": {
