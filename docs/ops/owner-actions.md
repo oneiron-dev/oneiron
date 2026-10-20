@@ -90,8 +90,9 @@ counted. The schedule and on-demand backups run on every privacy posture, under 
 force: the owner's backup setting, else `[backup]`. A vault our cloud hosts (managed serve)
 keeps its backups in
 `<data_dir>.backups` and makes each rehearsal's scratch copy in `<data_dir>.rehearsals`, both
-private and on the vault's own disk (`/vault/data.backups` and `/vault/data.rehearsals` in the
-vault VM); one it cannot create or write is logged at start (`owner_storage_unavailable`). One
+private and on the vault's own disk (`/vault/storage/data.backups` and
+`/vault/storage/data.rehearsals` in the vault VM); one it cannot create or write is logged at
+start (`owner_storage_unavailable`). One
 with no fscrypt policy is logged too (`owner_storage_unencrypted`), as is one whose policy cannot
 be read (`owner_storage_encryption_unverified`); either is used as it is, and a backup stays
 sealed in its own format. A running server's backup written to a `dir` on another disk keeps the
