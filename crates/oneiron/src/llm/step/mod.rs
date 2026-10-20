@@ -20,6 +20,7 @@ mod schema_guard;
 mod schema_runtime;
 pub use schema::validate_json_schema;
 mod peer_wait;
+mod response_bodies;
 mod settled;
 mod step_claim;
 mod step_only;
@@ -66,6 +67,13 @@ pub(crate) use self::settled::{
 pub(crate) use self::step_claim::{
     deindex_dreamer_step_claim, forget_step_memo, index_dreamer_step_claim_for_put,
     terminal_step_identity,
+};
+// KS-2B1: row-held step responses under body custody.
+pub(crate) use self::response_bodies::{
+    retire_step_claim_in_rows, retire_step_claim_in_txn, step_claim_carriage,
+};
+pub(crate) use self::step_state::{
+    erase_step_state_owner_in_txn, step_state_carriage, step_state_owners,
 };
 
 #[cfg(test)]

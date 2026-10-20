@@ -58,6 +58,10 @@ pub(crate) use self::program::{
     record_turn_program_wakes_in_txn, settle_program_outbound_in_txn, settle_program_write_in_txn,
     turn_program_erase_details, turn_programs_armed_in_txn,
 };
+// KS-2B1: a turn program's STEP bodies and run actor, for body custody.
+pub(crate) use self::program::{
+    program_run_actor_in_txn, program_step_carriage, program_step_owners,
+};
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
     ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView,

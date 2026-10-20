@@ -4456,6 +4456,11 @@ export_facade! {
     let output = client.vault_esign_send_for_signature(&input)?;
     crate::codec::lift_record("vault.esign.send_for_signature", &output)
 };
+"vault.esign.notices.dispatch" => fn vault_esign_notices_dispatch(&self, input: EsignNoticesDispatchRequest) -> EsignNoticesDispatchView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignNoticesDispatchRequest = crate::codec::lower_record("vault.esign.notices.dispatch", input)?;
+    let output = client.vault_esign_notices_dispatch(&input)?;
+    crate::codec::lift_record("vault.esign.notices.dispatch", &output)
+};
 "vault.esign.remind" => fn vault_esign_remind(&self, input: EsignDispatchRequest) -> EsignDispatchView = |client| {
     let input: oneiron::blob_artifact::esign::EsignDispatchRequest = crate::codec::lower_record("vault.esign.remind", input)?;
     let output = client.vault_esign_remind(&input)?;

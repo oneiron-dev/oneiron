@@ -27530,6 +27530,28 @@ async fn vault_esign_send_for_signature(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_esign_notices_dispatch(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.esign.notices.dispatch",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_esign_remind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -34723,6 +34745,7 @@ pub(crate) async fn call_verb(
         "vault.esign.send_for_signature" => {
             vault_esign_send_for_signature(server, call, input).await
         }
+        "vault.esign.notices.dispatch" => vault_esign_notices_dispatch(server, call, input).await,
         "vault.esign.remind" => vault_esign_remind(server, call, input).await,
         "vault.esign.void" => vault_esign_void(server, call, input).await,
         "vault.esign.signing.act" => vault_esign_signing_act(server, call, input).await,
