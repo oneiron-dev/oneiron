@@ -100,6 +100,13 @@ and checked before Argon2 runs; a reader also sets its own budget
 parameters must satisfy 2 <= threshold <= shares <= 16. After decoding, the parser
 re-encodes the header and refuses input that is not that exact encoding.
 
+`Header::parse_prefix` reads a header alone from the start of a buffer and returns it
+with `H`, through the same decoder and canonical check as `Envelope::parse`; it copies
+no ciphertext and does not look past `H`, and a buffer that ends inside the header is
+`Truncated`. The format puts `H` in 74..=1877 bytes (`ONEV_HEADER_PREFIX_MIN`/`_MAX`), a
+property of the encoding, not a bound on envelopes. Such a header is authentic only
+after the envelope opens.
+
 ### Key schedule
 
 Every wrap type yields a 32-byte wrap secret `W`:
@@ -176,7 +183,9 @@ against an independent HKDF.
 ## Secret hygiene
 
 - Key types (`Kek`, `RecoverySecret`, `Passphrase`, `HybridSecretKey`, `SigningKey`)
-  zeroize on drop and print as `redacted`. The wrap secret, the payload key and returned
+  zeroize on drop and print as `redacted`. A `Kek` is built from borrowed bytes copied
+  into zero-filled guarded storage (`Kek::from_bytes_ref`) or from guarded storage
+  (`Kek::from_zeroizing`), never from a plain array passed by value. The wrap secret, the payload key and returned
   plaintext are `Zeroizing`. Errors carry ids, names and lengths, never key or plaintext
   bytes.
 - Argon2id runs in work memory this crate allocates (fallibly) and wipes; the provider
@@ -225,6 +234,34 @@ FIPS 205 with an empty context and a fresh 32-byte randomizer per signature.
 A checkpoint reference is parsed and bounded but never verifies in v1
 (`Error::CheckpointRefUnverified`): it needs a separately verified checkpoint and the
 Merkle tree rules, which are E4's.
+
+## Sealed artifact clear codec (`backup`)
+
+The engine's sealed checkpoints and backups (`ONEIRONS` files) are written by the engine;
+their clear parts are read here, once, so a host that never opens a vault reads them with
+the engine's own codec: the prelude, the key header's wire DTOs, the signed commitment and
+its digest (BLAKE3 of its exact bytes), and the dual Ed25519 + SLH-DSA-SHA2-256s check
+against a signer the reader pins.
+
+```
+v2 prelude (112 bytes)  "ONEIRONS" | u16 2 | kind u8 | engine vault id[32]
+                        | has_registry u8 | binding[32] | snapshot[32] | key header len u32
+v1 prelude (79 bytes)   as v2 without has_registry and binding (read only, never written)
+binding                 BLAKE3-derive_key("oneiron/backup-registry-binding/v1",
+                        engine vault id || u32 registry id length || registry id);
+                        absent = 0 | zero[32]
+then                    key header | ONEV frames (u32 len each) | manifest frame
+                        | u32 len | commitment | u32 len | signature record | u64 manifest offset
+```
+
+`inspect_backup` reads one artifact once from a `Read` (no seek, no whole-file buffer),
+hashing every byte (`outer_blake3`) and counting its size, each ONEV frame read through
+`Header::parse_prefix`. `verify_with_pins` checks that evidence against pinned signers and
+that the signed commitment says what the clear parts say (in v2: the binding, the key
+header's commitment and BLAKE3; the custody position is signed too). `inspect_backup_prefix`
+reads whose artifact a file is from its first bytes and never refuses a short partial. None
+of it opens a frame or proves the image; the binding attributes, only the signature
+authenticates.
 
 ## Tests
 

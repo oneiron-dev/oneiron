@@ -23,6 +23,15 @@ const SHARE_SET_ID_LEN: usize = 16;
 /// Most shares a Shamir share set may have.
 const MAX_SHARES: u8 = 16;
 
+/// The fewest bytes a canonical header takes ([`Header::parse_prefix`]): one-byte
+/// ids, HKDF, no wrap parameters, a 12-byte nonce. Derived from the format; a
+/// reader that must find a header's end reads at least this much.
+pub const ONEV_HEADER_PREFIX_MIN: usize = 74;
+/// The most bytes a canonical header takes: 64-byte ids, HKDF, a hybrid capsule's
+/// parameters, a 24-byte nonce. Derived from the format, never a bound on what an
+/// envelope may carry: the ciphertext after the header is not counted.
+pub const ONEV_HEADER_PREFIX_MAX: usize = 1877;
+
 /// How the payload key is wrapped. Wire form: one byte.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -345,6 +354,34 @@ impl Header {
         out
     }
 
+    /// Reads the header at the start of `prefix`, with no ciphertext: the header,
+    /// and how many bytes of `prefix` it took (`H`). Every check [`Envelope::parse`]
+    /// makes of a header is made here, through the same decoder and the same
+    /// canonical-bytes check, so the two cannot drift; the bytes after `H` are not
+    /// read, copied or checked, so a caller with the whole envelope checks
+    /// `H + ciphertext_len` against its length itself. A prefix that ends inside the
+    /// header is [`Error::Truncated`]: read more and ask again
+    /// ([`ONEV_HEADER_PREFIX_MAX`] bytes always hold a header).
+    ///
+    /// The header is not authentic: it is bound into the envelope's AEAD and only
+    /// an open proves it.
+    pub fn parse_prefix(prefix: &[u8]) -> Result<(Header, usize)> {
+        let mut r = Reader::new(prefix);
+        let (header, _) = Self::decode_canonical(&mut r, prefix)?;
+        Ok((header, r.position()))
+    }
+
+    /// [`Self::decode`], then the canonical-bytes check against what it read of
+    /// `bytes`: the header and its canonical encoding.
+    fn decode_canonical(r: &mut Reader<'_>, bytes: &[u8]) -> Result<(Self, Vec<u8>)> {
+        let header = Self::decode(r)?;
+        let header_bytes = header.encode();
+        if header_bytes[..] != bytes[..r.position()] {
+            return Err(Error::NonCanonical);
+        }
+        Ok((header, header_bytes))
+    }
+
     /// Reads and validates a header, field by field, refusing at the first bad field.
     fn decode(r: &mut Reader<'_>) -> Result<Self> {
         if r.take(MAGIC.len(), "magic")? != MAGIC {
@@ -437,11 +474,7 @@ impl Envelope {
     /// the KDF/wrap matrix, exact consumption. Runs no KDF and no cipher.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let mut r = Reader::new(bytes);
-        let header = Header::decode(&mut r)?;
-        let header_bytes = header.encode();
-        if header_bytes[..] != bytes[..r.position()] {
-            return Err(Error::NonCanonical);
-        }
+        let (header, header_bytes) = Header::decode_canonical(&mut r, bytes)?;
         let ciphertext = r
             .take(header.ciphertext_len as usize, "ciphertext")?
             .to_vec();

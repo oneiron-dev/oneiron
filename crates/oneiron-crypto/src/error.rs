@@ -176,4 +176,14 @@ pub enum Error {
     /// A primitive refused its input after the bounds checks (should not happen).
     #[error("primitive refused its input: {0}")]
     Primitive(&'static str),
+    /// A sealed artifact's clear part is not the format, at the named part.
+    #[error("backup artifact is malformed at its {0}")]
+    BackupMalformed(&'static str),
+    /// Reading a sealed artifact failed with this I/O error kind.
+    #[error("reading the backup artifact failed: {0:?}")]
+    BackupRead(std::io::ErrorKind),
+    /// What a sealed artifact's signed commitment says, at the named field, is
+    /// not what its clear parts say.
+    #[error("backup artifact {0} disagrees with its signed commitment")]
+    BackupCommitmentMismatch(&'static str),
 }

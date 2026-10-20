@@ -177,7 +177,7 @@ impl Control {
     }
 
     fn log_kek(&self) -> Kek {
-        Kek::from_bytes(*self.derive(LOG_KEY_CONTEXT))
+        Kek::from_zeroizing(self.derive(LOG_KEY_CONTEXT))
     }
 
     /// The key the lineage's anchor records are authenticated under.

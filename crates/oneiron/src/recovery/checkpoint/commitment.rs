@@ -18,6 +18,15 @@
 use std::sync::Arc;
 
 use getrandom::SysRng;
+// The commitment's codec, digest and signature check are the shared artifact
+// codec's (`oneiron_crypto::backup`); signing, trust and the chain stay here.
+pub use oneiron_crypto::backup::CheckpointSigner;
+use oneiron_crypto::backup::{
+    CHECKPOINT_SIGNATURE_EPOCH as EPOCH, CHECKPOINT_SIGNATURE_SUITE as SUITE,
+    COMMITMENT_VERSION as VERSION, ED25519_KEY_ID, SLHDSA_KEY_ID, commitment_digest,
+    verify_commitment_signature,
+};
+pub(super) use oneiron_crypto::backup::{Commitment, MAX_SIGNED_FRAME};
 use oneiron_crypto::{
     SigPurpose, SignatureRecord, SigningKey, SuiteId, VerifyPolicy, VerifyingKey, sign,
 };
@@ -26,17 +35,9 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::side_table::{self, Named, SideTable};
+use crate::store::{Callback, Rows};
 use crate::world_keys::{keystore_error, refused, slot_seed};
 use crate::{Error, Result, Vault};
-
-const SUITE: SuiteId = SuiteId::SIG_DUAL_ED25519_SLHDSA_SHA2_256S_V1;
-/// The crypto epoch every checkpoint signature is made at.
-const EPOCH: u64 = 1;
-const VERSION: u16 = 1;
-const ED25519_KEY_ID: &[u8] = b"ed25519";
-const SLHDSA_KEY_ID: &[u8] = b"slh-dsa-sha2-256s";
-/// Longest commitment or signature record a reader takes.
-pub(super) const MAX_SIGNED_FRAME: u64 = 128 * 1024;
 
 /// The vault's last checkpoint: its sequence and commitment digest. Key: ().
 const CHAIN_HEAD: SideTable<(), ChainHead, Named> =
@@ -53,16 +54,11 @@ pub(super) struct ChainHead {
     commitment: [u8; 32],
 }
 
-/// One install's checkpoint signer for one vault: its install id and both
-/// public keys. A host trusts its checkpoints by pinning it
-/// ([`super::CheckpointKey::trusting`]).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CheckpointSigner {
-    pub install: [u8; 16],
-    pub ed25519: [u8; 32],
-    /// The SLH-DSA-SHA2-256s public key, 64 bytes.
-    pub slhdsa: Vec<u8>,
+impl ChainHead {
+    /// The digest of the commitment this head names.
+    pub(super) fn digest(&self) -> [u8; 32] {
+        self.commitment
+    }
 }
 
 /// Whose signatures a restore accepts.
@@ -147,40 +143,38 @@ impl Vault {
         CHAIN_HEAD.get(&self.store, txn, &())
     }
 
-    /// Advances the chain from `from` to the checkpoint just signed. Refused
-    /// when another checkpoint advanced it first.
+    /// Advances the chain from `from` to the checkpoint just signed, in a
+    /// store write of its own that carries no other row, and returns that
+    /// write's transaction id: what the backup watermark excludes as the
+    /// backup's own. Refused when another checkpoint advanced it first.
     pub(super) fn advance_checkpoint_chain(
         &self,
         from: Option<ChainHead>,
         to: ChainHead,
-    ) -> Result<()> {
-        self.with_write_txn(|txn| {
-            if CHAIN_HEAD.get(&self.store, txn, &())? != from {
-                return Err(Error::InvalidConfig(
-                    "another checkpoint was taken at the same time; take this one again".into(),
-                ));
+    ) -> Result<u64> {
+        self.store.group_write_as(Callback::Opaque, None, |txn| {
+            match advance_in_txn(&self.store, txn, from, to) {
+                Ok(own) => Rows::Commit(own),
+                Err(error) => Rows::Discard(Err(error)),
             }
-            CHAIN_HEAD.put(&self.store, txn, &(), &to)
         })
     }
 }
 
-/// What one artifact's signature covers.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct Commitment {
-    pub(super) version: u16,
-    pub(super) vault_id: [u8; 32],
-    pub(super) kind: u8,
-    pub(super) snapshot: [u8; 32],
-    pub(super) sequence: u64,
-    pub(super) epoch: u64,
-    /// The previous checkpoint's commitment digest; `None` for the first.
-    pub(super) predecessor: Option<[u8; 32]>,
-    /// BLAKE3 of the sealed manifest's envelope.
-    pub(super) manifest: [u8; 32],
-    pub(super) created_at: u64,
-    pub(super) signer: CheckpointSigner,
+/// The chain's move from `from` to `to` in `txn`, and `txn`'s id.
+fn advance_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    from: Option<ChainHead>,
+    to: ChainHead,
+) -> Result<u64> {
+    if CHAIN_HEAD.get(store, txn, &())? != from {
+        return Err(Error::InvalidConfig(
+            "another checkpoint was taken at the same time; take this one again".into(),
+        ));
+    }
+    CHAIN_HEAD.put(store, txn, &(), &to)?;
+    Ok(txn.id() as u64)
 }
 
 /// The link a new checkpoint takes in its vault's chain.
@@ -201,7 +195,7 @@ impl Link {
     /// Signs `commitment`: its bytes, the signature record's, and the head
     /// the chain moves to.
     pub(super) fn sign(&self, commitment: &Commitment) -> Result<(Vec<u8>, Vec<u8>, ChainHead)> {
-        let bytes = rmp_serde::to_vec_named(commitment).map_err(|_| codec())?;
+        let bytes = commitment.encode().map_err(|_| codec())?;
         let record = sign(
             SUITE,
             SigPurpose::BatchCheckpoint,
@@ -217,10 +211,21 @@ impl Link {
         .map_err(|_| refused("signing the checkpoint failed"))?;
         let head = ChainHead {
             sequence: commitment.sequence,
-            commitment: *blake3::hash(&bytes).as_bytes(),
+            commitment: commitment_digest(&bytes),
         };
         Ok((bytes, record.to_bytes(), head))
     }
+}
+
+/// The public refs a version 2 commitment signs beside the manifest: the
+/// prelude's registry binding (FIX 5826), the key header's commitment and
+/// BLAKE3, and the custody position the snapshot read, so a host that never
+/// opens the artifact reads them signed.
+pub(super) struct SignedRefs {
+    pub(super) registry_binding: Option<[u8; 32]>,
+    pub(super) key_commitment: [u8; 32],
+    pub(super) key_header_blake3: [u8; 32],
+    pub(super) custody_ref: Option<oneiron_crypto::backup::CustodyRef>,
 }
 
 pub(super) fn new_commitment(
@@ -230,6 +235,7 @@ pub(super) fn new_commitment(
     snapshot: [u8; 32],
     manifest: [u8; 32],
     created_at: u64,
+    refs: SignedRefs,
 ) -> Result<Commitment> {
     Ok(Commitment {
         version: VERSION,
@@ -242,6 +248,10 @@ pub(super) fn new_commitment(
         manifest,
         created_at,
         signer: link.keys.signer()?,
+        registry_binding: refs.registry_binding,
+        key_commitment: Some(refs.key_commitment),
+        key_header_blake3: Some(refs.key_header_blake3),
+        custody_ref: refs.custody_ref,
     })
 }
 
@@ -253,7 +263,7 @@ pub(super) fn verify(
     bytes: &[u8],
     record: &[u8],
 ) -> Result<Commitment> {
-    let commitment: Commitment = rmp_serde::from_slice(bytes).map_err(|_| codec())?;
+    let commitment = Commitment::decode(bytes).map_err(|_| codec())?;
     if commitment.version != VERSION
         || commitment.epoch != EPOCH
         || commitment.vault_id != *vault_id
@@ -273,23 +283,7 @@ pub(super) fn verify(
     if !trusted {
         return Err(refused("the checkpoint's signer is not trusted here"));
     }
-    let ed25519 = VerifyingKey::from_bytes(SuiteId::SIG_ED25519_V1, &commitment.signer.ed25519)
-        .map_err(|_| codec())?;
-    let slhdsa =
-        VerifyingKey::from_bytes(SuiteId::SIG_SLHDSA_SHA2_256S_V1, &commitment.signer.slhdsa)
-            .map_err(|_| codec())?;
-    SignatureRecord::parse(record)
-        .map_err(|_| codec())?
-        .verify(
-            bytes,
-            &VerifyPolicy {
-                suite: SUITE,
-                purpose: SigPurpose::BatchCheckpoint,
-                signer: &commitment.signer.install,
-                min_epoch: EPOCH,
-            },
-            &[(ED25519_KEY_ID, &ed25519), (SLHDSA_KEY_ID, &slhdsa)],
-        )
+    verify_commitment_signature(bytes, record, &commitment.signer)
         .map_err(|_| refused("the checkpoint's signature does not verify"))?;
     Ok(commitment)
 }

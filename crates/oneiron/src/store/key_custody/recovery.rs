@@ -74,7 +74,8 @@ struct RequiredId {
 }
 
 impl CustodyRequirement {
-    fn position(&self) -> Result<CustodyPosition> {
+    /// The custody position the requirement names.
+    pub(crate) fn position(&self) -> Result<CustodyPosition> {
         CustodyPosition::from_bytes(&self.position)
             .ok_or_else(|| refused("the backup's custody requirement does not parse".into()))
     }
@@ -94,6 +95,17 @@ impl CustodyRequirement {
 }
 
 impl Store {
+    /// The local custody log's writer epoch and sequence, for a backup
+    /// watermark: `(0, 0)` where this vault keeps no custody log. A cached
+    /// read in the normal case.
+    pub(crate) fn custody_log_mark(&self) -> Result<(u64, u64)> {
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok((0, 0));
+        };
+        let position = custody.journal()?.position()?;
+        Ok((position.epoch.get(), position.seq))
+    }
+
     /// What an image taken now needs of this vault's custody; `None` while
     /// nothing was ever published under it. The caller holds the custody
     /// read guard across this and the image's snapshot. Body instances are

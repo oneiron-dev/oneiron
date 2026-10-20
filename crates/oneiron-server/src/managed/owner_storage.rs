@@ -33,8 +33,11 @@ pub(super) fn owner_host(
 ) -> OwnerHost {
     let rehearsals = rehearsal_dir(&config.vault_path);
     // Its custody anchors where `[backup]` names (FIX 5789).
+    // Each backup binds the vault id to the registry's name for the vault
+    // (FIX 5826), with or without an escrow outbox.
     let host = OwnerHost::from_config(config, rehearsal_config)
         .with_rehearsal_dir(rehearsals.clone())
+        .registered_as(managed.vault_name.clone())
         .anchored_at(&config.backup)
         .shipping_custody_to(managed.escrow_outbox.as_ref().map(|outbox| {
             oneiron::recovery::checkpoint::CustodyOutbox::at(
