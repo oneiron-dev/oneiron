@@ -11,6 +11,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{BodyStale, EntityStoreRead as _, body_readable_in_txn};
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
+use crate::secret_custody::{SecretSight, masked_file_in_txn, sighted_bytes_in_txn};
 
 use super::super::body::decode_blob_artifact_body;
 use super::super::made_by::made_by_text;
@@ -187,18 +188,26 @@ impl Vault {
 }
 
 impl Vault {
-    /// Lends one version's stored bytes to `lend` without copying them out
-    /// of the store. The organ host uses it to fill a shared region once per
-    /// content hash. Liveness (deletion, staleness) is checked on every call;
-    /// the content hash is checked when `lend` asks for the bytes, so a
-    /// caller that already holds them verified under this hash skips both
-    /// the hash and the copy. `lend` runs inside the read transaction and
+    /// Lends one version's bytes to `lend` as `sight` reads them, without
+    /// copying stored bytes out of the store. The organ host uses it to fill
+    /// a shared region once per lent hash. Liveness (deletion, staleness) is
+    /// checked on every call. `lend` runs inside the read transaction and
     /// must not open another one on this thread. A compaction step's
     /// response whose words are withdrawn lends nothing.
+    ///
+    /// A masked reader of a body the secret mask marked is lent the masked
+    /// copy, made as the whole-body door makes it from the stored bytes,
+    /// verified first (FIX 6508): an inline body by `sighted_bytes_in_txn`,
+    /// one kept in its ASSET's file by `sighted_body_file_in_txn`. The owner, a
+    /// granted agent, and every reader of a body no mark covers are lent the
+    /// stored bytes, whose content hash is checked when `lend` asks for
+    /// them, so a caller that already holds them verified under this hash
+    /// skips both the hash and the copy.
     pub fn lend_blob_artifact_version<R>(
         &self,
         artifact_id: &EntityId,
         version: u64,
+        sight: SecretSight,
         lend: impl FnOnce(&BlobArtifactVersion, BlobBytes<'_>) -> R,
     ) -> Result<Option<R>> {
         let rtxn = self.store.env.read_txn()?;
@@ -210,6 +219,12 @@ impl Vault {
         if !compaction_response_readable_in(self, &rtxn, artifact_id)? {
             return Ok(None);
         }
+        if sight == SecretSight::Masked
+            && masked_file_in_txn(&self.store, &rtxn, &record.content_hash)?.is_some()
+        {
+            let copy = self.masked_version_copy_in_txn(&rtxn, artifact_id, &record)?;
+            return Ok(Some(lend(&record, BlobBytes::masked_copy(copy))));
+        }
         let bytes = self
             .lend_blob_in_txn(&rtxn, &record.content_hash)?
             .ok_or(Error::EntityNotFound)?;
@@ -218,19 +233,62 @@ impl Vault {
             BlobBytes {
                 bytes,
                 hash: record.content_hash,
+                masked: false,
             },
         )))
     }
+
+    /// The masked copy of `record`'s body, which a mark covers: a body kept
+    /// in its ASSET's file is filled as the checked reader verifies it, and
+    /// an inline one is verified under the version's content hash before it
+    /// is masked. Every refusal is the whole-body door's.
+    fn masked_version_copy_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        record: &BlobArtifactVersion,
+    ) -> Result<Vec<u8>> {
+        if let Some((asset, hash)) =
+            self.blob_artifact_version_file_in_txn(rtxn, artifact_id, record.version)?
+        {
+            return self
+                .sighted_body_file_in_txn(rtxn, &asset, &hash, SecretSight::Masked)?
+                .ok_or(Error::EntityNotFound);
+        }
+        let stored = BlobBytes {
+            bytes: self
+                .lend_blob_in_txn(rtxn, &record.content_hash)?
+                .ok_or(Error::EntityNotFound)?,
+            hash: record.content_hash,
+            masked: false,
+        }
+        .verified()?;
+        sighted_bytes_in_txn(&self.store, rtxn, stored.into_owned(), SecretSight::Masked)
+    }
 }
 
-/// One version's bytes, borrowed from a read transaction.
+/// One version's bytes, borrowed from a read transaction, or the masked copy
+/// a masked reader is lent.
 #[derive(Debug)]
 pub struct BlobBytes<'t> {
     bytes: std::borrow::Cow<'t, [u8]>,
+    /// The BLAKE3 of the bytes lent: the version's content hash for its
+    /// stored bytes, the copy's own for a masked copy.
     hash: [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+    /// A masked copy, hashed as it was lent: its stored bytes were verified
+    /// before they were masked.
+    masked: bool,
 }
 
 impl<'t> BlobBytes<'t> {
+    fn masked_copy(copy: Vec<u8>) -> Self {
+        Self {
+            hash: *blake3::hash(&copy).as_bytes(),
+            bytes: std::borrow::Cow::Owned(copy),
+            masked: true,
+        }
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         self.bytes.len()
@@ -241,13 +299,24 @@ impl<'t> BlobBytes<'t> {
         self.bytes.is_empty()
     }
 
-    /// Checks the bytes against the version's content hash, then lends them.
+    /// The BLAKE3 of the bytes lent (FIX 6508): the version's content hash
+    /// for its stored bytes, the copy's own for a masked copy. A cache or a
+    /// receipt names what the reader saw by it, never by the stored bytes'
+    /// hash alone.
+    #[must_use]
+    pub const fn hash(&self) -> &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN] {
+        &self.hash
+    }
+
+    /// Checks stored bytes against the version's content hash, then lends
+    /// them. A masked copy, made from stored bytes verified first, is lent
+    /// as it is.
     ///
     /// # Errors
     /// [`Error::CorruptedIndex`] when the stored bytes no longer hash to the
     /// version's content hash.
     pub fn verified(self) -> Result<std::borrow::Cow<'t, [u8]>> {
-        if blake3::hash(&self.bytes).as_bytes() == &self.hash {
+        if self.masked || blake3::hash(&self.bytes).as_bytes() == &self.hash {
             Ok(self.bytes)
         } else {
             Err(Error::CorruptedIndex("blob content hash"))
