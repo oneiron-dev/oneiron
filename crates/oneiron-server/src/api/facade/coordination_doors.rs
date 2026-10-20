@@ -395,6 +395,9 @@ fn spawn_rows(read: &PlannedSpawnObservation) -> Option<Vec<oneiron::EntityId>> 
         if critic.association == CriticAssociation::BranchAttempt {
             rows.push(critic.branch_attempt_ref);
         }
+        // A declared critique derives from its review's verdict claim
+        // (FIX 5252).
+        rows.extend(critic.review_verdict_ref);
     }
     rows.sort_unstable();
     rows.dedup();

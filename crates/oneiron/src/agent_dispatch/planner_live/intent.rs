@@ -30,7 +30,8 @@
 //!
 //! An actor's erase leaves every intent it asked, its custody, launch and
 //! frozen pack included, and forgets only the asker (FIX 4582): the erased
-//! asker can no longer replay, settle or launch it.
+//! asker can no longer replay, settle or launch it. One it left in flight is
+//! in doubt from then on (FIX 5097), since nothing can settle it.
 
 mod child;
 
@@ -81,8 +82,9 @@ enum IntentPhase {
     /// One call holds custody: placement or the planner may be asking a
     /// model.
     InFlight,
-    /// An unkeyed call was in flight when the key was asked again. It may
-    /// have run, so it is never rerun.
+    /// An unkeyed call was in flight when the key was asked again, or its
+    /// asker was erased while it was (FIX 5097). It may have run, so it is
+    /// never rerun.
     InDoubt,
     Planned,
     /// Queued and bound in the launch's own writer. It never launches
@@ -633,8 +635,10 @@ impl AgentDispatcher<'_> {
     /// keeps its key, ask, custody, plan or refusal, frozen start and pack,
     /// launch and leader exposures, and names no asker. Its asker can no
     /// longer replay, settle or launch it, and a launched team's leader
-    /// still runs with what its launch froze. One-way, in the erase's own
-    /// transaction. An id whose entity is no actor scans nothing.
+    /// still runs with what its launch froze. One still in flight moves to
+    /// in doubt (FIX 5097): its custody can no longer settle it. One-way, in
+    /// the erase's own transaction. An id whose entity is no actor scans
+    /// nothing.
     ///
     /// # Errors
     ///
@@ -652,6 +656,9 @@ impl AgentDispatcher<'_> {
             let (key, mut intent) = row?;
             if intent.actor == Some(*actor) {
                 intent.actor = None;
+                if intent.phase == IntentPhase::InFlight {
+                    intent.phase = IntentPhase::InDoubt;
+                }
                 named.push((key, intent));
             }
         }

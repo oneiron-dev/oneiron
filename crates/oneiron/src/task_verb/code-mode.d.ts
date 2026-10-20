@@ -2304,7 +2304,7 @@ declare namespace Sdk {
   type TeamReceiptView = { team_ref: string; type_ref: TypeStamp; pattern: CoordinationPatternView; pattern_skill?: SkillRevisionView | null; axis: TeamAxis; width: number; models: string[]; outcome_receipt?: string | null };
   type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: string; effort: ReasoningEffort; why: string; reused: boolean };
   type CriticAssociation = "branch_attempt" | "canonical_run_ref" | "declared_spawn_attempt";
-  type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
+  type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; review_verdict_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
   type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string };
   type BorrowedCellView = { predicate: string; subject: EntityId; executor?: string | null; type_ref?: TypeStamp | null; axis?: string | null };
   type DoorsLearningEvidenceView = { receipt_ref: string; at: number; anchor_kind: string; weight: number };
