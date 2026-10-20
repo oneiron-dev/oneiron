@@ -20,7 +20,8 @@
 //! answered stops the run on the typed outage, which parks it until a
 //! provider recovers. Its `ai.options` lists the speech rows that call could
 //! take. Any other `ai.*` media call and a hook replay are the owner's, and
-//! refused. A browser or desktop row drives the run's own guest under the
+//! refused, except to an owner's own program (`owner_program_rows`, FIX
+//! 5911). A browser or desktop row drives the run's own guest under the
 //! browser pack, its checked connection and the vault's standing grants. The
 //! board rows, `self.focus.*` and a keyed `describe`, run the engine's board
 //! dispatcher over the agent's own board on the run's own STREAM connection,
@@ -171,6 +172,18 @@ impl AgentVerbDoor for RunHostDoor {
                 Some(board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
                         .map(|(output, rows)| (output, Some(rows)))
+                }
+                // An owner's own program takes the owner's rows (FIX 5911).
+                None if super::owner_program_rows::is_owner_row(verb) => {
+                    super::owner_program_rows::answer(
+                        &server,
+                        actor,
+                        &origin,
+                        invocation,
+                        verb,
+                        input,
+                        line.as_ref(),
+                    )
                 }
                 None => answer_as_agent(
                     &server,
@@ -404,7 +417,7 @@ pub(crate) fn answer_as_agent(
 }
 
 /// The agent's own surface for one call, on this device.
-fn agent_memory<'a>(
+pub(super) fn agent_memory<'a>(
     server: &'a SyncServer,
     actor: WriteActor,
     origin: &HostWriteOrigin,

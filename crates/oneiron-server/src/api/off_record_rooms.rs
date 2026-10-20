@@ -227,17 +227,71 @@ pub(crate) async fn room_start(
 ) -> Result<Room, ApiError> {
     let actor = starter(auth)?;
     let room = parse_entity_id_param(&request.room, "room")?;
+    // The stretch's memory, queued for on the retained line before anything
+    // is made (FIX 5991). A caller gone while it waits starts nothing.
+    let charge = RoomCharge::reserve(server, &request.session_ref).await;
     let server = Arc::clone(server);
     let view = blocking(move || {
         let session = server
             .vault()
             .off_record_session_vault()
-            .enter_in_room(&request.session_ref, request.backend, room, actor)
+            .enter_in_room_charged(
+                &request.session_ref,
+                request.backend,
+                (room, actor),
+                Box::new(charge),
+            )
             .map_err(|error| engine_error(error, &request.session_ref))?;
         self::view(&session, &request.session_ref, actor)
     })
     .await?;
     Ok(view)
+}
+
+/// A room stretch's charge on the server's retained-memory line (FIX 5991):
+/// reserved before the stretch is entered, then moved to what it holds as
+/// its overlay changes, never refused and never waited on, and handed back
+/// once its overlay is gone.
+struct RoomCharge {
+    line: Arc<crate::byte_line::ByteLine>,
+    held: std::sync::Mutex<crate::byte_line::HeldBytes>,
+    questions: Arc<crate::wire_telemetry::LimitQuestions>,
+}
+
+/// How long one place in the line waits before it queues again. Waiting
+/// never refuses a start (Rule 5): only the caller leaving ends it.
+const ROOM_CHARGE_WAIT: std::time::Duration = std::time::Duration::from_secs(3600);
+
+impl RoomCharge {
+    /// Queues, in arrival order and outside every engine lock, for the
+    /// bytes a stretch named `session_ref` holds once entered.
+    async fn reserve(server: &SyncServer, session_ref: &str) -> Self {
+        let bytes = oneiron::off_record::room_entry_bytes(session_ref);
+        let questions = Arc::clone(server.wire_telemetry.limit_questions());
+        loop {
+            let reserved = server
+                .retained
+                .reserve_alone(bytes, ROOM_CHARGE_WAIT, &questions)
+                .await;
+            if let Some(held) = reserved {
+                return Self {
+                    line: Arc::clone(&server.retained),
+                    held: std::sync::Mutex::new(held),
+                    questions,
+                };
+            }
+        }
+    }
+}
+
+impl oneiron::off_record::RetainedCharge for RoomCharge {
+    fn charge(&self, bytes: usize) {
+        let mut held = self
+            .held
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.line.charge(&mut held, bytes, &self.questions);
+    }
 }
 
 pub(crate) async fn room_witness(

@@ -2015,6 +2015,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/defer.rs",
+     "purpose": "A fresh row held to its own due instant (FIX 5957): the readiness a retry's backoff gives the try it mints…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -3145,7 +3155,7 @@
      "path": "src/authority/invitee_slip.rs",
      "purpose": "FIX 1925: an invitee's own credential",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -5173,7 +5183,7 @@
      "path": "src/batch/deindex.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -12728,6 +12738,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/actions/replay_read.rs",
+     "purpose": "A replayed search answers under its caller's read scope now (SCAN C025, FIX 5989)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -18711,8 +18731,8 @@
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9,
+      "crate-vis": 4,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -18844,7 +18864,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConversationCreateInput",
@@ -18854,7 +18874,7 @@
      "path": "src/core_write/conversations.rs",
      "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -26251,7 +26271,7 @@
      "purpose": "Cross-vault same_as links and per-pact share consent (FED-07)",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4
      }
@@ -26402,7 +26422,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "mod": 2,
       "re-export": 18
      }
@@ -28017,9 +28037,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/gate/resolution/manifest_memo.rs",
-     "purpose": "Decodes a store keeps between policy resolutions",
+     "purpose": "Decodes a store keeps between policy resolutions: a byte-charged LRU (FIX 5987)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -28040,6 +28060,16 @@
      "purpose": "Resolved-view types plus the `PolicyManifestResolution` struct definition",
      "surface": {
       "crate-vis": 52
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_weight.rs",
+     "purpose": "What one decoded manifest body weighs in the store's manifest memo (FIX 5987): the bytes it owns, not the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -37923,7 +37953,7 @@
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
       "crate-vis": 3,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -37979,6 +38009,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetainedCharge"
+     ],
+     "path": "src/off_record/lifecycle/retained.rs",
+     "purpose": "A room stretch's memory, charged to its host's retained-memory line (SCAN C029, FIX 5991)",
+     "surface": {
+      "fn": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -37986,7 +38029,7 @@
      "purpose": "Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10)",
      "surface": {
       "crate-vis": 12,
-      "fn": 11,
+      "fn": 12,
       "type": 1
      }
     },
@@ -40194,7 +40237,7 @@
      "path": "src/overlay_db/accessors.rs",
      "purpose": "ComposedOverlay snapshot holder plus OverlayDb/OverlayStrDb canonical-vs-composed read/write accessors",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -47604,7 +47647,7 @@
      "path": "src/session_overlay/overlay/lifecycle.rs",
      "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 14
      }
     },
     {
@@ -49297,6 +49340,16 @@
      "purpose": "The owner's removal door (OF-519)",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/pack_catalog/route_halt.rs",
+     "purpose": "A catalog connector's route halts wherever the pack install it is bound to leaves the vault, in the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -59408,6 +59461,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault/transactions/sync_state_reclaim.rs",
+     "purpose": "One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault/vector_evidence.rs",
      "purpose": "Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it",
      "surface": {
@@ -63317,7 +63380,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63499,7 +63562,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 104,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63898,7 +63961,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64129,7 +64192,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64514,7 +64577,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 82,
+     "files": 83,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64696,7 +64759,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64782,7 +64845,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4015,
+   "source_files": 4021,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77982,7 +78045,7 @@
      "path": "src/api/facade.rs",
      "purpose": "ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 39
      }
     },
     {
@@ -78692,7 +78755,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 174
+      "crate-vis": 180
      }
     },
     {
@@ -79764,7 +79827,7 @@
      "path": "src/api/mcp_gateway/device_release.rs",
      "purpose": "What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -79815,6 +79878,16 @@
      "purpose": "A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/served_rows.rs",
+     "purpose": "The rows an MCP call's result was derived from, as its producers listed them (DEC-0005; SCAN C018, FIX…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -79962,7 +80035,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 44
+      "crate-vis": 46
      }
     },
     {
@@ -80862,7 +80935,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
@@ -81700,7 +81773,7 @@
      "path": "src/byte_line.rs",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -83970,6 +84043,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/idempotency/reclaim.rs",
+     "purpose": "Reclaim of expired idempotency entries (FIX 5951)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -86507,6 +86590,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/owner_program_rows.rs",
+     "purpose": "An owner's own program's owner rows (FIX 5911, after FIX 5717)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/owner_work_drain.rs",
      "purpose": "The served holder's owner work pickup",
      "surface": {
@@ -86629,7 +86722,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -87484,7 +87577,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 469,
+     "files": 470,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -87722,7 +87815,7 @@
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through"
     },
     "idempotency": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -87862,7 +87955,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -87934,7 +88027,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 870,
+   "source_files": 873,
    "test_files": 182
   },
   "oneiron-spawn": {

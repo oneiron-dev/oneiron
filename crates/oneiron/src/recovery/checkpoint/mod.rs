@@ -579,6 +579,7 @@ impl Vault {
         // Every id `current` has hard-erased, those after the checkpoint
         // too: the restored rows must not name those actors (FIX 3655).
         let erased = crate::deletion::hard_erased_ids_in(current)?;
+        let installed = current.installed_pack_sources()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;
@@ -600,6 +601,8 @@ impl Vault {
             &erased,
             &write_budget::Unfloored,
         )?;
+        // A live install the image does not hold halts its routes (FIX 6034).
+        vault.halt_departed_pack_routes(&installed, restored_at)?;
         #[cfg(test)]
         panic_if_armed();
         // Refused here, or unwound, the bindings above drop in reverse: the
