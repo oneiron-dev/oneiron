@@ -409,15 +409,20 @@ impl Vault {
     /// `ledger_identity_ref` when it names one, else its intent ref), so only
     /// the act that keeps them spends it. A held act's dispatch result carries the same
     /// digest as `approval_digest`. It reads and records nothing else.
+    /// `reminder` is the `(recipient, rung)` a reminder sweep binds
+    /// ([`Self::sweep_esign_reminders`]), `None` for every other act.
     /// # Errors
     /// The refusals [`Self::dispatch_esign`] makes before its gate.
     pub fn esign_approve_once_digest(
         &self,
         request: &OutboundDispatchRequest,
         command: &EsignOutboundCommand,
+        reminder: Option<(&str, u32)>,
     ) -> std::result::Result<Option<crate::consent::EffectDigest>, OutboundDispatchError> {
+        let reminder = reminder.map(|(recipient, rung)| (recipient.to_owned(), rung));
         let mut request = request.clone();
-        request.intent.content_ref = Some(self.esign_command_binding(&request, command, &None)?);
+        request.intent.content_ref =
+            Some(self.esign_command_binding(&request, command, &reminder)?);
         crate::outbound::outbound_approve_once_digest(self, &request)
     }
     /// The immutable binding (`esign-command:<sha256>`) an e-sign act runs

@@ -31,6 +31,31 @@ impl Default for EsignNoticeSwitches {
     }
 }
 
+/// One reminder a sweep's dispatch held, as
+/// [`Vault::sweep_esign_reminders_with_holds`] reports it (FIX 6424).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldEsignReminder {
+    pub document: EntityId,
+    /// The recipient id the reminder names.
+    pub recipient: String,
+    pub rung: u32,
+    /// While the Gate holds it for the owner, the approve-once digest his
+    /// one-time press must name to release it, 64 lower-hex, copied from the
+    /// dispatch result; [`Vault::esign_approve_once_digest`] with this
+    /// `(recipient, rung)` composes the same. `None` for any other hold.
+    pub approval_digest: Option<String>,
+}
+
+/// What one reminder sweep did (FIX 6424).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EsignReminderSweep {
+    /// Reminders delivered to their channel: the count
+    /// [`Vault::sweep_esign_reminders`] returns.
+    pub sent: usize,
+    /// Reminders the pipeline held, in sweep order.
+    pub held: Vec<HeldEsignReminder>,
+}
+
 /// Rule values belong to the installing pack; the engine does not choose a
 /// reminder ladder or a default expiry window. Seconds are measured from send.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -333,10 +358,21 @@ impl Vault {
         &self,
         documents: &[EntityId],
         now: u64,
-        mut request: impl FnMut(EntityId, &EsignRecipient, u32) -> OutboundDispatchRequest,
+        request: impl FnMut(EntityId, &EsignRecipient, u32) -> OutboundDispatchRequest,
     ) -> std::result::Result<usize, crate::outbound::OutboundDispatchError> {
+        self.sweep_esign_reminders_with_holds(documents, now, request)
+            .map(|sweep| sweep.sent)
+    }
+    /// [`Self::sweep_esign_reminders`], also naming each reminder the
+    /// pipeline held, with the approve-once digest of a gate hold (FIX 6424).
+    pub fn sweep_esign_reminders_with_holds(
+        &self,
+        documents: &[EntityId],
+        now: u64,
+        mut request: impl FnMut(EntityId, &EsignRecipient, u32) -> OutboundDispatchRequest,
+    ) -> std::result::Result<EsignReminderSweep, crate::outbound::OutboundDispatchError> {
         self.measure_limit(EngineLimit::EsignSweepDocuments, documents.len() as u64);
-        let mut sent = 0;
+        let mut sweep = EsignReminderSweep::default();
         for &document in documents {
             let candidates = {
                 let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
@@ -366,10 +402,17 @@ impl Vault {
                 let result =
                     self.dispatch_esign_reminder(next_request, &command, &recipient.id, rung)?;
                 if result.outcome == OutboundDispatchOutcome::DeliveredToChannel {
-                    sent += 1;
+                    sweep.sent += 1;
+                } else if result.outcome == OutboundDispatchOutcome::Held {
+                    sweep.held.push(HeldEsignReminder {
+                        document,
+                        recipient: recipient.id,
+                        rung,
+                        approval_digest: result.approval_digest,
+                    });
                 }
             }
         }
-        Ok(sent)
+        Ok(sweep)
     }
 }
