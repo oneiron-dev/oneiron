@@ -10157,6 +10157,30 @@
       "openapi": true
     },
     {
+      "name": "vault.runs.pause",
+      "description": "Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused.",
+      "input": "crate::task_verb::run_control::RunControlRequest",
+      "output": "crate::task_verb::run_control::RunControlReceipt",
+      "call": "memory.runs_pause(input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.runs.resume",
+      "description": "Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed.",
+      "input": "crate::task_verb::run_control::RunControlRequest",
+      "output": "crate::task_verb::run_control::RunControlReceipt",
+      "call": "memory.runs_resume(input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.consults.get",
       "description": "The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies.",
       "input": "crate::task_verb::run_doors::ConsultReadRequest",

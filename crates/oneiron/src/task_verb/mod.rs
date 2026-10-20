@@ -86,6 +86,7 @@ pub(crate) use report_journal::{
 pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
+pub mod run_control;
 pub mod run_doors;
 mod runner_done;
 mod scheduling;

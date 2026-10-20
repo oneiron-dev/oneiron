@@ -664,6 +664,8 @@ pub enum AgentVerb {
     VaultAgentsSpawn,
     VaultTasksCancelForce,
     VaultRunsBranchesGet,
+    VaultRunsPause,
+    VaultRunsResume,
     VaultConsultsGet,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
@@ -1760,6 +1762,8 @@ impl AgentVerb {
         Self::VaultAgentsSpawn,
         Self::VaultTasksCancelForce,
         Self::VaultRunsBranchesGet,
+        Self::VaultRunsPause,
+        Self::VaultRunsResume,
         Self::VaultConsultsGet,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
@@ -2877,6 +2881,8 @@ impl AgentVerb {
             Self::VaultAgentsSpawn => "vault.agents.spawn",
             Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
             Self::VaultRunsBranchesGet => "vault.runs.branches.get",
+            Self::VaultRunsPause => "vault.runs.pause",
+            Self::VaultRunsResume => "vault.runs.resume",
             Self::VaultConsultsGet => "vault.consults.get",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
@@ -3983,6 +3989,8 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
+                | Self::VaultRunsPause
+                | Self::VaultRunsResume
                 | Self::VaultConsultsGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
@@ -5106,6 +5114,8 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
+                | Self::VaultRunsPause
+                | Self::VaultRunsResume
                 | Self::VaultConsultsGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
@@ -6322,6 +6332,8 @@ impl AgentVerb {
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
                 | Self::VaultRunsBranchesGet
+                | Self::VaultRunsPause
+                | Self::VaultRunsResume
                 | Self::VaultConsultsGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
@@ -7122,6 +7134,8 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultAgentsSpawn
                 | Self::VaultTasksCancelForce
+                | Self::VaultRunsPause
+                | Self::VaultRunsResume
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
@@ -8071,6 +8085,8 @@ impl AgentVerb {
             Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
+            Self::VaultRunsPause => &["spec"],
+            Self::VaultRunsResume => &["spec"],
             Self::VaultConsultsGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
@@ -9168,6 +9184,8 @@ impl AgentVerb {
             Self::VaultAgentsSpawn => &["spec"],
             Self::VaultTasksCancelForce => &["spec"],
             Self::VaultRunsBranchesGet => &["spec"],
+            Self::VaultRunsPause => &["spec"],
+            Self::VaultRunsResume => &["spec"],
             Self::VaultConsultsGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
@@ -11553,6 +11571,12 @@ impl AgentVerb {
             }
             Self::VaultRunsBranchesGet => {
                 "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."
+            }
+            Self::VaultRunsPause => {
+                "Pauses one queued or scheduled branch of a run by its attempt id: the vault owner pauses any branch, any other caller only a branch of a TASK it owns. A repeat answers already_paused; a running branch is not paused."
+            }
+            Self::VaultRunsResume => {
+                "Resumes one paused branch of a run by its attempt id: the vault owner resumes any branch, any other caller only a branch of a TASK it owns. A repeat answers already_resumed."
             }
             Self::VaultConsultsGet => {
                 "The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies."

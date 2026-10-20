@@ -29,8 +29,8 @@ use super::create_origin::{
 };
 use super::create_spec::{TaskCreateRateLimit, TaskCreateSpec};
 use super::create_validation::{
-    ValidatedTaskCreate, human_route_refusal, task_create_proposal_value, task_route_dedupe_key,
-    validate_task_create,
+    ValidatedTaskCreate, admit_task_parent, human_route_refusal, task_create_proposal_value,
+    task_route_dedupe_key, validate_task_create,
 };
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::{TaskCreateReceipt, TaskRouteOutcome};
@@ -105,6 +105,8 @@ impl Memory<'_> {
         let now = spec.now.unwrap_or_else(|| self.vault().now_recorded_at());
         let rate_now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
+        // A parent this caller cannot read is refused first (FIX 4418).
+        admit_task_parent(self, spec.parent_ref)?;
         // The typed shape is settled BEFORE any write transaction opens: an
         // invalid consult never reaches the TASK write, so a rejected request
         // leaves no partial entity and burns no rate slot.

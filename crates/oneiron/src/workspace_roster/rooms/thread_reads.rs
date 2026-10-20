@@ -266,7 +266,7 @@ pub(super) fn turn_held_back_folded_for_in(
                 room,
                 audience: Some(seed),
                 ..
-            }) => Some((room, fold_audience_in(vault, txn, root, &seed)?)),
+            }) => Some((room, fold_audience_in(vault, txn, room, root, &seed)?)),
             _ => None,
         };
         folds.insert(root, folded);

@@ -59,9 +59,9 @@ fn erase_edit_as(
         vault
             .store
             .reject_legal_holds_in_txn(txn, &[*id], &actor.privacy(true))?;
-        let (_, held) = live_edit_in(vault, txn, id)?
+        let (binding, held) = live_edit_in(vault, txn, id)?
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
-        let erased = erased_here_in(vault, txn, held.erased())?;
+        let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
         rewrite_audience_edit_in_txn(vault, txn, id, &erased)?;
         Ok(Some(DeleteEntityOutcome {
             existed: true,

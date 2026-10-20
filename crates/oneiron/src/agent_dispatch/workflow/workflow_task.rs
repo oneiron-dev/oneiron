@@ -297,12 +297,14 @@ impl AgentDispatcher<'_> {
     /// (FIX 4391): Completed through the TASK's done-means, with `judged` as
     /// the answer a host gave outside the writer; Failed, Cancelled or
     /// Abandoned as the run ended. `false` when nothing moved: the run is
-    /// live, TASK-less or settled, or its TASK moved on.
+    /// live, TASK-less or settled, or its TASK moved on, or the TASK or its
+    /// fence was lost for good, which marks the run settled with that typed
+    /// reason so no pass retries it (FIX 5291).
     ///
     /// # Errors
     ///
-    /// The fence's and the TASK writer's refusals; storage errors. Nothing
-    /// is marked then, so a later pass tries again.
+    /// The fence's and the TASK writer's transient refusals; storage errors.
+    /// Nothing is marked then, so a later pass tries again.
     pub fn settle_workflow_task(
         &self,
         root: AttemptId,
@@ -331,6 +333,32 @@ impl AgentDispatcher<'_> {
         }
         record.task_settled = Some(ended.to_owned());
         RECORD.put(&self.vault.store, txn, &root, &record)
+    }
+
+    /// Marks an ended run's TASK settlement run in a writer of its own when
+    /// its TASK or fence was lost for good (FIX 5291): `ended` with the typed
+    /// `reason` beside it, nothing on the TASK moved, so no later pass runs
+    /// it again. A run some pass marked since keeps its mark.
+    pub(crate) fn mark_workflow_task_lost(
+        &self,
+        root: AttemptId,
+        ended: &str,
+        reason: &str,
+    ) -> Result<()> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let settled = RECORD
+            .get(&self.vault.store, &txn, &root)?
+            .and_then(|record| record.task_settled);
+        if settled.is_none() {
+            self.mark_workflow_task_settled_in(&mut txn, root, &format!("{ended}:{reason}"))?;
+        }
+        txn.commit()?;
+        tracing::info!(
+            ?root,
+            reason,
+            "a workflow's TASK settlement was lost for good; it settles moving nothing"
+        );
+        Ok(())
     }
 
     /// What a bound wrapper's terminal commit runs next: its TASK settles in

@@ -15,6 +15,7 @@ use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error};
+use crate::federation::{ScopeAxis, ScopeId};
 use crate::llm::run_admission::{DeclaredMaximum, LeaseUnit};
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
@@ -459,6 +460,7 @@ pub fn dispatch_workflow_bound_as_person(
         slip: memory
             .presented_credential()
             .map(|slip| slip.claims().slip_id),
+        landing: member_landing(vault, memory)?,
     };
     started_run(dispatch_bound(
         vault,
@@ -497,6 +499,29 @@ pub fn dispatch_workflow_bound_as_member(
         None => return Err(refused()),
     };
     dispatch_workflow_bound_as_person(memory, &person, input)
+}
+
+/// The facet a member's writes land in, for a credential whose facet
+/// caveats narrow it (FIX 5421, owner ruling FACET-READ = A), as the one
+/// facet a bind may take: the write facet its pairing picked while the
+/// credential carries it, else the smallest it carries, else none. `None`
+/// for a handle no facet caveat narrows. This door names no session, so
+/// none places the write.
+fn member_landing(vault: &Vault, memory: &Memory<'_>) -> MemoryResult<Option<ScopeAxis<ScopeId>>> {
+    let Some(slip) = memory.presented_credential() else {
+        return Ok(None);
+    };
+    let facets = match &slip.scope().facets {
+        ScopeAxis::All => return Ok(None),
+        ScopeAxis::Some(facets) => facets.clone(),
+        ScopeAxis::Bottom => std::collections::BTreeSet::new(),
+    };
+    let paired = vault.paired_write_facet(&slip.claims().slip_id)?;
+    let landing = paired
+        .map(ScopeId)
+        .filter(|facet| facets.contains(facet))
+        .or_else(|| facets.first().copied());
+    Ok(Some(ScopeAxis::Some(landing.into_iter().collect())))
 }
 
 /// The terms a member accepted, as the root they fund: a cap of more than

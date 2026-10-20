@@ -8,7 +8,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::human_task::HumanTaskError;
-use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
 
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
@@ -336,6 +336,27 @@ fn check_task_parent_in(
         ));
     }
     Ok(())
+}
+
+/// DOOR-113 slice B (FIX 4418): refuses a parent its writer cannot read,
+/// under `memory`'s own scoped read, as the `tasks.create` row's refs
+/// admission refuses one, so a native create or post never files under a
+/// TASK its caller cannot see. The owner and any caller who reads the parent
+/// pass; a refusal is receipted as the `tasks.create` write it refused. Run
+/// before the write's own transaction, ahead of [`check_task_parent_in`].
+pub(super) fn admit_task_parent(
+    memory: &Memory<'_>,
+    parent_ref: Option<EntityId>,
+) -> MemoryResult<()> {
+    let Some(parent_ref) = parent_ref else {
+        return Ok(());
+    };
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.create",
+        &serde_json::json!({ "parent_ref": parent_ref.to_hex() }),
+        &["/parent_ref"],
+    )
 }
 
 /// A typed ref must still name a live entity of its declared kind at write

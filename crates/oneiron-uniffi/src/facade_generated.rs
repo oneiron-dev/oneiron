@@ -3301,6 +3301,16 @@ export_facade! {
     let output = client.vault_runs_branches_get(&input)?;
     crate::codec::lift_record("vault.runs.branches.get", &output)
 };
+"vault.runs.pause" => fn vault_runs_pause(&self, input: RunControlRequest) -> RunControlReceipt = |client| {
+    let input: oneiron::task_verb::run_control::RunControlRequest = crate::codec::lower_record("vault.runs.pause", input)?;
+    let output = client.vault_runs_pause(&input)?;
+    crate::codec::lift_record("vault.runs.pause", &output)
+};
+"vault.runs.resume" => fn vault_runs_resume(&self, input: RunControlRequest) -> RunControlReceipt = |client| {
+    let input: oneiron::task_verb::run_control::RunControlRequest = crate::codec::lower_record("vault.runs.resume", input)?;
+    let output = client.vault_runs_resume(&input)?;
+    crate::codec::lift_record("vault.runs.resume", &output)
+};
 "vault.consults.get" => fn vault_consults_get(&self, input: ConsultReadRequest) -> ConsultInspection = |client| {
     let input: oneiron::task_verb::run_doors::ConsultReadRequest = crate::codec::lower_record("vault.consults.get", input)?;
     let output = client.vault_consults_get(&input)?;

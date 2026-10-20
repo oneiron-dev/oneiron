@@ -3638,6 +3638,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.runs.pause",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_control::RunControlRequest,
+                >(),
+            ),
+            (
+                "vault.runs.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_control::RunControlRequest,
+                >(),
+            ),
+            (
                 "vault.consults.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::run_doors::ConsultReadRequest,
@@ -13657,6 +13669,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.runs.pause" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consults.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18788,6 +18814,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.runs.branches.get" => {
             let _input: crate::task_verb::run_doors::RunBranchesRequest = decode(value.clone())?;
         }
+        "vault.runs.pause" => {
+            let _input: crate::task_verb::run_control::RunControlRequest = decode(value.clone())?;
+        }
+        "vault.runs.resume" => {
+            let _input: crate::task_verb::run_control::RunControlRequest = decode(value.clone())?;
+        }
         "vault.consults.get" => {
             let _input: crate::task_verb::run_doors::ConsultReadRequest = decode(value.clone())?;
         }
@@ -21591,6 +21623,8 @@ pub fn invoke(
         "vault.agents.spawn" => encode(vault_agents_spawn(memory, decode(value)?)?),
         "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
         "vault.runs.branches.get" => encode(vault_runs_branches_get(memory, decode(value)?)?),
+        "vault.runs.pause" => encode(vault_runs_pause(memory, decode(value)?)?),
+        "vault.runs.resume" => encode(vault_runs_resume(memory, decode(value)?)?),
         "vault.consults.get" => encode(vault_consults_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
@@ -28059,6 +28093,18 @@ pub fn vault_runs_branches_get(
         &memory.embedded_owner("vault.runs.branches.get")?,
         input,
     )
+}
+pub fn vault_runs_pause(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_control::RunControlRequest,
+) -> MemoryResult<crate::task_verb::run_control::RunControlReceipt> {
+    memory.runs_pause(input)
+}
+pub fn vault_runs_resume(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_control::RunControlRequest,
+) -> MemoryResult<crate::task_verb::run_control::RunControlReceipt> {
+    memory.runs_resume(input)
 }
 pub fn vault_consults_get(
     memory: &Memory<'_>,

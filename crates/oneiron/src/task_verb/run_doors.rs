@@ -487,7 +487,7 @@ fn branches(task: &str, records: Vec<AttemptRecord>) -> MemoryResult<Vec<Attempt
 
 /// One attempt row as its branch view: every field as stored, the agent
 /// status projected from the stored state alone.
-fn branch_view(record: AttemptRecord) -> RunBranchView {
+pub(super) fn branch_view(record: AttemptRecord) -> RunBranchView {
     RunBranchView {
         branch: attempt_hex(record.id),
         run_id: record.run_id,

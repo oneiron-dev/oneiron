@@ -190,7 +190,7 @@ pub(crate) fn overlay_thread_binding_in(
     // a member it mentions is named there, a pen through its PERSON (FIX
     // 3123).
     let audience = match seed {
-        Some(seed) => Some(fold_audience_in(vault, txn, held.root, &seed)?.current()),
+        Some(seed) => Some(fold_audience_in(vault, txn, held.room, held.root, &seed)?.current()),
         None => None,
     };
     if !private_members_readable_in(vault, txn, room, audience.as_ref(), &[actor])? {
