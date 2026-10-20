@@ -15,11 +15,15 @@ use serde::{Deserialize, Serialize};
 use super::notification::{
     NotificationBody, NotificationKind, NotificationSource, decode_notification_body,
 };
-use crate::claim::ClaimReadStatus;
-use crate::context_board::{notification_body_json, notification_scoped_to_caller};
+use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::context_board::{
+    NotificationRecipientScope, notification_body_json, notification_recipient_scope,
+    notification_scoped_to_caller,
+};
 use crate::entity_id::EntityId;
-use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::memory::{Memory, MemoryError, MemoryResult, verify_actor_binding_in_txn};
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
+use crate::store::Callback;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// Rows a page serves when its caller names no limit.
@@ -106,6 +110,76 @@ fn notification_not_found() -> MemoryError {
     MemoryError::not_found("no notification with that id is delivered to this actor")
 }
 
+/// Who [`Memory::inbox_mark`] lets write in a shared vault without a
+/// whole-vault content Grant (CALLS `FIX 6510 inbox mark write scope`,
+/// accepted by the Engine 10-20): an actor marking its own delivered
+/// notification, under a write lane scoped to that one row. A caller the
+/// whole-vault check admits keeps that check and nothing else.
+#[derive(Clone, Copy)]
+enum InboxMarkWriteScope {
+    /// The row's recipient markers name the actor, its read lane still reads
+    /// the row in the snapshot that writes, and its Grant admits a write at
+    /// the row's own stored position.
+    OwnRowLane,
+}
+
+const INBOX_MARK_WRITE_SCOPE: InboxMarkWriteScope = InboxMarkWriteScope::OwnRowLane;
+
+impl InboxMarkWriteScope {
+    /// Whether `memory`'s actor, refused the whole-vault content Grant in
+    /// the write snapshot `txn`, may still mark `id` as `caller`. Only a
+    /// shared vault asks that Grant: anywhere else the refusal was the
+    /// actor's own binding, which no row lifts. The actor is proved again at
+    /// the row: its binding, the row's recipient naming it (a row with no
+    /// recipient is no one's own), its read lane reading the row (#3441's
+    /// check), and its Grant at the row's stored position, the per-record
+    /// proof the content writer runs
+    /// (`Vault::authorize_shared_content_write_in_txn`). A row stored with
+    /// no position admits no one here.
+    fn admits_in(
+        self,
+        memory: &Memory<'_>,
+        txn: &heed::RoTxn<'_>,
+        lane: &ScopedRead<'_>,
+        id: EntityId,
+        caller: &str,
+    ) -> MemoryResult<bool> {
+        match self {
+            Self::OwnRowLane => {
+                let vault = memory.vault();
+                if vault.shared_vault_creation_in_txn(txn)?.is_none() {
+                    return Ok(false);
+                }
+                verify_actor_binding_in_txn(vault, txn, memory.actor(), memory.actor_class())?;
+                let Some((entity_type, _, raw)) = lane
+                    .get_entities_parts_in_txn(txn, &[id])?
+                    .into_iter()
+                    .next()
+                    .flatten()
+                else {
+                    return Ok(false);
+                };
+                let own = entity_type == ENTITY_TYPE_NOTIFICATION
+                    && notification_body_json(&raw)
+                        .and_then(|body| notification_recipient_scope(&body))
+                        .is_some_and(|scope| {
+                            matches!(scope, NotificationRecipientScope::Callers(callers)
+                                if callers.contains(caller))
+                        });
+                if !own {
+                    return Ok(false);
+                }
+                vault.authorize_shared_content_write_in_txn(
+                    txn,
+                    id,
+                    &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+                )?;
+                Ok(true)
+            }
+        }
+    }
+}
+
 impl Memory<'_> {
     /// One page of the notifications delivered to this actor, in entity-ID
     /// order after the exclusive `after` cursor. A short page or an absent
@@ -164,7 +238,10 @@ impl Memory<'_> {
 
     /// Marks one notification delivered to this actor seen or acknowledged,
     /// for this actor only, and returns it as this actor now reads it. The
-    /// event's own fields and every other caller's marks are kept.
+    /// event's own fields and every other caller's marks are kept. In a
+    /// shared vault, an actor whose Grant is narrower than the whole vault
+    /// marks only a row whose recipient it is, under that row's write lane
+    /// (`INBOX_MARK_WRITE_SCOPE`, FIX 6510).
     pub fn inbox_mark(
         &self,
         notification: &str,
@@ -190,7 +267,18 @@ impl Memory<'_> {
         if current.acked || (current.seen && mark == NotificationMark::Seen) {
             return Ok(current);
         }
-        self.with_verified_actor_write_txn(|wtxn| {
+        self.vault().write_txn_door(Callback::Audited, |wtxn| {
+            // The verified actor writer's own check, as before. A caller it
+            // refuses may still mark its own row under that row's write lane
+            // (FIX 6510); any other meets the refusal it met before.
+            if let Err(whole_vault) = self.verify_actor_write_in_txn(wtxn)
+                && !matches!(
+                    INBOX_MARK_WRITE_SCOPE.admits_in(self, wtxn, &lane, id, &caller),
+                    Ok(true)
+                )
+            {
+                return Err(whole_vault);
+            }
             // The same lane judges the row again in the snapshot that writes
             // (FIX 6498): a row it no longer reads answers as one never
             // delivered.
