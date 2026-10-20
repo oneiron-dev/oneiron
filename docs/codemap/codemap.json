@@ -10853,6 +10853,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "GmailSkipStage",
+      "GmailSkippedMessage"
+     ],
+     "path": "src/channel_identity_provider/mailbox_skipped.rs",
+     "purpose": "Node-local record of the Gmail messages a mailbox run set aside (FIX 6007)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/channel_identity_provider/member_mail.rs",
      "purpose": "Member-mailbox send predicates (OF-374)",
@@ -10868,7 +10884,7 @@
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
       "crate-vis": 1,
-      "mod": 5,
+      "mod": 6,
       "re-export": 5
      }
     },
@@ -18855,7 +18871,7 @@
      "purpose": "`vault.conversations.records.append` (OF-181): one DAG record and its topology, the write `POST…",
      "surface": {
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -18874,6 +18890,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "AnnouncementAuthority",
       "CoreWriteRefusal",
       "CoreWriteTextField",
       "CoreWriteTimes"
@@ -18882,8 +18899,8 @@
      "purpose": "The shape every core entity write shares: its id, its interval, its announcement-normalized body and its…",
      "surface": {
       "const": 6,
-      "crate-vis": 4,
-      "enum": 1,
+      "crate-vis": 5,
+      "enum": 2,
       "fn": 11,
       "struct": 2
      }
@@ -50088,7 +50105,7 @@
      "path": "src/skill_optimize/gate/project_goal.rs",
      "purpose": "The join between a skill's goal and a project's goal record (ARCH-0053 \"The goal record\")",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 5,
       "struct": 1
@@ -50108,7 +50125,7 @@
      "purpose": "The ARCH-0053 §10a tradeoff ladder: what happens to a [`SkillEditDisposition::NeedsTradeoffDecision`]",
      "surface": {
       "crate-vis": 10,
-      "fn": 12,
+      "fn": 11,
       "struct": 5
      }
     },
@@ -63419,7 +63436,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 24,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64765,7 +64782,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4014,
+   "source_files": 4015,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77845,7 +77862,7 @@
      "path": "src/api/core/write_shape.rs",
      "purpose": "Create-entity DTOs, and the HTTP face of the core write shape the engine owns…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
