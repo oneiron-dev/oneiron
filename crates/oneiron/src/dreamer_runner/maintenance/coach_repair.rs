@@ -1,17 +1,20 @@
 //! The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418). When a
-//! case's route question answers `skill_edit`, the Coach drafts a revision of
-//! the skill the failure names, or else of the one skill the failing run's
-//! pack loaded, through the optimizer's exact-target door, and the heal
-//! carries it as a `SkillEdit` repair for the owner to review. The revision
-//! is a gated candidate like any optimizer draft: the Dreamer's optimize pass
-//! scores it, and nothing here admits it. The other routes stay route-only.
-use crate::attempt_queue::AttemptId;
+//! case's or a blocked report's route question answers `skill_edit`, the
+//! Coach drafts a revision of the skill the failure names, or else of the one
+//! skill the failing run's pack loaded, through the optimizer's exact-target
+//! door, aimed at the failure (FIX 2495), and the heal carries it as a
+//! `SkillEdit` repair for the owner to review. The revision is a gated
+//! candidate like any optimizer draft: the Dreamer's optimize pass scores it,
+//! and nothing here admits it. The other routes stay route-only.
+use crate::attempt_queue::{AttemptId, AttemptQueue, ManifestEntry, ManifestKind};
 use crate::failure_ladder::{HealerCase, HealerRepairRoute};
 use crate::registry::ENTITY_TYPE_SKILL;
+use crate::self_heal::blocked_reports::BlockedIssue;
 use crate::skill::SkillLifecycle;
 use crate::skill_optimize::{
-    SkillEditCycle, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief, SkillRepairStamp,
-    propose_skill_repair_in_txn, proven_cycle, skill_repair_brief, validate_skill_draft,
+    SkillEditCycle, SkillEditDraft, SkillFailureContext, SkillOptimizeAuthor, SkillOptimizeBrief,
+    SkillRepairStamp, propose_skill_repair_in_txn, proven_cycle, skill_repair_brief,
+    validate_skill_draft,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -72,11 +75,29 @@ fn repair_target(vault: &Vault, case: &HealerCase) -> Result<Option<EntityId>> {
     if let Some(skill) = &case.scope.skill_ref {
         return Ok(EntityId::from_hex(skill).ok());
     }
-    let receipt_id = crate::receipt::attempt_pack_receipt_id(&case.failing_attempt_id);
-    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, &receipt_id)? else {
-        return Ok(None);
+    run_target(vault, case.failing_attempt_id)
+}
+
+/// The one active skill the run `attempt` loaded, under the same ruled
+/// policy for a case and a blocked report (FIX 2496): when its pack loaded
+/// exactly one skill and exactly one active skill answers it, that one; else
+/// none. A closed run's pack receipt says what its pack loaded; a run still
+/// live has no receipt yet, and its attempt's manifest says what it has
+/// loaded so far.
+fn run_target(vault: &Vault, attempt: AttemptId) -> Result<Option<EntityId>> {
+    let receipt_id = crate::receipt::attempt_pack_receipt_id(&attempt);
+    let manifest = match crate::receipt::attempt_pack_receipt(vault, &receipt_id)? {
+        Some(receipt) => receipt.pack_manifest_skills(),
+        None => AttemptQueue::new(vault).get(attempt)?.map(|record| {
+            record
+                .manifest()
+                .iter()
+                .filter(|entry| entry.kind == ManifestKind::Skill)
+                .map(ManifestEntry::wire_form)
+                .collect()
+        }),
     };
-    let Some(manifest) = receipt.pack_manifest_skills() else {
+    let Some(manifest) = manifest else {
         return Ok(None);
     };
     let [entry] = manifest.as_slice() else {
@@ -111,21 +132,101 @@ fn repair_target(vault: &Vault, case: &HealerCase) -> Result<Option<EntityId>> {
     }
 }
 
+/// What one `skill_edit` heal drafts for: the skill it repairs, `None`
+/// when no single one resolves, the agent and diagnosis its route names, and
+/// the failure the draft is aimed at.
+struct RepairAim {
+    skill: Option<EntityId>,
+    agent_ref: String,
+    diagnosis_ref: String,
+    failure: SkillFailureContext,
+}
+
 impl Vault {
-    /// Drafts the revision a `skill_edit` heal carries, outside any storage
-    /// transaction: the target's DEV-only brief and the route's binding to the
-    /// failing attempt's agent, then the author. A target that does not
-    /// resolve, one the optimizer may not revise, an unbound route, a decline,
-    /// a failed author and an unusable draft each leave the heal route-only.
-    /// `attempt` is the Coach's heal lease the candidate is born under.
+    /// Drafts the revision a case's `skill_edit` heal carries, aimed at
+    /// `failure`, bound to the failing attempt's agent and its pre-fail
+    /// context. `attempt` is the Coach's heal lease the candidate is born
+    /// under.
     pub(super) fn draft_coach_skill_repair(
         &self,
         case: &HealerCase,
+        failure: SkillFailureContext,
         author: &dyn SkillOptimizeAuthor,
         attempt: AttemptId,
         now: u64,
     ) -> Result<SkillRepairDraft> {
-        let Some(skill) = repair_target(self, case)? else {
+        let aim = RepairAim {
+            skill: repair_target(self, case)?,
+            agent_ref: case.scope.agent_ref.clone(),
+            diagnosis_ref: case.evidence_ref.clone(),
+            failure,
+        };
+        let bound = |route: &HealerRepairRoute| {
+            EntityId::from_hex(&case.pre_fail_checkpoint_ref).is_ok_and(|checkpoint| {
+                crate::genui::require_diagnosed_route(
+                    self,
+                    case.failing_attempt_id,
+                    checkpoint,
+                    route,
+                )
+                .is_ok()
+            })
+        };
+        self.draft_skill_repair(aim, bound, author, attempt, now)
+    }
+
+    /// Drafts the revision a blocked report's `skill_edit` heal carries
+    /// (FIX 2496), aimed at `failure`: of the one active skill the report's
+    /// run loaded, bound to the agent the report was witnessed for, which
+    /// must be the agent that run dispatched. A report with no durable run,
+    /// or whose run loaded no single skill, stays route-only. No failed case
+    /// or pre-fail checkpoint stands behind a report, and none is made up: a
+    /// skill edit forks nothing.
+    pub(super) fn draft_coach_issue_repair(
+        &self,
+        issue: &BlockedIssue,
+        failure: SkillFailureContext,
+        author: &dyn SkillOptimizeAuthor,
+        attempt: AttemptId,
+        now: u64,
+    ) -> Result<SkillRepairDraft> {
+        let run = issue
+            .run
+            .map(|run| AttemptId::from_bytes(run.as_bytes()))
+            .transpose()?;
+        let aim = RepairAim {
+            skill: match run {
+                Some(run) => run_target(self, run)?,
+                None => None,
+            },
+            agent_ref: issue.reporter.to_hex(),
+            diagnosis_ref: issue.diagnostic.to_hex(),
+            failure,
+        };
+        let bound = |_: &HealerRepairRoute| {
+            run.and_then(|run| AttemptQueue::new(self).get(run).ok().flatten())
+                .is_some_and(|record| {
+                    crate::failure_ladder::dispatched_target_ref(&record) == Some(issue.reporter)
+                })
+        };
+        self.draft_skill_repair(aim, bound, author, attempt, now)
+    }
+
+    /// Drafts the revision a `skill_edit` heal carries, outside any storage
+    /// transaction: the target's DEV-only brief with the failure it is aimed
+    /// at, and the route's binding (`bound`) to the failing agent, then the
+    /// author. A target that does not resolve, one the optimizer may not
+    /// revise, an unbound route, a decline, a failed author and an unusable
+    /// draft each leave the heal route-only.
+    fn draft_skill_repair(
+        &self,
+        aim: RepairAim,
+        bound: impl FnOnce(&HealerRepairRoute) -> bool,
+        author: &dyn SkillOptimizeAuthor,
+        attempt: AttemptId,
+        now: u64,
+    ) -> Result<SkillRepairDraft> {
+        let Some(skill) = aim.skill else {
             return Ok(SkillRepairDraft::Skipped {
                 skill: None,
                 why: "no_single_skill",
@@ -141,21 +242,19 @@ impl Vault {
             return skipped("not_revisable");
         };
         let resident = crate::skill::resident_of(&record)?;
-        let Ok(brief) = skill_repair_brief(self, &skill, now) else {
+        let Ok(mut brief) = skill_repair_brief(self, &skill, now) else {
             return skipped("not_revisable");
         };
+        // FIX 2495: the draft is aimed at the failure, read whole.
+        brief.failure = Some(aim.failure);
         let candidate = self.store.clock.entity_id()?;
         let route = HealerRepairRoute::SkillEdit {
-            agent_ref: case.scope.agent_ref.clone(),
+            agent_ref: aim.agent_ref,
             skill_ref: skill.to_hex(),
             patch_ref: candidate.to_hex(),
-            diagnosis_ref: case.evidence_ref.clone(),
+            diagnosis_ref: aim.diagnosis_ref,
         };
-        let bound = EntityId::from_hex(&case.pre_fail_checkpoint_ref).is_ok_and(|checkpoint| {
-            crate::genui::require_diagnosed_route(self, case.failing_attempt_id, checkpoint, &route)
-                .is_ok()
-        });
-        if !bound {
+        if !bound(&route) {
             return skipped("unbound_agent");
         }
         let (desc, rationale) = match author.draft(&brief) {

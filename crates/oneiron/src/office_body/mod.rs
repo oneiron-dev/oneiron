@@ -326,8 +326,13 @@ impl Vault {
         let writer = writer(kind, actor, made_by);
         match kind {
             OfficeBodyKind::Docx => {
-                let blocks = read_docx_blocks(&bytes, ArchiveLimits::DEFAULT)
-                    .map_err(|_| invalid("the DOCX package could not be read"))?;
+                let blocks =
+                    read_docx_blocks(&bytes, ArchiveLimits::DEFAULT).map_err(
+                        |error| match error.parse_limit_refusal() {
+                            Some(refusal) => Error::Refused(refusal.to_owned()),
+                            None => invalid("the DOCX package could not be read"),
+                        },
+                    )?;
                 self.with_write_txn_grouped(|wtxn| {
                     claim_source(&self.store, wtxn, artifact, &source)?;
                     birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
@@ -858,7 +863,10 @@ impl Vault {
                 &revision,
                 ArchiveLimits::DEFAULT,
             )
-            .map_err(|_| invalid("the body could not be projected onto its package"))?;
+            .map_err(|error| match error.parse_limit_refusal() {
+                Some(refusal) => Error::Refused(refusal.to_owned()),
+                None => invalid("the body could not be projected onto its package"),
+            })?;
             return Ok(Some((bytes, changes.len(), None, Vec::new())));
         }
         let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;

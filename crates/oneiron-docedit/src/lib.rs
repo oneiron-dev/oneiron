@@ -49,6 +49,17 @@ pub enum DoceditError {
     Document(#[from] stemma::runtime::RuntimeError),
 }
 
+impl DoceditError {
+    /// [`parse_limit_refusal`] for a failed parse or revision.
+    #[must_use]
+    pub fn parse_limit_refusal(&self) -> Option<&str> {
+        match self {
+            Self::Document(error) => parse_limit_refusal(error),
+            Self::InvalidTransaction(_) => None,
+        }
+    }
+}
+
 /// Parse the native writer's transaction grammar and refuse direct mode before
 /// any edit can resolve an earlier author's pending redlines.
 fn parse_native_revision(transaction_json: &str) -> Result<EditTransaction, DoceditError> {
@@ -149,6 +160,13 @@ pub fn preflight_with_limits(
     stemma::docx::DocxArchive::read_with_limits(bytes, limits)
         .map_err(stemma::runtime::map_docx_error)?;
     Ok(())
+}
+
+/// The caller-safe refusal when `error` is the DOCX parse budget's, naming
+/// the bound the package exceeded; `None` for any other failure.
+#[must_use]
+pub fn parse_limit_refusal(error: &stemma::runtime::RuntimeError) -> Option<&str> {
+    (error.code == stemma::runtime::ErrorCode::ParseLimitExceeded).then_some(error.message.as_str())
 }
 
 /// One body block of a Word document as an anchor reads it: its block id and

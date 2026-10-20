@@ -188,10 +188,35 @@ fn draft_with(
 }
 
 /// The brief as the Coach reads it: DEV evidence only, and of a rejected
-/// edit only its text, its reason and the gate's category. Every text goes
+/// edit only its text, its reason and the gate's category. A heal's repair
+/// also reads the failure it is aimed at (FIX 2495): its class and each of
+/// its reports, the agent's own words as data. Every text and list goes
 /// whole: the longest is measured, never cut.
 fn brief_data(vault: &Vault, brief: &SkillOptimizeBrief) -> serde_json::Value {
     let mut longest = brief.desc.len();
+    let failure = brief.failure.as_ref().map(|failure| {
+        let _ = vault.measure_limit(
+            EngineLimit::MaintenanceRowItems,
+            failure.reports.len() as u64,
+        );
+        let reports: Vec<_> = failure
+            .reports
+            .iter()
+            .map(|report| {
+                longest = longest.max(report.untrusted_detail.len());
+                serde_json::json!({
+                    "receipt": report.receipt.to_hex(),
+                    "category": report.category,
+                    "untrusted_detail": report.untrusted_detail,
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "class": failure.failure_class,
+            "category": failure.category,
+            "reports": reports,
+        })
+    });
     let corrections: Vec<_> = brief
         .substitution_proposals
         .iter()
@@ -223,7 +248,7 @@ fn brief_data(vault: &Vault, brief: &SkillOptimizeBrief) -> serde_json::Value {
         })
         .collect();
     let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
-    serde_json::json!({
+    let mut data = serde_json::json!({
         "skill_id": brief.skill_id,
         "version": brief.version,
         "instructions": brief.desc,
@@ -234,7 +259,11 @@ fn brief_data(vault: &Vault, brief: &SkillOptimizeBrief) -> serde_json::Value {
         "content_found_missing": brief.discovery_proposals.len(),
         "repeated_corrections": corrections,
         "rejected_edits": rejected,
-    })
+    });
+    if let Some(failure) = failure {
+        data["failure"] = failure;
+    }
+    data
 }
 
 /// The draft's answer as the Coach writes it.
