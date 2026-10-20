@@ -231,6 +231,15 @@ impl Vault {
             if let Some(request) = decoded.request_id.as_ref() {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }
+            // An erased actor with no row here still owns the responses its
+            // stamps named: the hard erase retires them as the provenance door
+            // does, read before the sweep (KS-2B1, KS-2B2, FIX 6530).
+            #[cfg(unix)]
+            {
+                crate::llm::erase_step_state_owner_in_txn(&self.store, wtxn, id)?;
+                crate::store::erase_sync_response_owner_in_txn(&self.store, wtxn, id)?;
+                crate::store::erase_response_owner_in_txn(&self.store, wtxn, id)?;
+            }
             // An actor with no other state here may still be named in the
             // rows that record it, so the purge's actor sweep runs (FIX 3654).
             crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;

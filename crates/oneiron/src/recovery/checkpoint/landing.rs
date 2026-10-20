@@ -10,8 +10,9 @@ use heed::types::Bytes;
 #[cfg(test)]
 use super::test_hooks::{RestoreStep, fail_at};
 use super::{
-    CheckpointImage, Custody, ForkedCustody, RESTORE_EPOCH, RecoveryWriteBudget, RestoreEpoch,
-    RestoreReason, RestoreReport, artifact, carried_bodies, codec_error, rebuild, write_budget,
+    CheckpointImage, Custody, ForkedCustody, RESTORE_EPOCH, RecoveryWriteBudget, Rejected,
+    RestoreEpoch, RestoreReason, RestoreReport, artifact, carried_bodies, codec_error, rebuild,
+    write_budget,
 };
 use crate::store::{DB_MANIFEST, MadeDestination};
 use crate::{EntityId, Result, Vault, VaultConfig};
@@ -20,7 +21,11 @@ impl Vault {
     /// Restores `image` into `destination`. The made directory, the forked
     /// custody and the copy come back in that order, so a caller's bindings,
     /// dropped in reverse, close the copy before the others go. The copy's
-    /// writes claim their room on `budget` (`write_budget`, FIX 5479).
+    /// writes claim their room on `budget` (`write_budget`, FIX 5479). A
+    /// refusal carries the reason its branch names beside the error today's
+    /// paths take back with `?` (FIX 6474): the claim preflight's, a missing
+    /// key's, a body landing's frame check and the final receipt scan's; any
+    /// other is typed by its kind.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn restore_image(
         mut image: CheckpointImage,
@@ -33,13 +38,13 @@ impl Vault {
         custody: Custody<'_>,
         erased: &BTreeSet<EntityId>,
         budget: &dyn RecoveryWriteBudget,
-    ) -> Result<(MadeDestination, ForkedCustody, Self, RestoreReport)> {
+    ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
         if image.databases["job_records"].iter().any(|(key, value)| {
             crate::attempt_queue::foreign_row_in_owner_retained_range(key, value)
         }) {
-            return Err(codec_error());
+            return Err(codec_error().into());
         }
         // A signed authority row that fails its key-free checks (an owner
         // root or a world-key record among them), and a FACET carrying PERSON
@@ -60,7 +65,10 @@ impl Vault {
         let mut gate_custody = if new_host {
             crate::store::preflight_absent_custody_rows(&image.databases["vault_meta"])?
         } else {
-            crate::store::preflight_checkpoint_rows(&image.databases["vault_meta"], source)?
+            crate::store::preflight_checkpoint_rows_rejected(
+                &image.databases["vault_meta"],
+                source,
+            )?
         };
         // Every body instance the rows name, through the plan the claim keys
         // share, so one fork copies both: missing refuses by name, retired
@@ -115,7 +123,8 @@ impl Vault {
             bodies,
             &mut room,
             (body_custody.as_ref(), &retired),
-        )?;
+        )
+        .map_err(Rejected::landing)?;
         room.landing_rows(&image)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
@@ -195,10 +204,11 @@ impl Vault {
         // or a side copy's forked ones, before reporting a successful restore,
         // wake, or migration.
         {
-            let txn = vault.store.env.read_txn()?;
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
             vault
                 .store
-                .for_each_gate_decision_in_txn(&txn, |_| Ok(()))?;
+                .for_each_gate_decision_in_txn(&txn, |_| Ok(()))
+                .map_err(Rejected::receipt)?;
             #[cfg(test)]
             fail_at(RestoreStep::ReceiptCheck)?;
         }
