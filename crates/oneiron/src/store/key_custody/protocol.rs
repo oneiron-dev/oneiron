@@ -30,7 +30,7 @@ pub use super::log::{CustodyEpoch, CustodyPosition};
 
 use super::files::read_whole;
 use super::identity::hex_decode;
-use super::log::frame_name;
+use super::log::{frame_hash, frame_name};
 
 /// One lineage a target holds: a vault's custody in one namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,7 +80,9 @@ pub trait CustodyTarget: CustodySource {
     /// latest in one compare-and-swap step (refused over a newer position),
     /// deletes every superseded head, stage and alias, shows by inventory
     /// that none is left, persists the acknowledgement and returns it. A
-    /// step that cannot finish answers [`TargetPublication::Pending`].
+    /// step that cannot finish answers [`TargetPublication::Pending`]; a
+    /// target whose held head a newer pass published answers
+    /// [`TargetPublication::Covered`] ([`CustodyBatch::covered_by`]).
     fn publish(&self, batch: &CustodyBatch) -> Result<TargetPublication>;
 }
 
@@ -356,6 +358,22 @@ impl CustodyBatch {
         read_whole(&self.journal.join(frame_name(seq)))
     }
 
+    /// Whether a target's head at `held` already covers this batch: a later
+    /// position of this install's own log (the same lineage and writer
+    /// epoch, past this position, and the local frame there hashes to its
+    /// tip). A newer pass published it and acks it; this batch has nothing
+    /// to write there (FIX 6394). A frame that does not read is no proof.
+    pub fn covered_by(&self, held: &CustodyPosition) -> bool {
+        held.same_lineage(&self.position)
+            && held.epoch == self.position.epoch
+            && held.seq > self.position.seq
+            && self
+                .frame(held.seq)
+                .ok()
+                .flatten()
+                .is_some_and(|frame| frame_hash(&frame) == held.tip)
+    }
+
     /// Every local frame after `after` through the batch's position.
     pub fn frames_after(&self, after: u64) -> Result<Vec<(u64, Vec<u8>)>> {
         let mut frames = Vec::new();
@@ -558,6 +576,10 @@ pub struct DeletionEvidence {
 pub enum TargetPublication {
     Acked(AckRecord),
     Pending(TargetPending),
+    /// It holds a newer head of the batch's own log, which covers it: the
+    /// pass that published that head acks it, and nothing was written here
+    /// (FIX 6394). Neither an ack of the older position nor a pending note.
+    Covered,
 }
 
 /// Why a target is still pending, in words naming no secret.

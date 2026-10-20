@@ -5682,6 +5682,7 @@ impl AgentVerb {
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultProductivityTree
+                | Self::VaultEsignNoticesDispatch
                 | Self::VaultClaimsSeed
                 | Self::VaultSummariesRead
                 | Self::VaultSummariesProposalsRead
@@ -6549,7 +6550,6 @@ impl AgentVerb {
                 | Self::VaultEsignGet
                 | Self::VaultEsignLinksIssue
                 | Self::VaultEsignSendForSignature
-                | Self::VaultEsignNoticesDispatch
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
                 | Self::VaultEsignSigningAct

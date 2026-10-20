@@ -30,7 +30,7 @@ use crate::error::{Error, Result};
 use self::replay::{Found, Retained, examine, keep, load, release};
 use super::anchor::extends;
 use super::files::open_dir;
-use super::folder::moved;
+use super::folder::newer_head;
 use super::log::Journal;
 use super::protocol::{
     CustodyBatch, CustodySource, CustodyTarget, Lineage, PendingCode, TargetId, TargetPending,
@@ -92,8 +92,11 @@ impl OutboxTarget {
             .acks()?
             .remove(self.id())
             .and_then(|ack| ack.position.position());
-        if held.is_some_and(|held| !extends(&held, &position)) {
-            return Ok(moved());
+        // Under the slot lock, through the staging: once a newer batch's ack
+        // is taken in, an older pass's batch is never staged after it. It is
+        // covered, not pending (FIX 6394).
+        if let Some(held) = held.filter(|held| !extends(held, &position)) {
+            return Ok(newer_head(&held, batch));
         }
         // The control plane holds every frame through the position it
         // acknowledged in this epoch.

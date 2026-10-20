@@ -114,9 +114,12 @@ fn status(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answe
         lineage(&input.vault, &input.namespace)?,
     )
     .map_err(missing)?;
+    // The whole position too, so a machine knows a newer head of its own
+    // log covers its batch (FIX 6394).
     let reply = json!({
         "epoch": held.map(|held| held.epoch.get()),
         "seq": held.map(|held| held.seq),
+        "position": held.map(|held| AckPosition::of(&held)),
     });
     Ok((reply, Some(Vec::new())))
 }
