@@ -6768,7 +6768,7 @@
      "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -6786,6 +6786,16 @@
      "surface": {
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/notice_scope.rs",
+     "purpose": "FIX 6220: a world-, facet- or record-scoped credential sends its own e-sign notices…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -64299,7 +64309,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65736,7 +65746,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4095,
+   "source_files": 4096,
    "test_files": 902
   },
   "oneiron-android": {
