@@ -3521,6 +3521,11 @@ export_facade! {
     let output = client.vault_rooms_thread_audience_add(&input)?;
     crate::codec::lift_record("vault.rooms.thread_audience.add", &output)
 };
+"vault.rooms.thread_audience.open_full_history" => fn vault_rooms_thread_audience_open_full_history(&self, input: ThreadAudienceOpenFullHistoryRequest) -> ThreadAudienceReceipt = |client| {
+    let input: oneiron::workspace_roster::ThreadAudienceOpenFullHistoryRequest = crate::codec::lower_record("vault.rooms.thread_audience.open_full_history", input)?;
+    let output = client.vault_rooms_thread_audience_open_full_history(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_audience.open_full_history", &output)
+};
 "vault.rooms.thread_audience.remove" => fn vault_rooms_thread_audience_remove(&self, input: ThreadAudienceRemoveRequest) -> ThreadAudienceReceipt = |client| {
     let input: oneiron::workspace_roster::ThreadAudienceRemoveRequest = crate::codec::lower_record("vault.rooms.thread_audience.remove", input)?;
     let output = client.vault_rooms_thread_audience_remove(&input)?;

@@ -708,6 +708,7 @@ pub enum AgentVerb {
     VaultRoomsClaim,
     VaultRoomsSpeak,
     VaultRoomsThreadAudienceAdd,
+    VaultRoomsThreadAudienceOpenFullHistory,
     VaultRoomsThreadAudienceRemove,
     VaultProjectsPropose,
     VaultProjectsProposals,
@@ -1806,6 +1807,7 @@ impl AgentVerb {
         Self::VaultRoomsClaim,
         Self::VaultRoomsSpeak,
         Self::VaultRoomsThreadAudienceAdd,
+        Self::VaultRoomsThreadAudienceOpenFullHistory,
         Self::VaultRoomsThreadAudienceRemove,
         Self::VaultProjectsPropose,
         Self::VaultProjectsProposals,
@@ -2925,6 +2927,9 @@ impl AgentVerb {
             Self::VaultRoomsClaim => "vault.rooms.claim",
             Self::VaultRoomsSpeak => "vault.rooms.speak",
             Self::VaultRoomsThreadAudienceAdd => "vault.rooms.thread_audience.add",
+            Self::VaultRoomsThreadAudienceOpenFullHistory => {
+                "vault.rooms.thread_audience.open_full_history"
+            }
             Self::VaultRoomsThreadAudienceRemove => "vault.rooms.thread_audience.remove",
             Self::VaultProjectsPropose => "vault.projects.propose",
             Self::VaultProjectsProposals => "vault.projects.proposals",
@@ -4033,6 +4038,7 @@ impl AgentVerb {
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
@@ -5158,6 +5164,7 @@ impl AgentVerb {
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
@@ -6376,6 +6383,7 @@ impl AgentVerb {
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
@@ -7159,6 +7167,7 @@ impl AgentVerb {
                 | Self::VaultRoomsClaim
                 | Self::VaultRoomsSpeak
                 | Self::VaultRoomsThreadAudienceAdd
+                | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
@@ -8129,6 +8138,7 @@ impl AgentVerb {
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceOpenFullHistory => &["spec"],
             Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
@@ -9228,6 +9238,7 @@ impl AgentVerb {
             Self::VaultRoomsClaim => &["room_ref", "turn_ref"],
             Self::VaultRoomsSpeak => &["spec", "room_ref"],
             Self::VaultRoomsThreadAudienceAdd => &["spec"],
+            Self::VaultRoomsThreadAudienceOpenFullHistory => &["spec"],
             Self::VaultRoomsThreadAudienceRemove => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
@@ -11691,6 +11702,9 @@ impl AgentVerb {
             }
             Self::VaultRoomsThreadAudienceAdd => {
                 "Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."
+            }
+            Self::VaultRoomsThreadAudienceOpenFullHistory => {
+                "Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."
             }
             Self::VaultRoomsThreadAudienceRemove => {
                 "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."
