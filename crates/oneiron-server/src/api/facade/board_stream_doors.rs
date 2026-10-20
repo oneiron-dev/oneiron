@@ -8,7 +8,8 @@
 //! connection the run's host door serves), so one connection holds one
 //! subscription set and one carrier epoch across both doors. A wake is
 //! re-read under this credential at delivery and dropped when its TASK
-//! no longer reads, exactly as the MCP wake handoff drops it.
+//! no longer reads, or its diary-read review no longer waits on this
+//! agent, exactly as the MCP wake handoff drops it.
 use std::sync::Arc;
 
 use oneiron::board_verb::BoardVerbCall;
@@ -121,7 +122,11 @@ pub(crate) async fn self_focus_unsubscribe(
 
 /// The subscription scope one wake was minted under, from its envelope id
 /// (`<task id>:<arrived|failed>:<revision>`), as the MCP wake handoff reads it.
+/// A review wake names its review, not a TASK.
 fn wake_scope(wake: &WakeEnvelope) -> Option<SubscriptionScope> {
+    if wake.review_ref.is_some() {
+        return Some(SubscriptionScope::DiaryReviews);
+    }
     let event = wake
         .event_ref
         .strip_prefix(&format!("{}:", wake.task_ref))?;
@@ -169,6 +174,18 @@ pub(crate) async fn self_focus_wakes(
                 continue;
             }
             if !wake_scope(&wake).is_some_and(|scope| subscribed.contains(&scope)) {
+                continue;
+            }
+            // A review wake reads again as this agent's own pending review,
+            // never as a read of its diary or of the review's content.
+            if wake.review_ref.is_some() {
+                if crate::wake_adapters::board_stream::review_wake_pending(
+                    server.vault(),
+                    writer.entity_ref(),
+                    &wake,
+                ) {
+                    kept.push(wake);
+                }
                 continue;
             }
             let Ok(task) = EntityId::from_hex(&wake.task_ref) else {

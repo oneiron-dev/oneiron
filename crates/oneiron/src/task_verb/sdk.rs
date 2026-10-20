@@ -365,7 +365,7 @@ pub struct BoardWakeRequest {}
 /// The typed facade answer of `self.focus.wakes`: every wake queued for the
 /// attached run's board STREAM connection, oldest first, each re-read under
 /// the caller's credential at delivery. Taking them drains the queue; the
-/// TASK each names remains the durable mailbox.
+/// TASK or diary-read review each names remains the durable mailbox.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BoardWakeReply {
