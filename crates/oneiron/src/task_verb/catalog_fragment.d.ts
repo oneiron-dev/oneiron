@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1111 code-mode rows (1086 host rows, 25 run rows), 3740 declarations.
-// Replies: 993 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1117 code-mode rows (1092 host rows, 25 run rows), 3749 declarations.
+// Replies: 999 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2536,6 +2536,15 @@ declare namespace Sdk {
   type ThreadAudienceReceipt = { thread_ref: string; event_ref: string; history?: ThreadAudienceHistory | null };
   type ThreadAudienceOpenFullHistoryRequest = { thread_ref: string };
   type ThreadAudienceRemoveRequest = { thread_ref: string; person_ref: string };
+  type RoomPrivateThreadsRequest = { room_ref: string };
+  type PrivateThreadMetadata = { id: string; creator?: string | null; created_at: number; last_active_at: number; member_count: number };
+  type PrivateThreadDeleteRequest = { thread_ref: string };
+  type PrivateThreadDeleteReceipt = { thread_ref: string; existed: boolean; receipt_ref?: string | null };
+  type ThreadJoinRequest = { thread_ref: string };
+  type ThreadJoinRequestState = "pending" | "approved" | "denied";
+  type ThreadJoinRequestView = { thread_ref: string; request_ref: string; requester_ref: string; at: number; state: ThreadJoinRequestState; decision_ref?: string | null };
+  type ThreadJoinRequestsRequest = { thread_ref: string };
+  type ThreadJoinDecisionRequest = { thread_ref: string; request_ref: string };
   type ProjectGoalDraft = { goal: string; why: string; axes: string[] };
   type ProjectProposalPicks = { leader_agent_def_ref: string; board_human_refs: string[]; budget_share_bps: number; starting_skill_refs: string[] };
   type ProjectProposalRequest = { card_id: string; source_message_ref: string; goal: ProjectGoalDraft; picks: ProjectProposalPicks };
@@ -5972,6 +5981,8 @@ declare const vault: Sdk.VaultHost & {
     offers(input: Sdk.OffersRequest): Promise<Sdk.OffersPage | StoredResult>;
     /** One page of who took part in a room or one of its threads, each with its causes and whether it may take part now. */
     participants(input: Sdk.ParticipantsRequest): Promise<Sdk.ParticipantsPage | StoredResult>;
+    /** That a room's private threads exist: id, creator, created and last-active times, member count; never a name, members or words. The vault's Owner or an Admin, seated or not, or the companion agent of either may call it. */
+    private_threads(input: Sdk.RoomPrivateThreadsRequest): Promise<Sdk.PrivateThreadMetadata[] | StoredResult>;
     /** The standalone rendered view of a room's threads. */
     render(input: Sdk.RoomRefRequest): Promise<string[] | StoredResult>;
     /** One page of a thread's quote replies, grouped by the message they quote, in reply order. */
@@ -5981,12 +5992,24 @@ declare const vault: Sdk.VaultHost & {
     /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove. */
     speak(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
     thread_audience: {
-      /** Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it. */
+      /** Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told. */
       add(input: Sdk.ThreadAudienceAddRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
       /** Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it. */
       open_full_history(input: Sdk.ThreadAudienceOpenFullHistoryRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
       /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. */
       remove(input: Sdk.ThreadAudienceRemoveRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
+    };
+    /** Deletes a private thread's root and its own messages on the room's delete rail; legal holds keep what they name. The vault's Owner, or an Admin while rooms.private_threads.admin_delete is on, may call it, seated or not. */
+    thread_delete(input: Sdk.PrivateThreadDeleteRequest): Promise<Sdk.PrivateThreadDeleteReceipt | StoredResult>;
+    thread_join: {
+      /** Approves a pending request to join a private thread: the one who asked is added from now on, citing the request, and told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it. */
+      approve(input: Sdk.ThreadJoinDecisionRequest): Promise<Sdk.ThreadJoinRequestView | StoredResult>;
+      /** Denies a pending request to join a private thread, and the one who asked is told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it. */
+      deny(input: Sdk.ThreadJoinDecisionRequest): Promise<Sdk.ThreadJoinRequestView | StoredResult>;
+      /** Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it. */
+      request(input: Sdk.ThreadJoinRequest): Promise<Sdk.ThreadJoinRequestView | StoredResult>;
+      /** The requests to join a private thread pending now: each request, who asked and when; a member in its audience now may call it. */
+      requests(input: Sdk.ThreadJoinRequestsRequest): Promise<Sdk.ThreadJoinRequestView[] | StoredResult>;
     };
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;

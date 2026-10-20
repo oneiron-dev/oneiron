@@ -1,7 +1,10 @@
 //! What the vault's Owner or an Admin learns of a room's private threads
 //! (FIX 5545): that they exist, by root id, never what they say. Adding
 //! itself to one's audience is what lets it read one. One the room's Scope
-//! refuses finds those it is in the audience of alone (FIX 6210).
+//! refuses finds those it is in the audience of alone (FIX 6210), and,
+//! inside a turn bound to one thread, leaves out a root whose audience that
+//! turn's held disclosure does not meet (FIX 6339). The list of every
+//! private thread, by its five facts, is [`super::private_threads`].
 
 use super::audience::{privileged_private_thread_reader_in, thread_binding};
 use super::audience_doors::vault_owner_or_admin_in;
@@ -63,7 +66,10 @@ impl Memory<'_> {
 
     /// The roots of `room`'s private threads this reader reads with no
     /// standing in the room ([`privileged_private_thread_reader_in`]), ids
-    /// alone, in the room's history order.
+    /// alone, in the room's history order. A root whose audience the turn
+    /// this handle is bound to does not disclose to is left out, as that
+    /// thread's own ceiling would refuse it (FIX 6339); an error reading it
+    /// still refuses.
     pub(super) fn privileged_private_roots(&self, room: EntityId) -> MemoryResult<Vec<EntityId>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
         self.private_roots_in(txn, room, true)
@@ -71,9 +77,10 @@ impl Memory<'_> {
 
     /// The roots of `room`'s private threads as `txn` reads them, by the
     /// room's history rows and each root's birth binding; with `privileged`,
-    /// only those this reader reads off the room. Every row is read, however
-    /// many (rule 5); past the threshold row the owner's check is raised for
-    /// the room.
+    /// only those this reader reads off the room, whose held audience check
+    /// ([`Memory::reads_thread_audience_in`]) admits it. Every row is read,
+    /// however many (rule 5); past the threshold row the owner's check is
+    /// raised for the room.
     fn private_roots_in(
         &self,
         txn: heed::RoTxn<'_>,
@@ -99,7 +106,13 @@ impl Memory<'_> {
                     binding.root == turn && binding.room == room && binding.audience.is_some()
                 })
                 && (!privileged
-                    || privileged_private_thread_reader_in(vault, &txn, room, turn, self.actor())?)
+                    || (privileged_private_thread_reader_in(
+                        vault,
+                        &txn,
+                        room,
+                        turn,
+                        self.actor(),
+                    )? && self.reads_thread_audience_in(&txn, room, turn)?))
             {
                 roots.push(turn);
             }

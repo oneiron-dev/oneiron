@@ -11118,7 +11118,7 @@
     },
     {
       "name": "vault.rooms.thread_audience.add",
-      "description": "Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it.",
+      "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told.",
       "input": "crate::workspace_roster::ThreadAudienceAddRequest",
       "output": "crate::workspace_roster::ThreadAudienceReceipt",
       "call": "memory.rooms_thread_audience_add(&input)?",
@@ -11152,6 +11152,89 @@
       "call": "memory.rooms_thread_audience_remove(&input)?",
       "scope": "Write",
       "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.private_threads",
+      "description": "That a room's private threads exist: id, creator, created and last-active times, member count; never a name, members or words. The vault's Owner or an Admin, seated or not, or the companion agent of either may call it.",
+      "input": "crate::workspace_roster::RoomPrivateThreadsRequest",
+      "output": "Vec<crate::workspace_roster::PrivateThreadMetadata>",
+      "call": "memory.rooms_private_threads(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.thread_delete",
+      "description": "Deletes a private thread's root and its own messages on the room's delete rail; legal holds keep what they name. The vault's Owner, or an Admin while rooms.private_threads.admin_delete is on, may call it, seated or not.",
+      "input": "crate::workspace_roster::PrivateThreadDeleteRequest",
+      "output": "crate::workspace_roster::PrivateThreadDeleteReceipt",
+      "call": "memory.rooms_thread_delete(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.thread_join.request",
+      "description": "Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it.",
+      "input": "crate::workspace_roster::ThreadJoinRequest",
+      "output": "crate::workspace_roster::ThreadJoinRequestView",
+      "call": "memory.rooms_thread_join_request(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.thread_join.requests",
+      "description": "The requests to join a private thread pending now: each request, who asked and when; a member in its audience now may call it.",
+      "input": "crate::workspace_roster::ThreadJoinRequestsRequest",
+      "output": "Vec<crate::workspace_roster::ThreadJoinRequestView>",
+      "call": "memory.rooms_thread_join_requests(&input)?",
+      "scope": "Read",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.thread_join.approve",
+      "description": "Approves a pending request to join a private thread: the one who asked is added from now on, citing the request, and told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it.",
+      "input": "crate::workspace_roster::ThreadJoinDecisionRequest",
+      "output": "crate::workspace_roster::ThreadJoinRequestView",
+      "call": "memory.rooms_thread_join_approve(&input)?",
+      "scope": "Write",
+      "lands_turn": true,
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
+      "name": "vault.rooms.thread_join.deny",
+      "description": "Denies a pending request to join a private thread, and the one who asked is told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it.",
+      "input": "crate::workspace_roster::ThreadJoinDecisionRequest",
+      "output": "crate::workspace_roster::ThreadJoinRequestView",
+      "call": "memory.rooms_thread_join_deny(&input)?",
+      "scope": "Write",
       "mcp_fields": {
         "spec": "$"
       },
