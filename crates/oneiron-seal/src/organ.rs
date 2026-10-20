@@ -27,7 +27,9 @@
 //! Reports: `{sealed: {evidence_sha256, requested, achieved, degraded,
 //! self_verify}}` with the output `sealed.pdf`, `{verified: verdict}`, or
 //! `{failed: <seal error>}`. A verdict is `{verdict, reasons, achieved,
-//! self_verify_ok, report}`; the error names the seal's own stage and code.
+//! self_verify_ok, report_json, classification}`, the classification the
+//! native verification's revision chain (the `report` child); the error
+//! names the seal's own stage and code.
 //! Beside the outcome every report carries `observed`, what the native
 //! analysis counted (`SealObserved`), on a failure too: the engine measures
 //! each count against its `[limits]` row before it reads the outcome.
@@ -53,11 +55,14 @@ use crate::api::{
     FetchPurpose, FetchRequest, FetchResponse, PadesProfile, PdfSealEngine, PreparedRevision,
     ProfileDegradeReason, SealBackend, SealClock, SealConfig, SealFetcher, SealObservations,
     SealRequest, SealResourceLimits, SealWarning, SignDigestRequest, SignRevisionRequest,
-    SignatureAlgorithm, SigningIdentity, TsaEndpoint, VerifyFindingCode, VerifyReport,
-    VerifyVerdict,
+    SignatureAlgorithm, SigningIdentity, TsaEndpoint,
 };
 use crate::error::{FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage};
 use crate::native::NativeSealEngine;
+
+mod report;
+
+use self::report::Verdict;
 
 pub const VERB_SEAL: &str = "seal.pdf";
 pub const VERB_VERIFY: &str = "seal.verify";
@@ -182,64 +187,6 @@ struct Degrade {
     reason: ProfileDegradeReason,
 }
 
-/// A verdict, with the full report as JSON bytes: one value in the reply
-/// frame however many signatures the PDF holds, at most
-/// [`MAX_REPORT_JSON_BYTES`], and never parsed by the engine.
-#[derive(Serialize)]
-struct Verdict {
-    verdict: VerifyVerdict,
-    reasons: Vec<VerifyFindingCode>,
-    achieved: Option<PadesProfile>,
-    self_verify_ok: bool,
-    report_json: ByteBuf,
-}
-
-impl Verdict {
-    fn of(report: &VerifyReport) -> Result<Self, OrganError> {
-        let failed =
-            |err: serde_json::Error| OrganError::new(ErrorCode::Internal, format!("report: {err}"));
-        let mut capped = CappedJson(Vec::new());
-        let json = match serde_json::to_writer(&mut capped, report) {
-            Ok(()) => capped.0,
-            Err(err) if err.is_io() => serde_json::to_vec(&OmittedReport {
-                omitted_over_bytes: MAX_REPORT_JSON_BYTES,
-            })
-            .map_err(failed)?,
-            Err(err) => return Err(failed(err)),
-        };
-        Ok(Self {
-            verdict: report.verdict(),
-            reasons: report.reasons(),
-            achieved: report.achieved_profile(),
-            self_verify_ok: report.passes_self_verify(),
-            report_json: ByteBuf::from(json),
-        })
-    }
-}
-
-/// What stands in for a report over [`MAX_REPORT_JSON_BYTES`].
-#[derive(Serialize)]
-struct OmittedReport {
-    omitted_over_bytes: usize,
-}
-
-/// JSON that stops at [`MAX_REPORT_JSON_BYTES`] rather than grow past it.
-struct CappedJson(Vec<u8>);
-
-impl std::io::Write for CappedJson {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.0.len() + buf.len() > MAX_REPORT_JSON_BYTES {
-            return Err(std::io::ErrorKind::FileTooLarge.into());
-        }
-        self.0.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
 /// [`SealError`], as the engine's adapter reads it.
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -265,7 +212,9 @@ enum Failure {
 }
 
 impl Failure {
-    fn of(err: SealError) -> Result<Self, OrganError> {
+    /// The seal's error; a failed verification's verdict is of `pdf`, when
+    /// this side holds the bytes it verified.
+    fn of(err: SealError, pdf: Option<&[u8]>) -> Result<Self, OrganError> {
         Ok(match err {
             SealError::Retryable {
                 stage,
@@ -278,7 +227,7 @@ impl Failure {
             },
             SealError::Fatal { stage, code } => Self::Fatal { stage, code },
             SealError::VerifyFailed { report } => Self::VerifyFailed {
-                verdict: Box::new(Verdict::of(&report)?),
+                verdict: Box::new(Verdict::of(&report, pdf)?),
             },
             SealError::BackendUnavailable { retry_after_ms } => {
                 Self::BackendUnavailable { retry_after_ms }
@@ -318,7 +267,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
     let engine = match engine {
         Ok(engine) => engine,
-        Err(err) => return report(&SealReport::Failed(Failure::of(err)?), &observed),
+        Err(err) => return report(&SealReport::Failed(Failure::of(err, None)?), &observed),
     };
     let request = SealRequest {
         operation_id: args.operation_id,
@@ -326,7 +275,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
     };
     let sealed = match block_on(engine.seal_pdf_in_revisions(pdf, &request, &revisions)) {
         Ok(sealed) => sealed,
-        Err(err) => return report(&SealReport::Failed(Failure::of(err)?), &observed),
+        Err(err) => return report(&SealReport::Failed(Failure::of(err, None)?), &observed),
     };
     let degraded = sealed
         .warnings
@@ -349,7 +298,7 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
             requested: sealed.requested_profile,
             achieved: sealed.achieved_profile,
             degraded,
-            self_verify: Verdict::of(&sealed.self_verify_report)?,
+            self_verify: Verdict::of(&sealed.self_verify_report, Some(&sealed.bytes))?,
         },
         &observed,
     )?;
@@ -368,8 +317,14 @@ fn verify(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> 
     let (observed, engine) = engine(args.config, args.now_ms, began, Asker::default())?;
     let checked = engine.and_then(|engine| engine.verify_sealed_pdf(pdf));
     match checked {
-        Ok(checked) => report(&VerifyReply::Verified(Verdict::of(&checked)?), &observed),
-        Err(err) => report(&VerifyReply::Failed(Failure::of(err)?), &observed),
+        Ok(checked) => report(
+            &VerifyReply::Verified(Verdict::of(&checked, Some(pdf))?),
+            &observed,
+        ),
+        Err(err) => report(
+            &VerifyReply::Failed(Failure::of(err, Some(pdf))?),
+            &observed,
+        ),
     }
 }
 

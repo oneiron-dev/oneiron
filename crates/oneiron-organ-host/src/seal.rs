@@ -11,9 +11,11 @@
 //! bounded by the fetch timeout. The key stays here, behind [`SealKeys`],
 //! and signs only attributes bound to one of the engine's revisions, by a
 //! hash this side computed. The sealed PDF is admitted only when it carries
-//! a signature this call issued, in a revision the engine wrote. Each
-//! verification is one `seal.verify` call in a process of its own, with no
-//! handlers: a second opinion, never the admission.
+//! a signature this call issued, in a revision the engine wrote, and then
+//! only on a fresh verification of the whole output (C032, the `verify`
+//! child): anything after that revision must be what the requested profile
+//! adds, classified as such. Each verification is one `seal.verify` call in
+//! a process of its own, with no handlers.
 //!
 //! No size refuses a seal (Rule 5). Each call runs in a process of its own,
 //! booked and granted memory by what it lends; the organ refuses only past
@@ -26,6 +28,7 @@
 mod binding;
 mod file_keys;
 mod observe;
+mod verify;
 
 pub use file_keys::{FileSealKeys, pem_certificates};
 
@@ -39,6 +42,7 @@ use oneiron::blob_artifact::esign::{
     SealDegrade, SealProfile, SealVerdict,
 };
 use oneiron::skill_hub::pack_catalog::PackOrganBinary;
+use oneiron_organ_protocol::seal::SealRevisionClassification;
 use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -314,6 +318,8 @@ enum VerifyReply {
     Failed(FailureReply),
 }
 
+/// A verdict, and the revision classification it was reached on: a
+/// verdict without one is not a reply.
 #[derive(Deserialize)]
 struct VerdictReply {
     verdict: SealVerdict,
@@ -321,6 +327,7 @@ struct VerdictReply {
     achieved: Option<SealProfile>,
     self_verify_ok: bool,
     report_json: ByteBuf,
+    classification: SealRevisionClassification,
 }
 
 /// The seal's own error, by its stage and code names.
@@ -349,13 +356,20 @@ enum FailureReply {
 
 impl VerdictReply {
     fn into_verdict(self) -> EsignVerdict {
-        EsignVerdict {
-            verdict: self.verdict,
-            reasons: self.reasons,
-            achieved: self.achieved,
-            self_verify_ok: self.self_verify_ok,
-            report_json: self.report_json.into_vec(),
-        }
+        self.into_classified().0
+    }
+
+    fn into_classified(self) -> (EsignVerdict, SealRevisionClassification) {
+        (
+            EsignVerdict {
+                verdict: self.verdict,
+                reasons: self.reasons,
+                achieved: self.achieved,
+                self_verify_ok: self.self_verify_ok,
+                report_json: self.report_json.into_vec(),
+            },
+            self.classification,
+        )
     }
 }
 
@@ -500,17 +514,21 @@ impl EsignSealer for HostedSealer<'_> {
             .find(|output| output.name == SEALED_OUTPUT && output.media_type == PDF)
             .ok_or_else(reply_invalid)?;
         // Validation data and a document timestamp come after the signed
-        // revision, and only for a profile that has them.
-        let suffix =
-            request.profile >= SealProfile::BaselineLt && achieved >= SealProfile::BaselineLt;
-        call.admit(sealed, suffix)?;
+        // revision, and only for a profile requested with them: what the
+        // organ says it achieved never decides it.
+        let witness = call.admit(sealed, request.profile >= SealProfile::BaselineLt)?;
         let evidence: [u8; 32] = Sha256::digest(&sealed[..]).into();
         if evidence_sha256.as_slice() != evidence {
             return Err(reply_invalid());
         }
-        measure_output(self.vault, &input.pdf, sealed);
+        // The call's outputs give back their budget before the fresh
+        // verification books its own.
+        let sealed = sealed.to_vec();
+        drop(outcome);
+        self.admit_fresh(&sealed, &witness, achieved, request.profile)?;
+        measure_output(self.vault, &input.pdf, &sealed);
         Ok(EsignSealed {
-            bytes: sealed.to_vec(),
+            bytes: sealed,
             evidence_sha256: evidence,
             requested,
             achieved,
@@ -520,24 +538,7 @@ impl EsignSealer for HostedSealer<'_> {
     }
 
     fn verify(&self, pdf: &[u8]) -> Result<EsignVerdict, EsignSealerError> {
-        let args = to_value(&VerifyArgs {
-            now_ms: self.now_ms(),
-            config: self.config(false)?,
-        })
-        .map_err(|_| reply_invalid())?;
-        measure_input(self.vault, pdf);
-        let lent = vec![LentInput {
-            media_type: PDF.to_owned(),
-            bytes: pdf.to_vec(),
-        }];
-        // A process of its own, as every seal call: never the one that
-        // sealed.
-        let (reply, _) =
-            self.sized_call(self.call(VERB_VERIFY, 1, args), lent, &AskHandlers::none())?;
-        match from_value(&reply)? {
-            VerifyReply::Verified(verdict) => Ok(verdict.into_verdict()),
-            VerifyReply::Failed(failure) => Err(failure.into_error()),
-        }
+        Ok(self.verify_classified(pdf)?.0)
     }
 }
 

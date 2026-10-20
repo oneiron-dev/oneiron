@@ -12,7 +12,10 @@
 //! - `frame`: framing and descriptor passing (Unix).
 //! - `region`: sealed read-only regions (Unix).
 //! - `runtime`: the organ side, [`serve`] and the [`Organ`] trait (Unix).
+//! - [`seal`]: the seal organ's revision classification, which its verdicts
+//!   carry to the engine.
 
+pub mod seal;
 pub mod wire;
 
 #[cfg(unix)]
