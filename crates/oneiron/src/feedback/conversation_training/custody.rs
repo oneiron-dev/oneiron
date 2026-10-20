@@ -22,14 +22,18 @@
 //!
 //! A generation older than the current one is orphaned (FIX 5892): its key
 //! was lost with a restore that brought no custody head, so its codes cannot
-//! be made again. Its scopes stay, still purgeable whole, but a withdrawal
-//! that needs its codes is recorded nowhere and counted unavailable.
+//! be made again. Its scopes stay, still purgeable whole, but a hosted
+//! withdrawal that needs its codes is recorded nowhere and counted
+//! unavailable. An anonymous piece (TL-6) keeps its C in its own row, so
+//! its withdrawal still goes whatever its generation (`anonymous`).
 //!
 //! A person's erase (FIX 3520) forgets their name here: every submission
 //! carrying their words stands withdrawn, each that reached the intake named
 //! by an id-only forget control in the erase's own transaction, one control
 //! per month those submissions were prepared in, so the withdrawal still
-//! flows without naming them.
+//! flows without naming them; every anonymous piece among them takes its
+//! withdrawal intent before their id leaves its row instead, and joins no
+//! control.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -42,8 +46,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
+use super::anonymous::{self, AnonymousPiece, TrainingTransport};
 use super::lifecycle::{ReceiptCursor, TrainingControlId, TrainingScope, TrainingSubmissionId};
-use super::link;
+use super::{link, purge};
 
 /// A custody key: the row's kind, then its id.
 pub(super) type CustodyKey = ([u8; 1], [u8; 16]);
@@ -101,6 +106,14 @@ pub(super) struct SubmissionCustody {
     /// and a restore that brings this row keeps it even after K is minted
     /// afresh (FIX 5892). No log or error names it.
     pub(super) piece: [u8; 32],
+    /// How its offer leaves the vault (TL-6): set at its first preparation
+    /// from the offer pass, kept by a retry.
+    pub(super) transport: TrainingTransport,
+    /// Where it stands on the anonymous training window, inline here (CALLS
+    /// TL6_RESTORE_CLASS: this LIVE family, no table of its own): the last
+    /// signed revision and state, the cursor and the withdrawal intent. A
+    /// hosted row keeps the default and never touches it.
+    pub(super) anonymous: AnonymousPiece,
     /// When it was published; `None` while it never left.
     pub(super) published_at: Option<u64>,
     pub(super) state: SubmissionState,
@@ -408,21 +421,11 @@ pub(super) fn take_withdrawals_unavailable_in(
     Ok(count)
 }
 
-/// Whether the intake's `removed` receipt for every purge control is in
-/// (TL-5): it holds nothing under any of this vault's scopes.
+/// Whether the purge is recorded and done (TL-5), by the one predicate
+/// `training_purge` reads too ([`purge::purge_progress`]): the intake holds
+/// nothing under any of this vault's scopes, hosted or anonymous.
 pub(super) fn purge_removed(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
-    let Some(purge) = state(vault, txn)?.purge else {
-        return Ok(false);
-    };
-    for id in purge.controls {
-        let removed = control(vault, txn, TrainingControlId(id))?
-            .and_then(|row| row.receipt)
-            .is_some_and(|mark| mark.status == TrainingReceiptStatusV2::Removed);
-        if !removed {
-            return Ok(false);
-        }
-    }
-    Ok(true)
+    Ok(purge::purge_progress(vault, txn)?.is_some_and(|progress| progress.done))
 }
 
 /// Every submission, in id order.
@@ -526,8 +529,10 @@ impl Vault {
     /// own transaction: the submissions carrying their words that reached
     /// the intake get id-only forget controls, one per source, month and
     /// generation, each under that pair's scope (none for an orphaned
-    /// generation, counted unavailable), and every such row forgets their id
-    /// and stands withdrawn, its files left for the next pass to purge.
+    /// generation, counted unavailable), every anonymous one takes its
+    /// withdrawal intent instead and joins no control, and every such row
+    /// forgets their id and stands withdrawn, its files left for the next
+    /// pass to purge.
     pub(crate) fn erase_publisher_training_custody_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -541,12 +546,16 @@ impl Vault {
             let removed = row
                 .receipt
                 .is_some_and(|mark| mark.status == TrainingReceiptStatusV2::Removed);
-            if row.published_at.is_some() && !removed {
+            if row.published_at.is_some() && !removed && row.transport == TrainingTransport::Hosted
+            {
                 forgets
                     .entry((row.source, row.month.clone(), row.generation))
                     .or_default()
                     .push(id);
             }
+            // TL-6: an anonymous piece's C withdrawal intent, set before the
+            // person's id leaves its row.
+            anonymous::withdraw(&mut row);
             row.persons.remove(actor);
             if matches!(
                 row.state,

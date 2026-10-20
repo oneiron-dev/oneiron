@@ -25,33 +25,37 @@
 //! ([`TrainingWithheld::LinkRotated`]), it stands withdrawn, since it never
 //! left, and its source is prepared again as a new offer. A published
 //! source is not offered again for the rotation alone.
+//!
+//! Each offer takes the transport the pass is given (TL-6): a self-hosted
+//! vault's leave through the anonymous training window under their C, a
+//! managed vault's through the outbox's V2 files. A held offer is reused
+//! only on the same transport. An anonymous piece the intake asked afresh
+//! for (`recipient_refresh_required`) is never sealed again under its C:
+//! its source alone skips "same revision, withheld: skip", and is offered
+//! again as a new submission under a new C.
+
+mod prepare;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use oneiron_vault_contract::conversation_training::{
-    TRAINING_OFFER_TYPE, TRAINING_PRIVACY_EVERYWHERE, TRAINING_SCHEMA_VERSION,
-    TRAINING_TEXT_ENCODING, TrainingChunkV2, TrainingFilterV2, TrainingOfferBodyV2,
-    TrainingOfferV2, TrainingPayloadV2, TrainingReceiptStatusV2, TrainingSettingV2,
-    offer_chunk_file_name, offer_manifest_file_name,
-};
+use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 
 use crate::Vault;
 use crate::authority::AuthorityFold;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::limit_ask::EngineLimit;
 
-use super::super::redaction::{FilteredText, TextFilter, TextFilterError};
-use super::crypto::{IntakeRecipient, seal_training_text, sign_training_payload};
+use super::super::redaction::{TextFilter, TextFilterError};
+use super::anonymous::{self, TrainingTransport};
+use super::crypto::IntakeRecipient;
 use super::custody::{
-    self, ControlChange, SubmissionCustody, SubmissionState, put_submission_in, random_id,
-    record_control_in,
+    self, ControlChange, SubmissionCustody, SubmissionState, put_submission_in, record_control_in,
 };
 use super::lifecycle::{
-    PublisherTrainingLifecycle, ReleaseDecision, SealedTrainingOffer, TrainingScope,
-    TrainingSubmissionId, TrainingUnavailable, TrainingWithheld,
+    PublisherTrainingLifecycle, ReleaseDecision, TrainingSubmissionId, TrainingUnavailable,
+    TrainingWithheld,
 };
-use super::link;
 use super::source::{self, TrainingSelection};
 use super::{ConversationSource, Eligibility, eligible};
 
@@ -175,7 +179,9 @@ impl Vault {
 
     /// One offer pass (A2, A3): while the vault's setting is on, every
     /// conversation of the vault, selected once, judged, filtered in the
-    /// vault, held, sealed to `intake`, staged on `sink` and released. A
+    /// vault, held, sealed to `intake`, staged on `sink` and released, each
+    /// new offer taking `transport` (TL-6: the server's placement, anonymous
+    /// for a self-hosted vault, hosted for a managed one). A
     /// source still moving (a row newer than `quiet_secs`) waits for a later
     /// pass, whole. A source already published at its revision is not
     /// offered again; a changed one is offered anew, and once the newer
@@ -202,6 +208,7 @@ impl Vault {
         sink: &dyn PublisherTrainingLifecycle,
         filter: &dyn TextFilter,
         intake: &IntakeRecipient,
+        transport: TrainingTransport,
         quiet_secs: u64,
     ) -> Result<TrainingOfferPass> {
         let now = crate::unix_seconds_now();
@@ -242,6 +249,7 @@ impl Vault {
                 sink,
                 filter,
                 intake,
+                transport,
                 room,
                 held: latest.get(&room),
                 generation,
@@ -278,16 +286,21 @@ impl Vault {
             return Ok(Offered::Skipped);
         }
         // An offer of an older generation is never reused or taken for a
-        // settled one: its source is prepared again under the current key.
+        // settled one: its source is prepared again under the current key. A
+        // held one is reused only on the same transport. An anonymous piece
+        // the intake asked afresh for is offered again, under a new C.
         let current = |row: &SubmissionCustody| row.generation == offer.generation;
         let reuse = match offer.held {
             Some((id, row)) if row.source_revision == selection.revision => match row.state {
-                SubmissionState::Held if current(row) => Some((*id, row)),
+                SubmissionState::Held if current(row) && row.transport == offer.transport => {
+                    Some((*id, row))
+                }
                 SubmissionState::Published => return Ok(Offered::Skipped),
                 SubmissionState::Withheld | SubmissionState::Withdrawn
                     if current(row)
                         && row.setting_revision == setting.revision
-                        && row.policy_revision == policy =>
+                        && row.policy_revision == policy
+                        && !anonymous::refresh_requested(row) =>
                 {
                     return Ok(Offered::Skipped);
                 }
@@ -327,8 +340,13 @@ impl Vault {
             .held
             .filter(|(_, row)| reuse.is_none() && row.state == SubmissionState::Held)
             .map(|(id, _)| *id);
-        let Some(placed) =
-            self.hold_submission((reuse, superseded), &selection, &setting, policy, offer.now)?
+        let Some(placed) = self.hold_submission(
+            (reuse, superseded),
+            &selection,
+            &setting,
+            (policy, offer.transport),
+            offer.now,
+        )?
         else {
             return Ok(Offered::Skipped);
         };
@@ -353,185 +371,6 @@ impl Vault {
                 Ok(Offered::Withheld(placed.id, why))
             }
         }
-    }
-
-    /// Holds one submission in local custody: a new one under a new id, the
-    /// next number of the private order and, in the month of `now` and the
-    /// current link generation (its key made live first), the next ordinal
-    /// of that pair's scope and its piece code, C (TL-6); a retry of one
-    /// still held under its own id, order, month, generation, ordinal, first
-    /// preparation time and C. A held one it supersedes is withheld in the
-    /// same write. `None` while a purge stands: nothing is held.
-    fn hold_submission(
-        &self,
-        (reuse, superseded): (
-            Option<(TrainingSubmissionId, &SubmissionCustody)>,
-            Option<TrainingSubmissionId>,
-        ),
-        selection: &TrainingSelection,
-        setting: &Setting,
-        policy: [u8; 32],
-        now: u64,
-    ) -> Result<Option<Placed>> {
-        self.with_write_txn_grouped(|txn| {
-            let state = custody::state(self, txn)?;
-            if state.purge.is_some() {
-                return Ok(None);
-            }
-            if let Some(old) = superseded
-                && let Some(mut row) = custody::submission(self, txn, old)?
-                && row.state == SubmissionState::Held
-            {
-                row.state = SubmissionState::Withheld;
-                put_submission_in(self, txn, old, &row)?;
-            }
-            let (local_seq, placed, piece) = match reuse {
-                // A retry keeps its C as it was made, never made again.
-                Some((id, held)) => (
-                    held.local_seq,
-                    Placed {
-                        id,
-                        scope: state.scope_of(&held.month, held.generation)?,
-                        month: held.month.clone(),
-                        generation: held.generation,
-                        scope_seq: held.scope_seq,
-                        prepared_at: held.prepared_at,
-                    },
-                    held.piece,
-                ),
-                None => {
-                    let local_seq = custody::next_local_seq_in(self, txn)?;
-                    let generation = custody::link_generation_in(self, txn)?;
-                    let month = link::training_month(now);
-                    let (scope, scope_seq) =
-                        custody::next_scope_seq_in(self, txn, &month, generation)?;
-                    let id = TrainingSubmissionId(random_id());
-                    // C, made once here under K at the generation it was
-                    // placed in; the zeroized K drops with this arm.
-                    let piece = {
-                        let key = link::training_link_key(self, txn, generation)?;
-                        link::piece_code(&key, &id.0, &month)
-                    };
-                    let placed = Placed {
-                        id,
-                        month,
-                        generation,
-                        scope,
-                        scope_seq,
-                        prepared_at: now,
-                    };
-                    (local_seq, placed, piece)
-                }
-            };
-            let row = SubmissionCustody {
-                source: selection.source,
-                persons: selection.persons.clone(),
-                worlds: selection.worlds.clone(),
-                messages: selection.message_ids(),
-                source_revision: selection.revision,
-                setting_revision: setting.revision,
-                setting_act: setting.act,
-                policy_revision: policy,
-                local_seq,
-                month: placed.month.clone(),
-                generation: placed.generation,
-                scope_seq: placed.scope_seq,
-                prepared_at: placed.prepared_at,
-                piece,
-                published_at: None,
-                state: SubmissionState::Held,
-                files: true,
-                receipt: None,
-                used_runs: Vec::new(),
-            };
-            put_submission_in(self, txn, placed.id, &row)?;
-            Ok(Some(placed))
-        })
-    }
-
-    /// Seals a held submission's filtered text to the intake under its
-    /// scope, and signs its manifest naming that month's codes; `None` when
-    /// this install has no key to sign with.
-    fn seal_offer(
-        &self,
-        prepared: &Prepared<'_>,
-        filtered: &FilteredText,
-        intake: &IntakeRecipient,
-    ) -> Result<Option<SealedTrainingOffer>> {
-        let placed = prepared.placed;
-        // The key of the generation it was placed in, never another's.
-        let key = {
-            let txn = self.store.env.read_txn()?;
-            link::training_link_key(self, &txn, placed.generation)?
-        };
-        let text = filtered.as_str().as_bytes();
-        let submission = placed.id.to_hex();
-        let sealed = seal_training_text(intake, &placed.scope, &placed.id.0, text)?;
-        let mut ciphertext = blake3::Hasher::new();
-        let mut chunks = Vec::with_capacity(sealed.len());
-        let mut files = Vec::with_capacity(sealed.len());
-        for (part, bytes) in sealed.into_iter().enumerate() {
-            let part = u32::try_from(part)
-                .map_err(|_| Error::ArithmeticOverflow("training offer chunk count"))?;
-            let file = offer_chunk_file_name(&submission, part).ok_or(
-                Error::InvariantViolation("a submission id names no chunk file"),
-            )?;
-            ciphertext.update(&bytes);
-            chunks.push(TrainingChunkV2 {
-                part,
-                bytes: bytes.len() as u64,
-                digest: blake3::hash(&bytes).to_hex().to_string(),
-                file: file.clone(),
-            });
-            files.push((file, bytes));
-        }
-        let selection = prepared.selection;
-        let month = placed.month.as_str();
-        let body = TrainingOfferBodyV2 {
-            submission_id: submission.clone(),
-            scope: oneiron_vault_contract::hex(&placed.scope),
-            event_seq: placed.scope_seq,
-            source: link::code_hex(&key, link::SOURCE, &selection.source, month),
-            persons: link::code_set(&key, link::PERSON, &selection.persons, month),
-            worlds: link::code_set(&key, link::WORLD, &selection.worlds, month),
-            training: TrainingSettingV2 {
-                on: prepared.setting.on,
-            },
-            privacy: TRAINING_PRIVACY_EVERYWHERE.to_owned(),
-            filter: TrainingFilterV2 {
-                model: filtered.filter().model.clone(),
-                stack_sha16: filtered.filter().stack_sha16.clone(),
-            },
-            payload: TrainingPayloadV2 {
-                encoding: TRAINING_TEXT_ENCODING.to_owned(),
-                key_id: oneiron_vault_contract::hex(intake.key_id()),
-                text_bytes: text.len() as u64,
-                ciphertext_digest: ciphertext.finalize().to_hex().to_string(),
-                chunks,
-            },
-            prepared_at: placed.prepared_at,
-        };
-        let Some(signature) = sign_training_payload(self, TRAINING_OFFER_TYPE, &body)? else {
-            return Ok(None);
-        };
-        let manifest = TrainingOfferV2 {
-            schema_version: TRAINING_SCHEMA_VERSION,
-            file_type: TRAINING_OFFER_TYPE.to_owned(),
-            body,
-            signature,
-        };
-        let bytes = serde_json::to_vec_pretty(&manifest)
-            .map_err(|_| Error::InvariantViolation("a training offer manifest does not encode"))?;
-        let name = offer_manifest_file_name(&submission).ok_or(Error::InvariantViolation(
-            "a submission id names no manifest file",
-        ))?;
-        Ok(Some(SealedTrainingOffer {
-            submission: placed.id,
-            scope: TrainingScope(placed.scope),
-            event_seq: placed.scope_seq,
-            manifest: (name, bytes),
-            chunks: files,
-        }))
     }
 
     /// Withdraws every held offer of an orphaned generation (FIX 5892): it
@@ -601,7 +440,9 @@ impl Vault {
 /// the intake has not already removed, and records forget controls naming
 /// exactly those ids: one per month and generation they were prepared in,
 /// each under that pair's scope, never recoded under the new offer's (none
-/// for an orphaned generation, counted unavailable). The source changed, so
+/// for an orphaned generation, counted unavailable); every anonymous one
+/// takes its withdrawal intent in the same write instead, and joins no
+/// control. The source changed, so
 /// its older versions are invalid, while the offer just published stays
 /// live.
 fn forget_older_in(
@@ -624,11 +465,14 @@ fn forget_older_in(
             continue;
         }
         held.state = SubmissionState::Withdrawn;
+        anonymous::withdraw(&mut held);
         put_submission_in(vault, txn, other, &held)?;
-        older
-            .entry((held.month, held.generation))
-            .or_default()
-            .push(other.0);
+        if held.transport == TrainingTransport::Hosted {
+            older
+                .entry((held.month, held.generation))
+                .or_default()
+                .push(other.0);
+        }
     }
     for ((month, generation), submissions) in older {
         let change = ControlChange::ForgetSource {
@@ -645,6 +489,8 @@ struct Offer<'a> {
     sink: &'a dyn PublisherTrainingLifecycle,
     filter: &'a dyn TextFilter,
     intake: &'a IntakeRecipient,
+    /// The transport a new offer takes (TL-6).
+    transport: TrainingTransport,
     room: EntityId,
     held: Option<&'a (TrainingSubmissionId, SubmissionCustody)>,
     /// The current training link generation.

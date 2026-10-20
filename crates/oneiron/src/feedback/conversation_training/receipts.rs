@@ -9,7 +9,10 @@
 //! never who else is in it. This door is local and authenticated: it names
 //! the raw ids this vault keeps, never the codes that left. Controls name no
 //! person and are not listed; a withdrawn submission reads withdrawn on its
-//! own row. Nothing says what the intake holds for anyone else.
+//! own row. Nothing says what the intake holds for anyone else. A piece
+//! that left through the anonymous training window (TL-6) also shows where
+//! its own signed receipts say it stands (CALLS TL6_OWNER_RECEIPT_DTO):
+//! never its C, a code, or anyone else in it.
 //!
 //! A page walks the submissions in key order from a cursor. It lists
 //! [`RECEIPT_PAGE`] rows at most, a pace and not a cap: the rest come on the
@@ -27,6 +30,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+use super::anonymous::{TrainingPieceState, TrainingTransport};
 use super::custody::{CustodyKey, SUBMISSION, SUBMISSIONS, SubmissionCustody, SubmissionState};
 use super::lifecycle::TrainingSubmissionId;
 
@@ -91,6 +95,10 @@ pub struct PersonTrainingSubmission {
     pub custody: TrainingCustody,
     /// The intake's last receipt for it; `None` while it sent none.
     pub receipt: Option<TrainingReceiptStatusV2>,
+    /// Where its own signed receipts say it stands, for a piece that left
+    /// through the anonymous training window (TL-6); `None` for a hosted
+    /// one.
+    pub anonymous: Option<AnonymousReceiptView>,
     /// The runs the intake says used it.
     pub used_runs: Vec<TrainingUsedRun>,
     /// [`TRAINING_WITHDRAWAL_NOTE`] once it is withdrawn or its removal is
@@ -100,6 +108,23 @@ pub struct PersonTrainingSubmission {
     pub prepared_at: u64,
     /// When it was published, unix seconds; `None` while it never left.
     pub published_at: Option<u64>,
+}
+
+/// Where an anonymous piece stands at the intake, as the person reads it:
+/// its last signed receipt, never its C, a code, or anyone else in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnonymousReceiptView {
+    /// What the last signed receipt says; `None` while the intake signed
+    /// none.
+    pub state: Option<TrainingPieceState>,
+    /// That receipt's revision; 0 before any.
+    pub revision: u64,
+    /// The reason it gave, for a rejection or the re-filter's refusal.
+    pub reason: Option<String>,
+    /// When the intake signed it, unix seconds.
+    pub at: Option<u64>,
+    /// The sealed bytes the intake holds so far, while it uploads.
+    pub progress: Option<u64>,
 }
 
 /// Where a submission stands in local custody.
@@ -221,11 +246,29 @@ fn kind_range(
 /// One submission carrying the person's words as they read it.
 fn own_submission(id: TrainingSubmissionId, row: SubmissionCustody) -> PersonTrainingSubmission {
     let receipt = row.receipt.map(|mark| mark.status);
+    let progress = row.anonymous.progress();
+    let anonymous = if row.transport == TrainingTransport::Anonymous {
+        Some(AnonymousReceiptView {
+            state: row.anonymous.state,
+            revision: row.anonymous.revision,
+            reason: row.anonymous.reason,
+            at: row.anonymous.at,
+            progress,
+        })
+    } else {
+        None
+    };
     let withdrawn = row.state == SubmissionState::Withdrawn
         || matches!(
             receipt,
             Some(TrainingReceiptStatusV2::RemovalPending | TrainingReceiptStatusV2::Removed)
-        );
+        )
+        || anonymous.as_ref().is_some_and(|view| {
+            matches!(
+                view.state,
+                Some(TrainingPieceState::RemovalPending | TrainingPieceState::Removed)
+            )
+        });
     PersonTrainingSubmission {
         id,
         source: row.source,
@@ -237,6 +280,7 @@ fn own_submission(id: TrainingSubmissionId, row: SubmissionCustody) -> PersonTra
             SubmissionState::Withdrawn => TrainingCustody::Withdrawn,
         },
         receipt,
+        anonymous,
         used_runs: row
             .used_runs
             .into_iter()

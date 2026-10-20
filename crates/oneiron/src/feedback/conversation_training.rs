@@ -43,7 +43,14 @@
 //! out (`link`). The raw ids stay in local custody, where the release
 //! rechecks them and a person's own receipts are read; an erase purges every
 //! scope (`purge`) before the vault is destroyed.
+//!
+//! A self-hosted vault's offers leave through the anonymous training window
+//! (TL-6), piece by piece under each submission's stored C: the server's
+//! shipper reads the released files and works through this module's Vault
+//! doors (`anonymous`), which page the pieces to upload, withdraw and ask
+//! about, and apply the intake's signed receipts.
 
+mod anonymous;
 mod crypto;
 mod custody;
 mod lifecycle;
@@ -54,6 +61,10 @@ mod reconcile;
 mod release;
 mod source;
 
+pub use self::anonymous::{
+    ANONYMOUS_PAGE, AnonymousApplied, AnonymousRefusal, AnonymousStatusWork, AnonymousUploadWork,
+    AnonymousWithdrawalWork, TrainingPieceState, TrainingTransport,
+};
 pub use self::crypto::{IntakeReceiptKey, IntakeRecipient};
 pub use self::lifecycle::{
     PublisherTrainingLifecycle, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision,
@@ -62,8 +73,8 @@ pub use self::lifecycle::{
     TrainingWithheld,
 };
 pub use self::receipts::{
-    PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody, TrainingReceiptsCursor,
-    TrainingUsedRun,
+    AnonymousReceiptView, PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody,
+    TrainingReceiptsCursor, TrainingUsedRun,
 };
 pub use self::reconcile::TrainingUpkeep;
 pub use self::release::TrainingOfferPass;
