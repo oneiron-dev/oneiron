@@ -136,12 +136,12 @@ pub(super) fn checkpoint_retirements(
 ) -> Result<Vec<(RetirementIntent, bool)>> {
     let mut retirements = Vec::new();
     for intent in retirements_in_rows(rows)? {
-        // A body instance, and a holder's known-value history (KS-3),
-        // retire for an erase only, which no hold defers (KS-2A): the
-        // restore treats it as done.
+        // A body instance, a holder's known-value history (KS-3) and a world
+        // pad (KS-5) retire for an erase only, which no hold defers (KS-2A):
+        // the restore treats it as done.
         if matches!(
             intent.subject.kind(),
-            CustodyKind::BodyInstance | CustodyKind::KnownValueEntry
+            CustodyKind::BodyInstance | CustodyKind::KnownValueEntry | CustodyKind::WorldPad
         ) {
             retirements.push((intent, true));
             continue;
@@ -326,7 +326,12 @@ impl Vault {
             let now = self.store.clock.now_recorded_at();
             let target = LegalHoldTarget::GatePartition(claim);
             legal_hold::set_partition_hold_in_txn(&self.store, txn, target, held, now)
-        })
+        })?;
+        // A released partition hold may free a deferred delete (FIX 1488).
+        if !held {
+            self.note_backup_hold_recheck();
+        }
+        Ok(())
     }
 
     /// The most recent retain-until stamp for a held partition, if present.
@@ -366,6 +371,20 @@ impl Vault {
         #[cfg(unix)]
         self.finish_body_custody_retirements_after_commit();
         self.finish_known_history_retirements_after_commit();
+        self.finish_world_pad_retirements_after_commit();
+    }
+
+    /// Post-commit door for an erase that staged a world's pad retirements
+    /// (KS-5, FIX 346). The intents are durable, so a failure here is retried
+    /// by the next housekeeping pass and never reported as a failure of the
+    /// erase that already committed.
+    pub(crate) fn finish_world_pad_retirements_after_commit(&self) {
+        if let Err(error) = self.store.finish_world_pad_retirements() {
+            tracing::warn!(
+                error = %error,
+                "world key pad retirement deferred to the next housekeeping pass"
+            );
+        }
     }
 
     /// Post-commit door for an erase that staged a holder's known-value

@@ -461,6 +461,41 @@ impl LocalCustody<'_> {
         Ok(newest)
     }
 
+    /// Every subject of `kind` whose item begins with `prefix` that has a
+    /// directory in this compartment, read from the directory names alone,
+    /// in id order: every pad instance of one world (KS-5). No compartment
+    /// holds none.
+    pub(crate) fn subjects_with_prefix(
+        &self,
+        kind: CustodyKind,
+        prefix: &[u8],
+    ) -> Result<Vec<CustodySubject>> {
+        let names = match fs::read_dir(self.compartment()?) {
+            Ok(names) => names,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => return Err(err.into()),
+        };
+        let lead = format!(
+            "{:02x}.{}",
+            kind.tag(),
+            crate::entity_id::bytes_to_hex_lower(prefix)
+        );
+        let mut subjects = Vec::new();
+        for name in names {
+            let name = name?.file_name();
+            let Some(name) = name.to_str().filter(|name| name.starts_with(&lead)) else {
+                continue;
+            };
+            if let Some(subject) = CustodySubject::from_dir_name(self.binding.vault(), name)
+                && subject.kind() == kind
+            {
+                subjects.push(subject);
+            }
+        }
+        subjects.sort();
+        Ok(subjects)
+    }
+
     /// `id`'s entry, minting it only while unpublished. A damaged entry is
     /// never treated as absent; only an unpublished temporary is discarded.
     pub(crate) fn get_or_create(&self, id: &CustodyId) -> Result<CustodySecret> {
