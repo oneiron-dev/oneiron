@@ -33,9 +33,9 @@ pub(crate) use self::records::{
 };
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{
-    ForkRows, capsule_request, capsule_start_body, finalize_capsule, fork_response, fork_rows,
-    put_capsule, put_fork, put_unavailable, step_replay_capsules_in_txn, store_capsule_request,
-    store_capsule_start, store_fork_response,
+    ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
+    fork_response, fork_rows, put_fork, put_staged_capsule, put_unavailable,
+    step_replay_capsules_in_txn, store_fork_response,
 };
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]
