@@ -30,7 +30,7 @@
 
 use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, request::Parts};
-use oneiron::authority::OwnerDeviceRenewalProof;
+use oneiron::authority::{ForwardedCallerProof, OwnerDeviceRenewalProof};
 
 use super::{BindingProof, CoreAuth, bearer_token, caller_locality, proved_peer};
 use crate::error::{ApiError, ApiErrorDetails};
@@ -47,27 +47,67 @@ const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
 const BINDING_HEADER: &str = "x-oneiron-binding";
 
 /// The caller the binding door admitted on a managed vault (FIX 4559): the
-/// auth its consuming admission of the request's slip returned, and the
-/// machine proof the request carries over that same token and the timestamp
-/// and nonce of the holder proof it spent, raw, or `None` when the request
-/// carries none or a malformed one. Only that door builds one, once it spent
-/// the proof's nonce, and it lives on that one request alone: never stored,
-/// never sent. It says where the request came from, not that it still
-/// stands: the engine's writer judges the slip, the proof's freshness and
-/// admission and the machine again.
+/// auth its consuming admission of the request's slip returned, the slip
+/// token and holder proof fields that admission accepted, as a home is
+/// forwarded them (FIX 6160), and the machine proof the request carries over
+/// that same token and the timestamp and nonce of the holder proof it spent,
+/// raw, or `None` when the request carries none or a malformed one. Only
+/// that door builds one, once it spent the proof's nonce, and it lives on
+/// that one request alone: never stored, never sent. It says where the
+/// request came from, not that it still stands: the engine's writer judges
+/// the slip, the proof's freshness and admission and the machine again.
 #[derive(Clone)]
 pub(super) struct AdmittedCaller {
     auth: CoreAuth,
+    forwarded: ForwardedCallerProof,
     machine: Option<OwnerDeviceRenewalProof>,
 }
 
 impl AdmittedCaller {
-    /// The caller `auth` the binding door admitted, with the `machine` proof
-    /// it read over the same token and holder proof.
-    pub(super) fn new(auth: CoreAuth, machine: Option<OwnerDeviceRenewalProof>) -> Self {
-        Self { auth, machine }
+    /// The caller `auth` the binding door admitted on the slip `token` and
+    /// holder proof `binding`, with the `machine` proof it read over them.
+    pub(super) fn new(
+        auth: CoreAuth,
+        token: &str,
+        binding: &BindingProof,
+        machine: Option<OwnerDeviceRenewalProof>,
+    ) -> Self {
+        let forwarded = ForwardedCallerProof {
+            token: token.to_owned(),
+            timestamp: binding.timestamp,
+            nonce: binding.nonce.clone(),
+            signature: binding.signature.clone(),
+        };
+        Self {
+            auth,
+            forwarded,
+            machine,
+        }
+    }
+
+    /// The caller the binding door kept on the request whose `extensions`
+    /// these are, when it admitted `auth`'s very instrument (FIX 6160).
+    /// `None` when it kept none (a vault no supervisor manages, a request it
+    /// admitted no slip on, a held facade call) or kept another instrument:
+    /// that request's reader keeps its own header path.
+    fn kept_for<'e>(extensions: &'e Extensions, auth: &CoreAuth) -> Option<&'e Self> {
+        extensions.get::<Self>().filter(|admitted| {
+            admitted.auth.instrument().is_some() && admitted.auth.instrument() == auth.instrument()
+        })
     }
 }
+
+/// What a reader of the admitted proof does on a request the binding door
+/// kept no caller for (FIX 6160, CALLS `FIX 6160 admitted proof reuse`).
+#[derive(Clone, Copy)]
+enum MissingAdmittedCaller {
+    /// It reads the request's headers exactly as before the door kept one:
+    /// the kept caller is never required, and no nonce is spent again.
+    UseExistingHeaders,
+}
+
+/// The one [`MissingAdmittedCaller`] policy.
+const MISSING_ADMITTED_CALLER: MissingAdmittedCaller = MissingAdmittedCaller::UseExistingHeaders;
 
 /// The capability slip `headers` carry as their bearer, if any. Any other
 /// bearer is not a caller's credential here: managed ingress strips it.
@@ -409,6 +449,59 @@ impl CoreAuth {
         }
         let auth = admitted.auth.clone().placed(headers, extensions, path);
         Some(Ok((auth, admitted.machine.clone())))
+    }
+
+    /// [`Self::forwarded_caller_proof`] on a request whose `extensions` may
+    /// hold the caller the binding door admitted (FIX 6160): for this very
+    /// slip, the token and holder proof fields that door accepted, never
+    /// read from the headers again; on any other request the headers' proof,
+    /// as before ([`MISSING_ADMITTED_CALLER`]). `None` for a caller admitted
+    /// on no holder-bound slip.
+    pub(crate) fn forwarded_caller_proof_admitted(
+        &self,
+        headers: &HeaderMap,
+        extensions: &Extensions,
+    ) -> Option<ForwardedCallerProof> {
+        self.verified_slip()?;
+        match AdmittedCaller::kept_for(extensions, self) {
+            Some(admitted) => Some(admitted.forwarded.clone()),
+            None => match MISSING_ADMITTED_CALLER {
+                MissingAdmittedCaller::UseExistingHeaders => self.forwarded_caller_proof(headers),
+            },
+        }
+    }
+
+    /// The holder proof the binding door admitted this very slip on, as a
+    /// home is forwarded it (FIX 6160), or `None` on a request it kept no
+    /// caller for, or a caller admitted on no holder-bound slip.
+    pub(crate) fn admitted_forwarded_proof(
+        &self,
+        extensions: &Extensions,
+    ) -> Option<ForwardedCallerProof> {
+        self.verified_slip()?;
+        AdmittedCaller::kept_for(extensions, self).map(|admitted| admitted.forwarded.clone())
+    }
+
+    /// The machine proof this caller's request carries, raw, for a door
+    /// that only records where it came from (FIX 6160): for this very slip,
+    /// the one the binding door kept over its token and holder proof, `None`
+    /// when it carried none or a malformed one, never read from the headers
+    /// again; on any other request the headers' as
+    /// [`super::required_machine_proof`] reads them, `None` where that
+    /// refuses ([`MISSING_ADMITTED_CALLER`]). Nothing is verified here.
+    pub(crate) fn machine_proof_admitted(
+        &self,
+        headers: &HeaderMap,
+        extensions: &Extensions,
+    ) -> Option<OwnerDeviceRenewalProof> {
+        match AdmittedCaller::kept_for(extensions, self) {
+            Some(admitted) => admitted.machine.clone(),
+            None => match MISSING_ADMITTED_CALLER {
+                MissingAdmittedCaller::UseExistingHeaders => {
+                    super::required_machine_proof(headers).ok()
+                }
+            },
+        }
     }
 
     /// This request's one caller ([`Self::for_request`]), placed.

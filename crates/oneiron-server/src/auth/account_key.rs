@@ -135,7 +135,7 @@ pub struct VerifiedAccountKey {
     /// The registered principal the verdict binds, when it binds one.
     pub principal_ref: Option<String>,
     /// Scopes the verdict granted.
-    pub scopes: BTreeSet<CoreScope>,
+    pub(crate) scopes: BTreeSet<CoreScope>,
     /// The key's own finite expiry, unix seconds.
     pub expires_at: u64,
     /// Node-clock time of this acceptance, unix seconds.

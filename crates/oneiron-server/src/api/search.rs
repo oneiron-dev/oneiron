@@ -501,7 +501,7 @@ pub(crate) async fn search_text(
         Arc::clone(server.vault()),
         auth.is_owner_grade(),
         (!auth.is_owner_grade())
-            .then(|| auth.forwarded_caller_proof(&parts.headers))
+            .then(|| auth.forwarded_caller_proof_admitted(&parts.headers, &parts.extensions))
             .flatten(),
         params.query.clone(),
         page_limit,

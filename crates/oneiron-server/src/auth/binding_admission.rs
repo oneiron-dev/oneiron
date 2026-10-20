@@ -132,13 +132,14 @@ pub(crate) async fn admit_http_binding(
                     server.vault(),
                 );
                 // A managed vault keeps the caller admitted here, with the
-                // machine proof it carries over this token and holder proof,
-                // for its renewal door (FIX 4559). A missing or malformed
-                // one refuses nothing here.
+                // token and holder proof it accepted and the machine proof
+                // it carries over them, for its renewal door (FIX 4559) and
+                // the readers that reuse them (FIX 6160). A missing or
+                // malformed machine proof refuses nothing here.
                 if server.managed_issuer.is_some() {
                     let device =
                         super::machine_proof::machine_proof_over(request.headers(), token, &proof);
-                    admitted = Some(AdmittedCaller::new(auth, device.ok()));
+                    admitted = Some(AdmittedCaller::new(auth, token, &proof, device.ok()));
                 }
             }
             Err(error) => {
