@@ -47,8 +47,12 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// commit marker and the `restore_status` ctl request) carries a build
 /// floor too, at the engine revision it merged in: a supervisor starts a
 /// restore only on an installed engine at or after it, since an older one
-/// refuses the flag before it touches anything. Supervisor and vault move
-/// to v3 together; no v2 reader is kept.
+/// refuses the flag before it touches anything. The idle reap preparation
+/// with its backup ([`CtlRequest::PrepareIdleReap`](crate::CtlRequest::PrepareIdleReap))
+/// carries a build floor too, proven by `prepare_idle_reap: true` in `Ping`'s
+/// managed backup facts; a v3 vault built before it answers it as an
+/// unknown request. Supervisor and vault move to v3 together; no v2 reader
+/// is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

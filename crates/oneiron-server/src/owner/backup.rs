@@ -41,12 +41,25 @@ use std::path::{Path, PathBuf};
 use oneiron::recovery::checkpoint::SideRestoreSource;
 use serde::Serialize;
 
-use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
+#[cfg(test)]
+use super::stamp::file_stamp;
+use super::stamp::{parse_file_stamp, rfc3339};
 use crate::machine::DiskFloor;
 
 mod custody;
+pub(crate) mod finalize;
 mod handoff;
 mod rehearse;
+#[allow(
+    dead_code,
+    reason = "L14 wires the relay locker delete through it (FIX 1488)"
+)]
+mod relay_hold;
+#[allow(
+    dead_code,
+    reason = "staged for L14, which moves it to managed/relay/hold_guard.rs (FIX 1488)"
+)]
+mod relay_hold_guard;
 mod restore;
 mod scratch;
 pub(crate) mod write_budget;
@@ -179,49 +192,11 @@ pub(crate) fn take_as(
     plan: &BackupPlan,
     owner: Option<&oneiron::consent::AuthenticatedOwner>,
 ) -> anyhow::Result<BackupOutcome> {
-    create_private_dir(&plan.dir)?;
-    let sequence = list(plan)?
-        .last()
-        .map_or(Some(1), |newest| newest.sequence.checked_add(1))
-        .ok_or_else(|| anyhow::anyhow!("backup sequence exhausted in {}", plan.dir.display()))?;
-    let taken_ms = now_unix_ms();
-    let stamp = file_stamp(taken_ms);
-    let partial = plan
-        .dir
-        .join(format!(".{}-{stamp}{PARTIAL_SUFFIX}", plan.label));
-    // The artifact claims its room on the floor the plan was lent, and on the
-    // disk of the directory it lands in when that is another, and gives it
-    // back once written or refused (FIX 5479, FIX 5675).
-    let floors = write_budget::landing_floors(plan.floor.as_ref(), &plan.dir);
-    let snapshot = vault.ensure_vault_key().and_then(|()| {
-        let room = write_budget::WriteClaim::on_each(&floors);
-        vault.snapshot_backup_within(
-            &partial,
-            vault.now_recorded_at(),
-            owner,
-            plan.registry.as_deref(),
-            &room,
-        )
-    });
-    let receipt = match snapshot {
-        Ok(receipt) => receipt,
-        Err(error) => {
-            let _ = std::fs::remove_file(&partial);
-            return Err(anyhow::Error::new(error).context("backup failed"));
-        }
-    };
-    let checkpoint_id = receipt.image_digest.clone();
-    let id8 = checkpoint_id.get(..8).unwrap_or(&checkpoint_id);
-    let file = format!(
-        "{}-{sequence:0SEQUENCE_WIDTH$}-{stamp}-{id8}{FILE_SUFFIX}",
-        plan.label
-    );
-    let path = plan.dir.join(&file);
-    std::fs::rename(&partial, &path)?;
-    sync_dir(&plan.dir)?;
+    let produced =
+        finalize::produce(vault, plan, owner).map_err(finalize::Unproduced::into_error)?;
     // What it covered, beside it now that it landed. A marker that fails
     // leaves the one before, which only reads as changed.
-    if let Err(error) = receipt.persist_marker(&plan.dir, &plan.label, &file) {
+    if let Err(error) = produced.accept(plan) {
         tracing::warn!(
             reason = "backup_watermark_marker_failed",
             error = %error,
@@ -229,20 +204,9 @@ pub(crate) fn take_as(
         );
     }
     custody::publish_after_take(vault, plan);
-    let bytes = std::fs::metadata(&path)?.len();
-    let pruned = prune(vault, plan, Some(&file))?;
-    Ok(BackupOutcome {
-        backup: BackupRecord {
-            file,
-            path,
-            sequence,
-            bytes,
-            taken: rfc3339(taken_ms),
-            taken_ms,
-        },
-        checkpoint_id,
-        pruned,
-    })
+    let bytes = std::fs::metadata(&produced.path)?.len();
+    let pruned = prune(vault, plan, Some(&produced.file))?;
+    Ok(produced.into_outcome(bytes, pruned))
 }
 
 /// This vault's backups, oldest first. A missing directory is no backups.
@@ -306,14 +270,19 @@ fn parse_sequence(field: &str) -> Option<u64> {
 /// Deletes this vault's oldest backups beyond `plan.keep`; returns their
 /// names. `spared`, the backup a `take` just wrote, is never deleted and
 /// counts as one kept; with none spared, the newest `keep` stay. Nothing
-/// goes while a legal hold stands. A label whose handoff policy is installed
-/// deletes only the ones its node's supervisor acked, and keeps the rest
-/// pending, an error included (`handoff`). The caller holds the backup lock.
+/// goes while a legal hold stands: the listing and acks are read first, then
+/// the holds are read and each unlink and directory sync runs while the
+/// vault's writer is held ([`oneiron::Vault::with_backup_hold_exclusion`]),
+/// so a hold placed meanwhile commits before the read or after the sync
+/// (FIX 1488). A label whose handoff policy is installed deletes only the
+/// ones its node's supervisor acked, and keeps the rest pending, an error
+/// included (`handoff`). The caller holds the backup lock.
 pub(crate) fn prune(
     vault: &oneiron::Vault,
     plan: &BackupPlan,
     spared: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
+    // A standing hold keeps them all; the exclusion below reads it again.
     if vault.legal_hold_keeps_backups()? {
         return Ok(Vec::new());
     }
@@ -325,35 +294,50 @@ pub(crate) fn prune(
     let excess = records.len().saturating_sub(keep);
     let excess: Vec<_> = records.into_iter().take(excess).collect();
     let Some(handoff) = handoff::pinned(&plan.dir, &plan.label) else {
+        return vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
+            let mut pruned = Vec::new();
+            if holds.keeps_backups() {
+                return Ok(pruned);
+            }
+            for record in excess {
+                match std::fs::remove_file(&record.path) {
+                    Ok(()) => pruned.push(record.file),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            if !pruned.is_empty() {
+                sync_dir(&plan.dir)?;
+            }
+            Ok(pruned)
+        })?;
+    };
+    let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
+    let pruned = vault.with_backup_hold_exclusion(|holds| {
+        if holds.keeps_backups() {
+            return None;
+        }
         let mut pruned = Vec::new();
-        for record in excess {
+        for (record, ack) in released {
             match std::fs::remove_file(&record.path) {
-                Ok(()) => pruned.push(record.file),
+                Ok(()) => {
+                    let _ = std::fs::remove_file(ack);
+                    pruned.push(record.file);
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
+                // Kept, and pending: a pinned backup is never lost to an error.
+                Err(_) => pending.push(record),
             }
         }
         if !pruned.is_empty() {
-            sync_dir(&plan.dir)?;
+            let _ = sync_dir(&plan.dir).and_then(|()| sync_dir(&handoff));
         }
-        return Ok(pruned);
+        Some(pruned)
+    })?;
+    // A standing hold keeps them all, acked or not.
+    let Some(pruned) = pruned else {
+        return Ok(Vec::new());
     };
-    let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
-    let mut pruned = Vec::new();
-    for (record, ack) in released {
-        match std::fs::remove_file(&record.path) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(ack);
-                pruned.push(record.file);
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            // Kept, and pending: a pinned backup is never lost to an error.
-            Err(_) => pending.push(record),
-        }
-    }
-    if !pruned.is_empty() {
-        let _ = sync_dir(&plan.dir).and_then(|()| sync_dir(&handoff));
-    }
     handoff::check_backlog(vault, &plan.backlog_checked, &pending);
     Ok(pruned)
 }

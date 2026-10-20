@@ -14226,7 +14226,7 @@
      "path": "src/code_run/storage/replay_bodies.rs",
      "purpose": "A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -34766,7 +34766,7 @@
      "path": "src/llm/step/step_state.rs",
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -39355,7 +39355,7 @@
      "path": "src/origin/actor_erase.rs",
      "purpose": "An erased actor out of origin's claim bodies (FIX 3877)",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -45134,14 +45134,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BackupHolds",
       "HostOrderHolds"
      ],
      "path": "src/recovery/checkpoint/host_holds.rs",
      "purpose": "Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that…",
      "surface": {
-      "crate-vis": 2,
-      "fn": 4,
-      "struct": 1
+      "crate-vis": 3,
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -45355,9 +45356,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "BackupMarker",
       "BackupSnapshotReceipt",
       "BackupWatermark"
      ],
@@ -45366,9 +45368,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 7,
+      "fn": 13,
       "re-export": 1,
-      "struct": 2,
+      "struct": 3,
       "type": 1
      }
     },
@@ -48025,7 +48027,7 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -52472,7 +52474,7 @@
      "path": "src/store/gate_decision/retention.rs",
      "purpose": "Opt-in gate-decision age sweep over the actual ORCB custody unit, and the claim client's retirement policy…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 7
      }
     },
@@ -52577,7 +52579,7 @@
      "path": "src/store/key_custody/files.rs",
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -53380,6 +53382,16 @@
      "purpose": "The MESSAGE rows a kept TURN lacks after a window demotion (OF-534, FIX 3859)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_pad_custody.rs",
+     "purpose": "The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -63757,7 +63769,7 @@
      "surface": {
       "crate-vis": 23,
       "enum": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -63943,7 +63955,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -64104,12 +64116,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "WorldPadAvailability",
       "WorldRecoveryState"
      ],
      "path": "src/world_keys/state.rs",
      "purpose": "The no-kit warning (ruling fix 10): a typed state",
      "surface": {
-      "enum": 1,
+      "crate-vis": 1,
+      "enum": 2,
       "fn": 1
      }
     },
@@ -66363,7 +66377,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 123,
+     "files": 124,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66589,7 +66603,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4168,
+   "source_files": 4169,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68044,7 +68058,7 @@
      "path": "src/infer/rows.rs",
      "purpose": "Result rows: one JSON line per finished (arm, case, rep), appended to `--out` and flushed and fsynced one by…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -68058,13 +68072,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/infer/summary.rs",
-     "purpose": "One summary line per arm: the `ok` rows grouped by (arm_id, config_digest), as a markdown table and as…",
+     "purpose": "One summary line per arm: the clean rows grouped by (arm_id, config_digest), as a markdown table and as…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 9
      }
     },
     {
@@ -68074,7 +68088,17 @@
      "path": "src/infer/vram.rs",
      "purpose": "GPU memory, sampled: one `nvidia-smi -lms` child streams `memory.used, memory.total, name, uuid` for one…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/infer/workers.rs",
+     "purpose": "The measured session's calls: `--concurrency` worker tasks on one arm, one backend and one meter, all driven…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -68737,7 +68761,7 @@
      "purpose": "Fleet load, real held sockets, paired PPR optimization, and measured JSON receipts"
     },
     "infer": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68816,7 +68840,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-bench — benchmark harness skeleton",
-   "source_files": 122,
+   "source_files": 123,
    "test_files": 18
   },
   "oneiron-broker": {
@@ -80321,6 +80345,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/discover/capabilities.rs",
+     "purpose": "The capabilities discovery and health advertise, sorted (FIX 6692)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -87033,7 +87067,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/backup_facts.rs",
-     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): this install's…",
+     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 rows (a) and (b)): its managed…",
      "surface": {
       "crate-vis": 1
      }
@@ -87319,7 +87353,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 18,
-      "fn": 21,
+      "fn": 17,
       "struct": 3,
       "type": 1
      }
@@ -87343,6 +87377,27 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/idle_backup.rs",
+     "purpose": "The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup shipper row (a), co-signed with LC)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/reap.rs",
+     "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 4
      }
     },
     {
@@ -88559,7 +88614,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -88596,6 +88651,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/owner/backup/finalize.rs",
+     "purpose": "A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/owner/backup/handoff.rs",
      "purpose": "The prune pin (LC backup shipper rows, Engine 10-20)",
      "surface": {
@@ -88610,6 +88675,26 @@
      "purpose": "Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/relay_hold.rs",
+     "purpose": "The relay delete guard over one vault's backup holds (FIX 1488): the adapter L14's relay locker delete takes…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/relay_hold_guard.rs",
+     "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x), staged here because its home…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -88857,7 +88942,17 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/schedule/managed.rs",
+     "purpose": "The managed backup duty (Engine 10-20 backup shipper row (a)): a managed vault's host backs it up hourly…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -90487,7 +90582,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 478,
+     "files": 479,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90781,7 +90876,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 47,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90816,7 +90911,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 34,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90937,7 +91032,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 929,
+   "source_files": 936,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95235,7 +95330,27 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupCoverageWire",
+      "IdleBackupFailure",
+      "IdleBackupState",
+      "IdleBackupWire",
+      "IdleReapWire"
+     ],
+     "path": "src/lib/managed_backup/idle_reap.rs",
+     "purpose": "The answer to an idle reap's preparation (`prepare_idle_reap`, Engine 10-20 backup shipper row (a)…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
      }
     },
     {
@@ -95601,7 +95716,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95610,7 +95725,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 37,
+   "source_files": 38,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
