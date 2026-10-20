@@ -14,6 +14,7 @@ use super::evidence::{
 };
 use super::landing::ReceivePackLanding;
 use super::paths::ORIGIN_REF_UPDATE_BATCH;
+use super::retained_reasons::RetainedReasons;
 use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -261,7 +262,7 @@ impl Vault {
         updates: &[RefUpdate],
         pointers: &[LfsPushedPointer],
         ref_pointers: &[Vec<usize>],
-    ) -> Result<Vec<String>> {
+    ) -> Result<RetainedReasons> {
         let RepoRef::LocalFolder { path, .. } = repo else {
             return Err(receive_pack_provenance_refused("intent is not local"));
         };
@@ -276,7 +277,7 @@ impl Vault {
                 (admission == LfsAdmission::StoreInLfs).then_some((intent.oid, intent.size_bytes)),
             );
         }
-        let mut reasons = Vec::new();
+        let mut reasons = RetainedReasons::default();
         for (index, update) in updates.iter().enumerate() {
             let Some(next) = update.new_oid.as_ref() else {
                 continue;
@@ -297,7 +298,8 @@ impl Vault {
                 .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
             let held = held.into_iter().flatten();
             if let Some(refusal) = obligations_beyond_owner(&owner, std::iter::once(next), held) {
-                reasons.push(format!("{}: {refusal}", printable_ref_name(&update.name)));
+                let name = &update.name;
+                reasons.push_with(|| format!("{}: {refusal}", printable_ref_name(name)));
             }
         }
         Ok(reasons)
