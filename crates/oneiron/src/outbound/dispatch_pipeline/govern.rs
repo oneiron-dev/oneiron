@@ -8,16 +8,20 @@ use crate::gate::{
 use crate::outbound::capability::{OutboundVerbContract, normalize_key};
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
 
+/// `frozen_payload` is the payload the request froze
+/// ([`super::request_binding::PreparedOutboundDispatch::frozen_payload_bytes`]),
+/// whose digest a Linear send's press pins (FIX 6424 part 2a).
 pub(super) fn gate_input(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
     policy_risk: ExternalEffectPolicyRisk,
+    frozen_payload: Option<&[u8]>,
 ) -> ExternalEffectGateInput {
     ExternalEffectGateInput {
         actor: request.actor.gate_actor(),
         provenance: GateProvenanceHandles {
             mail_content_ref: request.intent.content_ref.clone(),
-            approval_target: approval_target(request, &verb_contract.kind),
+            approval_target: approval_target(request, &verb_contract.kind, frozen_payload),
             ..request.actor.provenance()
         },
         verb: verb_contract.kind.clone(),
@@ -45,11 +49,14 @@ pub(super) fn gate_input(
 /// approves, read off the canonical request: its original transport target
 /// (never the counterparty alias), its logical send ref, and its family's
 /// facts. A Linear send (part 2a) pins its canonical `verb`, its target and
-/// content ref, its stable logical send ref, and the mirror operation's facts
-/// only when the mirror door supplies them.
+/// content ref, its stable logical send ref, the digest of `frozen_payload`
+/// (every frozen field of the send), and the mirror operation's facts only
+/// when the mirror door supplies them. Every caller freezes a Linear request
+/// first; one that did not would pin nothing, as before part 2a.
 pub(super) fn approval_target(
     request: &OutboundDispatchRequest,
     verb: &str,
+    frozen_payload: Option<&[u8]>,
 ) -> Option<ApprovalTarget> {
     let connector = normalize_key(&request.intent.channel);
     if connector == LINEAR_CONNECTOR {
@@ -58,6 +65,7 @@ pub(super) fn approval_target(
             target: request.intent.target.clone(),
             content_ref: request.intent.content_ref.clone(),
             send_ref: stable_send_ref(request).to_owned(),
+            payload_digest: crate::outbound_intent_ledger::hash_frozen_payload(frozen_payload?),
             mirror: request.linear_mirror.as_ref().map(LinearMirrorFacts::of),
         });
     }
@@ -111,9 +119,13 @@ fn stable_send_ref(request: &OutboundDispatchRequest) -> &str {
 /// and schedule receipt carry the same digest as `approval_digest`; pass its
 /// `to_hex()` as the press's `effect_digest`. `None` for a send whose family
 /// does not pin its target: mail keeps its own canonical digest. A Linear
-/// send's digest pins its stable logical send (FIX 6424 part 2a); the mirror
-/// door's names its operation too, through `linear_mirror`, which the door
-/// sets. A digest composed by hand from
+/// send's digest pins its stable logical send and the payload it freezes,
+/// frozen here exactly as its dispatch freezes it (FIX 6424 part 2a); the
+/// mirror door's names its operation too, through `linear_mirror`, which the
+/// door sets (both of that door's asks:
+/// [`crate::Vault::linear_outbound_door_approval_digests`]). A request a
+/// durable LLM step dispatches also freezes that step, which this request
+/// does not carry. A digest composed by hand from
 /// [`crate::consent::EffectFacts`] with no target releases none of these
 /// families' sends. It reads and records nothing else.
 /// # Errors
@@ -146,10 +158,16 @@ pub(crate) fn outbound_gate_effect(
         None,
         None,
     )?;
+    // FIX 6424 part 2a: a Linear send pins the bytes its dispatch freezes;
+    // no other family reads them here.
+    let frozen = (normalize_key(&prepared.request.intent.channel) == LINEAR_CONNECTOR)
+        .then(|| prepared.frozen_payload_bytes())
+        .transpose()?;
     Ok(gate_input(
         &prepared.request,
         prepared.verb_contract,
         prepared.policy_risk,
+        frozen.as_deref(),
     ))
 }
 

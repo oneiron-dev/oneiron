@@ -455,6 +455,7 @@ pub(super) fn effect_result(
         suppression_receipt: None,
         ceiling_count: None,
         approval_digest: None,
+        approval_actor: None,
     }
 }
 
@@ -490,6 +491,7 @@ pub(super) fn gate_rejection(
         suppression_receipt: None,
         ceiling_count: None,
         approval_digest: None,
+        approval_actor: None,
     }
 }
 

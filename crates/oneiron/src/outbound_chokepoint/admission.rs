@@ -537,15 +537,12 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let (decision_id, decision) =
         gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+    let mut co_spent = None;
     if let Some(co) = co_governance {
-        let spent = co.spent_press_digest();
+        co_spent = co.spent_press_digest().zip(co_keep);
         gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
-        if let (Some(keep), Some(spent)) = (co_keep, spent) {
-            keep(vault, &mut wtxn, spent)?;
-        }
     }
     insert_pending_in_txn(vault, &mut wtxn, &pending)?;
-    crate::outbound_intent_ledger::keep_pinned_approval_in_txn(vault, &mut wtxn, pinned_approval)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
@@ -567,6 +564,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
+    // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
+    super::types::keep_spent_presses(vault, pending.id, pinned_approval, co_spent)?;
 
     let mut result = send_pending(vault, authority, pending, now_ms, false, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));

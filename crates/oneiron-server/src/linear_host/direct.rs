@@ -132,7 +132,19 @@ pub(super) async fn spawn(
                         "Linear update remains pending"
                     );
                 }
-                Ok(Err(_)) | Err(_) => {
+                Ok(Err(error)) => {
+                    // FIX 6424 part 2a: a mutation held for the owner's
+                    // approve-once press names the digest to press.
+                    let hold = error.approval_hold();
+                    tracing::warn!(
+                        reason = "linear_sync_failed",
+                        approval_digest = ?hold.and_then(|hold| hold.approval_digest.as_deref()),
+                        approval_role = ?hold.map(|hold| hold.role),
+                        gate_decision = ?hold.map(|hold| hold.gate_decision_ref.as_str()),
+                        "Linear direct mirror pass failed; will retry"
+                    );
+                }
+                Err(_) => {
                     tracing::warn!(
                         reason = "linear_sync_failed",
                         "Linear direct mirror pass failed; will retry"

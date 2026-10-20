@@ -313,14 +313,18 @@ pub(super) fn dispatch_result_receipt(
         // Already folded into the admission's seat decision by the pipeline.
         ceiling_count: _,
         held_approval_digest,
+        held_approval_actor,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
     let gate_outcome = gate_outcome_kind.as_str().to_owned();
     // FIX 6424: a send the Gate holds for the owner names the digest his
-    // approve-once press on it must carry.
-    let approval_digest = held_approval_digest
-        .or(approval_digest)
-        .filter(|_| gate_outcome_kind == GateOutcome::Pending);
+    // approve-once press on it must carry, and (part 2a) whose press it is.
+    let (approval_digest, approval_actor) = match held_approval_digest {
+        Some(digest) => (Some(digest), held_approval_actor),
+        None => (approval_digest, request.actor.actor_entity_ref),
+    };
+    let approval_digest = approval_digest.filter(|_| gate_outcome_kind == GateOutcome::Pending);
+    let approval_actor = approval_actor.filter(|_| approval_digest.is_some());
     if let Some(receipt) = suppression_receipt {
         return OutboundDispatchResult {
             outcome,
@@ -328,6 +332,7 @@ pub(super) fn dispatch_result_receipt(
             gate_outcome,
             gate_reason_codes,
             approval_digest,
+            approval_actor,
             receipt,
             resolution,
             effector_budget: None,
@@ -564,6 +569,7 @@ pub(super) fn dispatch_result_receipt(
         gate_outcome,
         gate_reason_codes,
         approval_digest,
+        approval_actor,
         receipt,
         resolution,
         effector_budget,

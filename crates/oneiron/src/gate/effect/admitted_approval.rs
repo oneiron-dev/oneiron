@@ -24,13 +24,26 @@ impl ExternalEffectGovernance {
     /// Its proof is persisted only if this Gate decision and Pending insertion
     /// commit together; a preflight lookup never authors admission authority.
     /// Only a native-mail cold send, an e-sign send for signature or
-    /// reminder, or a failure-signal batch carries one.
+    /// reminder, or a failure-signal batch carries one. FIX 6424 part 2a: a
+    /// campaign leg rides any channel, an e-sign or failure-signal one
+    /// included, and a family whose target files its own press
+    /// ([`Self::pinned_send_approval`]) never records it here, whose frozen
+    /// recomposers read only their own payloads.
     pub(crate) fn admitted_send_approval(&self, intent_id: IntentId) -> Option<AdmittedApproval> {
         if self.approval_context != ApprovalContext::FirstAdmission {
             return None;
         }
         let effect = self.input.external_effect.as_ref()?;
-        if !effect.mail_approve_once && !press_send(&effect.channel, &effect.verb) {
+        let pinned_family = self
+            .input
+            .provenance
+            .approval_target
+            .as_ref()
+            .and_then(super::ApprovalTarget::pinned_family)
+            .is_some();
+        if !effect.mail_approve_once
+            && (!press_send(&effect.channel, &effect.verb) || pinned_family)
+        {
             return None;
         }
         self.approve_once

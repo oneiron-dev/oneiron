@@ -6,17 +6,23 @@
 //! their own digest, both over the same operation (its id, the nonce), TASK,
 //! linked issue and mirrored fields (CALLS `FIX 6424 Linear dual actor
 //! asks`). A held mutation names the actor that held it and that actor's
-//! digest; [`crate::Vault::linear_effect_approval_digests`] composes both
-//! with the Gate's own composer. An Allow the other actor did not match
-//! spends no press, so the first actor's press still releases the operation
-//! once the other is answered.
+//! digest, on its typed outcome and on the refusal it has always returned
+//! ([`LinearSyncError::approval_hold`]). Both asks are composed with the
+//! Gate's own composer by each admission's own constructor: the direct
+//! admission's by [`crate::Vault::linear_effect_approval_digests`], the
+//! recorded outbound door's (whose scheduler asks over its dispatch request)
+//! by [`crate::Vault::linear_outbound_door_approval_digests`]. An Allow the
+//! other actor did not match spends no press, so the first actor's press
+//! still releases the operation once the other is answered.
 //!
 //! A press an actor's admission spent is kept here, keyed by the operation
-//! and its digest, in the writer that spends it (CALLS `FIX 6424 pinned
-//! Pending proof retention`): a retry of the same operation, through
+//! and its digest, in a writer of its own once that admission committed
+//! (CALLS `FIX 6424 pinned Pending proof retention`, `FIX 6424 kept press
+//! write failure`): a retry of the same operation, through
 //! [`crate::Vault::authorize_linear_effect`] or the recorded outbound door's
 //! co-actor admission, reuses it while that actor's own pinned digest is the
-//! kept one. A row that does not read leaves the retry on its existing path.
+//! kept one. A row that does not read, or was not written, leaves the retry
+//! on its existing path.
 
 use crate::Vault;
 use crate::consent::EffectDigest;
@@ -25,8 +31,11 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{ApprovalTarget, ExternalEffectGateInput, GateOutcome, PairAdmission};
 use crate::linear_sync::{LinearEffectRequest, LinearSyncError, LinearSyncResult};
+use crate::outbound::{OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult};
 use crate::outbound_chokepoint::CoActorEffect;
-use crate::outbound_intent_ledger::{AdmittedApproval, IntentLedgerError};
+use crate::outbound_intent_ledger::{
+    AdmittedApproval, IntentLedgerError, keep_press_after_admission,
+};
 use crate::side_table::{self, Raw, SideTable};
 use crate::task_verb::linear_effect_state_in_txn;
 
@@ -120,20 +129,27 @@ fn keep_press_in(
     )
 }
 
-/// Keeps each actor's press the pair's admission of `operation_id` spent.
-pub(super) fn keep_spent_presses_in(
+/// Keeps each actor's press the pair's committed admission of
+/// `operation_id` spent, each in a writer of its own; one that does not
+/// write is logged and the admission stands.
+///
+/// # Errors
+/// None while CALLS `FIX 6424 kept press write failure` stands.
+pub(super) fn keep_spent_presses(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
     operation_id: [u8; 32],
     spent: [Option<EffectDigest>; 2],
 ) -> crate::error::Result<()> {
     let [scheduler, writer] = spent;
+    let subject = crate::entity_id::bytes_to_hex_lower(&operation_id);
     for (role, digest) in [
         (LinearEffectRole::Scheduler, scheduler),
         (LinearEffectRole::Writer, writer),
     ] {
         if let Some(digest) = digest {
-            keep_press_in(vault, txn, operation_id, role, digest)?;
+            keep_press_after_admission(vault, &subject, |txn| {
+                keep_press_in(vault, txn, operation_id, role, digest)
+            })?;
         }
     }
     Ok(())
@@ -187,12 +203,41 @@ pub(crate) fn linear_writer_co_actor_in_txn(
     })
 }
 
+impl LinearEffectHold {
+    /// The hold the recorded outbound door's `result` for `effect` names
+    /// (FIX 6424 part 2a): the actor whose decision held the mutation and
+    /// the digest its press names, both copied from the result. `None` for a
+    /// result the Gate does not hold for a press.
+    #[must_use]
+    pub fn of_door_result(
+        result: &OutboundDispatchResult,
+        effect: &LinearEffectRequest,
+    ) -> Option<Self> {
+        let approval_digest = result.approval_digest.clone()?;
+        let actor = result.approval_actor.unwrap_or(effect.scheduler_actor);
+        Some(Self {
+            role: if actor == effect.scheduler_actor {
+                LinearEffectRole::Scheduler
+            } else {
+                LinearEffectRole::Writer
+            },
+            actor,
+            gate_decision_ref: result.gate_decision_id.clone()?,
+            gate_outcome: result.gate_outcome.clone(),
+            approval_digest: Some(approval_digest),
+        })
+    }
+}
+
 impl Vault {
     /// FIX 6424 part 2a (CALLS `FIX 6424 Linear dual actor asks`): the
-    /// approve-once digests `request`'s two asks name, scheduler first,
-    /// each composed by the Gate's own constructor over that actor's effect
-    /// on the operation, the TASK revision's verified writer read as
-    /// [`Self::authorize_linear_effect`] reads it. It records nothing.
+    /// approve-once digests the DIRECT admission's two asks on `request`
+    /// name ([`Self::authorize_linear_effect`]), scheduler first, each
+    /// composed by the Gate's own constructor over that actor's effect on the
+    /// operation, the TASK revision's verified writer read as that admission
+    /// reads it. The recorded outbound door's scheduler asks over its
+    /// dispatch request instead:
+    /// [`Self::linear_outbound_door_approval_digests`]. It records nothing.
     ///
     /// # Errors
     /// [`LinearSyncError::AuthorizationDenied`] when the TASK revision has no
@@ -201,26 +246,89 @@ impl Vault {
         &self,
         request: &LinearEffectRequest,
     ) -> LinearSyncResult<[LinearRoleApproval; 2]> {
+        Ok([
+            role_approval(
+                LinearEffectRole::Scheduler,
+                request.scheduler_actor,
+                EdgeActorClass::System,
+                request,
+            ),
+            self.linear_writer_approval(request)?,
+        ])
+    }
+
+    /// FIX 6424 part 2a (CALLS `FIX 6424 Linear dual actor asks`): the
+    /// approve-once digests the recorded outbound door's two asks on one
+    /// staged call name, scheduler first. `request` is the dispatch request
+    /// that door builds for the call (its target, staged content ref and
+    /// logical ref); `effect` the mirror mutation it carries. The scheduler's
+    /// is the outbound dispatch's own `LinearDispatch` composer over that
+    /// request with `effect`'s mirror facts, frozen as its dispatch freezes
+    /// it; the writer's is the co-actor admission's `LinearMirror` effect,
+    /// the writer read as that admission reads it. It records nothing.
+    ///
+    /// # Errors
+    /// The request's own refusal at preparation (as
+    /// [`crate::outbound::outbound_approve_once_digest`]: an engine failure
+    /// as [`LinearSyncError::Store`], any other as
+    /// [`LinearSyncError::Transport`]); [`LinearSyncError::AuthorizationDenied`]
+    /// when the TASK revision has no verified writer; a storage failure.
+    pub fn linear_outbound_door_approval_digests(
+        &self,
+        request: &OutboundDispatchRequest,
+        effect: &LinearEffectRequest,
+    ) -> LinearSyncResult<[LinearRoleApproval; 2]> {
+        let mut request = request.clone();
+        request.linear_mirror = Some(effect.clone());
+        let scheduler =
+            crate::outbound::outbound_approve_once_digest(self, &request).map_err(|error| {
+                match error {
+                    OutboundDispatchError::Engine(error) => LinearSyncError::Store(error),
+                    other => LinearSyncError::Transport(other.to_string()),
+                }
+            })?;
+        Ok([
+            LinearRoleApproval {
+                role: LinearEffectRole::Scheduler,
+                actor: effect.scheduler_actor,
+                approval_digest: scheduler.map(|digest| digest.to_hex()),
+            },
+            self.linear_writer_approval(effect)?,
+        ])
+    }
+
+    /// The writer's ask on `request`: the TASK revision's verified writer,
+    /// read as both admissions read it, over the `LinearMirror` effect both
+    /// build for it.
+    fn linear_writer_approval(
+        &self,
+        request: &LinearEffectRequest,
+    ) -> LinearSyncResult<LinearRoleApproval> {
         let txn = self.store.env.read_txn().map_err(Error::from)?;
         let state = linear_effect_state_in_txn(self, &txn, request.task_ref)?;
         let writer = state.writer.ok_or(LinearSyncError::AuthorizationDenied)?;
         let class = EdgeActorClass::try_from_u8(writer.actor_class)
             .ok_or(LinearSyncError::AuthorizationDenied)?;
-        let approval =
-            |role: LinearEffectRole, actor: EntityId, class: EdgeActorClass| LinearRoleApproval {
-                role,
-                actor,
-                approval_digest: ApprovalTarget::held_digest(&super::effect::effect(
-                    actor, class, request,
-                )),
-            };
-        Ok([
-            approval(
-                LinearEffectRole::Scheduler,
-                request.scheduler_actor,
-                EdgeActorClass::System,
-            ),
-            approval(LinearEffectRole::Writer, writer.actor_ref, class),
-        ])
+        Ok(role_approval(
+            LinearEffectRole::Writer,
+            writer.actor_ref,
+            class,
+            request,
+        ))
+    }
+}
+
+/// One actor's ask on `request`, by the effect constructor both admissions
+/// use for it.
+fn role_approval(
+    role: LinearEffectRole,
+    actor: EntityId,
+    class: EdgeActorClass,
+    request: &LinearEffectRequest,
+) -> LinearRoleApproval {
+    LinearRoleApproval {
+        role,
+        actor,
+        approval_digest: ApprovalTarget::held_digest(&super::effect::effect(actor, class, request)),
     }
 }

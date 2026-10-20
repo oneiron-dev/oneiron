@@ -3,7 +3,8 @@
 use std::path::PathBuf;
 
 use oneiron::linear_sync::{
-    LinearEffectKind, LinearEffectRequest, LinearTaskStore, VaultLinearTaskStore,
+    LinearEffectHold, LinearEffectKind, LinearEffectRequest, LinearRoleApproval, LinearTaskStore,
+    VaultLinearTaskStore,
 };
 use oneiron::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
@@ -111,12 +112,15 @@ impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, T> {
     }
 }
 
-impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
-    fn dispatch(
-        &mut self,
+impl<T> VaultLinearOutboundDoor<'_, T> {
+    /// The exact mirror mutation `call` sends, as the vault binds it to the
+    /// TASK's current mirror operation, with the canonical verb and the
+    /// transport target its dispatch names.
+    fn mutation_effect<'c>(
+        &self,
         mutation: &LinearMutation<'_>,
-        call: &GraphQlCall,
-    ) -> LinearSyncResult<Value> {
+        call: &'c GraphQlCall,
+    ) -> LinearSyncResult<(LinearEffectRequest, &'static str, &'c str)> {
         let operation_id = mutation.operation_id;
         let (verb, target, kind) = match mutation.issue {
             None if call.query == CREATE => (
@@ -139,8 +143,7 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
         let target = target
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| invalid("Linear mutation has no target"))?;
-        let actor_ref = self
-            .actor
+        self.actor
             .actor_ref
             .as_deref()
             .ok_or_else(|| invalid("Linear outbound actor has no reference"))?;
@@ -168,13 +171,24 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             kind,
             fields: mutation.fields.clone(),
         };
-        self.vault.recheck_admitted_linear_effect(&effect)?;
+        Ok((effect, verb, target))
+    }
+
+    /// The outbound request this door dispatches `operation_id` under, with
+    /// the staged request's `content_ref`, and its logical intent ref.
+    fn door_request(
+        &self,
+        operation_id: [u8; 32],
+        verb: &str,
+        target: &str,
+        content_ref: &str,
+    ) -> (OutboundDispatchRequest, String) {
         let digest = blake3::Hash::from(operation_id).to_hex().to_string();
         let intent_ref = format!("linear:{digest}");
-        let content_ref = self.journal.stage_request(&operation_id, call)?;
+        let actor_ref = self.actor.actor_ref.as_deref().unwrap_or_default();
         let intent = OutboundIntent::from_trigger(
             OutboundIntentDraft::new(actor_ref, verb, "linear", target)
-                .content_ref(content_ref.clone())
+                .content_ref(content_ref.to_owned())
                 .idempotency_key(digest),
             OutboundIntentTrigger::agent_immediate(intent_ref.clone()),
         );
@@ -188,6 +202,44 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             OutboundDeliveryWindowDecision::DeliverNow,
         );
         request.ledger_identity_ref = Some(intent_ref.clone());
+        (request, intent_ref)
+    }
+
+    /// FIX 6424 part 2a (CALLS `FIX 6424 Linear dual actor asks`): the
+    /// approve-once digests this door's two asks on `call` name, scheduler
+    /// first: the outbound dispatch's own `LinearDispatch` ask over the
+    /// request this door dispatches the call under (its target, the content
+    /// ref its staging names, its logical ref) with the mutation's mirror
+    /// facts, and the TASK revision writer's `LinearMirror` ask
+    /// ([`oneiron::Vault::linear_outbound_door_approval_digests`]). It stages,
+    /// sends and records nothing.
+    ///
+    /// # Errors
+    /// The door's own refusal of `call`, or the vault preview's.
+    pub fn approval_digests(
+        &self,
+        mutation: &LinearMutation<'_>,
+        call: &GraphQlCall,
+    ) -> LinearSyncResult<[LinearRoleApproval; 2]> {
+        let (effect, verb, target) = self.mutation_effect(mutation, call)?;
+        let content_ref = LinearResponseJournal::<T>::request_ref(&effect.operation_id);
+        let (request, _) = self.door_request(effect.operation_id, verb, target, &content_ref);
+        self.vault
+            .linear_outbound_door_approval_digests(&request, &effect)
+    }
+}
+
+impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
+    fn dispatch(
+        &mut self,
+        mutation: &LinearMutation<'_>,
+        call: &GraphQlCall,
+    ) -> LinearSyncResult<Value> {
+        let operation_id = mutation.operation_id;
+        let (effect, verb, target) = self.mutation_effect(mutation, call)?;
+        self.vault.recheck_admitted_linear_effect(&effect)?;
+        let content_ref = self.journal.stage_request(&operation_id, call)?;
+        let (request, intent_ref) = self.door_request(operation_id, verb, target, &content_ref);
         let mut sink = LinearSink {
             journal: &mut self.journal,
             operation_id,
@@ -200,7 +252,14 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             .dispatch_linear_outbound_intent_recorded(request, &effect, &mut sink)
             .map_err(|_| invalid("Linear outbound dispatch failed"))?;
         if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
-            return Err(invalid("Linear outbound dispatch did not deliver"));
+            // FIX 6424 part 2a: a hold for the owner's press carries the
+            // blocking actor's digest, copied from the result, on the same
+            // refusal.
+            let refusal = invalid("Linear outbound dispatch did not deliver");
+            return Err(match LinearEffectHold::of_door_result(&result, &effect) {
+                Some(hold) => LinearSyncError::held(refusal, hold),
+                None => refusal,
+            });
         }
         // The door's own admission is the push row's gate ref (OF-427 C9).
         if let Some(gate_ref) = result.gate_decision_id.as_deref() {

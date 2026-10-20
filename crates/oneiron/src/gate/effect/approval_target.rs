@@ -98,14 +98,17 @@ pub(crate) enum ApprovalTarget {
     /// canonical verb, its original transport target (the team a create
     /// goes to, the issue an update names), its content ref, the send's
     /// stable logical ref (the logical send a schedule's ask names and its
-    /// executor spends, CALLS `FIX 6424 scheduled ask stable identity`), and
-    /// the mirror operation's facts when the mirror door supplies them. A
-    /// generic caller supplies none and is asked for none.
+    /// executor spends, CALLS `FIX 6424 scheduled ask stable identity`), the
+    /// digest of the payload the dispatch froze (every frozen field, so a
+    /// changed one is another send), and the mirror operation's facts when
+    /// the mirror door supplies them. A generic caller supplies none and is
+    /// asked for none.
     LinearDispatch {
         verb: String,
         target: String,
         content_ref: Option<String>,
         send_ref: String,
+        payload_digest: [u8; 32],
         mirror: Option<LinearMirrorFacts>,
     },
     /// A Linear mirror mutation one of its two actors speaks for (OF-427):
@@ -376,6 +379,7 @@ impl ApprovalTarget {
                 target,
                 content_ref,
                 send_ref,
+                payload_digest,
                 mirror,
             } => {
                 field(&mut hasher, "linear_dispatch");
@@ -383,6 +387,7 @@ impl ApprovalTarget {
                 field(&mut hasher, target);
                 optional(&mut hasher, content_ref.as_deref());
                 field(&mut hasher, send_ref);
+                field(&mut hasher, &bytes_to_hex_lower(payload_digest));
                 match mirror {
                     Some(facts) => {
                         hasher.update(&[1]);

@@ -11,11 +11,11 @@ use super::runner::{
 };
 use super::storage::CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND;
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::attempt_queue::AttemptRecord;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{
-    ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
+    ApprovalTarget, CampaignLegFacts, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles,
 };
 use crate::outbound_chokepoint::{
@@ -48,8 +48,9 @@ pub(super) struct EnrollmentLegDispatch {
     /// The chokepoint's result: the dispatch, the Gate decision, its reasons
     /// and, while the Gate holds the call for a press, its `approval_digest`.
     pub(super) effect: OutboundEffectResult,
-    /// The event row the ask for this call's digest was first made under,
-    /// kept as evidence; `None` when no press was asked for it.
+    /// The event row this call's prepared request was first asked under,
+    /// retained before the chokepoint first took it; `None` when its
+    /// retained request did not read or keep.
     pub(super) first_asked_event_ref: Option<EntityId>,
 }
 
@@ -109,8 +110,10 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         return Ok(EnrollmentOutboundLeg::NoOutboundStep);
     };
     let consequence_id = enrollment_consequence_id(&event, &step)?;
-    let gate = enrollment_gate_input(&step, outbound, &event, consequence_id);
-    let live_digest = ApprovalTarget::held_digest(&gate);
+    // FIX 6424 part 2a (Engine ruling 7): the request retained for this call
+    // is read before its gate input is built; a new one is retained before
+    // the chokepoint asks for it.
+    let ask = super::approval::leg_ask(vault, &event, &step, outbound, consequence_id, true);
     let prepared = PreparedEffect {
         attempt_id: consequence_id,
         call_seq: outbound.call_seq,
@@ -119,7 +122,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         payload: outbound.payload.clone(),
         idempotency_supported: outbound.idempotency_supported,
         resolved_endpoint: None,
-        gate,
+        gate: enrollment_gate_input(&step, outbound, &event, ask.target),
         budget_class: BudgetClass::Send,
         authorization: PreparedAuthorization::None,
         verified_actor: None,
@@ -136,25 +139,18 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         now_ms,
         transport,
     )?;
-    let first_asked_event_ref = super::approval::settle_first_ask(
-        vault,
-        consequence_id,
-        outbound.call_seq,
-        live_digest.as_deref(),
-        result.approval_digest.as_deref(),
-        event.event_ref,
-    );
     Ok(EnrollmentOutboundLeg::Dispatched(EnrollmentLegDispatch {
         effect: result,
-        first_asked_event_ref,
+        first_asked_event_ref: ask.first_event_ref,
     }))
 }
 
 /// FIX 6424 part 2a (Engine 10-20 21:0x ruling 1): the approve-once digest
 /// an owner's press on `payload`'s outbound leg names, composed by the
 /// Gate's own constructor over the gate input the leg builds from the same
-/// persisted rows: the logical event, the program step, the consequence and
-/// its call sequence, the frozen body. `None` when the step declares no
+/// persisted rows (the logical event, the program step, the consequence and
+/// its call sequence, the frozen body), read against the request retained
+/// for that call as the leg reads it. `None` when the step declares no
 /// outward call. It reads and records nothing else.
 ///
 /// # Errors
@@ -170,12 +166,9 @@ pub fn enrollment_outbound_approval_digest(
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(None);
     };
-    let gate = enrollment_gate_input(
-        &step,
-        outbound,
-        &event,
-        enrollment_consequence_id(&event, &step)?,
-    );
+    let consequence_id = enrollment_consequence_id(&event, &step)?;
+    let ask = super::approval::leg_ask(vault, &event, &step, outbound, consequence_id, false);
+    let gate = enrollment_gate_input(&step, outbound, &event, ask.target);
     Ok(crate::gate::external_effect_approval_digest(&gate))
 }
 
@@ -189,7 +182,7 @@ fn enrollment_gate_input(
     step: &CampaignProgramStep,
     outbound: &CampaignProgramOutbound,
     event: &CampaignEnrollmentEvent,
-    consequence_id: AttemptId,
+    target: CampaignLegFacts,
 ) -> ExternalEffectGateInput {
     ExternalEffectGateInput {
         actor: GateActor {
@@ -200,12 +193,7 @@ fn enrollment_gate_input(
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(step.sender_ref),
             // FIX 6424 part 2a: a press pins this consequence's call.
-            approval_target: Some(super::approval::leg_approval_target(
-                event,
-                step,
-                outbound,
-                consequence_id,
-            )),
+            approval_target: Some(ApprovalTarget::Campaign(target)),
             ..GateProvenanceHandles::default()
         },
         verb: outbound.verb.clone(),

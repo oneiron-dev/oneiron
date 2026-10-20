@@ -145,6 +145,7 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         suppression_receipt: effect_result.suppression_receipt,
         ceiling_count: effect_result.ceiling_count,
         held_approval_digest: effect_result.approval_digest,
+        held_approval_actor: effect_result.approval_actor,
     })
 }
 

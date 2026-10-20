@@ -531,6 +531,10 @@ pub struct OutboundDispatchResult {
     /// [`crate::outbound::outbound_approve_once_digest`] composes the same
     /// digest for a prepared request.
     pub approval_digest: Option<String>,
+    /// FIX 6424 part 2a: the actor whose press `approval_digest` names: the
+    /// co-actor's when its decision held the send (OF-427), else the
+    /// request's actor. `None` whenever `approval_digest` is.
+    pub(crate) approval_actor: Option<crate::EntityId>,
     pub receipt: ReceiptRecord,
     /// Ledger-owned logical delivery result, independent of the attempt receipt.
     pub(crate) resolution: Option<crate::outbound_intent_ledger::IntentResolution>,

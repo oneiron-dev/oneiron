@@ -24,4 +24,6 @@ pub(in crate::outbound) struct DispatchVerdict {
     /// names, as the chokepoint composed it over the input that decision
     /// evaluated (a co-actor's, when the co-actor held the send).
     pub(in crate::outbound) held_approval_digest: Option<String>,
+    /// The actor whose decision named `held_approval_digest`.
+    pub(in crate::outbound) held_approval_actor: Option<crate::entity_id::EntityId>,
 }

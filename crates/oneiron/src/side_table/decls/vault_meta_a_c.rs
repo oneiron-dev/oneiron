@@ -313,9 +313,10 @@ side_tables! {
     CAMPAIGN_COMPLIANCE_PENDING: VaultMeta b"campaign:compliance:pending:v1" Named;
     /// Caller-bound compliance amendment, owner decision or verification receipt. Key: id16.
     CAMPAIGN_COMPLIANCE_RECEIPT: VaultMeta b"campaign:compliance:receipt:v1:" Named;
-    /// The first approvable hold of one campaign enrollment's outbound call (FIX 6424 part 2a):
-    /// the approve-once digest it named and the event row it was asked under, evidence only.
-    /// Key: id16(consequence) + u64be(call seq).
+    /// One campaign enrollment outbound call's prepared request, retained before its first ask
+    /// (FIX 6424 part 2a): its target's ids and epoch, its body's digest, its sender and the event
+    /// row it was first asked under; ids and digests only. Key: id16(consequence) + u64be(call
+    /// seq) + the request's 32-byte digest.
     CAMPAIGN_ENROLLMENT_ASK: VaultMeta b"campaign:enrollment_ask:v1:" Raw;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.

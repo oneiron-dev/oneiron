@@ -10,10 +10,13 @@
 //! table keeps their press apart, filed under the family its pinned target
 //! names, and leaves that field, its codec and its validation untouched.
 //!
-//! The press is written in the admission writer that spends it and inserts
-//! the Pending row. A retry of that row reads it under the same retry
-//! context; the Gate reuses it only while the retry's own pinned digest is
-//! the kept one. A row that does not read leaves the retry on its existing
+//! The press is written once the admission that spent it and inserted the
+//! Pending row has committed, in a writer of its own
+//! ([`keep_press_after_admission`]): a press that does not write is logged
+//! and the admission stands, so its send proceeds as before this table. A
+//! retry of that row reads it under the same retry context; the Gate reuses
+//! it only while the retry's own pinned digest is the kept one. A row that
+//! does not read, or was never written, leaves the retry on its existing
 //! path, as before this table.
 
 use super::types::{AdmittedApproval, IntentId, IntentLedgerError};
@@ -23,6 +26,44 @@ use crate::side_table::{self, Raw, SideTable};
 
 /// The kept press's row layout version.
 const PINNED_APPROVAL_VERSION: u8 = 1;
+
+/// FIX 6424 part 2a (CALLS `FIX 6424 kept press write failure`): a spent
+/// press that does not write never fails the admission that spent it. The
+/// write is logged with the intent or operation it names and the admission
+/// stands: its send proceeds as it did before part 2a, and a later retry,
+/// finding no kept press, takes the existing retry path. `false` would
+/// return the write's error to the caller instead.
+pub(crate) const KEPT_PRESS_WRITE_FAILURE_CONTINUES: bool = true;
+
+/// Writes one spent press with `write`, in a writer of its own, once the
+/// admission that spent it has committed. A failure is logged with
+/// `subject` (the intent or operation, hex) and, under
+/// [`KEPT_PRESS_WRITE_FAILURE_CONTINUES`], leaves the admission as it stands.
+///
+/// # Errors
+/// The write's own failure, only when that constant is `false`.
+pub(crate) fn keep_press_after_admission<E>(
+    vault: &Vault,
+    subject: &str,
+    write: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<(), E>,
+) -> Result<(), E>
+where
+    E: From<crate::error::Error> + std::fmt::Display,
+{
+    match vault.try_with_write_txn(write) {
+        Err(error) if KEPT_PRESS_WRITE_FAILURE_CONTINUES => {
+            tracing::warn!(
+                reason = "approve_once_press_not_kept",
+                subject,
+                %error,
+                "an owner's spent approve-once press was not kept for its retry; \
+                 the admission stands and its retry asks as before"
+            );
+            Ok(())
+        }
+        kept => kept,
+    }
+}
 
 /// Intent id → version, family tag, then the spent press's 32-byte digest.
 const PINNED_APPROVAL: SideTable<IntentId, [u8; 34], Raw> =
@@ -60,8 +101,9 @@ impl PinnedApproval {
     }
 }
 
-/// Keeps `approval` beside its Pending row, in the admission writer that
-/// spends it. `None` keeps nothing.
+/// Keeps `approval` beside its Pending row, in a writer of its own once the
+/// admission that spent it has committed ([`keep_press_after_admission`]).
+/// `None` keeps nothing.
 ///
 /// # Errors
 /// A storage failure of that writer.

@@ -236,8 +236,8 @@ side_tables! {
     /// hash32.
     OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored;
     /// The owner press a Linear dispatch's or a campaign leg's admission spent, kept beside its
-    /// ledger row for its retry (FIX 6424 part 2a): version, family tag, digest. Key: hash32
-    /// (intent id).
+    /// ledger row for its retry once the admission committed (FIX 6424 part 2a): version, family
+    /// tag, digest. Key: hash32 (intent id).
     OUTBOUND_PINNED_APPROVAL: VaultMeta b"outbound:pinned_approval:v1:" Raw;
     /// Deterministic receipt id -> intent id. Key: id16.
     OUTBOUND_SUPPRESSION_INDEX: VaultMeta b"outbound:suppression_index:v1:" Raw;
