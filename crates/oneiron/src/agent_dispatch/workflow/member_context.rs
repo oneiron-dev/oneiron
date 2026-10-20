@@ -44,6 +44,13 @@ const _: () = assert!(!SELECTOR_REFILL_AFTER_BINDER_FILTER);
 const SELECTOR_ORDER_KEPT: bool = true;
 const _: () = assert!(SELECTOR_ORDER_KEPT);
 
+/// Whether a row a binder's admission check cannot judge (a store or
+/// room-walk failure that check meets) stays in the run it bound (CALLS
+/// "FIX 6715 unjudged own-entry row"): it does not. It is left out and
+/// counted, as a row the private-thread cut cannot judge is, and the run
+/// still resolves; the failure never fails a run that resolves today.
+const OWN_ENTRY_UNJUDGED_ROW_KEPT: bool = false;
+
 impl AgentDispatcher<'_> {
     /// The member whose bound run `row` wraps: a registered wrapper whose
     /// TASK binding requires a payer and names a person other than the vault
@@ -132,9 +139,9 @@ impl AgentDispatcher<'_> {
     /// whose row cannot be named or judged against a thread is left out too,
     /// as is one its admission check cannot judge. The rest keep their order
     /// and nothing refills them (`SELECTOR_ORDER_KEPT`,
-    /// `SELECTOR_REFILL_AFTER_BINDER_FILTER`). Nothing here refuses; a store
-    /// or room-walk failure the admission check meets is an error, as it is
-    /// on those reads.
+    /// `SELECTOR_REFILL_AFTER_BINDER_FILTER`). Nothing here refuses: a store
+    /// or room-walk failure the admission check meets leaves its row out
+    /// (`OWN_ENTRY_UNJUDGED_ROW_KEPT`).
     pub(in crate::agent_dispatch) fn binder_context(
         &self,
         projection: ResolvedContextProjection,
@@ -173,7 +180,7 @@ impl AgentDispatcher<'_> {
         let txn = self.vault.store.env.read_txn()?;
         let dbs = self.vault.store.read();
         let entry = AudienceCache::default();
-        let kept = |sections: &[String]| -> Result<Vec<String>> {
+        let kept = |sections: &[String]| -> Vec<String> {
             let mut kept = Vec::with_capacity(sections.len());
             for section in sections {
                 let Ok(row) = section_row(section) else {
@@ -182,15 +189,16 @@ impl AgentDispatcher<'_> {
                 if reads
                     .iter()
                     .all(|read| read.private_threads_admit_in(&txn, &row).unwrap_or(false))
-                    && own_entry_admits_in(self.vault, &entry, &dbs, &txn, row, &own_entry)?
+                    && own_entry_admits_in(self.vault, &entry, &dbs, &txn, row, &own_entry)
+                        .unwrap_or(OWN_ENTRY_UNJUDGED_ROW_KEPT)
                 {
                     kept.push(section.clone());
                 }
             }
-            Ok(kept)
+            kept
         };
-        let memory = kept(&projection.memory_sections)?;
-        let chat = kept(&projection.chat_sections)?;
+        let memory = kept(&projection.memory_sections);
+        let chat = kept(&projection.chat_sections);
         Ok(match OWN_ENTRY_SELECTOR_NOTICE {
             OwnEntryNotice::CountOnlyBinderNarrowed => projection.binder_narrowed(memory, chat),
         })
