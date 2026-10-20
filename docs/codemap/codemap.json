@@ -46356,7 +46356,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 5,
       "struct": 1
      }
