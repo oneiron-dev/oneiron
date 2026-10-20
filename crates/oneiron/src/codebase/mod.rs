@@ -5,6 +5,7 @@ mod residue;
 mod serve_lookup;
 mod snapshot;
 mod store;
+pub(crate) use self::store::checkpoint;
 pub(crate) use self::store::{archive_codebase_asset_id, archive_codebase_tables};
 
 // The ASSET a snapshot file's bytes are stored as, for a door that lists it.
