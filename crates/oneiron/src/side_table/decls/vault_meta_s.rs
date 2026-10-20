@@ -241,6 +241,12 @@ side_tables! {
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().
     EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT: VaultMeta b"settings:publisher:v1:install_default" Raw;
+    /// The owner's switch over an Admin deleting a private room thread (FIX 6382): `false` turns
+    /// it off. Absent is on. Key: ().
+    ROOM_THREADS_ADMIN_DELETE: VaultMeta b"settings:rooms:v1:admin_delete" Named;
+    /// The owner's switch over an Admin walking into a private room thread (FIX 6382): `false`
+    /// turns it off. Absent is on. Key: ().
+    ROOM_THREADS_ADMIN_WALK_IN: VaultMeta b"settings:rooms:v1:admin_walk_in" Named;
     /// Owner-set posterior-lower-bound floor below which a skill's reliability triggers a quarantine
     /// proposal. Key: ().
     SKILL_RELIABILITY_FLOOR: VaultMeta b"settings:skill:v1:reliability_floor" Raw;

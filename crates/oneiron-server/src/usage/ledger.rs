@@ -310,6 +310,8 @@ fn merge_stored_event(
 /// never zero.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SeatUsage {
+    /// The window's calls (on the one model a read asks for), and every
+    /// stored event that does not decode.
     pub calls: u64,
     /// Prompt tokens, cached reads and writes included.
     pub input_tokens: u64,
@@ -339,15 +341,23 @@ pub struct SeatUsage {
     /// The calls whose price would carry `cost_amount` past what it holds;
     /// left out of it.
     pub sum_overflow: u64,
-    /// The unpriced calls whose record names no reason: an older record, or
-    /// a posted one that gave none.
+    /// The unpriced calls whose record names no reason: an older record, a
+    /// posted one that gave none, or one that does not decode.
     pub unclassified: u64,
+    /// The stored events that do not decode, each also counted in `calls`
+    /// and `unclassified`: when, on which seat and on which model one ran is
+    /// unknown, so every read counts it.
+    pub undecodable: u64,
+    /// The seat's window calls a read for one model left out: those on
+    /// another model, or naming none.
+    pub counted_out: u64,
     /// Calls per model id.
     pub models: std::collections::BTreeMap<String, u64>,
     /// The vault's first metered call of any seat: a window that starts
     /// before it was not metered throughout.
     pub metered_since: Option<u64>,
-    /// Every call's idempotency key, newest first.
+    /// Every window call's idempotency key, the counted-out calls' too,
+    /// newest first.
     pub refs: Vec<String>,
 }
 impl SeatUsage {
@@ -392,12 +402,14 @@ impl UnpricedCache {
 impl UsageLedger {
     /// One seat's calls with `from <= at < until`, where `at` is when the call
     /// happened (its record time when the run gave none) and `seat` is the
-    /// seat the run admitted it on.
+    /// seat the run admitted it on. With a `model`, only its calls are read:
+    /// the seat's others are counted out.
     pub fn seat_usage(
         &self,
         owner: &str,
         vault_id: &str,
         seat: &str,
+        model: Option<&str>,
         from: u64,
         until: u64,
     ) -> Result<SeatUsage, UsageError> {
@@ -411,11 +423,24 @@ impl UsageLedger {
                     txn,
                     &usage_event_prefix(owner, vault_id),
                     |_, raw| -> Result<(), UsageError> {
-                        let stored = decode_entry(raw)?;
+                        // A stored event that does not decode is counted as a
+                        // call with no price and no reason, never read as zero
+                        // spend, and never fails the whole read.
+                        let Ok(stored) = decode_entry(raw) else {
+                            usage.calls += 1;
+                            usage.unclassified += 1;
+                            usage.undecodable += 1;
+                            return Ok(());
+                        };
                         let at = stored.event.occurred_at.unwrap_or(stored.recorded_at);
                         usage.metered_since =
                             Some(usage.metered_since.map_or(at, |since| since.min(at)));
                         if stored.event.role.as_deref() != Some(seat) || at < from || at >= until {
+                            return Ok(());
+                        }
+                        if model.is_some_and(|model| stored.event.model.as_deref() != Some(model)) {
+                            usage.counted_out += 1;
+                            refs.push(std::cmp::Reverse((at, stored.event.idempotency_key)));
                             return Ok(());
                         }
                         let counts = &stored.event.token_counts;
@@ -468,6 +493,12 @@ impl UsageLedger {
                     },
                 )
             })?;
+        if usage.undecodable > 0 {
+            tracing::warn!(
+                undecodable = usage.undecodable,
+                "stored usage events that do not decode were counted as unpriced calls"
+            );
+        }
         usage.complete = usage.gap_calls() == 0;
         refs.sort_unstable();
         usage.refs = refs
