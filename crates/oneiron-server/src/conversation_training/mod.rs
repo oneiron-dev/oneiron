@@ -12,15 +12,25 @@
 //! The engine decides everything: which words count, the release, the
 //! reconciliation, the seal and the signature. This module only supplies
 //! the in-vault filter, the directory, and the hooks that decide whether
-//! offers may be written at all: the intake's sealing key (CALLS-5), its
-//! receipt key, and a self-hosted vault's account binding (C1, `account`).
-//! Without them no offer is written; withdrawals still are.
+//! offers may be written at all: the intake's sealing key (CALLS-5) and its
+//! receipt key. Without them no offer is written; withdrawals still are.
+//!
+//! A self-hosted vault's offers leave through the anonymous training window
+//! (TL-6), which takes no account, so they are written only while its
+//! self-host shipper is on (`--publisher-training-self-host-shipper`, off by
+//! default, plain serve only). The shipper fetches the intake's public
+//! descriptor (`descriptor`) and installs the same two key files a managed
+//! vault's supervisor pushes, so one reader serves both. Managed serve never
+//! starts it.
 
-mod account;
+mod descriptor;
+mod http;
 mod outbox;
+mod retry;
 mod worker;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::feedback::{IntakeReceiptKey, IntakeRecipient, TrainingUnavailable};
@@ -28,7 +38,14 @@ use oneiron_vault_contract::conversation_training::{
     INTAKE_RECEIPT_KEY_FILE, INTAKE_RECIPIENT_FILE,
 };
 
-pub(crate) use self::worker::spawn;
+use self::descriptor::Descriptor;
+use self::http::Intake;
+use crate::config::ServeConfig;
+use crate::server::{HousekeepingAdmission, SyncServer};
+
+/// The intake the self-host shipper reaches without
+/// `--publisher-training-intake-origin` (CALLS TL6_DESCRIPTOR_TRUST).
+pub(crate) const DEFAULT_INTAKE_ORIGIN: &str = "https://oneiron.dev";
 
 /// How often the outbox applies receipts, reconciles and writes controls: a
 /// pace, so a withdrawal reaches `controls/` within one.
@@ -41,8 +58,9 @@ const OFFER_POLL: Duration = Duration::from_secs(15 * 60);
 /// Which serve path runs the outbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Placement {
-    /// Plain serve: a self-hosted vault, whose offers need its account
-    /// binding to the intake (C1).
+    /// Plain serve: a self-hosted vault, whose offers leave through the
+    /// anonymous training window (TL-6), so they wait for its self-host
+    /// shipper.
     SelfHost,
     /// Managed serve: the supervisor binds the registry vault id and the
     /// node's bearer outside the engine's offer.
@@ -60,8 +78,71 @@ pub(crate) fn validate_outbox_dir(dir: Option<&Path>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Refuses an intake origin the self-host shipper may not reach, by the
+/// feedback transport's rule: HTTPS, or HTTP on loopback only, with no
+/// credentials, query or fragment.
+///
+/// # Errors
+/// An origin that breaks it.
+pub(crate) fn validate_intake_origin(origin: &str) -> anyhow::Result<()> {
+    crate::feedback_delivery::check_endpoint(origin).map_err(|_| {
+        anyhow::anyhow!(
+            "--publisher-training-intake-origin must be an HTTPS origin (HTTP only on loopback) \
+             with no credentials, query or fragment"
+        )
+    })
+}
+
+/// Starts the outbox on `dir` with no self-host shipper: managed serve's,
+/// whose supervisor pushes the intake's keys and ships.
+pub(crate) fn spawn(
+    server: Arc<SyncServer>,
+    admit: HousekeepingAdmission,
+    dir: PathBuf,
+    placement: Placement,
+) -> tokio::task::JoinHandle<()> {
+    worker::spawn(server, admit, dir, placement, None)
+}
+
+/// Starts plain serve's outbox on `--publisher-training-outbox-dir`, and
+/// with it the self-host shipper's descriptor fetch while
+/// `--publisher-training-self-host-shipper` is on (TL-6); `None` with no
+/// outbox. The shipper flag without an outbox warns once and stays
+/// inactive: nothing is fetched or shipped.
+pub(crate) fn spawn_self_host(
+    server: &Arc<SyncServer>,
+    config: &ServeConfig,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let shipper = config.publisher_training_self_host_shipper;
+    let Some(dir) = config.publisher_training_outbox_dir.clone() else {
+        if shipper {
+            tracing::warn!(
+                "--publisher-training-self-host-shipper needs --publisher-training-outbox-dir; \
+                 the self-host training shipper stays inactive"
+            );
+        }
+        return None;
+    };
+    let descriptor = shipper.then(|| {
+        tracing::info!(
+            "the self-host training shipper is on: the intake's descriptor is fetched at start \
+             and hourly"
+        );
+        let intake = Intake::new(&config.publisher_training_intake_origin);
+        Arc::new(Descriptor::new(Arc::new(intake)))
+    });
+    Some(worker::spawn(
+        Arc::clone(server),
+        crate::server::admit_every_pass(),
+        dir,
+        Placement::SelfHost,
+        descriptor,
+    ))
+}
+
 /// CALLS-5: the intake's sealing key, read from the one fixed file the
-/// supervisor (or a self-host operator) publishes in the outbox directory,
+/// supervisor, or a self-hosted vault's shipper from the intake's
+/// descriptor, publishes in the outbox directory,
 /// [`INTAKE_RECIPIENT_FILE`]. Every chunk is sealed to it with the envelope
 /// escrow seals to its recipients with. No file, or one that holds no
 /// hybrid public key, refuses offers with a typed unavailable naming it;
@@ -73,9 +154,10 @@ fn intake_recipient_key(outbox_dir: &Path) -> Result<IntakeRecipient, TrainingUn
     IntakeRecipient::from_key_file(&bytes)
 }
 
-/// The intake's receipt key, from its fixed file
-/// ([`INTAKE_RECEIPT_KEY_FILE`]): what authenticates a receipt. Without it
-/// no receipt is applied, so nothing retires.
+/// The intake's receipt key ring, from its fixed file
+/// ([`INTAKE_RECEIPT_KEY_FILE`]): what authenticates a receipt, by the
+/// current key or the one before it (FIX 6156). Without it no receipt is
+/// applied, so nothing retires.
 fn intake_receipt_key(outbox_dir: &Path) -> Result<IntakeReceiptKey, TrainingUnavailable> {
     let bytes = read_key_file(&outbox_dir.join(INTAKE_RECEIPT_KEY_FILE))
         .ok_or(TrainingUnavailable::MissingReceiptKey)?;
@@ -83,13 +165,16 @@ fn intake_receipt_key(outbox_dir: &Path) -> Result<IntakeReceiptKey, TrainingUna
 }
 
 /// Whether offers may be written from this vault now, and the key they are
-/// sealed to: a self-hosted vault first needs its account binding (C1).
+/// sealed to. A self-hosted vault's offers wait for its self-host shipper
+/// (`shipper`, TL-6); past that both placements read the one installed
+/// recipient.
 fn offer_gate(
     outbox_dir: &Path,
     placement: Placement,
+    shipper: bool,
 ) -> Result<IntakeRecipient, TrainingUnavailable> {
-    if placement == Placement::SelfHost {
-        account::intake_account_binding()?;
+    if placement == Placement::SelfHost && !shipper {
+        return Err(TrainingUnavailable::ShipperOff);
     }
     intake_recipient_key(outbox_dir)
 }

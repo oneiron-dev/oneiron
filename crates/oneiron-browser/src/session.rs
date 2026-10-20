@@ -53,14 +53,17 @@
 //! The model moves the page to the other engine with `switch_engine`
 //! (`switch`): the host's starter starts the target guest, and the target
 //! replaces only the session's engine group (`guest`); the run's state
-//! stays.
+//! stays, the storage snapshots of the origins its tabs visited with it
+//! (`storage`).
 
 mod guest;
+pub(crate) mod storage;
 pub(crate) mod switch;
 
 pub use guest::{BrowserGuestStarter, StartedGuest};
 
 use self::guest::EngineGuest;
+use self::storage::{Collector, OriginSnapshots};
 use self::switch::OriginHistory;
 use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
@@ -74,9 +77,9 @@ use crate::{
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
     Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
     ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SelectInput, SendPolicy, SwitchEngineInput, SwitchEngineOutput, TabSwitch,
-    Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput, WorkflowLibrary,
-    ZoomInput, site_of,
+    ScreenshotTrigger, SelectInput, SendPolicy, StoragePhase, SwitchEngineInput,
+    SwitchEngineOutput, TabSwitch, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput,
+    WaitForOutput, WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
     EgressRelay, GuestLimits, SessionLease, SessionManifest, SessionTransport,
@@ -152,6 +155,9 @@ pub struct BrowserSession {
     starter: Option<Box<dyn BrowserGuestStarter>>,
     /// The top-level origins the session's tabs visited, across switches.
     history: OriginHistory,
+    /// Their stores as last read, across switches; none where the host gave
+    /// no starter, so no switch.
+    snapshots: Option<Collector>,
 }
 
 impl BrowserSession {
@@ -172,11 +178,15 @@ impl BrowserSession {
             relay,
             retention,
         };
+        let snapshots = starter
+            .as_ref()
+            .map(|starter| OriginSnapshots::collector(starter.state_charge()));
+        let sink = snapshots.as_ref().map(OriginSnapshots::sink);
         let EngineGuest {
             driver,
             lease,
             manifest,
-        } = EngineGuest::attach(config.engine, started, config.wait_cap)?;
+        } = EngineGuest::attach(config.engine, started, config.wait_cap, sink)?;
         Ok(Self {
             driver,
             guest: lease,
@@ -191,6 +201,7 @@ impl BrowserSession {
             returned: None,
             starter,
             history: OriginHistory::default(),
+            snapshots,
         })
     }
 
@@ -373,6 +384,7 @@ impl BrowserSession {
         }
         self.driver.tabs(false)?;
         self.bring_up(tab)?;
+        self.driver.checkpoint(StoragePhase::PreInput);
         self.driver.person_input(input)?;
         let Takeover::Held { inputs, .. } = &mut self.takeover else {
             return Err(BrowserError::GuestLost);
@@ -421,6 +433,7 @@ impl BrowserSession {
         // person left it: no tab they opened, and no move from before,
         // counts as the agent's.
         let _ = self.driver.tabs(false);
+        self.driver.checkpoint(StoragePhase::HandBack);
         self.driver.know_tabs();
         self.returned = Some(record.clone());
         Ok(record)
@@ -570,6 +583,7 @@ impl BrowserSession {
             self.receipt_sink = Some(sink);
         }
         self.receipts.push(receipt.clone());
+        self.landed();
         observation.receipt = Some(receipt);
     }
 }

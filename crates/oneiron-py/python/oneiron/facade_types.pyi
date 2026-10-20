@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1085 facade rows, 3729 declarations.
+Census: 1085 facade rows, 3730 declarations.
 Inputs: 1020 of 1085 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 972 of 1085 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -18491,17 +18491,22 @@ class ActionFactNavigateNoEffect(TypedDict):
     window_ms: int
 ActionFact = ActionFactClickNoEffect | ActionFactTypeNoEffect | ActionFactNavigateNoEffect
 SwitchComponent = Literal["url", "cookies", "cookie", "local_storage", "session_storage", "storage", "scroll", "tab"]
+StoragePhase = Literal["pre_input", "post_act", "exit", "hand_back", "switch_export"]
 class SwitchCarried(TypedDict):
     component: SwitchComponent
     origin: NotRequired[str | None]
     count: NotRequired[int | None]
-SwitchLoss = Literal["not_collected", "engine_refuses", "engine_ignores", "limit", "host_capacity", "read_failed", "seed_failed", "readback_mismatch", "redirected", "not_web_page", "other_tab"]
+    phase: NotRequired[StoragePhase | None]
+    after_receipt: NotRequired[int | None]
+SwitchLoss = Literal["never_sampled", "context_lost", "read_exception", "departure_tail_unobserved", "evicted_oldest", "cross_origin_frame", "opaque_origin", "effective_origin_mismatch", "engine_refuses", "engine_ignores", "limit", "host_capacity", "read_failed", "seed_failed", "readback_mismatch", "redirected", "not_web_page", "other_tab"]
 class SwitchNotCarried(TypedDict):
     component: SwitchComponent
     origin: NotRequired[str | None]
     cookies: NotRequired[list[str]]
     attribute: NotRequired[str | None]
     count: NotRequired[int | None]
+    phase: NotRequired[StoragePhase | None]
+    after_receipt: NotRequired[int | None]
     reason: SwitchLoss
 SwitchStage = Literal["start", "attach", "cookies", "navigate"]
 class SwitchOutcomeSwitched(TypedDict):

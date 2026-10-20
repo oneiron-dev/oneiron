@@ -26137,7 +26137,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 50
+      "crate-vis": 51
      }
     },
     {
@@ -27704,7 +27704,7 @@
      "purpose": "The publisher training files' crypto (OF-420): the install signature on what the vault writes (C1, D6), the…",
      "surface": {
       "crate-vis": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -27746,13 +27746,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/feedback/conversation_training/link.rs",
      "purpose": "The training link (TRAINING-LINK = C, TL-1): the opaque codes that stand in for this vault, its sources…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -69405,13 +69405,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cdp/state.rs",
-     "purpose": "What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3): the page each watched…",
+     "purpose": "What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/storage.rs",
+     "purpose": "What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -69449,7 +69459,7 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -69499,7 +69509,17 @@
      "path": "src/driver/state.rs",
      "purpose": "A page's state as an engine switch reads it off the source and writes it into the target (FIX 6680…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/storage.rs",
+     "purpose": "The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -69705,7 +69725,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 23,
       "re-export": 1,
       "struct": 2
@@ -69730,10 +69750,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/session/switch.rs",
-     "purpose": "The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3), under the seat lock the call already holds…",
+     "path": "src/session/storage.rs",
+     "purpose": "The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session/switch.rs",
+     "purpose": "The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b), under the seat lock the call already…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69741,6 +69771,7 @@
      "kind": "src",
      "notable": [
       "EngineSwitchRecord",
+      "StoragePhase",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -69751,9 +69782,9 @@
       "SwitchStage"
      ],
      "path": "src/switch.rs",
-     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3): the model moves the run's browser to the other engine…",
+     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine…",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "struct": 5
      }
     }
@@ -69774,7 +69805,7 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -69788,7 +69819,7 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -69851,7 +69882,7 @@
      "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)"
     },
     "session": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -69862,12 +69893,12 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3): the model moves the run's browser to the other engine…"
+     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine…"
     }
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 25,
+   "source_files": 28,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -82636,7 +82667,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs/browser_guest.rs",
      "purpose": "A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -86193,10 +86224,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/conversation_training/account.rs",
-     "purpose": "C1 (CALLS-1): a self-hosted vault's binding to the publisher's intake as the person's Oneiron account…",
+     "path": "src/conversation_training/descriptor.rs",
+     "purpose": "The intake's public descriptor on a self-hosted vault (TL-6): the intake's sealing key and receipt keys…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/http.rs",
+     "purpose": "The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -86206,7 +86247,7 @@
      "path": "src/conversation_training/mod.rs",
      "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -86216,7 +86257,17 @@
      "path": "src/conversation_training/outbox.rs",
      "purpose": "The outbox directory as the engine's training transport: three protocol subdirectories and the vault's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/retry.rs",
+     "purpose": "The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -91140,7 +91191,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "conversation_training": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91471,7 +91522,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 944,
+   "source_files": 946,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94954,6 +95005,7 @@
       "StepTarget",
       "StepXfrm",
       "StopCause",
+      "StoragePhase",
       "StoredShapeSeed",
       "StreamCadence",
       "StreamFinality",
@@ -95376,7 +95428,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 896,
+      "enum": 897,
       "struct": 2808
      }
     },

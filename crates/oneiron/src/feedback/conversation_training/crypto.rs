@@ -12,8 +12,8 @@ use ed25519_dalek::{Signature, Signer as _, VerifyingKey};
 use getrandom::SysRng;
 use oneiron_crypto::{HybridPublicKey, Purpose, SealKey, SealParams, SuiteId, seal};
 use oneiron_vault_contract::conversation_training::{
-    TRAINING_RECEIPT_TYPE, TRAINING_SEAL_RECIPIENT, TRAINING_SIGNATURE_SUITE, TrainingReceiptV2,
-    TrainingSignatureV2, training_signed_message,
+    PieceReceiptV1, TRAINING_RECEIPT_TYPE, TRAINING_SEAL_RECIPIENT, TRAINING_SIGNATURE_SUITE,
+    TrainingReceiptV2, TrainingSignatureV2, piece_receipt_signed_message, training_signed_message,
 };
 use serde::Serialize;
 
@@ -71,35 +71,91 @@ impl std::fmt::Debug for IntakeRecipient {
     }
 }
 
-/// The intake's Ed25519 receipt key, as the outbox's receipt key file holds
-/// it: what authenticates a receipt.
+/// The intake's Ed25519 receipt keys, as the outbox's receipt key file holds
+/// them: what authenticates a receipt. The file is a ring (FIX 6156): the
+/// current key's 32 raw bytes, then, while a rotation drains, the previous
+/// key's 32. A receipt either key signed verifies, so a rotation strands no
+/// receipt the old key signed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct IntakeReceiptKey(VerifyingKey);
+pub struct IntakeReceiptKey {
+    /// The intake's current receipt key.
+    current: VerifyingKey,
+    /// The key before it, which the intake drops only once every receipt it
+    /// signed is delivered.
+    previous: Option<VerifyingKey>,
+}
 
 impl IntakeReceiptKey {
-    /// The key a receipt key file's 32 bytes hold.
+    /// The ring a receipt key file's bytes hold: 32 bytes for the current
+    /// key alone, 64 for the current key then the previous one.
     ///
     /// # Errors
-    /// [`TrainingUnavailable::UnusableReceiptKey`] for bytes that are no
-    /// Ed25519 public key.
+    /// [`TrainingUnavailable::UnusableReceiptKey`] for any other length, or a
+    /// member that is no Ed25519 public key: no ring is taken in part.
     pub fn from_key_file(bytes: &[u8]) -> std::result::Result<Self, TrainingUnavailable> {
-        let bytes: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| TrainingUnavailable::UnusableReceiptKey)?;
-        VerifyingKey::from_bytes(&bytes)
-            .map(Self)
-            .map_err(|_| TrainingUnavailable::UnusableReceiptKey)
+        match bytes.len() {
+            32 => Ok(Self {
+                current: receipt_key_member(bytes)?,
+                previous: None,
+            }),
+            64 => {
+                let (current, previous) = bytes.split_at(32);
+                Ok(Self {
+                    current: receipt_key_member(current)?,
+                    previous: Some(receipt_key_member(previous)?),
+                })
+            }
+            _ => Err(TrainingUnavailable::UnusableReceiptKey),
+        }
     }
+
+    /// Whether `receipt`, an anonymous window's receipt (TL-6), is signed by
+    /// either key of the ring over [`piece_receipt_signed_message`] of its
+    /// body. Only the ring's keys are tried: a receipt names no key, and none
+    /// a reply carries is ever trusted.
+    #[must_use]
+    pub fn verify_piece_receipt(&self, receipt: &PieceReceiptV1) -> bool {
+        let Some(signature) = signature_of(&receipt.signature) else {
+            return false;
+        };
+        let Ok(message) = piece_receipt_signed_message(&receipt.body) else {
+            return false;
+        };
+        self.members()
+            .any(|key| key.verify_strict(&message, &signature).is_ok())
+    }
+
+    /// The ring's keys, the current one first.
+    fn members(&self) -> impl Iterator<Item = &VerifyingKey> {
+        std::iter::once(&self.current).chain(self.previous.as_ref())
+    }
+}
+
+/// One member of a receipt key ring: 32 bytes that are an Ed25519 public
+/// key.
+fn receipt_key_member(bytes: &[u8]) -> std::result::Result<VerifyingKey, TrainingUnavailable> {
+    let bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| TrainingUnavailable::UnusableReceiptKey)?;
+    VerifyingKey::from_bytes(&bytes).map_err(|_| TrainingUnavailable::UnusableReceiptKey)
+}
+
+/// An Ed25519 signature spelled as 128 hex characters; `None` for any other
+/// text.
+fn signature_of(hex: &str) -> Option<Signature> {
+    oneiron_vault_contract::from_hex(hex)
+        .and_then(|bytes| <[u8; 64]>::try_from(bytes).ok())
+        .map(|bytes| Signature::from_bytes(&bytes))
 }
 
 /// C1 (D6): signs `body`, for a file of `file_type`, with this install's
 /// machine key over the contract's signed message (its own domain, never an
 /// authority transcript). The signature is for the intake's authentication
 /// of this install only: the intake checks it, then discards it and the key,
-/// and keeps no install identity beside the codes (TRAINING-LINK = C). The
-/// account binding is the uploader's (a self-hosted vault's device-code
-/// account hook, unavailable today; the supervisor's in managed mode).
-/// `None` before this install has a machine identity.
+/// and keeps no install identity beside the codes (TRAINING-LINK = C). No
+/// account rides on it: in managed mode the supervisor binds its own when it
+/// ships, and a self-hosted vault ships through the anonymous window (TL-6),
+/// which takes none. `None` before this install has a machine identity.
 ///
 /// # Errors
 /// Storage faults, a machine identity whose signer is not loaded, and a body
@@ -126,25 +182,24 @@ pub(super) fn sign_training_payload<T: Serialize>(
     }))
 }
 
-/// Whether `receipt` is signed by the intake's receipt key over its body.
+/// Whether `receipt` is signed over its body by a key of the intake's
+/// receipt key ring: its suite, the key it names and its strict signature
+/// all checked against that one key, the current one or the previous.
 pub(super) fn receipt_verifies(key: &IntakeReceiptKey, receipt: &TrainingReceiptV2) -> bool {
-    let signature = &receipt.signature;
-    if signature.suite != TRAINING_SIGNATURE_SUITE
-        || signature.public_key != oneiron_vault_contract::hex(key.0.as_bytes())
-    {
+    let signed = &receipt.signature;
+    if signed.suite != TRAINING_SIGNATURE_SUITE {
         return false;
     }
-    let Some(bytes) = oneiron_vault_contract::from_hex(&signature.signature)
-        .and_then(|bytes| <[u8; 64]>::try_from(bytes).ok())
-    else {
+    let Some(signature) = signature_of(&signed.signature) else {
         return false;
     };
     let Ok(message) = training_signed_message(TRAINING_RECEIPT_TYPE, &receipt.body) else {
         return false;
     };
-    key.0
-        .verify_strict(&message, &Signature::from_bytes(&bytes))
-        .is_ok()
+    key.members().any(|member| {
+        signed.public_key == oneiron_vault_contract::hex(member.as_bytes())
+            && member.verify_strict(&message, &signature).is_ok()
+    })
 }
 
 /// Seals `text` to the intake, one envelope per chunk, in part order. Each
