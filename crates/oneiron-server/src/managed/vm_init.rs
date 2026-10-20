@@ -15,13 +15,19 @@
 //! reports its own readiness after the unchanged managed gates; nothing here
 //! stands in for either.
 //!
-//! It stays root only to supervise. When the engine exits it ends whatever
-//! the engine left running, syncs, removes the key from the filesystem's
-//! keyring and exits with the engine's status; the image's init then powers
-//! the VM off.
+//! It stays root only to supervise, and to run the outbox companion
+//! `oneiron-vm-outbox` beside the engine ([`outbox`], FIX 5235): started
+//! before the engine, it lays out the outbox and carries it to the host, and
+//! the engine gets its outbox flags only once it is ready. When the engine
+//! exits the bootstrap stops the companion and waits for it (a local commit
+//! in flight finishes, a network transfer parks), then ends whatever the
+//! engine left running, syncs, removes the key from the filesystem's keyring
+//! and exits with the engine's status; the image's init then powers the VM
+//! off.
 
 mod fscrypt;
 mod layout;
+mod outbox;
 
 use self::fscrypt::{KeyIdentifier, Removal};
 use anyhow::Context as _;
@@ -267,13 +273,36 @@ fn remove_key(provisioned: &Provisioned) {
     }
 }
 
-/// Starts the engine as `uid` and waits for it, then ends and reaps what it
-/// left running.
+/// Starts the outbox companion, then the engine as `uid`, and waits for the
+/// engine; then stops the companion, and ends and reaps what is left.
 fn run_engine(args: &InitArgs, uid: u32) -> anyhow::Result<ExitStatus> {
     // Whatever the engine leaves behind is reparented here, not to PID 1, so
     // it is reaped before the key goes. Any nonzero argument sets it.
     rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
         .context("becoming the engine's subreaper")?;
+    let companion = outbox::start(&args.vault, uid, ENGINE_PATH);
+    let outbox_flags = if companion.is_some() {
+        outbox::engine_flags()
+    } else {
+        Vec::new()
+    };
+    let status = start_engine(args, uid, &outbox_flags)
+        .and_then(|mut engine| engine.wait().context("waiting for the engine"));
+    // The companion goes first, while the key is in: it may be writing into
+    // the encrypted storage. Then everything else, the broker among it.
+    if let Some(companion) = companion {
+        companion.stop();
+    }
+    end_leftovers();
+    status
+}
+
+/// The engine as `uid`, with the init's flags and `outbox_flags`.
+fn start_engine(
+    args: &InitArgs,
+    uid: u32,
+    outbox_flags: &[OsString],
+) -> anyhow::Result<std::process::Child> {
     let mut command = oneiron_spawn::command(ENGINE);
     command
         .arg("serve")
@@ -290,6 +319,7 @@ fn run_engine(args: &InitArgs, uid: u32) -> anyhow::Result<ExitStatus> {
             VM_GUEST_KEYS_DIR,
         ])
         .args(&args.engine_flags)
+        .args(outbox_flags)
         .env_clear()
         .env("PATH", ENGINE_PATH)
         .stdin(Stdio::null());
@@ -297,10 +327,7 @@ fn run_engine(args: &InitArgs, uid: u32) -> anyhow::Result<ExitStatus> {
     // setgroups, setgid and setuid, which are async-signal-safe, then reads
     // errno; it allocates nothing.
     unsafe { command.pre_exec(move || drop_privileges(uid)) };
-    let mut engine = command.spawn().context("starting the engine")?;
-    let status = engine.wait().context("waiting for the engine")?;
-    end_leftovers();
-    Ok(status)
+    command.spawn().context("starting the engine")
 }
 
 /// Clears the supplementary groups, then sets the GID and the UID to `uid`.
