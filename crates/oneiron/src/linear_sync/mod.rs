@@ -67,6 +67,7 @@
 //! event NOT recorded, which is the safe direction — the retry re-derives the
 //! decision from the stored base rather than assuming it landed.
 
+mod approval;
 mod codec;
 mod effect;
 mod engine;
@@ -78,9 +79,12 @@ mod served;
 mod storage_codec;
 mod webhook;
 
+pub(crate) use self::approval::linear_writer_co_actor_in_txn;
+pub use self::approval::{
+    LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval,
+};
 pub(crate) use self::codec::LINEAR_LINKS;
 pub use self::codec::{linear_event_digest, linear_operation_id};
-pub(crate) use self::effect::linear_effect_writer_in_txn;
 pub use self::effect::{LinearEffectKind, LinearEffectRequest};
 pub use self::engine::LinearSyncAdapter;
 pub use self::facade_types::{

@@ -178,6 +178,15 @@ fn send_pending_with_gate<T: OutboundTransport>(
             .or_else(|| super::admission::required_grant_id(&prepared.authorization));
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
+        // FIX 6424 part 2a: or the press a pinned family kept for this row.
+        let retry = record.admitted_approval.or_else(|| {
+            crate::outbound_intent_ledger::pinned_retry_approval(
+                vault,
+                &wtxn,
+                record.id,
+                &prepared.gate,
+            )
+        });
         let governance = gate::evaluate_external_effect_policy(
             &vault.store,
             &mut wtxn,
@@ -188,15 +197,14 @@ fn send_pending_with_gate<T: OutboundTransport>(
                 PreparedAuthorization::ScopedMcp { prepared, .. } => Some(prepared),
                 PreparedAuthorization::None => None,
             },
-            record
-                .admitted_approval
-                .map_or(gate::ApprovalContext::Observe, gate::ApprovalContext::Retry),
+            retry.map_or(gate::ApprovalContext::Observe, gate::ApprovalContext::Retry),
         )?;
         if governance.outcome() != GateOutcome::Allow {
             let (decision_id, decision) =
                 gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
             wtxn.commit().map_err(Error::from)?;
-            let mut result = gate_rejection(record.id, decision_id, decision);
+            let mut result =
+                gate_rejection(record.id, decision_id, decision).held_by(&posting_gate);
             result.dispatch.state = Some(record.state);
             result.dispatch.replayed = replayed;
             return Ok(result);
@@ -446,6 +454,8 @@ pub(super) fn effect_result(
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
+        approval_digest: None,
+        approval_actor: None,
     }
 }
 
@@ -480,6 +490,8 @@ pub(super) fn gate_rejection(
         dedupe_suppressed: false,
         suppression_receipt: None,
         ceiling_count: None,
+        approval_digest: None,
+        approval_actor: None,
     }
 }
 

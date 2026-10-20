@@ -13,7 +13,7 @@ mod journal;
 mod source;
 mod webhook;
 
-pub use dispatch::VaultLinearOutboundDoor;
+pub use dispatch::{VaultLinearOutboundDoor, held_approve_once};
 pub use egress::{LinearHostEgress, LinearMutation, LinearOutboundDoor};
 pub use http::{
     GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient, LINEAR_GRAPHQL_ENDPOINT,

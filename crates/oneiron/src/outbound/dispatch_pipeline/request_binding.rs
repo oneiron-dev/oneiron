@@ -183,41 +183,8 @@ impl PreparedOutboundDispatch {
         if self.payload.is_some() {
             return Ok(());
         }
+        let payload = self.frozen_payload_bytes()?;
         let request = &self.request;
-        let mut hygiene_headers = BTreeMap::new();
-        inject_campaign_email_hygiene_headers(
-            &normalize_channel_class(&request.intent.channel),
-            &mut hygiene_headers,
-            request.campaign_unsubscribe.as_ref(),
-        )?;
-        let payload = serde_json::to_vec(&FrozenOutboundPayload {
-            intent: &request.intent,
-            hygiene_headers,
-            dreamer_step: self
-                .step_binding
-                .map(crate::llm::StepEffectBinding::frozen_value),
-            calendar_invite: request.calendar_invite.as_ref(),
-            space_posting: self.space_posting.as_ref(),
-            actor_class: &request.actor.actor_class,
-            actor_ref: request.actor.actor_ref.as_deref(),
-            actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
-            channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
-            counterparty_ref: request.counterparty_ref.as_deref(),
-            native_mail_recipient: self.native_mail_recipient.then_some(true),
-            native_mail_logical_ref: self
-                .native_mail_recipient
-                .then_some(request.intent_ref.as_str()),
-            approval_send_ref: super::govern::frozen_approval_send_ref(request),
-            has_opted_in: request.gate.has_opted_in,
-            has_permission: request.gate.has_permission,
-            requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
-            policy_risk: self.policy_risk.as_str(),
-            originating_session_ref: request.originating_session_ref.as_deref(),
-            reply_thread_ref: request.reply_thread_ref.as_deref(),
-            facet_ref: request.facet_ref.map(|id| id.to_hex()),
-            send_autonomy: request.send_autonomy.as_ref().map(FrozenSendAutonomy::of),
-        })
-        .map_err(|_| Error::InvariantViolation("outbound intent freeze failed"))?;
         if let Some(record) = self.replay.as_ref() {
             if record.server != request.intent.channel
                 || record.tool != self.verb_contract.kind
@@ -249,6 +216,46 @@ impl PreparedOutboundDispatch {
         }
         self.payload = Some(payload);
         Ok(())
+    }
+    /// The exact bytes [`Self::freeze_and_validate`] freezes for this
+    /// request, before it compares them with a replayed row. A Linear send's
+    /// approve-once target pins their digest (FIX 6424 part 2a).
+    pub(super) fn frozen_payload_bytes(&self) -> Result<Vec<u8>, OutboundDispatchError> {
+        let request = &self.request;
+        let mut hygiene_headers = BTreeMap::new();
+        inject_campaign_email_hygiene_headers(
+            &normalize_channel_class(&request.intent.channel),
+            &mut hygiene_headers,
+            request.campaign_unsubscribe.as_ref(),
+        )?;
+        serde_json::to_vec(&FrozenOutboundPayload {
+            intent: &request.intent,
+            hygiene_headers,
+            dreamer_step: self
+                .step_binding
+                .map(crate::llm::StepEffectBinding::frozen_value),
+            calendar_invite: request.calendar_invite.as_ref(),
+            space_posting: self.space_posting.as_ref(),
+            actor_class: &request.actor.actor_class,
+            actor_ref: request.actor.actor_ref.as_deref(),
+            actor_entity_ref: request.actor.actor_entity_ref.map(|id| id.to_hex()),
+            channel_identity_ref: request.channel_identity_ref.map(|id| id.to_hex()),
+            counterparty_ref: request.counterparty_ref.as_deref(),
+            native_mail_recipient: self.native_mail_recipient.then_some(true),
+            native_mail_logical_ref: self
+                .native_mail_recipient
+                .then_some(request.intent_ref.as_str()),
+            approval_send_ref: super::govern::frozen_approval_send_ref(request),
+            has_opted_in: request.gate.has_opted_in,
+            has_permission: request.gate.has_permission,
+            requested_policy_risk: request.gate.policy_risk.to_gate().as_str(),
+            policy_risk: self.policy_risk.as_str(),
+            originating_session_ref: request.originating_session_ref.as_deref(),
+            reply_thread_ref: request.reply_thread_ref.as_deref(),
+            facet_ref: request.facet_ref.map(|id| id.to_hex()),
+            send_autonomy: request.send_autonomy.as_ref().map(FrozenSendAutonomy::of),
+        })
+        .map_err(|_| Error::InvariantViolation("outbound intent freeze failed").into())
     }
     pub(super) fn replay_done(&self) -> bool {
         self.replay

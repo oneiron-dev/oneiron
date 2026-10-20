@@ -79,6 +79,7 @@ impl DispatchObservation {
                 .fields
                 .get(crate::outbound::APPROVAL_DIGEST_FIELD)
                 .cloned(),
+            approval_actor: None,
             receipt: self.receipt.clone(),
             // The observation is not resend authority; terminal consumers
             // resolve the exact ledger row instead of trusting this echo.

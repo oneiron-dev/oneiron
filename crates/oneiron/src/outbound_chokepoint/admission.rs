@@ -276,28 +276,34 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
         wtxn.commit().map_err(Error::from)?;
-        return Ok(gate_rejection(intent_id, decision_id, decision));
+        return Ok(gate_rejection(intent_id, decision_id, decision).held_by(&posting_gate));
     }
     // OF-427: the co-actor's own governance under this same writer. A
     // refusal records only its decision: the primary's Allow admitted
-    // nothing, so it spends no approve-once marker.
+    // nothing, so it spends no approve-once marker. FIX 6424 part 2a: it
+    // reuses the press its own earlier admission kept, and names its digest.
+    let mut co_keep = None;
     let mut co_governance = match prepared.co_actor.take() {
         Some(co_actor) => {
-            let effect = (co_actor.bind)(vault, &mut wtxn)?;
+            let bound = (co_actor.bind)(vault, &mut wtxn)?;
+            co_keep = Some(bound.keep_press);
             let co = gate::evaluate_external_effect_policy(
                 &vault.store,
                 &mut wtxn,
-                &effect,
+                &bound.effect,
                 &policy,
                 None,
                 None,
-                gate::ApprovalContext::FirstAdmission,
+                bound.kept_press.map_or(
+                    gate::ApprovalContext::FirstAdmission,
+                    gate::ApprovalContext::Retry,
+                ),
             )?;
             if co.outcome() != GateOutcome::Allow {
                 let (decision_id, decision) =
                     gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
                 wtxn.commit().map_err(Error::from)?;
-                return Ok(gate_rejection(intent_id, decision_id, decision));
+                return Ok(gate_rejection(intent_id, decision_id, decision).held_by(&bound.effect));
             }
             Some(co)
         }
@@ -523,6 +529,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // not an availability observation from dispatch preparation. Spend,
     // decision, typed proof, budget marker and Pending insert commit together.
     pending.admitted_approval = governance.admitted_send_approval(pending.id);
+    let pinned_approval = governance.pinned_send_approval(pending.id);
     if pending.id != intent_id {
         return Err(IntentLedgerError::InvalidRecord(
             "prepared outbound identity changed",
@@ -530,7 +537,9 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let (decision_id, decision) =
         gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
+    let mut co_spent = None;
     if let Some(co) = co_governance {
+        co_spent = co.spent_press_digest().zip(co_keep);
         gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
     }
     insert_pending_in_txn(vault, &mut wtxn, &pending)?;
@@ -555,6 +564,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     wtxn.commit().map_err(Error::from)?;
     force_sync(vault)?;
+    // FIX 6424 part 2a: the presses it spent, kept for its retry once it stands.
+    super::types::keep_spent_presses(vault, pending.id, pinned_approval, co_spent)?;
 
     let mut result = send_pending(vault, authority, pending, now_ms, false, transport)?;
     result.gate_decision_id = Some(format!("gate:{}", decision_id.to_hex()));

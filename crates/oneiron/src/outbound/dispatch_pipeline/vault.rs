@@ -57,25 +57,38 @@ impl Vault {
     /// allow; each distinct connector key is charged once, so one remote
     /// mutation spends the scheduler's allowance once.
     ///
+    /// FIX 6424 part 2a: both actors' approve-once presses pin the mirror
+    /// operation (`request.linear_mirror` is set to `effect`); a held result
+    /// and its receipt name the digest of the actor that held it, the
+    /// writer's when the writer did.
+    ///
     /// # Errors
     /// As [`Self::dispatch_outbound_intent_recorded`]. A mutation that is no
     /// longer the TASK's current mirror operation is refused before any
     /// decision is recorded.
     pub fn dispatch_linear_outbound_intent_recorded<S: OutboundExecutionSink>(
         &self,
-        request: OutboundDispatchRequest,
+        mut request: OutboundDispatchRequest,
         effect: &crate::linear_sync::LinearEffectRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        request.linear_mirror = Some(effect.clone());
         let effect = effect.clone();
         let co_actor = crate::outbound_chokepoint::CoActorAdmission {
             bind: Box::new(move |vault: &Vault, txn: &mut heed::RwTxn<'_>| {
-                crate::linear_sync::linear_effect_writer_in_txn(vault, txn, &effect)
+                crate::linear_sync::linear_writer_co_actor_in_txn(vault, txn, &effect)
             }),
         };
         let result =
             OutboundDispatchPipeline.dispatch_with_co_actor(self, request, sink, co_actor)?;
         crate::receipt::record_direct_dispatch_receipt(self, result.receipt.clone())?;
+        if let Some(digest) = result.approval_digest.as_deref() {
+            tracing::info!(
+                approval_digest = digest,
+                gate_decision = ?result.gate_decision_id,
+                "Linear mutation held for the owner's approve-once press"
+            );
+        }
         Ok(result)
     }
 

@@ -30,6 +30,7 @@
 //! key. CA-03 keeps its own `campaign:home_node_macro:v1` row and never touches
 //! the Dreamer's.
 
+mod approval;
 mod audience;
 mod detection;
 mod home_node;
@@ -52,6 +53,7 @@ pub use self::home_node::{
     elect_campaign_home_node_designation, local_campaign_home_node_candidate,
     require_campaign_home_node,
 };
+pub use self::outbound_leg::enrollment_outbound_approval_digest;
 pub use self::program::{
     AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition,
     CampaignProgramDraft, CampaignProgramStepDraft, archive_campaign_program,

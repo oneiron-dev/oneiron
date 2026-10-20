@@ -3,13 +3,15 @@
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::connector_key::EffectorBudgetCharge;
+use crate::consent::EffectDigest;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::gate::ExternalEffectGateInput;
+use crate::gate::{ApprovalTarget, ExternalEffectGateInput};
 use crate::outbound_consent::tool_call::PreparedToolCall;
 use crate::outbound_intent_ledger::{
-    BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentId, IntentLedgerError,
-    IntentResolution, OutboundSendOutcome, derive_intent_id, hash_frozen_payload,
+    AdmittedApproval, BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentId,
+    IntentLedgerError, IntentResolution, OutboundSendOutcome, PinnedApproval, derive_intent_id,
+    hash_frozen_payload, keep_pinned_approval_in_txn, keep_press_after_admission,
 };
 use crate::receipt::ReceiptRecord;
 
@@ -38,6 +40,30 @@ pub(crate) struct OutboundEffectResult {
     /// insert, to the count it read under the writer lock: nothing was
     /// admitted or sent.
     pub(crate) ceiling_count: Option<u32>,
+    /// FIX 6424 part 2a: the approve-once digest the Gate decision that held
+    /// this call names, 64 lower-hex, composed over the very input that
+    /// decision evaluated: the primary's, or the co-actor's when the co-actor
+    /// held it. `None` for every other result.
+    pub(crate) approval_digest: Option<String>,
+    /// The actor whose decision held this call, when `approval_digest` is
+    /// set: the press it names is that actor's (FIX 6424 part 2a).
+    pub(crate) approval_actor: Option<EntityId>,
+}
+
+impl OutboundEffectResult {
+    /// This Gate rejection, naming the approve-once digest `effect`'s press
+    /// carries while the Gate holds it, and `effect`'s actor (FIX 6424 part
+    /// 2a).
+    pub(super) fn held_by(mut self, effect: &ExternalEffectGateInput) -> Self {
+        if self.gate_outcome.as_deref() == Some("pending") {
+            self.approval_digest = ApprovalTarget::held_digest(effect);
+            self.approval_actor = self
+                .approval_digest
+                .as_ref()
+                .and(effect.provenance.actor_entity_ref);
+        }
+        self
+    }
 }
 
 /// The only two commands accepted by the effectful entry.
@@ -98,12 +124,50 @@ pub(crate) struct PreparedEffect {
 /// the Pending insert, so one remote mutation spends each key once.
 pub(crate) struct CoActorAdmission {
     pub(crate) bind: Box<
-        dyn for<'t> FnOnce(
-                &Vault,
-                &mut heed::RwTxn<'t>,
-            ) -> Result<ExternalEffectGateInput, IntentLedgerError>
+        dyn for<'t> FnOnce(&Vault, &mut heed::RwTxn<'t>) -> Result<CoActorEffect, IntentLedgerError>
             + Send,
     >,
+}
+
+/// The co-actor's gate input as its binding yields it, with the press its
+/// earlier admission of the same mutation spent, which this admission reuses,
+/// and where a press this admission spends is kept (FIX 6424 part 2a).
+pub(crate) struct CoActorEffect {
+    pub(crate) effect: ExternalEffectGateInput,
+    pub(crate) kept_press: Option<AdmittedApproval>,
+    pub(crate) keep_press: CoActorKeepPress,
+}
+
+/// Keeps the press one co-actor admission spent, in the writer it is given.
+pub(crate) type CoActorKeepPress = Box<
+    dyn for<'t> FnOnce(&Vault, &mut heed::RwTxn<'t>, EffectDigest) -> Result<(), IntentLedgerError>
+        + Send,
+>;
+
+/// FIX 6424 part 2a: keeps the presses the committed admission of
+/// `intent_id` spent, for its retry: the primary's beside its Pending row,
+/// the co-actor's where its binding keeps it, each in a writer of its own
+/// after that admission committed. A press that does not write is logged and
+/// the admission stands (CALLS `FIX 6424 kept press write failure`).
+///
+/// # Errors
+/// None while that call stands; else a keeper's storage failure.
+pub(super) fn keep_spent_presses(
+    vault: &Vault,
+    intent_id: IntentId,
+    pinned: Option<PinnedApproval>,
+    co_actor: Option<(EffectDigest, CoActorKeepPress)>,
+) -> Result<(), IntentLedgerError> {
+    let subject = crate::entity_id::bytes_to_hex_lower(&intent_id);
+    if pinned.is_some() {
+        keep_press_after_admission(vault, &subject, |wtxn| {
+            keep_pinned_approval_in_txn(vault, wtxn, pinned)
+        })?;
+    }
+    if let Some((spent, keep)) = co_actor {
+        keep_press_after_admission(vault, &subject, |wtxn| keep(vault, wtxn, spent))?;
+    }
+    Ok(())
 }
 
 /// A deterministic count bound on one server and tool. Admission holds the
