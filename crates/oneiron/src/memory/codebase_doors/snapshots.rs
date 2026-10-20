@@ -103,11 +103,11 @@ impl Memory<'_> {
 /// The CALL behind `pointer.local_folder`: an absolute path on the serving
 /// engine's host, not the client's. The adapter reads no client file, clones
 /// nothing and grants nothing by the path; the existing importer opens it.
-/// `#` ends a local pointer path, so a folder holding one refuses.
+/// A folder may hold `#`: the pointer grammar ends the path at its last one.
 fn served_host_folder(local_folder: &str) -> MemoryResult<&str> {
-    if !Path::new(local_folder).is_absolute() || local_folder.contains('#') {
+    if !Path::new(local_folder).is_absolute() {
         return Err(MemoryError::bad_request_with(
-            "pointer.local_folder must be an absolute folder on the serving host, without #",
+            "pointer.local_folder must be an absolute folder on the serving host",
             &["Name the folder as the engine host sees it, not as the client does."],
         ));
     }
