@@ -5,6 +5,7 @@ mod authority;
 mod bundle;
 mod checkpoint_roots;
 pub(crate) mod custody;
+pub(crate) mod home_handoff;
 mod index;
 mod kit_fetch;
 mod machine_history;

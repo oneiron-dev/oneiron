@@ -1,8 +1,8 @@
 //! The carrier's four side tables and their typed access. The head is this
 //! node's place in the lineage; parts hold the sealed bytes of a frozen
-//! handoff; receipts hold the ack of an adopted one; a transfer row is one
-//! handoff's status on this node. All four stand as the live vault holds
-//! them through a restore.
+//! handoff, or on its target the parts staged so far; receipts hold the ack
+//! of an adopted one; a transfer row is one handoff's status on this node.
+//! All four stand as the live vault holds them through a restore.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -51,13 +51,25 @@ pub(super) struct MoveRequest {
     pub(super) to: Option<u64>,
 }
 
+/// The endpoint a home move's target was captured at when the move came
+/// (FIX 5661 C2a): the move's own target, never whatever home a route names
+/// later. `endpoint` is `None` when nothing named one for that node.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct HandoffRoute {
+    /// The target's sync node id.
+    pub(super) to: u64,
+    pub(super) endpoint: Option<String>,
+}
+
 /// This node's place in the home-state lineage.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HandoffHead {
     pub(super) floor: Option<HeadFloor>,
     pub(super) request: Option<MoveRequest>,
     /// Why the last move that named this node carried nothing, if it did not.
     pub(super) incomplete: Option<IncompleteReason>,
+    /// The route captured for `request`'s target; a new request drops it.
+    pub(super) route: Option<HandoffRoute>,
 }
 
 impl HandoffHead {
@@ -80,6 +92,9 @@ pub(super) struct HandoffTransfer {
     pub(super) digest: [u8; 32],
     /// How many parts hold the sealed bytes here; none on a target.
     pub(super) parts: u32,
+    /// The route the source delivers to, captured with the move; none on a
+    /// target.
+    pub(super) route: Option<HandoffRoute>,
 }
 
 /// One part of a handoff's sealed bytes.
@@ -170,6 +185,83 @@ pub(super) fn sealed_in_txn(
         sealed.extend_from_slice(&bytes);
     }
     Ok(sealed)
+}
+
+/// Part `index` of handoff `id`'s sealed bytes, if this node holds it.
+pub(super) fn part_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    id: &HandoffId,
+    index: u32,
+) -> Result<Option<Vec<u8>>> {
+    Ok(PART
+        .get(dbs, txn, &(*id, index.to_be_bytes()))?
+        .map(|HandoffPart(bytes)| bytes))
+}
+
+/// How many parts of handoff `id` this node holds in order from the first:
+/// on its target, the durable staged position.
+pub(super) fn staged_position_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    id: &HandoffId,
+) -> Result<u32> {
+    let mut index = 0u32;
+    while PART.contains(dbs, txn, &(*id, index.to_be_bytes()))? {
+        index = index
+            .checked_add(1)
+            .ok_or_else(|| refused("a handoff has more parts than an index holds"))?;
+    }
+    Ok(index)
+}
+
+/// Stages part `index` of handoff `id` on its target. A part at the staged
+/// position lands; one before it must be the bytes already there, so a part
+/// sent again after a lost reply resumes; one past it is refused. Returns
+/// the staged position after it.
+pub(super) fn stage_part_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    id: &HandoffId,
+    index: u32,
+    bytes: &[u8],
+) -> Result<u32> {
+    let position = staged_position_in_txn(dbs, txn, id)?;
+    if index < position {
+        let HandoffPart(held) = PART
+            .get(dbs, txn, &(*id, index.to_be_bytes()))?
+            .ok_or_else(|| refused("a staged part is missing"))?;
+        if held != bytes {
+            return Err(refused("a part differs from the one staged"));
+        }
+        return Ok(position);
+    }
+    if index > position {
+        return Err(refused("a part comes before the ones it follows"));
+    }
+    PART.put(
+        dbs,
+        txn,
+        &(*id, index.to_be_bytes()),
+        &HandoffPart(bytes.to_vec()),
+    )?;
+    staged_position_in_txn(dbs, txn, id)
+}
+
+/// Drops the staged parts of handoff `id` once it landed here.
+pub(super) fn drop_staged_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    id: &HandoffId,
+) -> Result<()> {
+    let mut index = 0u32;
+    while PART.delete(dbs, txn, &(*id, index.to_be_bytes()))? {
+        let Some(next) = index.checked_add(1) else {
+            break;
+        };
+        index = next;
+    }
+    Ok(())
 }
 
 /// CALLS no carrier: a home move that carried nothing (the old home gone

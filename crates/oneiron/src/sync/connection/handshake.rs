@@ -113,16 +113,19 @@ impl SyncConnection {
 
     /// The loop [`Self::run`] and [`Self::run_observed`] drive, with the
     /// owner's residence directives naming this machine run beside it, across
-    /// its reconnects, each time the residence upkeep wakes them (OF-534).
+    /// its reconnects, each time the residence upkeep wakes them (OF-534),
+    /// and the home handoff's delivery worker beside both (FIX 5661 C2a).
     async fn drive(
         &self,
         client: SyncClient,
         shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> crate::error::Result<()> {
         let directives = self.run_residence_directives(client.event_tx.clone());
+        let home_handoff = self.run_home_handoff(client.event_tx.clone());
         tokio::select! {
             result = self.drive_loop(client, shutdown_rx) => result,
             never = directives => match never {},
+            never = home_handoff => match never {},
         }
     }
 
@@ -148,6 +151,7 @@ impl SyncConnection {
                     Arc::clone(self.manager.vault()),
                     source,
                     self.config.client_config.residence_home_route.clone(),
+                    self.config.client_config.server_url.clone(),
                     event_tx.clone(),
                 )
             })

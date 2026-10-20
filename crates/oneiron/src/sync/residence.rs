@@ -14,6 +14,7 @@ mod bundle_turn;
 mod custody;
 mod directives;
 mod discover;
+mod home_handoff;
 mod kit_fetch;
 mod machine_history;
 mod policy;
@@ -55,6 +56,9 @@ pub(crate) use directives::{
 };
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
+pub use home_handoff::{
+    HomeHandoffStanding, home_handoff_commit, home_handoff_part, home_handoff_status,
+};
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
     KitBundleFetch, kit_bundle_fetch_origin, kit_sealed_bundle_part,

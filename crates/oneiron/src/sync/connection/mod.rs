@@ -33,6 +33,7 @@
 mod converge;
 mod directives;
 mod handshake;
+mod home_handoff;
 mod home_search;
 mod node_batch;
 mod note_reads;
@@ -80,6 +81,9 @@ pub struct SyncConnection {
     /// Wakes the owner's residence directives naming this machine: the
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
+    /// Wakes the home handoff's delivery worker (FIX 5661 C2a): the
+    /// residence upkeep rings it on each tick, its first at each connect.
+    home_handoff_wake: Arc<tokio::sync::Notify>,
     /// Whether this env's member left the shared vault it holds (OF-158): the
     /// lane ends for good and never reconnects.
     left: tokio::sync::watch::Sender<bool>,
@@ -150,6 +154,7 @@ impl SyncConnection {
             config,
             mode,
             directive_wake: Arc::default(),
+            home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
             _home_search: home_search,

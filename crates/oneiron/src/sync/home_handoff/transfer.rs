@@ -20,7 +20,8 @@ use crate::side_table::SideTableDbs;
 /// to `to`. It reads and writes the head row only: no export, signing or
 /// sealing runs here, so the election's commit never fails for one. The
 /// drain freezes and exports later ([`freeze_export`]). A move to the node
-/// it left records nothing.
+/// it left records nothing. A new move drops the route captured for the
+/// last one.
 pub(crate) fn request_move_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -32,6 +33,7 @@ pub(crate) fn request_move_in_txn(
     }
     let mut head = store::head_in_txn(dbs, txn)?;
     head.request = Some(MoveRequest { from, to });
+    head.route = None;
     store::put_head_in_txn(dbs, txn, &head)
 }
 
@@ -79,66 +81,82 @@ pub(crate) fn freeze_export(
     check_registry(tables)?;
     // The install key signs in the writer: load it here.
     vault.load_install_signing_if_minted()?;
-    vault.with_write_txn(|txn| {
-        let view: &RoTxn<'_> = txn;
-        let head = store::head_in_txn(vault, view)?;
-        if let Some(floor) = head.floor.filter(|floor| floor.role == HandoffRole::Source) {
-            return frozen_again(vault, view, &floor, movement).map(Some);
+    vault.with_write_txn(|txn| freeze_in_txn(vault, txn, movement, tables))
+}
+
+/// [`freeze_export`]'s final writer, for a caller that already holds it (a
+/// supersession cancels and freezes in one). The caller checked the registry
+/// and loaded the install key.
+pub(super) fn freeze_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    movement: &HomeMove,
+    tables: &[HomeTableRegistration],
+) -> Result<Option<SealedHandoff>> {
+    let view: &RoTxn<'_> = txn;
+    let head = store::head_in_txn(vault, view)?;
+    if let Some(floor) = head.floor.filter(|floor| floor.role == HandoffRole::Source) {
+        return frozen_again(vault, view, &floor, movement).map(Some);
+    }
+    check_source(vault, view, &head, movement)?;
+    let fold = vault.authority_view_readonly_in_txn(view)?;
+    if fold.vault_id != Some(movement.vault_id) {
+        return Err(refused("the move names another vault"));
+    }
+    let target = envelope::target_key(&fold, movement.target.machine)?;
+    for table in tables {
+        if !table.quiescent(vault, view, movement)? {
+            return Ok(None);
         }
-        check_source(vault, view, &head, movement)?;
-        let fold = vault.authority_view_readonly_in_txn(view)?;
-        if fold.vault_id != Some(movement.vault_id) {
-            return Err(refused("the move names another vault"));
-        }
-        let target = envelope::target_key(&fold, movement.target.machine)?;
-        for table in tables {
-            if !table.quiescent(vault, view, movement)? {
-                return Ok(None);
-            }
-        }
-        let fence = HomeFence::new(*movement);
-        let mut sections = Vec::with_capacity(tables.len());
-        for table in tables {
-            sections.push(TableSection {
-                table_id: table.table_id().to_owned(),
-                schema_version: table.schema_version(),
-                rows: table.export(vault, view, &fence)?,
-            });
-        }
-        // The state this node adopted: its signed header is the lineage.
-        let lineage = match head.floor {
-            Some(floor) => Some(
-                store::transfer_in_txn(vault, view, &floor.handoff)?
-                    .ok_or_else(|| refused("the handoff this node adopted is missing"))?
-                    .signed,
-            ),
-            None => None,
-        };
-        let key = vault.door_signing_key_in_txn(view, movement.source.machine)?;
-        let (sealed, signed) = envelope::seal_handoff(movement, &key, &target, lineage, &sections)?;
-        let parts = store::put_parts_in_txn(vault, txn, &sealed.id, &sealed.sealed)?;
-        let transfer = HandoffTransfer {
-            role: HandoffRole::Source,
-            status: HandoffStatus::Frozen,
-            movement: *movement,
-            signed,
-            digest: sealed.digest,
-            parts,
-        };
-        store::put_transfer_in_txn(vault, txn, &sealed.id, &transfer)?;
-        let floor = HeadFloor {
-            serial: movement.generation.serial,
-            handoff: sealed.id,
-            role: HandoffRole::Source,
-        };
-        let head = HandoffHead {
-            floor: Some(floor),
-            request: None,
-            incomplete: None,
-        };
-        store::put_head_in_txn(vault, txn, &head)?;
-        Ok(Some(sealed))
-    })
+    }
+    let fence = HomeFence::new(*movement);
+    let mut sections = Vec::with_capacity(tables.len());
+    for table in tables {
+        sections.push(TableSection {
+            table_id: table.table_id().to_owned(),
+            schema_version: table.schema_version(),
+            rows: table.export(vault, view, &fence)?,
+        });
+    }
+    // The state this node adopted: its signed header is the lineage.
+    let lineage = match head.floor {
+        Some(floor) => Some(
+            store::transfer_in_txn(vault, view, &floor.handoff)?
+                .ok_or_else(|| refused("the handoff this node adopted is missing"))?
+                .signed,
+        ),
+        None => None,
+    };
+    let key = vault.door_signing_key_in_txn(view, movement.source.machine)?;
+    let (sealed, signed) = envelope::seal_handoff(movement, &key, &target, lineage, &sections)?;
+    let parts = store::put_parts_in_txn(vault, txn, &sealed.id, &sealed.sealed)?;
+    let transfer = HandoffTransfer {
+        role: HandoffRole::Source,
+        status: HandoffStatus::Frozen,
+        movement: *movement,
+        signed,
+        digest: sealed.digest,
+        parts,
+        // The route captured for this move's target moves with it.
+        route: head
+            .route
+            .clone()
+            .filter(|route| route.to == movement.target.node_id),
+    };
+    store::put_transfer_in_txn(vault, txn, &sealed.id, &transfer)?;
+    let floor = HeadFloor {
+        serial: movement.generation.serial,
+        handoff: sealed.id,
+        role: HandoffRole::Source,
+    };
+    let head = HandoffHead {
+        floor: Some(floor),
+        request: None,
+        incomplete: None,
+        route: None,
+    };
+    store::put_head_in_txn(vault, txn, &head)?;
+    Ok(Some(sealed))
 }
 
 /// The handoff this node froze, when it is `movement`'s: its same sealed
@@ -215,7 +233,10 @@ pub(crate) fn adopt(
     vault.with_write_txn(|txn| record_unadopted(vault, txn, &handoff, reason))?;
     Ok(match reason {
         IncompleteReason::Conflict => AdoptOutcome::Conflict,
-        IncompleteReason::SourceGone | IncompleteReason::UnknownLineage => AdoptOutcome::Pending,
+        IncompleteReason::SourceGone
+        | IncompleteReason::UnknownLineage
+        | IncompleteReason::NoRoute
+        | IncompleteReason::Unresolved => AdoptOutcome::Pending,
     })
 }
 
@@ -274,6 +295,7 @@ fn adopt_in_txn(
         signed: handoff.signed.clone(),
         digest: handoff.digest,
         parts: 0,
+        route: None,
     };
     store::put_transfer_in_txn(vault, txn, &handoff.id, &transfer)?;
     let floor = HeadFloor {
@@ -285,6 +307,7 @@ fn adopt_in_txn(
         floor: Some(floor),
         request: None,
         incomplete: None,
+        route: None,
     };
     store::put_head_in_txn(vault, txn, &head)?;
     Ok(AdoptOutcome::Adopted(ack))
@@ -356,6 +379,7 @@ fn record_unadopted(
         signed: handoff.signed.clone(),
         digest: handoff.digest,
         parts: 0,
+        route: None,
     };
     store::put_transfer_in_txn(vault, txn, &handoff.id, &transfer)
 }
