@@ -23476,7 +23476,7 @@
      "path": "src/edge.rs",
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 2,
       "re-export": 2,
