@@ -383,8 +383,8 @@ where
 }
 
 /// Whether `read`'s caller reads `id` under each private thread it sits in,
-/// turn by turn, the opener included (FIX 5652): the one bound a door
-/// serving rows by record scope holds a row to. One it does not read is one
+/// turn by turn, the opener included (FIX 5652): the one bound the TURN
+/// routes hold the owner's read to (FIX 5938). One it does not read is one
 /// that is not here.
 pub(crate) fn core_private_threads_admit(
     vault: &oneiron::Vault,
