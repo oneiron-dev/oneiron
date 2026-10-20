@@ -131,19 +131,26 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(|error| MemoryError::from(Error::from(error)))?;
-        verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        self.identity_read_key_in_txn(&txn)
+    }
+
+    /// [`Self::identity_read_key`] in `txn`, a snapshot its caller holds
+    /// (FIX 6992): the store keeps one reader per thread, so a read inside a
+    /// projection's snapshot never opens a second one.
+    fn identity_read_key_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<ScopedReadActorKey> {
+        verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
         if let Some(action) = &self.host_action {
             // The host action's guarded owner key (FIX 2222), its action
             // proved again in this snapshot.
-            action.guard().holds_in(self.vault, &txn)?;
+            action.guard().holds_in(self.vault, txn)?;
             return Ok(action.read_key());
         }
-        let owner = self.is_vault_owner_in_txn(&txn)?;
+        let owner = self.is_vault_owner_in_txn(txn)?;
         if let Some(proof) = &self.read_proof {
             // The one key every proof-backed door builds (credential_key.rs).
             return self
                 .vault
-                .credential_read_key_in_txn(&txn, proof, self.actor, owner)?
+                .credential_read_key_in_txn(txn, proof, self.actor, owner)?
                 .ok_or_else(|| {
                     MemoryError::new(
                         MEMORY_CODE_FORBIDDEN,
@@ -171,11 +178,16 @@ impl Memory<'_> {
     /// it (OF-560): the vault owner's own key reads the stored bytes, every
     /// other actor a copy with each key overwritten.
     pub(crate) fn secret_sight(&self) -> MemoryResult<crate::secret_custody::SecretSight> {
-        Ok(if self.identity_read_key()?.reads_as_vault_owner() {
-            crate::secret_custody::SecretSight::Owner
-        } else {
-            crate::secret_custody::SecretSight::Masked
-        })
+        Ok(sight_of(&self.identity_read_key()?))
+    }
+
+    /// [`Self::secret_sight`] in `txn`, a snapshot its caller holds (FIX
+    /// 6992).
+    pub(crate) fn secret_sight_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<crate::secret_custody::SecretSight> {
+        Ok(sight_of(&self.identity_read_key_in_txn(txn)?))
     }
 
     /// Of `ids`, the ones a handle bound to a read credential reads, each
@@ -504,7 +516,7 @@ impl Memory<'_> {
         // A key the lift sweep marked in a record's text reads as its handle
         // to all but the owner (OF-067).
         if let Some(value) = &mut body
-            && self.reads_lifted_keys_masked()?
+            && self.reads_lifted_keys_masked_in_txn(txn)?
         {
             let keys = crate::batch::secret_scan::LiftedKeys::of_json_in_txn(
                 &self.vault().store,
@@ -523,6 +535,16 @@ impl Memory<'_> {
             made_by: self.made_by_in_lane(lane, txn, &row.id)?,
             body,
         }))
+    }
+}
+
+/// How a reader holding `key` sees a stored key: as stored for the vault
+/// owner, as its handle for everyone else.
+fn sight_of(key: &ScopedReadActorKey) -> crate::secret_custody::SecretSight {
+    if key.reads_as_vault_owner() {
+        crate::secret_custody::SecretSight::Owner
+    } else {
+        crate::secret_custody::SecretSight::Masked
     }
 }
 
