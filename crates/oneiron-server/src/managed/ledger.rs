@@ -138,6 +138,19 @@ impl WakeLedger {
         action.verify(&self.token, &self.vault_name, request)
     }
 
+    /// Proves this vault's owner signing on the supervisor's `challenge`
+    /// (FIX 5260): the spawn token goes to the supervisor socket this ledger
+    /// pushes to, and nowhere else. Whether the supervisor acked.
+    pub(super) async fn prove_owner_signing(&self, challenge: &str) -> anyhow::Result<bool> {
+        super::owner_recovery::prove(
+            &self.hypnos_socket,
+            &self.vault_name,
+            &self.token,
+            challenge,
+        )
+        .await
+    }
+
     /// The transcript `holder_ref`'s owner action covers on this vault, for
     /// a request with `head` whose body is `body_len` bytes, fed in pieces
     /// and checked by `ManagedOwnerAction::verify_transcript`.

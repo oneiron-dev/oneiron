@@ -15,6 +15,7 @@ use crate::context_projection::normalize_context_spec;
 use crate::dreamer_runner::{EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome};
 use crate::error::Result;
 
+mod member_context;
 mod workflow_task;
 
 impl AgentDispatcher<'_> {

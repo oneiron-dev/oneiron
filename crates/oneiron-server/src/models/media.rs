@@ -51,7 +51,7 @@ use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
 mod jobs;
 
-use jobs::{JobRow, JobStore};
+use jobs::{JobRow, JobStore, erased_poll, submit_stamps};
 
 /// The run every media call is admitted under, one run per call.
 const MEDIA_RUN: &str = "ai-media";
@@ -826,16 +826,20 @@ impl MediaRuntime {
     /// Submits one job (`ai.video`), billed to `payer` as [`Self::run`]'s
     /// call is; its caller polls the ticket. The job is kept in the vault
     /// with its payer, so a restart loses neither, and a poll or a cancel
-    /// never names a payer of its own.
+    /// never names a payer of its own. Its row is stamped with who owns its
+    /// content: `actor`, the caller's entity when its credential names one,
+    /// and its request's subject; never its payer (KS-2B2).
     pub async fn submit(
         &self,
         request: MediaRequest,
         payer: Option<PayerPerson>,
+        actor: Option<oneiron::EntityId>,
     ) -> LlmResult<MediaTicket> {
         if !request.operation.is_job() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let operation = request.operation;
+        let stamps = submit_stamps(actor, &request);
         let sent = self
             .store
             .as_ref()
@@ -860,6 +864,8 @@ impl MediaRuntime {
                     ended: None,
                     receipt: job.receipt.clone(),
                     payer,
+                    stamps,
+                    erased: false,
                 },
             )
         {
@@ -875,14 +881,13 @@ impl MediaRuntime {
     /// answered once. An end the vault refuses is held here and answered
     /// from here, and each poll writes it again; the job is never polled or
     /// paid for again. A job a restart left running is taken up again on a
-    /// fresh permit, and nothing is sent again.
+    /// fresh permit, and nothing is sent again. A job an erase took answers
+    /// its erased end: a running one is still polled and paid for, and its
+    /// end is neither kept nor answered (KS-2B2).
     pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
-            Held::Unkept(state) => {
-                self.keep_end(id, &state);
-                return Ok(state);
-            }
+            Held::Unkept(state) => return Ok(self.keep_end(id, &state)),
             Held::Ended(state) => return Ok(state),
         };
         let mut held = job.lock().await;
@@ -892,10 +897,10 @@ impl MediaRuntime {
             return self.ended(id);
         }
         let state = held.poll().await;
-        if let Ok(state) = &state
-            && state.ended()
+        if let Ok(ended) = &state
+            && ended.ended()
         {
-            self.keep_end(id, state);
+            return Ok(self.keep_end(id, ended));
         }
         state
     }
@@ -904,22 +909,31 @@ impl MediaRuntime {
     /// write, and lets the job go from here. An end the vault refuses, or a
     /// job whose row was never kept, stays held here with its end, for the
     /// next poll to answer and write again. A job dropped meanwhile stays
-    /// dropped.
-    fn keep_end(&self, id: &str, state: &MediaJobState) {
+    /// dropped. A job an erase took keeps nothing of its end, which goes
+    /// from here unanswered: the answer is its erased end (KS-2B2). Returns
+    /// what the poll answers.
+    fn keep_end(&self, id: &str, state: &MediaJobState) -> MediaJobState {
         let kept = self
             .store
             .as_ref()
-            .map_or(Ok(()), |store| -> Result<(), String> {
+            .map_or(Ok(true), |store| -> Result<bool, String> {
                 let mut row = store
                     .get(id)
                     .ok_or_else(|| "its row is not kept".to_owned())?;
+                if row.erased {
+                    return Ok(false);
+                }
                 row.ended = Some(state.clone());
                 store.put(id, row)
             });
         let mut jobs = self.lock_jobs();
         match kept {
-            Ok(()) => {
+            Ok(true) => {
                 jobs.remove(id);
+            }
+            Ok(false) => {
+                jobs.remove(id);
+                return erased_poll(id);
             }
             Err(error) => {
                 tracing::error!(%error, ticket = id, "a media job's end is held, not kept");
@@ -930,6 +944,7 @@ impl MediaRuntime {
                 }
             }
         }
+        state.clone()
     }
 
     /// Stops job `id` at its provider and drops it, its kept row with it.
@@ -960,6 +975,10 @@ impl MediaRuntime {
             .as_ref()
             .and_then(|store| store.get(id))
             .ok_or(FatalLlmError::InvalidRequest)?;
+        // An erased job is never taken up, resumed or resubmitted (KS-2B2).
+        if row.erased {
+            return Ok(Held::Ended(erased_poll(id)));
+        }
         if let Some(state) = row.ended {
             return Ok(Held::Ended(state));
         }
@@ -986,15 +1005,18 @@ impl MediaRuntime {
         }
     }
 
-    /// The end job `id` holds here, or its row keeps.
+    /// The end job `id` holds here, or its row keeps; its erased end once
+    /// an erase took it, whose end held here goes (KS-2B2).
     fn ended(&self, id: &str) -> LlmResult<MediaJobState> {
+        let row = self.store.as_ref().and_then(|store| store.get(id));
+        if row.as_ref().is_some_and(|row| row.erased) {
+            self.lock_jobs().remove(id);
+            return Ok(erased_poll(id));
+        }
         if let Some(Held::Unkept(state)) = self.lock_jobs().get(id) {
             return Ok(state.clone());
         }
-        self.store
-            .as_ref()
-            .and_then(|store| store.get(id))
-            .and_then(|row| row.ended)
+        row.and_then(|row| row.ended)
             .ok_or_else(|| FatalLlmError::InvalidRequest.into())
     }
 

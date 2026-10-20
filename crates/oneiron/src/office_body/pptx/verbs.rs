@@ -149,10 +149,14 @@ pub struct DeckExportView {
 const CLOSED_GATE_EXPORT_WAITS: bool = true;
 
 /// `vault.artifacts.body.deck.gate` and `.oracle`: one profile's export
-/// gate, open only on a clean all-pass receipt for the current projector.
+/// gate, open only on a clean all-pass receipt from a run of the current
+/// projector.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeckGateView {
     pub profile: String,
+    /// This server's projector. The receipt names its own run's projector,
+    /// source revision and case manifest (FIX 3772); a receipt from a run of
+    /// another projector is shown as that run's and opens nothing.
     pub projector: String,
     pub open: bool,
     pub receipt: Option<OracleReceipt>,

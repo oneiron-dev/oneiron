@@ -300,8 +300,9 @@ pub(super) fn element_of(tree: &XmlTree, native: u32, local: &str) -> Option<usi
 /// Point the picture `native` on `slide` at the held media part `media`
 /// names, through the slide's image relationship to it (a new one when it
 /// has none); an SVG part a picture of the deck shows over a raster, as
-/// Office does ([`svg_fallback::show`]). The media it showed keeps its
-/// relationship, unreferenced, as new media leaves it. Whether anything
+/// Office does ([`svg_fallback::show`]). Other media drops the SVG extension
+/// the blip carried ([`svg_fallback::drop_svg`]); the media it showed keeps
+/// its relationship, unreferenced, as new media leaves it. Whether anything
 /// changed.
 pub(super) fn show_held_media(
     package: &mut Package,
@@ -320,6 +321,7 @@ pub(super) fn show_held_media(
     if let Some(changed) = svg_fallback::show(package, slide, native, &media.part)? {
         return Ok(changed);
     }
+    let dropped = svg_fallback::drop_svg(package, slide, native)?;
     let (bytes, tree) = xml::read(package, slide)?;
     let picture = element_of(&tree, native, "pic").ok_or(LiveError::UnknownNode)?;
     let blip = xml::path(&tree, picture, &[(P, "blipFill"), (A, "blip")]).ok_or(refuse)?;
@@ -330,7 +332,7 @@ pub(super) fn show_held_media(
         .iter()
         .any(|rel| Some(rel.id.as_str()) == shown && !rel.external && rel.target == media.part)
     {
-        return Ok(false);
+        return Ok(dropped);
     }
     let id = match rels
         .into_iter()
