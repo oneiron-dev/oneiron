@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4049 | 902 | 190 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4053 | 902 | 190 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 42 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 45 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 882 | 182 | 54 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 885 | 182 | 53 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 11 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 23 | 1 | 0 |
@@ -124,7 +124,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `counterparty_contact` | dir | 10 | m | yes | Counterparty contact record substrate (OF-347 CID-7) |
 | `credential_door` | dir | 10 | m | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `critic` | file+dir | 11 | m | — | Multi-critic review node primitives |
-| `deletion` | dir | 34 | L | yes | ARCH-0038 deletion/redaction contract types |
+| `deletion` | dir | 35 | L | yes | ARCH-0038 deletion/redaction contract types |
 | `delivery_window` | dir | 8 | m | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 12 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `dispatch_byoa` | dir | 14 | L | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
@@ -241,12 +241,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `skill_attribution` | dir | 21 | m | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `skill_convert` | dir | 7 | m | yes | Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry… |
 | `skill_hub` | dir | 83 | L | yes | Skill-hub records, provenance aliases, adapter contracts, and update gates |
-| `skill_optimize` | dir | 44 | XL | yes | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
+| `skill_optimize` | dir | 45 | XL | yes | SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 "Optimize skills"): the Coach's job on the Dreamer's runner that… |
 | `skill_reliability` | dir | 15 | L | yes | Bayesian skill retrieval over the shared learning.reliability projection |
 | `skill_scan` | file+dir | 2 | m | — | Deterministic static skill scanning and the activation risk consult |
 | `slim` | file+dir | 4 | m | yes | SLIM residency (ONE-1933 / OF-447): the engine half of the FULL → SLIM → REAPED ladder |
 | `speculative` | file+dir | 2 | m | — | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
-| `store` | dir | 112 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `store` | dir | 114 | L | yes | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `subject_model` | file+dir | 15 | L | yes | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
 | `surface_event` | dir | 8 | m | yes | Inbound SurfaceEvent adapter contract (OF-347 CID-6) |
 | `sweep` | dir | 5 | L | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
@@ -678,7 +678,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `cli` | file+dir | 9 | L | — |
 | `code_consent_host` | file | 1 | s | The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on… |
 | `commands` | file+dir | 42 | XL | The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy |
-| `config` | dir | 45 | L | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
+| `config` | dir | 46 | L | Server configuration: resolved types, CLI flags, and the file/env/argv merge |
 | `connector_admission_host` | file | 1 | m | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
 | `connector_call_host` | file+dir | 2 | m | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
 | `connector_call_settle` | file | 1 | s | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
@@ -717,7 +717,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `owner` | dir | 32 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
 | `projection` | file+dir | 2 | m | — |
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
-| `replay_judge` | file | 1 | L | The serve host's skill judge (OF-495) |
+| `replay_judge` | file+dir | 3 | m | The serve host's skill judge (OF-495) |
 | `residence_machines` | file | 1 | s | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
 | `runtime` | dir | 12 | L | — |
 | `saved_query_sweep` | file | 1 | m | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |

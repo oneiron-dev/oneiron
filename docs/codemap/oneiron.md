@@ -1524,16 +1524,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/delete/preview.rs` | src | s | 1 struct · 6 fn · 3 crate-vis | DeleteEntityPreview | Snapshot-bound impact preview for the one-action, confirmed delete door |
 | `src/deletion/derived_rows.rs` | src | s | 2 crate-vis | — | Rows a record feeds outside the generic index set, torn with the record |
 | `src/deletion/erase/active_store.rs` | src | m | 4 crate-vis | — | — |
-| `src/deletion/erase/markers.rs` | src | s | 6 crate-vis | — | — |
-| `src/deletion/erase/mod.rs` | src | s | 4 crate-vis | — | — |
+| `src/deletion/erase/markers.rs` | src | s | 7 crate-vis | — | — |
+| `src/deletion/erase/mod.rs` | src | s | 5 crate-vis | — | — |
 | `src/deletion/erase/provenance.rs` | src | s | 3 crate-vis | — | — |
 | `src/deletion/erase/redirect_shells.rs` | src | s | 2 crate-vis | — | — |
 | `src/deletion/erase/replay.rs` | src | m | 5 crate-vis | — | — |
+| `src/deletion/erase/scope_probes.rs` | src | s | 4 crate-vis | — | One decision-ledger scan for a tombstone batch's missing-id probes (SCAN C049) |
 | `src/deletion/gate.rs` | src | m | 20 crate-vis | — | — |
 | `src/deletion/identity_event_stamps.rs` | src | s | 2 crate-vis | — | Erase independent author-attribution carriers without changing decisions |
 | `src/deletion/legal_hold/mod.rs` | src | m | 14 fn · 1 re-export · 3 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
 | `src/deletion/legal_hold/types.rs` | src | m | 6 struct · 7 enum · 4 fn · 7 const | ErasePendingReason, HostOrderHold, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldMaintenance +5 | The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling… |
-| `src/deletion/mod.rs` | src | s | 11 re-export · 27 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/mod.rs` | src | s | 11 re-export · 28 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/publish.rs` | src | L | 4 crate-vis | — | — |
 | `src/deletion/receipt.rs` | src | m | 16 crate-vis | — | — |
 | `src/deletion/receipt_completion.rs` | src | s | 3 crate-vis | — | The linked REDACTION_AUDIT completion row (OF-470, ARCH-0038 step 10) |
@@ -2343,7 +2344,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/op_apply.rs` | src | m | 1 struct · 1 enum · 4 fn · 9 crate-vis | IdentityOpOutcome, IdentityOpWrite | The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct… |
 | `src/identity_topology/op_undo.rs` | src | m | 2 fn · 1 crate-vis | — | The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event… |
 | `src/identity_topology/op_vocabulary.rs` | src | s | 6 struct · 2 enum · 1 fn · 2 crate-vis | AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp, SurvivorshipPlan | The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the… |
-| `src/identity_topology/proposal_resolution.rs` | src | m | 4 fn · 8 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
+| `src/identity_topology/proposal_resolution.rs` | src | m | 4 fn · 9 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
 | `src/identity_topology/reassignment_map.rs` | src | m | 3 struct · 1 enum · 2 fn · 12 crate-vis | ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget | The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the… |
 | `src/identity_topology/replicated_event_validation.rs` | src | m | 11 crate-vis | — | Sync-path ingest for the type-76 family: event reads, participant and actor validation shared with the local… |
 | `src/identity_topology/seal_standing.rs` | src | s | 6 crate-vis | — | A decision seal's causal evidence (FIX 4649, FIX 4652, FIX 5248): the act each decision seal names for… |
@@ -3370,7 +3371,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/reaction/verbs.rs` | src | s | 3 struct · 3 fn | MessageReactionExternal, MessageReactionReceipt, MessageReactionRequest | `vault.messages.react` (OF-181): the one typed door that a reaction button, an agent's call and `POST… |
 | `src/reaction/write.rs` | src | m | 2 struct · 1 enum · 3 fn · 10 crate-vis | ReactionChange, ReactionInput, ReactionState | First-party reaction writes on the (message, person, glyph) chain, and the claim write both first-party and… |
 | `src/receipt/admission.rs` | src | s | 4 struct · 1 enum · 6 fn | AdmissionReceipt, AdmissionReceiptsRequest, AdmissionStatus, AdmissionStatusRequest, AdmissionTracker | Durable admission observations of named typed calls (ARCH-0044 C5) |
-| `src/receipt/archive_source/access.rs` | src | s | 2 crate-vis | — | Archive receipt I/O through ordinary ASSET admission, not terminal ledgers |
+| `src/receipt/archive_source/access.rs` | src | s | 3 crate-vis | — | Archive receipt I/O through ordinary ASSET admission, not terminal ledgers |
 | `src/receipt/archive_source/codec.rs` | src | s | 16 crate-vis | — | Canonical claim-bound archived receipt data, never a native terminal stamp |
 | `src/receipt/archive_source/custody.rs` | src | s | 8 crate-vis | — | Identifier-only source custody |
 | `src/receipt/archive_source/mod.rs` | src | s | 4 crate-vis | — | Imported receipt source artifacts and their physical, non-authoritative custody |
@@ -3870,7 +3871,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/tool_schema.rs` | src | m | 6 crate-vis | — | Closed Draft 2020-12 tool-schema profile: resource-aware nodes, not a JSON rewrite |
 | `src/skill_hub/pack_catalog/transport.rs` | src | s | 1 trait · 2 fn · 3 crate-vis | PackSourceAdapter | Generic Git/HTTP source fetch composes with the post-fit pack install door |
 | `src/skill_hub/package.rs` | src | s | 4 struct · 1 enum · 8 fn · 6 crate-vis | HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat | — |
-| `src/skill_hub/package_codec.rs` | src | m | 2 fn · 12 crate-vis | — | Bounded, typed package persistence |
+| `src/skill_hub/package_codec.rs` | src | m | 2 fn · 13 crate-vis | — | Bounded, typed package persistence |
 | `src/skill_hub/publisher.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | ForeignSkillPublisher | A publisher is a foreign actor with an owner-minted, revocable offer-only grant |
 | `src/skill_hub/record.rs` | src | m | 3 struct · 4 enum · 14 fn · 3 const · 2 crate-vis | HubPin, HubRef, HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef | — |
 | `src/skill_hub/ref_sync.rs` | src | s | 2 fn · 6 crate-vis | — | Per-ref sync policy (ARCH-0053 §7: sync_policy per ref, not per hub) |
@@ -3893,7 +3894,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_optimize/ask_band.rs` | src | s | 1 struct · 1 trait | AskBandLabel, AskBandPolicy | Question-class band policy input from settled human ask receipts |
 | `src/skill_optimize/audit_rate.rs` | src | s | 3 crate-vis | — | OF-542: `audit_rate` learned from audit checks (ARCH-0003 settings catalog: "Learned from audit checks |
 | `src/skill_optimize/brief.rs` | src | m | 4 struct · 2 enum · 1 trait · 3 fn · 3 const · 3 crate-vis | RejectedSkillEdit, RejectedSkillEditReason, SkillEditDraft, SkillFailureContext, SkillFailureReport, SkillOptimizeAuthor, SkillOptimizeBrief | The author seam and the dev-partitioned evidence brief handed across it |
-| `src/skill_optimize/decisions.rs` | src | m | 2 struct · 4 fn · 8 crate-vis | SkillOptimizeDecisions, SkillReplayPair | Skill judgments on the shared typed-decision ladder |
+| `src/skill_optimize/decisions.rs` | src | m | 1 struct · 4 fn · 1 re-export · 8 crate-vis | SkillOptimizeDecisions | Skill judgments on the shared typed-decision ladder |
+| `src/skill_optimize/decisions/replay_pairs.rs` | src | s | 2 struct · 2 crate-vis | SkillReplayResponse, SkillReplayResponses | The blind preference's pairs (FIX 1091) |
 | `src/skill_optimize/dials.rs` | src | s | 2 fn · 2 const · 3 crate-vis | — | The N dial over vault_meta, and the two text helpers every child in this module uses |
 | `src/skill_optimize/eval_set.rs` | src | m | 4 struct · 4 enum · 7 fn · 1 mod · 4 re-export · 13 crate-vis | DerivationKind, EvalCase, EvalCaseDraft, EvalLabel, EvalLabelKind, EvalSeat, FamilyPurpose, SourceFamily | OF-578 (ARCH-0053 "Eval authoring", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the… |
 | `src/skill_optimize/eval_set/authoring.rs` | src | m | 8 struct · 2 fn · 1 re-export · 1 crate-vis | CandidateLabel, CohortSummary, EvalAuthoringInventory, EvalCandidate, EvalSourceGroup, PurposeCounts, SeatInventory, UncutFamily | The eval-authoring pass (OF-578, ARCH-0053 "Eval authoring"): the Coach's nightly upkeep of each seat's test… |
@@ -3980,6 +3982,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/checkpoint_payload/rows/restore.rs` | src | s | 6 crate-vis | — | Putting an opened compartment's rows back, through the one restore-only raw-row sink |
 | `src/store/checkpoint_payload/rows/typed.rs` | src | s | 9 crate-vis | — | Reading a declared table's rows with its own codec, and splitting the actors a row names out of an owner's… |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
+| `src/store/deadline_jobs.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | DeadlineJob | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
 | `src/store/gate_decision/actor_erase.rs` | src | s | 1 enum · 1 const · 1 crate-vis | GateAttributionErase | An erased actor out of the Gate decision ledger (FIX 4230, 4231) |
 | `src/store/gate_decision/checkpoint_custody.rs` | src | m | 29 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
@@ -3989,6 +3992,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/keys.rs` | src | s | 15 crate-vis | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
 | `src/store/gate_decision/ledger.rs` | src | m | 1 fn · 28 crate-vis | — | Gate-decision ledger Store methods plus the row append and record codec |
 | `src/store/gate_decision/ledger/custody.rs` | src | s | 4 crate-vis | — | The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under… |
+| `src/store/gate_decision/ledger/erasure_scan.rs` | src | s | 1 crate-vis | — | The ERASE completeness scan for many claims at once (SCAN C049): one tombstone batch's missing-id probes… |
 | `src/store/gate_decision/lookup.rs` | src | s | 3 crate-vis | — | First-match reads on the caller's gate-decision ledger transaction |
 | `src/store/gate_decision/mod.rs` | src | s | 2 re-export · 15 crate-vis | — | The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar… |
 | `src/store/gate_decision/orcb.rs` | src | s | 8 crate-vis | — | ORCB v1: schema-only dictionary and per-claim hot-value AEAD, keyed by the claim's typed custody entry… |
@@ -4025,7 +4029,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
-| `src/store/mod.rs` | src | s | 1 mod · 14 re-export · 23 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 1 mod · 15 re-export · 24 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 18 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |

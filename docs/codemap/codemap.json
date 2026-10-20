@@ -19617,7 +19617,7 @@
      "path": "src/deletion/erase/markers.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -19627,7 +19627,7 @@
      "path": "src/deletion/erase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -19658,6 +19658,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/erase/scope_probes.rs",
+     "purpose": "One decision-ledger scan for a tombstone batch's missing-id probes (SCAN C049)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -19726,7 +19736,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "re-export": 11
      }
     },
@@ -30000,7 +30010,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 4
      }
     },
@@ -43441,7 +43451,7 @@
      "path": "src/receipt/archive_source/access.rs",
      "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -49812,7 +49822,7 @@
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -50086,14 +50096,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SkillOptimizeDecisions",
-      "SkillReplayPair"
+      "SkillOptimizeDecisions"
      ],
      "path": "src/skill_optimize/decisions.rs",
      "purpose": "Skill judgments on the shared typed-decision ladder",
      "surface": {
       "crate-vis": 8,
       "fn": 4,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SkillReplayResponse",
+      "SkillReplayResponses"
+     ],
+     "path": "src/skill_optimize/decisions/replay_pairs.rs",
+     "purpose": "The blind preference's pairs (FIX 1091)",
+     "surface": {
+      "crate-vis": 2,
       "struct": 2
      }
     },
@@ -51300,6 +51324,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DeadlineJob"
+     ],
+     "path": "src/store/deadline_jobs.rs",
+     "purpose": "Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "Diagnostics"
      ],
      "path": "src/store/diagnostics.rs",
@@ -51392,6 +51431,16 @@
      "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/ledger/erasure_scan.rs",
+     "purpose": "The ERASE completeness scan for many claims at once (SCAN C049): one tombstone batch's missing-id probes…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51816,9 +51865,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 1,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -64097,7 +64146,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64916,7 +64965,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -64951,7 +65000,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 112,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65177,7 +65226,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4049,
+   "source_files": 4053,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83610,6 +83659,21 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReplayJudgeWording"
+     ],
+     "path": "src/config/skills/replay_judge.rs",
+     "purpose": "`[skills.replay_judge]`: the serve replay judge's wording (OF-495, FIX 1091)",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -86606,20 +86670,43 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "JournalRow",
       "PersonTime",
-      "ServeAxisBandit",
       "ServeReplayJudge"
      ],
      "path": "src/replay_judge.rs",
      "purpose": "The serve host's skill judge (OF-495)",
      "surface": {
       "const": 1,
-      "fn": 11,
-      "struct": 4
+      "fn": 9,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ServeAxisBandit"
+     ],
+     "path": "src/replay_judge/axis_bandit.rs",
+     "purpose": "The goal-axis bandit's live arm attribution for one open optimizer proposal, on the serve judge's arms: each…",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/replay_judge/replays.rs",
+     "purpose": "The serve judge's replay evidence: each reserved receipt's task and response, read whole from its attempt…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -88219,7 +88306,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 45,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88492,10 +88579,10 @@
      "purpose": "Custom Oneiron sync protocol — server-side extensions"
     },
     "replay_judge": {
-     "files": 1,
+     "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "L",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "The serve host's skill judge (OF-495)"
     },
     "residence_machines": {
@@ -88590,9 +88677,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 54,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 882,
+   "source_files": 885,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -390,6 +390,25 @@ impl Vault {
         let record = decode_skill_record(&body)?;
         self.runtime_skill_package_in_txn(txn, entity, &record)
     }
+    /// The replicated carrier [`Self::export_hub_package_in_txn`] reads
+    /// `entity`'s package from, for an export to judge by its locality filter
+    /// and name among its sources (SCAN C022): `None` when the local sidecar
+    /// answers, or when `record` admits no package hash.
+    pub(crate) fn export_hub_package_carrier_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &crate::skill::SkillRecord,
+    ) -> Result<Option<EntityId>> {
+        if PACKAGE.contains(&self.store, txn, entity)? {
+            return Ok(None);
+        }
+        record
+            .content_hash
+            .as_ref()
+            .map(|hash| super::source_carrier::source_carrier_id(entity, hash))
+            .transpose()
+    }
     pub(super) fn stored_hub_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
