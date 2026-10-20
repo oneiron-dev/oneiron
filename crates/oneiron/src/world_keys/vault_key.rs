@@ -26,9 +26,15 @@
 use std::sync::{Arc, PoisonError};
 
 use getrandom::SysRng;
+// The wraps' public facts and the key header's wire form are the shared
+// artifact codec's, so a host that never opens a vault reads a sealed
+// artifact's key header with the engine's own types. A stored wrap is one
+// wrap as it rests: its public facts and its sealed envelope.
+use oneiron_crypto::backup::{KeyHeader, KeyHeaderWrap as StoredWrap};
+pub use oneiron_crypto::backup::{VaultKeyWrapInfo, VaultKeyWrapKind};
 use oneiron_crypto::{
     Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, Kek, OpenKey, OpenPolicy, Passphrase,
-    Purpose, SealKey, SealParams, SuiteId, WrapType, seal,
+    Purpose, SealKey, SealParams, SuiteId, seal,
 };
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
@@ -104,51 +110,6 @@ impl VaultDataKey {
     }
 }
 
-/// How one wrap unlocks the vault data key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum VaultKeyWrapKind {
-    /// This device's keystore slot, for the install named as hex.
-    Device { install: String },
-    /// The vault password.
-    Password,
-    /// One passkey, by the host's credential id.
-    Passkey { credential: String },
-    /// A hybrid capsule to a recovery or transfer key, by the owner's label.
-    Escrow { label: String },
-}
-
-impl VaultKeyWrapKind {
-    /// The wrap's id: one wrap per device, per passkey and per escrow label, and
-    /// one password.
-    fn id(&self) -> String {
-        match self {
-            Self::Device { install } => format!("device:{install}"),
-            Self::Password => "password".to_owned(),
-            Self::Passkey { credential } => format!("passkey:{credential}"),
-            Self::Escrow { label } => format!("escrow:{label}"),
-        }
-    }
-
-    fn wrap_type(&self) -> WrapType {
-        match self {
-            Self::Device { .. } => WrapType::DeviceKeystore,
-            Self::Password => WrapType::Passphrase,
-            Self::Passkey { .. } => WrapType::Passkey,
-            Self::Escrow { .. } => WrapType::HybridCapsule,
-        }
-    }
-}
-
-/// One wrap's public facts: never the envelope, never a key.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VaultKeyWrapInfo {
-    pub id: String,
-    pub kind: VaultKeyWrapKind,
-    /// The vault clock, in seconds, when the wrap was added.
-    pub created_at: u64,
-}
-
 /// Whether this vault has a data key, and whether this handle holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -164,37 +125,30 @@ struct VaultKeyState {
     created_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredWrap {
-    info: VaultKeyWrapInfo,
-    envelope: Vec<u8>,
+/// A stored wrap's digest: its id and its envelope's BLAKE3.
+fn wrap_digest(stored: &StoredWrap) -> WrapDigest {
+    WrapDigest {
+        id: stored.info.id.clone(),
+        envelope: *blake3::hash(&stored.envelope).as_bytes(),
+    }
 }
 
-impl StoredWrap {
-    fn digest(&self) -> WrapDigest {
-        WrapDigest {
-            id: self.info.id.clone(),
-            envelope: *blake3::hash(&self.envelope).as_bytes(),
-        }
-    }
-
-    /// An escrow capsule presented from outside the vault's wraps, filed as
-    /// escrow wrap `label` would be, so it opens under that wrap's id. None
-    /// of it is stored, so it names no time.
-    fn presented_escrow(label: &str, capsule: &[u8]) -> Result<Self> {
-        check_name(label)?;
-        let kind = VaultKeyWrapKind::Escrow {
-            label: label.to_owned(),
-        };
-        Ok(Self {
-            info: VaultKeyWrapInfo {
-                id: kind.id(),
-                kind,
-                created_at: 0,
-            },
-            envelope: capsule.to_vec(),
-        })
-    }
+/// An escrow capsule presented from outside the vault's wraps, filed as
+/// escrow wrap `label` would be, so it opens under that wrap's id. None
+/// of it is stored, so it names no time.
+fn presented_escrow(label: &str, capsule: &[u8]) -> Result<StoredWrap> {
+    check_name(label)?;
+    let kind = VaultKeyWrapKind::Escrow {
+        label: label.to_owned(),
+    };
+    Ok(StoredWrap {
+        info: VaultKeyWrapInfo {
+            id: kind.id(),
+            kind,
+            created_at: 0,
+        },
+        envelope: capsule.to_vec(),
+    })
 }
 
 /// One wrap as a page-seal mirror carries it (OF-570): its id, which names
@@ -313,35 +267,45 @@ pub enum VaultKeyUnlock<'a> {
 
 /// The vault key as it rests: its commitment and every wrap's sealed envelope,
 /// never the key. A sealed artifact carries it in the clear, so a host without
-/// the vault can unlock the artifact's key from one of the wraps.
+/// the vault can unlock the artifact's key from one of the wraps. Its wire
+/// form is the shared key header's ([`KeyHeader`]).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CarriedVaultKey {
-    commitment: [u8; 32],
-    wraps: Vec<StoredWrap>,
-}
+#[serde(transparent)]
+pub(crate) struct CarriedVaultKey(KeyHeader);
 
 impl CarriedVaultKey {
+    fn new(commitment: [u8; 32], wraps: Vec<StoredWrap>) -> Self {
+        Self(KeyHeader { commitment, wraps })
+    }
+
     /// The vault key named by `commitment` with no wrap yet: what the mirror
     /// of a vault under a delivered key holds before its first wrap.
     pub(super) fn unwrapped(commitment: [u8; 32]) -> Self {
-        Self {
-            commitment,
-            wraps: Vec::new(),
-        }
+        Self::new(commitment, Vec::new())
+    }
+
+    /// The key header a sealed artifact carries, as its wire form.
+    pub(crate) fn encode(&self) -> Result<Vec<u8>> {
+        self.0
+            .encode()
+            .map_err(|_| refused("the vault key header does not encode"))
+    }
+
+    /// The key header a sealed artifact carries, read from its wire form.
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
+        KeyHeader::decode(bytes)
+            .map(Self)
+            .map_err(|_| crate::Error::CorruptedIndex("sealed checkpoint artifact"))
     }
 
     /// The commitment naming the vault key.
     pub(crate) fn commitment(&self) -> &[u8; 32] {
-        &self.commitment
+        &self.0.commitment
     }
 
     /// Each carried wrap's public facts: what a host may unlock with.
     pub(crate) fn wrap_infos(&self) -> Vec<VaultKeyWrapInfo> {
-        self.wraps
-            .iter()
-            .map(|stored| stored.info.clone())
-            .collect()
+        self.0.wrap_infos()
     }
 
     /// The key for `context` of the vault key a carried wrap opens to under
@@ -377,12 +341,12 @@ impl CarriedVaultKey {
         let mut refusal = None;
         let mut attempt = |stored: &StoredWrap, secret: &UnlockSecret<'_>| match open_wrap(
             vault_id,
-            &self.commitment,
+            &self.0.commitment,
             stored,
             secret,
         ) {
             Ok(unwrapped) => {
-                opened.push(stored.digest());
+                opened.push(wrap_digest(stored));
                 if key.is_none() {
                     key = Some(unwrapped);
                 }
@@ -391,12 +355,15 @@ impl CarriedVaultKey {
         };
         let named = |kind: VaultKeyWrapKind| {
             let id = kind.id();
-            self.wraps.iter().filter(move |stored| stored.info.id == id)
+            self.0
+                .wraps
+                .iter()
+                .filter(move |stored| stored.info.id == id)
         };
         match unlock {
             VaultKeyUnlock::Device(keystore) => {
                 let mut held = false;
-                for stored in &self.wraps {
+                for stored in &self.0.wraps {
                     let VaultKeyWrapKind::Device { install } = &stored.info.kind else {
                         continue;
                     };
@@ -454,7 +421,7 @@ impl CarriedVaultKey {
                 capsule,
                 secret,
             } => {
-                let presented = StoredWrap::presented_escrow(label, capsule)?;
+                let presented = presented_escrow(label, capsule)?;
                 attempt(&presented, &UnlockSecret::Hybrid(secret));
             }
             VaultKeyUnlock::Kit {
@@ -463,7 +430,7 @@ impl CarriedVaultKey {
                 passphrase,
             } => {
                 let rebuilt =
-                    kit::open_kit(vault_id, &self.commitment, kit_vault, pieces, *passphrase)?;
+                    kit::open_kit(vault_id, &self.0.commitment, kit_vault, pieces, *passphrase)?;
                 return Ok((rebuilt, Vec::new()));
             }
         }
@@ -475,7 +442,7 @@ impl CarriedVaultKey {
 
     /// Each carried wrap's digest.
     pub(super) fn digests(&self) -> Vec<WrapDigest> {
-        self.wraps.iter().map(StoredWrap::digest).collect()
+        self.0.wraps.iter().map(wrap_digest).collect()
     }
 }
 
@@ -791,10 +758,7 @@ impl Vault {
             .into_iter()
             .map(|(_, stored)| stored)
             .collect();
-        Ok((!wraps.is_empty()).then_some(CarriedVaultKey {
-            commitment: state.commitment,
-            wraps,
-        }))
+        Ok((!wraps.is_empty()).then_some(CarriedVaultKey::new(state.commitment, wraps)))
     }
 
     /// What a sealed vault's page-seal mirror holds while a wrap change
@@ -814,10 +778,7 @@ impl Vault {
             .map(|(_, stored)| stored)
             .collect();
         wraps.extend(adding.cloned());
-        Ok(CarriedVaultKey {
-            commitment: state.commitment,
-            wraps,
-        })
+        Ok(CarriedVaultKey::new(state.commitment, wraps))
     }
 
     /// Whether this vault holds one of `wraps` as it is, envelope for
@@ -827,7 +788,7 @@ impl Vault {
         for wrap in wraps {
             let held = WRAPS
                 .get(&self.store, &txn, &wrap.id)?
-                .is_some_and(|stored| stored.digest() == *wrap);
+                .is_some_and(|stored| wrap_digest(&stored) == *wrap);
             if held {
                 return Ok(true);
             }
@@ -859,10 +820,7 @@ impl Vault {
             .map(|(_, stored)| stored)
             .collect();
         Ok((
-            CarriedVaultKey {
-                commitment: state.commitment,
-                wraps,
-            },
+            CarriedVaultKey::new(state.commitment, wraps),
             Zeroizing::new(key.derive(context, &vault_id)),
         ))
     }
@@ -890,10 +848,7 @@ impl Vault {
                     .into_iter()
                     .map(|(_, stored)| stored)
                     .collect();
-                Some(CarriedVaultKey {
-                    commitment: state.commitment,
-                    wraps,
-                })
+                Some(CarriedVaultKey::new(state.commitment, wraps))
             }
         };
         let Some(carried) = carried else {
@@ -961,7 +916,7 @@ impl Vault {
         capsule: &[u8],
         secret: &HybridSecretKey,
     ) -> Result<()> {
-        let presented = StoredWrap::presented_escrow(label, capsule)?;
+        let presented = presented_escrow(label, capsule)?;
         let state = {
             let txn = self.store.env.read_txn()?;
             STATE
@@ -1433,7 +1388,7 @@ pub fn reseal_escrow_capsule(
             "a released escrow recipient is never sealed to again: name a fresh one",
         ));
     }
-    let presented = StoredWrap::presented_escrow(label, capsule)?;
+    let presented = presented_escrow(label, capsule)?;
     let key = open_wrap(
         vault_id,
         commitment,

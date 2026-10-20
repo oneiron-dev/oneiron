@@ -176,4 +176,7 @@ pub enum Error {
     /// A primitive refused its input after the bounds checks (should not happen).
     #[error("primitive refused its input: {0}")]
     Primitive(&'static str),
+    /// A sealed artifact's clear part is not the format, at the named part.
+    #[error("backup artifact is malformed at its {0}")]
+    BackupMalformed(&'static str),
 }

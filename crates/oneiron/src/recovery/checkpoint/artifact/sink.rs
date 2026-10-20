@@ -122,7 +122,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     let mut partial = Partial(Some(path.to_path_buf()));
     let mut snapshot = [0u8; 32];
     crate::world_keys::os_fill(&mut snapshot)?;
-    let key_header = rmp_serde::to_vec_named(carried).map_err(|_| codec())?;
+    let key_header = carried.encode()?;
     let len = u32::try_from(key_header.len())
         .ok()
         .filter(|len| *len as usize <= MAX_KEY_HEADER)

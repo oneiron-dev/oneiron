@@ -9,6 +9,7 @@
 //! Every refusal is a typed [`Error`]. No error, `Debug` or `Display` output carries
 //! key bytes or plaintext; secret types zeroize on drop.
 
+pub mod backup;
 mod codec;
 mod envelope;
 mod error;

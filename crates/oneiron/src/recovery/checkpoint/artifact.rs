@@ -38,7 +38,9 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-use oneiron_crypto::{Kek, MAX_PLAINTEXT_LEN, Purpose, SuiteId};
+pub use oneiron_crypto::backup::ArtifactKind;
+use oneiron_crypto::backup::{BACKUP_MAGIC as MAGIC, MAX_KEY_HEADER_LEN as MAX_KEY_HEADER};
+use oneiron_crypto::{Kek, MAX_PLAINTEXT_LEN, SuiteId};
 use serde::{Deserialize, Serialize};
 
 use self::sink::Sealer;
@@ -49,7 +51,6 @@ use crate::world_keys::{
 };
 use crate::{Error, Result, Vault};
 
-const MAGIC: &[u8; 8] = b"ONEIRONS";
 const VERSION: u16 = 1;
 const SEAL_CONTEXT: &str = "oneiron/checkpoint-seal/v1";
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
@@ -61,45 +62,11 @@ const ZSTD_LEVEL: i32 = 3;
 const IMAGE_STREAM: u32 = 0;
 const MANIFEST_STREAM: u32 = u32::MAX;
 const PRELUDE_LEN: usize = MAGIC.len() + 2 + 1 + 32 + 32 + 4;
-const MAX_KEY_HEADER: usize = 1 << 20;
 /// No envelope's header and tag come near 64 KiB above its plaintext.
 const MAX_FRAME: u64 = MAX_PLAINTEXT_LEN as u64 + (1 << 16);
 
 fn codec() -> Error {
     Error::CorruptedIndex("sealed checkpoint artifact")
-}
-
-/// What a sealed artifact is for, which fixes its E0 purpose.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ArtifactKind {
-    /// A checkpoint, for restore, wake and migrate.
-    Checkpoint,
-    /// An owner's backup.
-    Backup,
-}
-
-impl ArtifactKind {
-    fn code(self) -> u8 {
-        match self {
-            Self::Checkpoint => 1,
-            Self::Backup => 2,
-        }
-    }
-
-    fn from_code(code: u8) -> Option<Self> {
-        match code {
-            1 => Some(Self::Checkpoint),
-            2 => Some(Self::Backup),
-            _ => None,
-        }
-    }
-
-    fn purpose(self) -> Purpose {
-        match self {
-            Self::Checkpoint => Purpose::CheckpointArtifact,
-            Self::Backup => Purpose::BackupArtifact,
-        }
-    }
 }
 
 /// The key one vault's sealed checkpoints and backups open with, derived from
@@ -324,7 +291,7 @@ impl Prelude {
     }
 
     fn carried(&self) -> Result<CarriedVaultKey> {
-        rmp_serde::from_slice(&self.key_header).map_err(|_| codec())
+        CarriedVaultKey::decode(&self.key_header)
     }
 }
 
