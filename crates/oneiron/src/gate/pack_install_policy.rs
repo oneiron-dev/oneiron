@@ -253,6 +253,9 @@ impl Vault {
             rmpv::encode::write_value(&mut data, &manifest)
                 .map_err(|_| Error::InvariantViolation("pack policy manifest encoding"))?;
             self.write_owner_policy_manifest_in_txn(owner, txn, id, data, crate::unix_seconds_now())
-        })
+        })?;
+        // A floor this commit moved is judged again at once (FIX 5505).
+        self.apply_pending_rebinds_after_commit();
+        Ok(())
     }
 }

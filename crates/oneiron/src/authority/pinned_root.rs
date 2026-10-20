@@ -238,14 +238,17 @@ pub(crate) fn end_request_wait_in_txn(
 }
 
 /// The root request whose wait `row` keeps, when `fold` holds that request
-/// cancelled by the owner or superseded by a newer request on this install
-/// (CALLS ROOT_WORK_CANCEL, ROOT_WORK_SUPERSESSION): its wait has ended
-/// (FIX 5582). `None` for the owner's own wait, a request still open or
-/// answered, or no wait.
+/// closed: cancelled by the owner or superseded by a newer request on this
+/// install (CALLS ROOT_WORK_CANCEL, ROOT_WORK_SUPERSESSION), or answered
+/// refused, its final state (FIX 5696): its wait has ended (FIX 5582).
+/// `None` for the owner's own wait, a request still open or enacted, or no
+/// wait.
 pub(crate) fn ended_request_wait(row: &PinRow, fold: &AuthorityFold) -> Option<AuthorityEntryHash> {
     let request = row.awaiting.and(row.awaited_for)?;
-    (fold.root_request_cancelled(&request) || fold.root_request_superseded(&request))
-        .then_some(request)
+    (fold.root_request_cancelled(&request)
+        || fold.root_request_superseded(&request)
+        || fold.root_request_refused(&request))
+    .then_some(request)
 }
 
 /// The root `row` awaits as `fold` stands: its wait, unless a root request

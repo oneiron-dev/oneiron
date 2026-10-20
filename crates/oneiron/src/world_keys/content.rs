@@ -15,8 +15,13 @@ use crate::store::Store;
 pub(super) const MIRROR: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::WORLD_KEY_SEALED_MIRROR);
 
-/// Purges every mirror of `world`, in the caller's write transaction: the
-/// erase's share here.
+/// Which version of each window's mirror last landed here in full
+/// (`content_landed`, FIX 5506). Key: hex32 (world) ":" window label.
+pub(super) const LANDED: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::WORLD_KEY_SEALED_MIRROR_LANDED);
+
+/// Purges every mirror of `world`, and every mark of what landed from one,
+/// in the caller's write transaction: the erase's share here.
 pub(super) fn purge_world_mirrors_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -25,6 +30,9 @@ pub(super) fn purge_world_mirrors_in_txn(
     let prefix = format!("{}:", world.to_hex());
     for key in MIRROR.scan_keys(store, wtxn, prefix.as_bytes())? {
         MIRROR.delete(store, wtxn, &key)?;
+    }
+    for key in LANDED.scan_keys(store, wtxn, prefix.as_bytes())? {
+        LANDED.delete(store, wtxn, &key)?;
     }
     Ok(())
 }

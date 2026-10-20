@@ -74,6 +74,7 @@ mod known_values;
 mod masked_files;
 mod owner_door;
 mod reveal;
+mod sighted_file;
 mod transition;
 mod types;
 mod use_handle;

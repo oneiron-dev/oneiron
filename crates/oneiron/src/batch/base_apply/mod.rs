@@ -187,6 +187,9 @@ pub(super) fn apply_ops_with_origin(
         !replay,
         mutation_recorded_at,
     )?;
+    // FIX 5507: a body file a mark names bands its record as a marked row does.
+    let masked_files =
+        masked_files.with_marked_body_files(store, &*wtxn, &ops.ops, &asset_files)?;
     // ONE-1871 (F5): LWW-resolve a replicated reparent of one child's single
     // parent slot BEFORE the overlay is built, so the winner add and the stored
     // losers' deletes are one atomic strict batch — cardinality is already one

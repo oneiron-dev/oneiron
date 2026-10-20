@@ -35,7 +35,7 @@ pub(crate) const MASKED_FILE_BAND: Sensitivity = Sensitivity::Restricted;
 
 /// The byte a key's span reads as in a masked copy. A run of it is the
 /// door's own mask shape (`********`), never secret material.
-const FILLER: u8 = b'*';
+pub(super) const FILLER: u8 = b'*';
 
 /// One row per file the write door kept with keys in it. Key: the blake3 hash
 /// of the stored bytes, which every door that serves them holds.
@@ -219,19 +219,25 @@ pub(crate) fn sighted_bytes_in_txn(
     Ok(copy)
 }
 
-/// Whether a stored record body is a file with keys in it. A door that hands
-/// whole stored records to a contact leaves it out: a contact reads a key's
-/// handle only.
+/// Whether the stored body of record `id` is a file with keys in it. A door
+/// that hands whole stored records to a contact leaves it out: a contact
+/// reads a key's handle only. A body kept in its file is named by the file's
+/// digest, never by its manifest's (FIX 5507).
 pub(crate) fn holds_masked_keys_in_txn(
-    store: &impl SideTableDbs,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
+    id: &EntityId,
     entity_type: u8,
     body: &[u8],
 ) -> Result<bool> {
     if entity_type != ENTITY_TYPE_ASSET {
         return Ok(false);
     }
-    Ok(masked_file_in_txn(store, txn, blake3::hash(body).as_bytes())?.is_some())
+    let hash = match crate::store::asset_file_in_txn(store, txn, id, body)? {
+        Some(manifest) => manifest.facts.blake3,
+        None => *blake3::hash(body).as_bytes(),
+    };
+    Ok(masked_file_in_txn(store, txn, &hash)?.is_some())
 }
 
 impl Vault {
@@ -274,6 +280,8 @@ impl Vault {
     }
 
     /// [`Vault::read_blob_artifact_version`] for a reader at a serving door.
+    /// A version whose body is its ASSET's file is read from the file as
+    /// `sight` reads it (FIX 5507, `sighted_file`).
     pub fn read_blob_artifact_version_as(
         &self,
         artifact_id: &EntityId,
@@ -281,6 +289,15 @@ impl Vault {
         sight: SecretSight,
     ) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
+        if let Some((asset, hash)) =
+            self.blob_artifact_version_file_in_txn(&rtxn, artifact_id, version)?
+        {
+            let bytes = self
+                .sighted_body_file_in_txn(&rtxn, &asset, &hash, sight)?
+                .ok_or(Error::EntityNotFound)?;
+            // FIX 4513: once, after custody read the stored bytes.
+            return self.resolve_docx_authors_in_txn(&rtxn, bytes).map(Some);
+        }
         self.read_blob_artifact_version_in_txn(&rtxn, artifact_id, version)?
             .map(|bytes| {
                 let bytes = sighted_bytes_in_txn(&self.store, &rtxn, bytes, sight)?;

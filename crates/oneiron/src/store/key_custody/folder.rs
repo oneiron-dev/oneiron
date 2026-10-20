@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 
 use super::anchor::extends;
 use super::files::{open_dir, read_whole, replace_file, write_once};
-use super::head::head_position;
+use super::head::{head_position, staged_position};
 use super::log::{CustodyPosition, FrameHeader, Journal, frame_name, log_corrupt};
 use super::protocol::{
     CustodyBatch, CustodySource, CustodyTarget, DeletionEvidence, EvidenceKind, Lineage,
@@ -219,8 +219,12 @@ fn lineage_dir_names(dir: &Path, vault: &[u8; 32], namespace: &[u8; 16]) -> bool
 /// Makes `head` the latest of the lineage directory `dir` in one rename,
 /// then removes every superseded head, temporary and stale stage there and
 /// in its log, syncs both, and lists the directory again: anything but the
-/// head and the log left over is a refusal, never an ack. `replaced` says a
-/// head was there before, which the rename superseded.
+/// head, the log and a newer upload's stage left over is a refusal, never an
+/// ack. `replaced` says a head was there before, which the rename
+/// superseded. A stage whose first bytes name a later position of the
+/// lineage than `head`'s, one the commit would still take, stays for the
+/// upload still writing it (FIX 6415); it is no head, and the inventory
+/// leaves it out.
 pub(super) fn switch_head(
     dir: &Path,
     head: &[u8],
@@ -228,10 +232,12 @@ pub(super) fn switch_head(
     kind: EvidenceKind,
 ) -> Result<DeletionEvidence> {
     replace_file(dir, HEAD, head)?;
-    let removed = sweep(dir)? + sweep(&dir.join(LOG))?;
+    let (removed, staged) = sweep(dir, head_position(head).ok().as_ref())?;
+    let removed = removed + sweep(&dir.join(LOG), None)?.0;
     let mut left = fs::read_dir(dir)?
         .map(|entry| entry.map(|entry| entry.file_name()))
         .collect::<std::io::Result<Vec<_>>>()?;
+    left.retain(|name| !staged.contains(name));
     left.sort();
     if left.iter().any(|name| name != HEAD && name != LOG) {
         return Err(Error::InvalidConfig(
@@ -253,23 +259,43 @@ pub(super) fn switch_head(
 }
 
 /// Removes every temporary an interrupted write left in `dir`, a head's
-/// among them, and every stale staged head, and syncs it. Returns how many
-/// it removed.
-fn sweep(dir: &Path) -> Result<u64> {
+/// among them, and every stale staged head, and syncs it: a stage newer
+/// than `switched` stays (FIX 6415). Returns how many it removed, and the
+/// names of the stages it kept.
+fn sweep(dir: &Path, switched: Option<&CustodyPosition>) -> Result<(u64, Vec<std::ffi::OsString>)> {
     let mut removed = 0_u64;
+    let mut staged = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let name = entry.file_name();
-        if name.to_str().is_some_and(|name| {
-            (name.starts_with(".t") && name.ends_with(".pending")) || name.starts_with(STAGE_PREFIX)
-        }) {
-            match fs::remove_file(entry.path()) {
-                Ok(()) => removed = removed.saturating_add(1),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err.into()),
-            }
+        let Some(text) = name.to_str() else {
+            continue;
+        };
+        let stage = text.starts_with(STAGE_PREFIX);
+        if !stage && !(text.starts_with(".t") && text.ends_with(".pending")) {
+            continue;
+        }
+        if stage && switched.is_some_and(|switched| newer_stage(&entry.path(), switched)) {
+            staged.push(name);
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => removed = removed.saturating_add(1),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
         }
     }
     super::platform::sync_dir(dir)?;
-    Ok(removed)
+    Ok((removed, staged))
+}
+
+/// Whether the stage at `path` holds the start of a head at a later
+/// position of `switched`'s lineage, which a commit would still take over
+/// it ([`extends`]).
+fn newer_stage(path: &Path, switched: &CustodyPosition) -> bool {
+    read_whole(path)
+        .ok()
+        .flatten()
+        .and_then(|lead| staged_position(&lead))
+        .is_some_and(|staged| staged != *switched && extends(switched, &staged))
 }

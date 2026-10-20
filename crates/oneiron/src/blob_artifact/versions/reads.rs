@@ -120,6 +120,33 @@ impl Vault {
         Ok(Some(record))
     }
 
+    /// The ASSET whose file holds version `version` of `artifact_id`, with
+    /// the version's content hash, when the version reads here as
+    /// [`Self::read_blob_artifact_version_in_txn`] reads it and its body is
+    /// that file (FIX 5507): a serving door reads the file as its reader
+    /// sees it. `None` for every other version, one whose body is in its row
+    /// included, which that read reads as before.
+    pub(crate) fn blob_artifact_version_file_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<(EntityId, [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN])>> {
+        let Some(record) = VERSIONS.get(&self.store, rtxn, &(*artifact_id, version))? else {
+            return Ok(None);
+        };
+        let asset = super::blob_artifact_asset_entity_id(&record.content_hash)?;
+        let Some(row) = self.store.port_entity_record(rtxn, &asset)? else {
+            return Ok(None);
+        };
+        if crate::store::asset_file_in_txn(&self.store, rtxn, &asset, &row.body)?.is_none()
+            || !compaction_response_readable_in(self, rtxn, artifact_id)?
+        {
+            return Ok(None);
+        }
+        Ok(Some((asset, record.content_hash)))
+    }
+
     /// Reads the stored bytes for one version, verifying the content hash on
     /// the way out. A compaction step's response whose words are withdrawn
     /// reads as absent ([`compaction_response_readable_in`]).
