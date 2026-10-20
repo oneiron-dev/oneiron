@@ -24,8 +24,9 @@ use super::{StorageTier, response_rows, storage_tier};
 use crate::store::{BODY_KEYS, BodyKeyRow, INLINE_ASSETS, Store, pin_body_custody_in_txn};
 use crate::{Error, Result, Vault};
 
-/// The databases whose rows name the bodies a checkpoint carries.
-const BODY_DATABASES: [&str; 2] = ["entities", "vault_meta"];
+/// The databases whose rows name the bodies a checkpoint carries: the host's
+/// row-held responses rest in `sync_state` (KS-2B2).
+const BODY_DATABASES: [&str; 3] = ["entities", "vault_meta", "sync_state"];
 
 impl Vault {
     /// Mints and binds an instance for every body the next checkpoint will

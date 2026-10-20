@@ -540,6 +540,16 @@ impl CoreAuth {
         self.principal_ref.as_deref()
     }
 
+    /// The entity this caller's credential names: its principal ref, or a
+    /// managed vault's attested owner; `None` when it names neither. A row
+    /// stamps it as its owner (KS-2B2).
+    pub(crate) fn principal_entity(&self) -> Option<oneiron::EntityId> {
+        self.principal_ref
+            .as_deref()
+            .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+            .or(self.managed_owner)
+    }
+
     /// The off-record session this request names, if any: context the
     /// caller's handles bind, never authority (OF-063, FIX 1668).
     pub(crate) fn off_record_session(&self) -> Option<&str> {
