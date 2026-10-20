@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
 use super::{ManagedBackupFacts, ManagedTrainingSetting, WakeEntry, valid_owner_signing_challenge};
 
@@ -32,9 +33,21 @@ pub enum CtlRequest {
     Ping,
     /// Appended last. `waited_secs` is the supervisor's own observation of the
     /// wait; the engine validates positivity, never policy.
+    ///
+    /// `wait_id` (FIX 5186), optional, is the id of the
+    /// [`EligibleWaitWire`](crate::slim_control::EligibleWaitWire) a
+    /// [`CtlRequest::SlimStatus`] reported. With it the vault sheds only while
+    /// the step it would shed still has that live wait, and otherwise refuses
+    /// [`WAIT_OBSERVATION_CHANGED`](crate::slim_control::WAIT_OBSERVATION_CHANGED)
+    /// before dropping anything. Without it the shed is unguarded, as before.
+    /// Build floor: a vault built before it ignores the field and sheds
+    /// unguarded, so a supervisor relies on the guard only after that vault's
+    /// `Ping` reports `slim_recovery_revision`.
     Shed {
         cause: ShedCause,
         waited_secs: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait_id: Option<u64>,
     },
     /// Appended last (TL-5, TRAINING-LINK = C): before an erase destroys the
     /// vault, purge every publisher training scope it ever used. The first
@@ -64,6 +77,18 @@ pub enum CtlRequest {
     /// before it answers it as an unknown request (`Ok { ok: false }`), which
     /// a supervisor reads as not proven: the erase waits.
     LegalHolds,
+    /// Appended last (FIX 5186): the vault's residency and the live outbound
+    /// wait a `Shed` would park it on ([`CtlResponse::SlimStatus`]). A read:
+    /// it changes no residency and resumes nothing, so a vault frozen for
+    /// reap answers it too and stays frozen. Build floor: as `Shed.wait_id`.
+    SlimStatus,
+    /// Appended last (FIX 5186): ends a SLIM episode with logical FULL
+    /// residency ([`CtlResponse::Unslim`]), the resume an ordinary inbound
+    /// already performs. It rebuilds nothing, schedules no wake, writes no
+    /// journal row and neither cancels nor resends an outbound call. It is
+    /// not `reap_abort`, and a vault frozen for reap refuses it as it refuses
+    /// `shed`, staying frozen. Build floor: as `Shed.wait_id`.
+    Unslim,
 }
 
 impl CtlRequest {
@@ -86,7 +111,9 @@ impl CtlRequest {
             | CtlRequest::ReapAbort
             | CtlRequest::Ping
             | CtlRequest::TrainingPurge
-            | CtlRequest::LegalHolds => {}
+            | CtlRequest::LegalHolds
+            | CtlRequest::SlimStatus
+            | CtlRequest::Unslim => {}
         }
         Ok(())
     }
@@ -411,9 +438,12 @@ pub enum CtlResponse {
     /// FIX 5187), and `artifact_public_slug_revision` that of its artifact
     /// origin's public slug binding
     /// ([`ARTIFACT_PUBLIC_SLUG_REVISION`](crate::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION),
-    /// FIX 5389), never the slug itself. Each rides v3 with a build floor:
-    /// a vault built before it sends none, which reads as unknown, never as
-    /// revision 1, and so does a value that is not a u32.
+    /// FIX 5389), never the slug itself. `slim_recovery_revision` is that of
+    /// the supervisor SLIM recovery surface
+    /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION),
+    /// FIX 5186): `slim_status`, `unslim` and `Shed.wait_id`. Each rides v3
+    /// with a build floor: a vault built before it sends none, which reads as
+    /// unknown, never as revision 1, and so does a value that is not a u32.
     Ping {
         ok: bool,
         vault: String,
@@ -438,6 +468,12 @@ pub enum CtlResponse {
             deserialize_with = "super::version::observed_revision"
         )]
         artifact_public_slug_revision: Option<u32>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::version::observed_revision"
+        )]
+        slim_recovery_revision: Option<u32>,
     },
     Ok {
         ok: bool,
@@ -461,7 +497,9 @@ pub enum CtlResponse {
     /// - engine `Refused(blocker)` -> `status=refused`, both numerics absent,
     ///   `blocker=Some(mapped_blocker)`. For known kinds, `slim=true` iff the kind
     ///   is `already_slim_for_different_step`; the other known blockers report
-    ///   `slim=false`. Unknown blocker kinds may report either residency.
+    ///   `slim=false`. Unknown blocker kinds may report either residency, and
+    ///   so may `wait_observation_changed`, a guarded shed's refusal
+    ///   (FIX 5186), since the observed wait can end on either side of a shed.
     ///
     /// `slim` always reports residency at return, never whether this call entered it.
     Slim {
@@ -504,16 +542,35 @@ pub enum CtlResponse {
     LegalHolds {
         legal_holds: LegalHoldsWire,
     },
+    /// Appended last (FIX 5186): the answer to [`CtlRequest::SlimStatus`].
+    /// Its one required field {slim_status} is disjoint from every variant
+    /// above, and it carries no `ok` for the reason `Slim` carries none.
+    SlimStatus {
+        slim_status: SlimStatusWire,
+    },
+    /// Appended last (FIX 5186): the answer to [`CtlRequest::Unslim`]. Its
+    /// one required field {unslim} is disjoint from every variant above, and
+    /// it carries no `ok` for the reason `Slim` carries none.
+    Unslim {
+        unslim: UnslimWire,
+    },
 }
 
 impl CtlResponse {
-    /// Validate SLIM status, residency, numerics, and blocker combinations, and
-    /// the shape of `PrepareReap.training`, after parsing. Existing responses
-    /// keep their prior validation requirements; `PrepareReap.next_wake` still
-    /// uses [`validate_wake_entries`](crate::validate_wake_entries).
+    /// Validate SLIM status, residency, numerics, and blocker combinations,
+    /// the shape of `PrepareReap.training` and the residency an `Unslim`
+    /// left, after parsing. Existing responses keep their prior validation
+    /// requirements; `PrepareReap.next_wake` still uses
+    /// [`validate_wake_entries`](crate::validate_wake_entries).
     pub fn validate(&self) -> anyhow::Result<()> {
         if let CtlResponse::PrepareReap { training, .. } = self {
             training.validate()?;
+        }
+        if let CtlResponse::Unslim { unslim } = self {
+            anyhow::ensure!(
+                unslim.residency == SlimResidency::Full,
+                "unslim leaves full residency"
+            );
         }
         if let CtlResponse::Slim {
             slim,

@@ -42,6 +42,8 @@ mod secrets;
 pub mod settings_paths;
 /// The leaves a managed vault's settings file may not set.
 pub mod settings_policy;
+/// The supervisor's SLIM status read and unslim (FIX 5186).
+pub mod slim_control;
 /// Account and organization vault bindings with per-vault lifecycle hooks.
 pub mod tenancy;
 /// The host's vault UID allocation table: its path, file shape and row codec.

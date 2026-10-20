@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1073 facade rows, 3677 declarations.
-Inputs: 1008 of 1073 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 962 of 1073 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1075 facade rows, 3682 declarations.
+Inputs: 1010 of 1075 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 964 of 1075 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -11202,6 +11202,13 @@ class RunBranchesRequest(TypedDict):
 class RunBranchesView(TypedDict):
     task_ref: EntityId
     branches: list[RunBranchView]
+class RunControlRequest(TypedDict):
+    branch: str
+    note: NotRequired[str | None]
+RunControlEffect = Literal["paused", "already_paused", "resumed", "already_resumed"]
+class RunControlReceipt(TypedDict):
+    effect: RunControlEffect
+    branch: RunBranchView
 class ConsultReadRequest(TypedDict):
     task_ref: EntityId
 ConsultDisposition = Literal["completed", "rejected", "failed", "expired", "abandoned", "cancelled"]
@@ -15244,6 +15251,14 @@ class EsignEventRow(TypedDict):
     event: EsignEvent
     actor: EsignAuditActor
     at: int
+EsignDeliveryEndReason = Literal["document_ended", "recipient_ended"]
+class EsignDeliveryReceipt(TypedDict):
+    attempt_ref: str
+    attempt_count: int
+    recipient: str
+    transition: str
+    reason: EsignDeliveryEndReason
+    at: int
 class EsignDocumentView(TypedDict):
     document_ref: str
     status: DocumentStatus
@@ -15254,6 +15269,7 @@ class EsignDocumentView(TypedDict):
     rejection: NotRequired[str | None]
     sealed_sha256: list[str]
     audit: list[EsignEventRow]
+    delivery_receipts: list[EsignDeliveryReceipt]
 class EsignLinksIssueRequest(TypedDict):
     document_ref: str
     rotate: NotRequired[bool]

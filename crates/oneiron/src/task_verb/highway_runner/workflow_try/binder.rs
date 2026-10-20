@@ -16,6 +16,8 @@ use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{ArtifactError, Error};
+use crate::federation::facet_read::facets_admit_in;
+use crate::federation::{ScopeAxis, ScopeId};
 use crate::llm::run_admission::{DeclaredMaximum, MaximumShown};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::task_verb::HostBinding;
@@ -26,6 +28,12 @@ use crate::write_envelope::WriteActor;
 const MEMBER_UNREADABLE: &str = "vault.workflows.dispatch_bound reads its TASK, its workflow and \
                                  each step's definition on your own credential's lane, and one \
                                  is not readable there";
+
+/// What a member reads when the TASK they bind sits outside the facet their
+/// credential's writes land in (FIX 5421).
+const MEMBER_OUTSIDE_LANDING: &str = "vault.workflows.dispatch_bound binds a TASK only in the \
+                                      facet your credential's writes land in, its facet caveats \
+                                      being its own authority limits";
 
 /// The binding caller, with the proof its door checked.
 pub(crate) enum WorkflowBinder<'a> {
@@ -44,11 +52,14 @@ pub(crate) enum WorkflowBinder<'a> {
     /// the key their credential reads through, only once no run an earlier
     /// request started answers theirs (FIX 5415). `slip` is the id of the
     /// slip their call presented, which the binding keeps (FIX 5419).
+    /// `landing` is the one facet that slip's writes land in, empty when it
+    /// lands in none, for a slip whose facet caveats narrow it (FIX 5421).
     Person {
         person: &'a AuthenticatedOwner,
         lane: &'a dyn Fn() -> MemoryResult<ScopedReadActorKey>,
         funding: &'a WorkflowFunding,
         slip: Option<[u8; 32]>,
+        landing: Option<ScopeAxis<ScopeId>>,
     },
 }
 
@@ -153,6 +164,55 @@ impl WorkflowBinder<'_> {
             Self::Person { lane, .. } => lane().map(Some),
             Self::Owner(_) | Self::Agent { .. } => Ok(None),
         }
+    }
+
+    /// Refuses, in the admitting writer, a member's bind of a TASK that sits
+    /// outside the facet their credential's writes land in (FIX 5421): its
+    /// facet caveats are their own authority limits, judged by the one facet
+    /// rule. The owner's narrower credential is no narrowing (FACET-READ =
+    /// A); the owner at his door and an agent bind as before.
+    pub(super) fn landing_admits_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        lane: Option<&ScopedReadActorKey>,
+        task: EntityId,
+    ) -> MemoryResult<()> {
+        let (
+            Self::Person {
+                landing: Some(landing),
+                ..
+            },
+            Some(lane),
+        ) = (self, lane)
+        else {
+            return Ok(());
+        };
+        if lane.facets_owner_exempt_in(vault, txn)? {
+            return Ok(());
+        }
+        let raw = vault.get_raw_in(txn, &task)?.ok_or(Error::EntityNotFound)?;
+        if facets_admit_in(vault, &vault.store, txn, task, &raw, landing)? {
+            return Ok(());
+        }
+        let bound = match landing {
+            ScopeAxis::Some(facets) => facets.first().map(|facet| facet.0.to_hex()),
+            ScopeAxis::All | ScopeAxis::Bottom => None,
+        };
+        Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!(
+                "{MEMBER_OUTSIDE_LANDING}: TASK {} sits outside {}",
+                task.to_hex(),
+                bound.map_or_else(
+                    || "every facet, as this credential's writes land in none".to_owned(),
+                    |facet| format!("facet {facet}"),
+                )
+            ),
+            &[
+                "Bind a TASK that sits in your credential's write facet, or ask the owner to place it there.",
+            ],
+        ))
     }
 
     /// Opens a member's root spend scope in the admitting writer, before the

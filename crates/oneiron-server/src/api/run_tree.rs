@@ -6,6 +6,7 @@ use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
+use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
@@ -16,6 +17,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::{Stream, stream};
+use oneiron::task_verb::run_control::RunControl;
 use serde::Deserialize;
 use serde::Serialize;
 use std::convert::Infallible;
@@ -425,6 +427,14 @@ pub(crate) async fn core_run_tree_intervene(
                 ApiError::bad_request("placement requires redirect", Some("placement")).into(),
             );
         }
+        // FIX 4501: pause and resume take the run-control doors' own
+        // admission; every other kind keeps core:write alone.
+        (oneiron::AttemptInterventionKind::Pause, None) => {
+            Ok(core_run_control(&server, &auth, input, RunControl::Pause)?)
+        }
+        (oneiron::AttemptInterventionKind::Resume, None) => {
+            Ok(core_run_control(&server, &auth, input, RunControl::Resume)?)
+        }
         (_, None) => queue.intervene(input),
     };
     let outcome = result
@@ -455,6 +465,76 @@ pub(crate) async fn core_run_tree_intervene(
         effect: core_run_tree_intervention_effect(outcome.effect),
         tree,
     }))
+}
+
+/// A pause or resume through the run-control doors' own admission (FIX
+/// 4501, the C002 pattern), on the caller's handle as its credential names
+/// it: the owner a host action acts as, else its principal under its class.
+/// The vault owner pauses and resumes any branch, his own credential that
+/// grants no read included; any other caller needs the TASK binding.
+fn core_run_control(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    input: oneiron::InterveneAttempt,
+    control: RunControl,
+) -> Result<oneiron::attempt_queue::InterveneOutcome, EnvelopedApiError> {
+    let (actor, class) = match super::host_action::host_action_of(&server.vault, auth) {
+        Some(action) => {
+            let actor = action
+                .map_err(super::host_action::host_action_refusal)?
+                .actor();
+            (actor.entity_ref(), actor.actor_class())
+        }
+        None => {
+            let actor = auth
+                .principal_entity()
+                .ok_or_else(|| ApiError::forbidden_scope("principal_ref"))?;
+            // A credential that declares no class is a person's, as the
+            // owner's own may be; the engine refuses a class its actor lacks.
+            let class = match auth.actor_class() {
+                Some("human") | None => oneiron::EdgeActorClass::Human,
+                Some("agent") => oneiron::EdgeActorClass::Agent,
+                Some("system") => oneiron::EdgeActorClass::System,
+                Some(_) => return Err(ApiError::forbidden_scope("actor_class").into()),
+            };
+            (actor, class)
+        }
+    };
+    super::credential_memory(&server.vault, Some(auth), actor, class)
+        .at(auth.locality())
+        .control_run(input.id, control, input.note)
+        .map_err(run_control_refusal)
+}
+
+/// The run-control doors' refusal in the core error envelope (FIX 4501): a
+/// caller they do not admit is told why, and a transition the queue refuses
+/// is the malformed intervention it always was.
+fn run_control_refusal(error: oneiron::memory::MemoryError) -> EnvelopedApiError {
+    use oneiron::memory::{
+        MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
+        MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    };
+    match error.code.as_str() {
+        MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => ApiError::new(
+            error.message,
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            error.suggestions,
+        ),
+        MEMORY_CODE_NOT_FOUND => ApiError::not_found("job", None),
+        MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, None),
+        MEMORY_CODE_INVALID_STATE => ApiError::new(
+            error.message,
+            ApiErrorDetails::InvalidState { state: None },
+            error.suggestions,
+        ),
+        _ => {
+            tracing::error!(code = %error.code, "core run tree intervene failed");
+            ApiError::internal_server_error("core run tree intervene failed")
+        }
+    }
+    .into()
 }
 
 pub(crate) fn validate_core_run_tree_query(params: &CoreRunTreeQuery) -> Result<(), ApiError> {

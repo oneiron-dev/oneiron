@@ -16,7 +16,10 @@ use crate::authority::TaskActorVerb;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Error;
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OWNER_BINDING_REQUIRED, Memory,
+    MemoryError, MemoryResult,
+};
 use crate::task_authority::TaskStanding;
 use crate::task_verb::highway::{forbidden, not_found};
 
@@ -31,6 +34,36 @@ const LAPSED: &str = "lapsed";
 const REVOKED: &str = "revoked";
 /// What a binder that is not the TASK's owner reads.
 const MOVES_ITS_OWN: &str = "A workflow run moves only the task its binder bound it to.";
+
+/// Why a settlement can never move its TASK (FIX 5291): the TASK no longer
+/// stands for its binder, missing or no party of theirs, or the fence
+/// refuses the binder for good, no longer its owner or its binding revoked.
+/// The run is marked settled with it, so no pass retries it; any other
+/// refusal is transient, and the next pass tries again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SettleLoss {
+    TaskLost,
+    FenceLost,
+}
+
+impl SettleLoss {
+    /// The loss the settling writer's refusal `error` names, if any.
+    pub(super) fn of(error: &MemoryError) -> Option<Self> {
+        match error.code.as_str() {
+            MEMORY_CODE_NOT_FOUND => Some(Self::TaskLost),
+            MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => Some(Self::FenceLost),
+            _ => None,
+        }
+    }
+
+    /// The reason the run's settled mark keeps.
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::TaskLost => "task_lost",
+            Self::FenceLost => "fence_lost",
+        }
+    }
+}
 
 /// The TASK's standing for a binder that settles on its recorded right: the
 /// TASK's own facts under the Owner rule its bind proved, with no fresh
