@@ -223,6 +223,7 @@ impl Vault {
             &bytes,
             &files.streams(),
             |index| files.open(index),
+            None,
             budget,
         )?;
         // A checkpoint the chain does not take is no checkpoint.
