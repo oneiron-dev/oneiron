@@ -26,8 +26,8 @@ use crate::{EntityId, Result, Vault};
 
 mod source;
 pub(crate) use source::{
-    BlockedRunHost, BlockedRunRequest, RunWorlds, blocked_source_in,
-    erase_blocked_source_actor_in_txn,
+    BlockedRunHost, BlockedRunRequest, RunWorlds, SentRequest, blocked_source_in,
+    capture_durable_step, erase_blocked_source_actor_in_txn, step_sources_in,
 };
 
 /// Reports waiting for the Coach. Key: the receipt.

@@ -32,6 +32,10 @@ pub(crate) struct ExecutedModelWitness<'vault> {
     request_hash: [u8; 32],
     model: super::super::ModelId,
     at_ms: u64,
+    /// The step's host-owned envelope actor (FIX 2146).
+    actor: crate::EntityId,
+    /// A deterministic fallback answered the step: a failed execution.
+    fell_back: bool,
 }
 
 impl<'vault> ExecutedModelWitness<'vault> {
@@ -40,6 +44,7 @@ impl<'vault> ExecutedModelWitness<'vault> {
         claim_id: crate::EntityId,
         request_hash: [u8; 32],
         model: super::super::ModelId,
+        fell_back: bool,
     ) -> Self {
         Self {
             vault: ctx.vault,
@@ -49,7 +54,17 @@ impl<'vault> ExecutedModelWitness<'vault> {
             request_hash,
             model,
             at_ms: ctx.now_ms,
+            actor: ctx.envelope_actor.entity_ref(),
+            fell_back,
         }
+    }
+
+    pub(crate) const fn actor(&self) -> crate::EntityId {
+        self.actor
+    }
+
+    pub(crate) const fn fell_back(&self) -> bool {
+        self.fell_back
     }
 
     pub(crate) fn parts(
@@ -260,6 +275,16 @@ async fn durable_step(
             return Err(classified_failure(ctx.vault, source)?);
         }
     };
+    // FIX 1662: the request is kept before it is sent, for an exact replay
+    // of a failure; a capture that fails never fails the step.
+    crate::self_heal::blocked_reports::capture_durable_step(
+        ctx.vault,
+        ctx.attempt_id,
+        step_hash,
+        ctx.envelope_actor.entity_ref(),
+        &request,
+        ctx.now_ms,
+    );
     // The admitted call binds to its wake in one short write before it is
     // sent (DOOR-144), best-effort: unobserved, it runs exactly as before.
     // Declared before the settlement guard, it closes after the lease does.
@@ -321,6 +346,7 @@ async fn durable_step(
                     if let Err(error) = super::schema::validate_fallback(&request, &response, check)
                     {
                         settle_failed_usage(guard, &admission.lease, &failed_usage);
+                        ctx.vault.count_failed_step(ctx, step_hash, None);
                         return Err(error);
                     }
                     response.usage = failed_usage;
@@ -328,6 +354,7 @@ async fn durable_step(
                 }
                 Err(error) => {
                     settle_failed_usage(guard, &admission.lease, &failed_usage);
+                    ctx.vault.count_failed_step(ctx, step_hash, None);
                     return Err(error.into());
                 }
             }
@@ -345,6 +372,8 @@ async fn durable_step(
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
+            // FIX 2146: a fresh call that failed counts once.
+            ctx.vault.count_failed_step(ctx, step_hash, Some(&error));
             return Err(match error {
                 DurableStepError::Llm(LlmError::Fatal(source))
                     if matches!(request.envelope.class, CallClass::BestEffort) =>
@@ -392,7 +421,13 @@ async fn durable_step(
 
     lease_settle.settle().map_err(LlmError::from)?;
     step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
-    let witness = ExecutedModelWitness::completed(ctx, claim_id, step_hash, request.model.clone());
+    let witness = ExecutedModelWitness::completed(
+        ctx,
+        claim_id,
+        step_hash,
+        request.model.clone(),
+        failure_policy.is_some(),
+    );
     ctx.vault.capture_tier1_executed_step(&witness)?;
 
     Ok(StepOutcome::Finished {

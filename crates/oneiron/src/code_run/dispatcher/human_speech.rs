@@ -177,6 +177,8 @@ impl HostSelfDispatcher<'_> {
                 instructions,
                 briefing: None,
                 task: Some(task.to_owned()),
+                // The request itself, for an exact replay (FIX 1662).
+                sent: crate::self_heal::blocked_reports::SentRequest::bound(request),
             });
     }
 

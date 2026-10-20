@@ -708,7 +708,18 @@ impl<'a> DreamerRunnerStore<'a> {
         policy: crate::failure_ladder::FailureScopePolicy,
     ) -> Result<crate::failure_ladder::FailureLadderOutcome> {
         self.ensure_terminal_transition_target(input.attempt_id)?;
-        crate::failure_ladder::FailureLadder::new(self.vault).handle_attempt_failure(input, policy)
+        let (attempt, lease, now) = (input.attempt_id, input.attempt_count, input.now);
+        let outcome = crate::failure_ladder::FailureLadder::new(self.vault)
+            .handle_attempt_failure(input, policy)?;
+        // FIX 2146: the lease-fenced failure counts once, for the agent the
+        // dispatch targets; a count that fails changes nothing here.
+        self.vault.count_dispatch_failure(
+            attempt,
+            lease,
+            crate::failure_signals::DispatchFailure::Settled,
+            now,
+        );
+        Ok(outcome)
     }
 
     /// Atomically retries a typed agent failure together with its runner tree

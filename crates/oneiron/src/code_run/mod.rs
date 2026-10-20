@@ -129,7 +129,7 @@ pub(crate) use self::storage::{
     deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
-    StoredRunContinuation, capsule_start_body, put_run_continuation_row_in_txn,
+    StoredRunContinuation, capsule_request, capsule_start_body, put_run_continuation_row_in_txn,
     run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};

@@ -22,7 +22,8 @@
 //! is a failure-ladder case or a blocked report ([`CodeFixSource`]). A report
 //! whose run is no agent dispatch's attempt reads the source its run's host
 //! kept with it (FIX 2343); one whose run never gave this engine a model
-//! request has no replay.
+//! request has no replay. The replay sends the request the failing call sent
+//! when the vault kept it (FIX 1662, `exact`).
 
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
@@ -39,7 +40,10 @@ use crate::failure_ladder::{BlockedReportRef, HealerCase, failure_case_ref, heal
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
+mod exact;
 mod subject;
+pub(crate) use self::exact::exact_replay_request;
+pub use self::exact::{ExactReplayRequest, ReplayFidelity};
 pub(crate) use self::subject::dispatch_worlds_in;
 use self::subject::{SubjectFailure, blocked_source_failure_in};
 
@@ -92,9 +96,10 @@ pub struct CandidateFix {
 }
 
 /// The real failure as the vault holds it: the failing agent's
-/// instructions, the briefing its dispatch carried and the task it ran. No
-/// model request is kept, so a replay rebuilds the failing call from these.
-/// None of it leaves the vault.
+/// instructions, the briefing its dispatch carried and the task it ran. A
+/// replay sends the request the failing call sent when the vault kept it
+/// ([`ExactReplayRequest`], FIX 1662), and rebuilds the call from these when
+/// it did not. None of it leaves the vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailureSource {
     pub instructions: String,
