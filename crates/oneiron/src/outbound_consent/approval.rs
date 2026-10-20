@@ -137,6 +137,10 @@ pub(super) struct ConnectorCallApproval {
     /// question's version counts up with it.
     #[serde(default)]
     pub(super) revision: u32,
+    /// The owner question a newer approvable ask replaces, withdrawn once
+    /// that newer question is queued (FIX 6906 (c)).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) superseded_ask_seq: Option<u64>,
 }
 
 impl ConnectorCallApproval {
@@ -199,9 +203,14 @@ pub(super) fn retain_held_ask(row: &mut PendingConnectorCall, ask: Option<&HeldC
     }
     approval.last = Some(ask.clone());
     approval.revision = approval.revision.saturating_add(1);
-    // The question already put names another ask, or none: put it again. A
-    // code consent wait asks its own.
-    if row.code_consent_wait.is_none() {
-        row.owner_ask_seq = None;
+    // The question already put names another ask, or none: put it again,
+    // keeping the one it replaces until the new one is queued, which
+    // withdraws it (FIX 6906 (c)). A second re-ask before that finds no
+    // question put and leaves the kept one as it is. A code consent wait
+    // asks its own.
+    if row.code_consent_wait.is_none()
+        && let Some(superseded) = row.owner_ask_seq.take()
+    {
+        approval.superseded_ask_seq = Some(superseded);
     }
 }
