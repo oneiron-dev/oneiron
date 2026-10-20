@@ -84,12 +84,28 @@ impl ScopedRead<'_> {
             return Ok(None);
         }
         // A private thread's ceiling binds its audience alone (FIX 2951).
-        let roster = match turn.branch {
+        let mut roster = match turn.branch {
             Some(thread) => crate::workspace_roster::thread_members_in(
                 self.vault, txn, turn.room, thread, &roster,
             )?,
             None => roster,
         };
+        // One whose audience holds no member now, read by the vault's Owner
+        // or an Admin in it off the room (FIX 6267), binds as
+        // `thread_ceiling_in` binds it, so that caller's clearance meets into
+        // the turn on each row as a member's does (FIX 6336).
+        if let Some(thread) = turn.branch
+            && roster.is_empty()
+            && crate::workspace_roster::privileged_private_thread_reader_in(
+                self.vault,
+                txn,
+                turn.room,
+                thread,
+                turn.caller,
+            )?
+        {
+            roster = empty_private_thread_refresh_parties(turn.caller);
+        }
         let live = match turn.branch {
             Some(_) => None,
             None => Some(self.vault.room_live_speaker_entries_in(txn, turn.room)?),
@@ -133,4 +149,14 @@ impl ScopedRead<'_> {
         *current = Arc::new(current.narrowed_by(&now));
         Ok(Some(Arc::clone(current)))
     }
+}
+
+/// Who a private thread's refreshed ceiling binds when its audience holds no
+/// member now and `caller`, the vault's Owner or an Admin in it, reads it off
+/// the room (FIX 6336; CALLS `FIX 6336 empty private thread refresh`,
+/// EMPTY_PRIVATE_THREAD_REFRESH_PARTIES = CallerOnly): that caller alone,
+/// never the room's members or every name in the audience. The vault owner
+/// and the vault's own agents bring no clearance, so their reads stay open.
+fn empty_private_thread_refresh_parties(caller: EntityId) -> Vec<EntityId> {
+    vec![caller]
 }
