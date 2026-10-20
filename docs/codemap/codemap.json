@@ -51976,7 +51976,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -61335,6 +61335,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/join_door/publish.rs",
+     "purpose": "A join's receipt reaching the live windows of its room or thread once the write that filed or answered it…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -62149,7 +62159,7 @@
      "path": "src/workspace_roster/rooms/audience_find.rs",
      "purpose": "What the vault's Owner or an Admin learns of a room's private threads (FIX 5545): that they exist, by root…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -65423,7 +65433,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 104,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65446,7 +65456,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4073,
+   "source_files": 4074,
    "test_files": 902
   },
   "oneiron-android": {
