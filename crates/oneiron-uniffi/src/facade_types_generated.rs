@@ -22304,6 +22304,12 @@ pub struct EvalLabel {
     pub weight: f64,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::skill_optimize::eval_set::EvalCase`.
@@ -22336,6 +22342,12 @@ pub struct EvalCase {
     pub recorded_at: u64,
     #[serde(rename = "labels")]
     pub labels: Vec<EvalLabel>,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::skill_optimize::eval_set::EvalCaseDraft`.
@@ -23187,6 +23199,18 @@ pub struct OfferPilot {
         skip_serializing_if = "Option::is_none"
     )]
     pub completed_at: Option<u64>,
+    #[serde(
+        rename = "release_source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub release_source_rows: Option<Vec<String>>,
+    #[serde(
+        rename = "measurement_source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub measurement_source_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::skill_optimize::offer_pilot::OfferPilotPrepared`.
@@ -42901,6 +42925,12 @@ pub struct ModelRegistryRow {
         skip_serializing_if = "Option::is_none"
     )]
     pub stale_since: Option<u64>,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::llm::registry::CatalogSeed`.
@@ -42933,6 +42963,12 @@ pub struct ScoreSnapshot {
     pub fetched_at: u64,
     #[serde(rename = "observations")]
     pub observations: Vec<ScoreObservation>,
+    #[serde(
+        rename = "source_rows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_rows: Option<Vec<String>>,
 }
 
 /// `oneiron::llm::catalog_doors::types::ModelCatalogRefresh`.
