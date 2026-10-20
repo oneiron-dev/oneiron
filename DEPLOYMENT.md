@@ -82,9 +82,12 @@ by default: its offers go to the anonymous training window, with no account.
 The vault then fetches the intake's public descriptor from `https://oneiron.dev`
 (`--publisher-training-intake-origin` names another HTTPS origin) at start and
 hourly, writes both key files from it, and keeps the last pair through a failed
-fetch. This build does not upload those offers yet. Without the shipper flag a
-self-hosted outbox writes withdrawals only. Without the outbox flag no outbox
-runs and nothing is shared.
+fetch. Every 30 s it then uploads the released offers (sealed text and code-only
+facts, with no account, install key or vault id) and sends withdrawals by each
+offer's own code, and at most every 15 minutes it asks for and applies the
+intake's signed receipts; see `docs/ops/run-with-models.md`. Without the shipper flag a self-hosted outbox
+writes withdrawals only. Without the outbox flag no outbox runs and nothing is
+shared.
 
 ## Config
 

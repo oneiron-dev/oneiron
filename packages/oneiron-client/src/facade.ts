@@ -2841,7 +2841,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.agents.update": { description: "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.agents.dreaming.get": { description: "The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.agents.dreaming.set": { description: "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.agents.grants.mint": { description: "The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.agents.grants.mint": { description: "The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.agents.grants.revoke": { description: "The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.agents.base": { description: "The owner reads the base agents' principal ids, the Coach's and the Dreamer's, which vault.agents.grants.mint takes as its agent.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.standing_blocks.configure": { description: "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -5046,7 +5046,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           set: (input: Facade.AgentDreamingSetRequest, options?: O): FacadeReturns<"vault.agents.dreaming.set">[K] => invoke("vault.agents.dreaming.set", input, options, newInvocation()),
         },
         grants: {
-          /** The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant. */
+          /** The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant. */
           mint: (input: Facade.AgentGrantMintRequest, options?: O): FacadeReturns<"vault.agents.grants.mint">[K] => invoke("vault.agents.grants.mint", input, options, newInvocation()),
           /** The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing. */
           revoke: (input: Facade.AgentGrantRevokeRequest, options?: O): FacadeReturns<"vault.agents.grants.revoke">[K] => invoke("vault.agents.grants.revoke", input, options, newInvocation()),

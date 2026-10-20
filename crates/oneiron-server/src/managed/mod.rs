@@ -37,6 +37,7 @@
 mod args;
 mod attested_routes;
 mod backup_facts;
+mod container_dirs;
 #[cfg(test)]
 mod ctl_shed_tests;
 mod host;

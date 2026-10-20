@@ -109,6 +109,9 @@ pub(super) fn configure(
             "the shared model root the supervisor declared failed its check and is ignored: the vault starts without it, and a model directory only it would admit is refused"
         );
     }
+    // The container CLI's HOME and XDG_RUNTIME_DIR, checked and bound once
+    // tracing runs, so one that fails is logged (FIX 6876).
+    super::container_dirs::bind_container_cli_env(managed);
     let settled = settle(settings, &mut config)?;
     Ok((config, settled))
 }
