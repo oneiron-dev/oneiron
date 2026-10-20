@@ -21,6 +21,7 @@ use crate::provenance::text_commit::TextCommitReceipt;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
+pub(super) mod checkpoint;
 
 /// The stamp every commit message starts with; the verb follows it and no
 /// actor does.
