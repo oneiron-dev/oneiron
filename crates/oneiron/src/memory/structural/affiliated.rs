@@ -136,7 +136,7 @@ impl Memory<'_> {
             .check_auto_note_birth(&envelope.kind, self.actor_class, &envelope.markdown)?;
         let body = encode_note_body(&NoteBody {
             kind: envelope.kind.clone(),
-            author_ref: self.actor,
+            author_ref: crate::note::NoteActor::Actor(self.actor),
             markdown: envelope.markdown.clone(),
             source_revision_ref: envelope.source_revision_ref,
         })?;
@@ -291,7 +291,7 @@ pub(crate) fn append_agent_diary_in_txn(
     let unlinked = unlinked_prose_in_txn(vault, txn, agent, &markdown)?;
     let body = encode_note_body(&NoteBody {
         kind: NoteKind::Diary,
-        author_ref: owner_ref,
+        author_ref: crate::note::NoteActor::Actor(owner_ref),
         markdown,
         source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
     })?;

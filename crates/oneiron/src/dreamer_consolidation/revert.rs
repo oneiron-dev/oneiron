@@ -468,7 +468,10 @@ fn note_by_in_txn(
     let Ok(note) = crate::note::decode_note_body_in_txn(&vault.store, txn, &live) else {
         return Ok(None);
     };
-    Ok((note.author_ref == dreamer).then(|| note.kind.as_str().to_string()))
+    Ok(note
+        .author_ref
+        .is(dreamer)
+        .then(|| note.kind.as_str().to_string()))
 }
 
 /// Whether `id` is neither deleted nor archived.

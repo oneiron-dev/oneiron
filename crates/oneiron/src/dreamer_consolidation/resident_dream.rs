@@ -402,7 +402,7 @@ fn cut_for(
         let Some(note) = vault.read_note(&pad)? else {
             continue;
         };
-        if note.author_ref != author {
+        if !note.author_ref.is(author) {
             continue;
         }
         let body = note.markdown.trim();

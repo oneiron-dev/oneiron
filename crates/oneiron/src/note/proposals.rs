@@ -25,10 +25,37 @@ pub enum NoteActor {
 }
 
 impl NoteActor {
-    /// Whether this is `actor`.
+    /// Whether this is `actor`. No one is never an actor.
     #[must_use]
     pub fn is(self, actor: EntityId) -> bool {
         self == Self::Actor(actor)
+    }
+
+    /// The actor, while it is not erased. No one has no id, so it never
+    /// stands for a live writer (FIX 6072, Engine R2).
+    #[must_use]
+    pub const fn id(self) -> Option<EntityId> {
+        match self {
+            Self::Actor(id) => Some(id),
+            Self::Erased => None,
+        }
+    }
+
+    /// Its stored spelling: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
+    #[must_use]
+    pub fn to_wire(self) -> String {
+        match self {
+            Self::Actor(id) => id.to_hex(),
+            Self::Erased => ERASED_CALL_IDENTITY.to_owned(),
+        }
+    }
+
+    /// A stored spelling read back: [`ERASED_CALL_IDENTITY`], or a hex id.
+    pub(crate) fn from_wire(value: &str) -> Option<Self> {
+        if value == ERASED_CALL_IDENTITY {
+            return Some(Self::Erased);
+        }
+        EntityId::from_hex(value).ok().map(Self::Actor)
     }
 }
 
@@ -37,10 +64,7 @@ impl Serialize for NoteActor {
         &self,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
-        match self {
-            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
-            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
-        }
+        serializer.serialize_str(&self.to_wire())
     }
 }
 
@@ -49,12 +73,8 @@ impl<'de> Deserialize<'de> for NoteActor {
         deserializer: D,
     ) -> std::result::Result<Self, D::Error> {
         let value = String::deserialize(deserializer)?;
-        if value == ERASED_CALL_IDENTITY {
-            return Ok(Self::Erased);
-        }
-        EntityId::from_hex(&value)
-            .map(Self::Actor)
-            .map_err(serde::de::Error::custom)
+        Self::from_wire(&value)
+            .ok_or_else(|| serde::de::Error::custom("not an actor id or the erased marker"))
     }
 }
 
@@ -298,7 +318,7 @@ pub(super) fn grant_allows(
     actor: WriteActor,
 ) -> Result<bool> {
     let (_, core) = super::verbs::note_core(vault, txn, note)?;
-    if core.author_ref == actor.entity_ref()
+    if core.author_ref.is(actor.entity_ref())
         || (actor.actor_class() == EdgeActorClass::Human
             && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
                 .is_ok())

@@ -441,8 +441,10 @@ impl Decision for NoteReads {
                 if let Some(raw) = vault.store.port_entity_raw(&txn, &id?)?
                     && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
                     && let Ok(note) = crate::note::decode_note_body_using(body, NoteKind::wire)
+                    && let Some(author) = note.author_ref.id()
                 {
-                    authors.insert(note.author_ref);
+                    // An erased author is no reader: only live ones are kept.
+                    authors.insert(author);
                 }
             }
         }

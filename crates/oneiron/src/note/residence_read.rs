@@ -74,7 +74,7 @@ fn thin_note_view(
     )? == super::ContextDefault::OwnerOnly;
     // A cache has no independent grant authority. Another actor's private
     // note still requires its ordinary reasoned private-note door.
-    if private && core.author_ref != actor.entity_ref() {
+    if private && !core.author_ref.is(actor.entity_ref()) {
         return Err(MemoryError::new(
             crate::memory::MEMORY_CODE_FORBIDDEN,
             "another actor's private NOTE requires its reasoned read door",

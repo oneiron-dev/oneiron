@@ -619,6 +619,13 @@ pub(crate) fn opened_atoms(parts: &[&ActorPart]) -> Result<Vec<Atom>> {
         .collect()
 }
 
+/// Whether `content` is a row `C`'s split framed: its framing reads and
+/// names `C`'s family. A restore joins a group by the family its own framing
+/// names, never by a guess at its bytes.
+pub(crate) fn frames<C: LoroActorCodec>(content: &[u8]) -> bool {
+    read_frame(C::FAMILY, content).is_ok()
+}
+
 /// Whether `bytes` is a Loro update blob whose checksum holds.
 pub(crate) fn is_update(bytes: &[u8]) -> bool {
     LoroDoc::decode_import_blob_meta(bytes, true)

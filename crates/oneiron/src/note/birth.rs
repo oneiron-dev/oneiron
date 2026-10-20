@@ -1,6 +1,6 @@
 //! Deterministic NOTE birth on the shared document registry's first load.
 use super::document::NoteDocument;
-use crate::{EdgeActorClass, EntityId, Result, Vault, WriteActor};
+use crate::{EntityId, Result, Vault};
 
 pub(crate) fn document_birth_in_txn(
     vault: &Vault,
@@ -16,14 +16,9 @@ pub(crate) fn document_birth_in_txn(
         return Ok(None);
     }
     let (_, body) = super::verbs::note_core(vault, txn, id)?;
-    let class = if vault.get_entity_type_in_txn(txn, &body.author_ref)?
-        == Some(crate::registry::ENTITY_TYPE_PERSON)
-    {
-        EdgeActorClass::Human
-    } else {
-        EdgeActorClass::Agent
-    };
+    // The birth records its stored author, live or erased (FIX 6072): the
+    // seed is the same on every replica, and no writer is made from it.
     Ok(Some(
-        NoteDocument::birth(id, &body.markdown, &WriteActor::new(body.author_ref, class))?.doc,
+        NoteDocument::birth_by(id, &body.markdown, body.author_ref)?.doc,
     ))
 }

@@ -72,7 +72,7 @@ pub(super) fn intent_note_body(
         kind: NoteKind::parse(COMPACTION_INTENT_NOTE_KIND).ok_or(Error::InvariantViolation(
             "the compaction intent NOTE kind is shipped",
         ))?,
-        author_ref: author,
+        author_ref: crate::note::NoteActor::Actor(author),
         markdown,
         source_revision_ref: *summary.as_bytes(),
     })

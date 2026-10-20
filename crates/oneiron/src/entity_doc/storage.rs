@@ -315,7 +315,9 @@ impl Vault {
             }
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
                 let original = crate::note::decode_note_body(body)?;
-                if original.author_ref != birth_actor.entity_ref()
+                // Only a live author that is the migrating writer matches: an
+                // erased one is no one, never another verified writer.
+                if !original.author_ref.is(birth_actor.entity_ref())
                     || *field != TextField::MapField("markdown".to_owned())
                 {
                     return Err(invalid(

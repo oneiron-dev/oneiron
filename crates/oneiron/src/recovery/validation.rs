@@ -349,11 +349,15 @@ pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {
     for row in &snapshot.doc_snapshots {
         id(row.entity_id)?;
         id(row.head)?;
-        id(row.birth_actor)?;
+        if let Some(actor) = row.birth_actor {
+            id(actor)?;
+        }
         let core = cores
             .get(&row.entity_id)
             .ok_or(invalid("document owner is not a NOTE"))?;
-        if row.birth_actor != *core.author_ref.as_bytes() || !heads.contains_key(&row.entity_id) {
+        // An erased author binds as no one, never as a live actor (FIX 6072).
+        let author = core.author_ref.id().map(|author| *author.as_bytes());
+        if row.birth_actor != author || !heads.contains_key(&row.entity_id) {
             return Err(invalid("document birth binding"));
         }
         row.rebuild()?;

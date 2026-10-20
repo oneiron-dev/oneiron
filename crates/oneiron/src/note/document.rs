@@ -116,6 +116,14 @@ pub(super) struct NoteDocument {
 
 impl NoteDocument {
     pub(super) fn birth(id: EntityId, body: &str, actor: &WriteActor) -> Result<Self> {
+        Self::birth_by(id, body, super::NoteActor::Actor(actor.entity_ref()))
+    }
+
+    /// The deterministic birth of a stored NOTE core whose author is
+    /// `author`: a live one, or no one once erased (FIX 6072, Engine R2). The
+    /// record names that author and nothing more; no authenticated class or
+    /// writer is made from it, and an erased author stamps and records no one.
+    pub(super) fn birth_by(id: EntityId, body: &str, author: super::NoteActor) -> Result<Self> {
         if body.len() > MAX_NOTE_BYTES {
             return Err(invalid("NOTE body exceeds bound"));
         }
@@ -133,13 +141,13 @@ impl NoteDocument {
         doc.get_text(BODY)
             .insert(0, body)
             .map_err(|_| invalid("NOTE birth insert"))?;
-        stamp(&doc, actor);
+        stamp_author(&doc, author);
         let born = Self { doc, id };
         super::operations::record_authorship(
             &born,
             &super::NoteAuthorship {
                 operation: id,
-                actor: actor.entity_ref(),
+                actor: author,
                 // Birth ABI carries an author, not an authenticated actor class.
                 // Keep the seed identical on every replica; later admissions carry
                 // the credential's verified class in their own records.
@@ -444,10 +452,14 @@ impl NoteDocument {
 }
 
 fn stamp(doc: &LoroDoc, actor: &WriteActor) {
-    doc.commit_with(CommitOptions::new().commit_msg(&format!(
-        "oneiron.note/v1 actor={}",
-        actor.entity_ref().to_hex()
-    )));
+    stamp_author(doc, super::NoteActor::Actor(actor.entity_ref()));
+}
+
+/// The engine stamp naming `author`, or no one once erased.
+fn stamp_author(doc: &LoroDoc, author: super::NoteActor) {
+    doc.commit_with(
+        CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={}", author.to_wire())),
+    );
 }
 
 /// A title is human metadata, not a body hash. Keep the socket check bounded.

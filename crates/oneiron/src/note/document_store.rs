@@ -235,7 +235,7 @@ impl Memory<'_> {
         let actor = WriteActor::new(self.actor(), self.actor_class());
         let body = encode_note_body(&NoteBody {
             kind,
-            author_ref: self.actor(),
+            author_ref: super::NoteActor::Actor(self.actor()),
             markdown: markdown.clone(),
             source_revision_ref: *id.as_bytes(),
         })?;
@@ -309,7 +309,7 @@ impl Memory<'_> {
                     &doc,
                     &super::NoteAuthorship {
                         operation: self.vault().new_entity_id()?,
-                        actor: self.actor(),
+                        actor: super::NoteActor::Actor(self.actor()),
                         actor_class: self.actor_class().gate_actor_class().to_owned(),
                         grant: None,
                         command_hash: *blake3::hash(&body).as_bytes(),
@@ -568,7 +568,7 @@ pub(super) fn require_note_writer(
         return Err(invalid("NOTE was erased").into());
     }
     let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
-    if body.author_ref != memory.actor()
+    if !body.author_ref.is(memory.actor())
         && !super::proposals::automatic_edit_grant(
             memory.vault(),
             txn,

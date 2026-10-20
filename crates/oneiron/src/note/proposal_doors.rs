@@ -354,7 +354,8 @@ impl Memory<'_> {
                 .collect();
             Ok(NoteVersionTree {
                 version: doc.version(),
-                birth_author: core.author_ref.to_hex(),
+                // An erased birth author reads as the erased marker, no one.
+                birth_author: core.author_ref.to_wire(),
                 born_at: header.occurred_start,
                 forks,
                 receipts,

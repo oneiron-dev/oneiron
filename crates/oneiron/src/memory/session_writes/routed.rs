@@ -133,7 +133,7 @@ impl Memory<'_> {
         let body = encode_note_body(&NoteBody {
             source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
             kind,
-            author_ref: self.actor,
+            author_ref: crate::note::NoteActor::Actor(self.actor),
             markdown: markdown.to_owned(),
         })?;
         // The NOTE's birth facet: the one a NOTE born in the vault without a

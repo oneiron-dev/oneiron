@@ -30,7 +30,7 @@ impl Vault {
         let body = encode_note_body(&NoteBody {
             source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
             kind,
-            author_ref: actor.entity_ref(),
+            author_ref: super::NoteActor::Actor(actor.entity_ref()),
             markdown: markdown.to_owned(),
         })?;
         self.memory(actor.entity_ref(), actor.actor_class())
@@ -102,7 +102,7 @@ impl Vault {
                     ENTITY_TYPE_NOTE => {
                         self.authorize_shared_note_write_in_txn(txn, origin, &actor)?;
                         let (_, core) = note_core(self, txn, origin)?;
-                        if !owner && core.author_ref != actor.entity_ref() {
+                        if !owner && !core.author_ref.is(actor.entity_ref()) {
                             return Err(
                                 invalid("NOTE fork requires its author or the owner").into()
                             );
@@ -119,7 +119,7 @@ impl Vault {
                         let body = encode_note_body(&NoteBody {
                             source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
                             kind: core.kind,
-                            author_ref: actor.entity_ref(),
+                            author_ref: super::NoteActor::Actor(actor.entity_ref()),
                             markdown,
                         })?;
                         fork_links(
@@ -491,7 +491,7 @@ fn create_from_text_in_txn(
     let body = encode_note_body(&NoteBody {
         source_revision_ref: *vault.store.clock.entity_id()?.as_bytes(),
         kind,
-        author_ref: actor.entity_ref(),
+        author_ref: super::NoteActor::Actor(actor.entity_ref()),
         markdown: text,
     })?;
     content.apply_batch(

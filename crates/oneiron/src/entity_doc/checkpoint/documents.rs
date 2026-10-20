@@ -1,15 +1,16 @@
 //! The document rows of entity and NOTE documents (KS7-2, FIX 6072): each
 //! slot's snapshot and pending updates, joined to their owner through every
-//! retained entity-document head, every head document a NOTE held, and the
-//! entity a snapshot's own birth names; never by presuming a slot is its
-//! entity. An entity document's slot is one group: its full snapshot and its
-//! updates in replay order split together through the shared Loro
-//! projection, the birth's actor and every stamp's out ([`super::loro`]).
-//! A group that does not split stays whole under the vault-wide seal, named
-//! with its owner: a shallow snapshot and its updates (Engine R3), a history
-//! the projection does not give back, and every NOTE document until its own
-//! projection lands. A slot nothing joins is named with no owner, and one
-//! two owners claim with neither.
+//! retained entity-document head, every head document a NOTE held, the
+//! entity a snapshot's own birth names, and the NOTE a snapshot names as its
+//! own identity in its own slot; never by presuming a slot is its entity.
+//! Each slot is one group: its full snapshot and its updates in replay order
+//! split together through the shared Loro projection, an entity document's
+//! birth and stamp actors out ([`super::loro`]), a NOTE document's stamp and
+//! authorship actors out (`crate::note::checkpoint`). A group that does not
+//! split stays whole under the vault-wide seal, named with its owner: a
+//! shallow snapshot and its updates (Engine R3), and a history the
+//! projection does not give back. A slot nothing joins is named with no
+//! owner, and one two owners claim with neither.
 
 use std::collections::BTreeMap;
 
@@ -19,7 +20,7 @@ use super::hex_id;
 use crate::entity_doc::EntityDoc;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::{DocumentSlot, DocumentUpdateKey};
+use crate::ports::{DocumentSlot, DocumentUpdateKey, UpdateSeq};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::loro::{self as shared, Atom, OpenedRow};
@@ -34,10 +35,6 @@ use crate::store::checkpoint_payload::rows::{
 /// ledger name versions and frontiers, never a container), so a restore has
 /// none to derive again.
 const ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
-
-/// The carrier a NOTE document's Loro bytes are, until NOTE's own
-/// projection lands.
-const NOTE_DOC_ACTORS: &str = "NOTE document commit messages name actors";
 
 /// Updates with no full snapshot to replay them on.
 const NO_SNAPSHOT: &str = "entity document updates with no full snapshot";
@@ -93,6 +90,15 @@ impl Group {
         Some(Claim::Owner(entity, Flavor::EntityDoc))
     }
 
+    /// The NOTE a slot nothing else joins is, when its own snapshot is that
+    /// NOTE's document and names the slot it sits in: a NOTE whose head never
+    /// moved keeps its document in its own slot, with no head marker.
+    fn note_claim(&self, slot: &str) -> Option<Claim> {
+        let snapshot = self.snapshot.as_ref()?;
+        let note = crate::note::checkpoint::snapshot_note(&snapshot.value)?;
+        (note.to_hex() == slot).then_some(Claim::Owner(note, Flavor::Note))
+    }
+
     /// Names each of the group's rows unclassified.
     fn name(self, out: &mut Captured, owner: Option<OwnerRef>, reason: Unresolved) {
         if let Some(row) = self.snapshot {
@@ -143,13 +149,14 @@ pub(super) fn capture(
         groups.entry(slot).or_default().updates.push(row);
     }
     for (slot, group) in groups {
-        let claim = claims.get(&slot).copied().or_else(|| group.birth_claim());
+        let claim = claims
+            .get(&slot)
+            .copied()
+            .or_else(|| group.birth_claim())
+            .or_else(|| group.note_claim(&slot));
         match claim {
             Some(Claim::Owner(entity, Flavor::EntityDoc)) => split_slot(out, entity, group),
-            Some(Claim::Owner(note, Flavor::Note)) => {
-                let reason = Unresolved::ActorSplit(NOTE_DOC_ACTORS);
-                group.name(out, Some(OwnerRef::entity(&note)), reason);
-            }
+            Some(Claim::Owner(note, Flavor::Note)) => split_note_slot(out, note, group),
             Some(Claim::Shared) => group.name(out, None, Unresolved::SharedOwners),
             None => group.name(out, None, Unresolved::NoOwner),
         }
@@ -188,17 +195,50 @@ fn split_slot(out: &mut Captured, entity: EntityId, group: Group) {
     }
 }
 
+/// Splits a NOTE document's slot as one group, under `note`: its full
+/// snapshot, a document of `note`, then its updates in replay order, each at
+/// a sequence key as a NOTE's text plane appends them.
+fn split_note_slot(out: &mut Captured, note: EntityId, group: Group) {
+    let owner = OwnerRef::entity(&note);
+    if group.snapshot.is_none() {
+        group.name(out, Some(owner), Unresolved::ActorSplit(NO_SNAPSHOT));
+        return;
+    }
+    let sequenced = group
+        .updates
+        .iter()
+        .all(|row| matches!(row.key.seq, UpdateSeq::Sequence(_)));
+    if !sequenced {
+        group.name(out, Some(owner), Unresolved::Undecodable);
+        return;
+    }
+    let snapshot = group.snapshot.as_ref().map(|row| row.bytes.as_slice());
+    let updates = group.updates.iter().map(|row| row.bytes.as_slice());
+    let rows: Vec<&[u8]> = snapshot.into_iter().chain(updates).collect();
+    match crate::note::checkpoint::split_live(note, &rows) {
+        Ok(split) => {
+            let snapshot = group.snapshot.into_iter().map(|row| row.at);
+            let ats = snapshot.chain(group.updates.into_iter().map(|row| row.at));
+            for (at, row) in ats.zip(split) {
+                shared::place(out, owner, at, row);
+            }
+        }
+        Err(reason) => group.name(out, Some(owner), reason),
+    }
+}
+
 /// Whether `at` is a document row this getter frames.
 pub(super) fn owns(at: &RowLocator) -> bool {
     at.in_table(SNAPSHOTS.decl()) || at.in_table(UPDATES.decl())
 }
 
 /// Refuses a document row that is not, under its own key, a full entity
-/// document snapshot or an update blob.
+/// document or NOTE document snapshot, or an update blob.
 pub(super) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(SNAPSHOTS.decl()) {
         rows::check_row(SNAPSHOTS, at, value)?;
         super::loro::check_snapshot(value, None)
+            .or_else(|_| crate::note::checkpoint::check_live_snapshot(value))
     } else {
         rows::check_row(UPDATES, at, value)?;
         super::loro::check_update(value)
@@ -220,12 +260,16 @@ fn snapshot_slot(at: &RowLocator) -> Result<String> {
     Ok(slot.to_hex())
 }
 
-/// The slot an update row's key names.
-fn update_slot(at: &RowLocator) -> Result<String> {
+/// The key an update row names.
+fn update_key(at: &RowLocator) -> Result<DocumentUpdateKey> {
     let prefix = UPDATES.decl().prefix;
     let key = at.key.strip_prefix(prefix).ok_or_else(rows::bad_part)?;
-    let key = DocumentUpdateKey::decode_key(key).ok_or_else(rows::bad_part)?;
-    Ok(key.slot.to_hex())
+    DocumentUpdateKey::decode_key(key).ok_or_else(rows::bad_part)
+}
+
+/// The slot an update row's key names.
+fn update_slot(at: &RowLocator) -> Result<String> {
+    Ok(update_key(at)?.slot.to_hex())
 }
 
 /// The atoms the opened actor parts naming `at` fill.
@@ -238,10 +282,12 @@ fn atoms_at(opened: &OpenedOwnerRows, at: &RowLocator) -> Result<Vec<Atom>> {
     shared::opened_atoms(&parts)
 }
 
-/// Rebuilds each entity document slot `opened` holds as one group: its
-/// snapshot, then its updates in key order, each filled with the actors that
-/// opened, the snapshot's birth naming the compartment's entity. Each row's
-/// bytes, by its locator, for the restore's join to write.
+/// Rebuilds each document slot `opened` holds as one group, by the family
+/// its snapshot's framing names: its snapshot, then its updates in key
+/// order, each filled with the actors that opened. An entity document's
+/// birth names the compartment's entity; a NOTE document is that NOTE's,
+/// its updates at sequence keys. Each row's bytes, by its locator, for the
+/// restore's join to write.
 pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<u8>>> {
     let mut slots: BTreeMap<String, OpenedSlot<'_>> = BTreeMap::new();
     for part in &opened.rows {
@@ -273,9 +319,22 @@ pub(super) fn join(opened: &OpenedOwnerRows) -> Result<BTreeMap<RowLocator, Vec<
             let atoms = atoms_at(opened, at)?;
             group.push(OpenedRow { content, atoms });
         }
-        let bytes = super::loro::join(&group)?;
-        let first = bytes.first().ok_or_else(rows::bad_part)?;
-        super::loro::check_snapshot(first, Some(&entity))?;
+        let bytes = if crate::note::checkpoint::frames_live(snapshot.1) {
+            for &(at, _) in order.iter().skip(1) {
+                if !matches!(update_key(at)?.seq, UpdateSeq::Sequence(_)) {
+                    return Err(rows::bad_part());
+                }
+            }
+            crate::note::checkpoint::join_live(entity, &group)?
+        } else {
+            let bytes = super::loro::join(&group)?;
+            let first = bytes.first().ok_or_else(rows::bad_part)?;
+            super::loro::check_snapshot(first, Some(&entity))?;
+            bytes
+        };
+        if bytes.len() != order.len() {
+            return Err(rows::bad_part());
+        }
         for ((at, _), row) in order.into_iter().zip(bytes) {
             joined.insert(at.clone(), row);
         }

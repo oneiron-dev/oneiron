@@ -187,7 +187,7 @@ impl Vault {
                             actor.entity_ref(),
                         )
                         .is_ok();
-                    if !owner && core.author_ref != actor.entity_ref() {
+                    if !owner && !core.author_ref.is(actor.entity_ref()) {
                         return Err(
                             invalid("NOTE overrides require its author or the owner").into()
                         );
