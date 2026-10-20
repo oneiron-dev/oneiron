@@ -8,9 +8,9 @@
 //! state the guard cannot read (202 `hold_state_unknown`). Nothing is refused.
 //! The intents replay at start, before the room serves, and each time the
 //! guard's recheck counter moves, through the same guard. An intent clears
-//! once its object is gone, or once a later upload has replaced the object,
-//! which is never deleted. A delete, a replay and the rename of an upload
-//! take one lock per room.
+//! once the guard reports its object gone, or once a later upload has
+//! replaced the object, which is never deleted. A delete, a replay and the
+//! rename of an upload take one lock per room.
 
 use std::{
     io::{self, Write},
@@ -209,7 +209,10 @@ impl HeldDeletes {
     }
 
     /// Hands the guard the unlink of `target`'s object, then its directory
-    /// sync, and clears the intent once the object is gone.
+    /// sync, and clears the intent once the object is gone. A guard that
+    /// delegates the delete to the vault's engine reports a confirmed
+    /// absence as deleted and never an engine's storage failure as a missing
+    /// object, so only a confirmed delete clears its intent (FIX 6826).
     fn settle(
         &self,
         target: &RelayDeleteTarget,
@@ -283,23 +286,27 @@ impl HeldDeletes {
         }
     }
 
-    /// Settles one intent: cleared when its object is gone or now holds
-    /// other bytes than the delete named, else handed to the guard again.
+    /// Settles one intent: cleared when its object now holds other bytes
+    /// than the delete named, else handed to the guard again, a missing
+    /// object too: an engine that executes the delete confirms the absence
+    /// itself, and a claimed object a stopped engine job left goes back at
+    /// its next bind (FIX 6826).
     fn replay_one(&self, object: &str) {
         let Some(target) = self.read_intent(object) else {
             return;
         };
         match digest(&self.objects.join(object)) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => self.clear(object),
-            Err(error) => {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => {
                 tracing::warn!(
                     kind = ?error.kind(),
                     "relay delete replay did not read the object; the next recheck asks again"
                 );
             }
             Ok(current) if current != target.ciphertext_blake3 => self.clear(object),
-            Ok(_) => {
-                if let Err(RelayDeleteHoldError::StorageIo(error)) = self.settle(&target) {
+            _ => {
+                if let Err(RelayDeleteHoldError::StorageIo(error)) = self.settle(&target)
+                    && error.kind() != io::ErrorKind::NotFound
+                {
                     tracing::warn!(
                         kind = ?error.kind(),
                         "relay delete replay did not unlink; the next recheck asks again"

@@ -59,12 +59,18 @@ pub enum ManagedError {
     RelativeRecipientFile { flag: &'static str },
 
     /// One leaf of the owner's settings file that a managed vault does not
-    /// take, named by its dotted field and never by its value.
-    #[error("--settings-file sets `{field}`, which a managed vault refuses: {reason}")]
+    /// take, named by its dotted field and never by its value. `cause` is
+    /// the finer reason an owner path was refused, when there is one: the
+    /// contract's path reason (FIX 6874).
+    #[error(
+        "--settings-file sets `{field}`, which a managed vault refuses: {reason}{}",
+        .cause.map_or_else(String::new, |cause| format!(" ({cause})"))
+    )]
     SettingsRefused {
         section: String,
         field: String,
         reason: SettingsRefusal,
+        cause: Option<&'static str>,
     },
 
     #[error("--artifact-http-socket must be an absolute path")]
