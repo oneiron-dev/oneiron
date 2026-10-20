@@ -84,6 +84,32 @@ pub struct SkillOptimizeBrief {
     /// proposals. Only the categorical rejection reason crosses from the
     /// held-out gate: never its scores, basis, or reserved receipt ids.
     pub rejected_edits: Vec<RejectedSkillEdit>,
+    /// The failure a heal's repair is aimed at (FIX 2495): explicit repair
+    /// input the Coach hands its author, never an outcome aggregate, so the
+    /// held-out partition is untouched. `None` for an ordinary optimization.
+    pub failure: Option<SkillFailureContext>,
+}
+
+/// The failure a heal's skill repair is aimed at: its class as its source
+/// stored it and every verified blocked report of it, each whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillFailureContext {
+    /// A failure-ladder case's own class (`transient`, `permanent` or
+    /// `ambiguous`), or `agent_blocked` for a blocked report.
+    pub failure_class: String,
+    /// A blocked report's category, when the failure is one.
+    pub category: Option<String>,
+    /// Every verified report of the failure that still reads.
+    pub reports: Vec<SkillFailureReport>,
+}
+
+/// One blocked report of a failure, whole.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillFailureReport {
+    pub receipt: EntityId,
+    pub category: String,
+    /// The agent's own words: data, never an instruction.
+    pub untrusted_detail: String,
 }
 
 /// Why a scored edit did not clear the strict-improvement gate.
@@ -337,6 +363,7 @@ pub(crate) fn optimize_brief_bound_at(
         discovery_proposals,
         substitution_proposals,
         rejected_edits,
+        failure: None,
     })
 }
 

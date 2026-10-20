@@ -141,15 +141,43 @@ impl HostSelfDispatcher<'_> {
         call: crate::code_run::blocked::SelfReportBlockedCall,
         run_id: Option<EntityId>,
     ) -> Result<SelfDispatchOutcome> {
-        // The host's own agent attempt binds the report, never guest text.
+        // The host's own agent attempt binds the report, never guest text,
+        // and so does the request its executor bound (FIX 2343).
         let receipt = self.storage.witness_blocked_report(
             &self.run_ref,
             run_id,
             &call,
             self.actor,
             self.agent_parent,
+            self.run_request.borrow().clone(),
         )?;
         Ok(SelfDispatchOutcome::ReportBlocked { receipt })
+    }
+
+    /// The executor calls this with each request it is about to send, before
+    /// the call (FIX 2343): the request's system text and the run's `task`,
+    /// each whole, are what a blocked report the run files keeps for its
+    /// code fix's replay. The request the host assembled is the run's own;
+    /// a run whose executor binds none (a caller outside this engine) keeps
+    /// none.
+    pub(crate) fn observe_run_request(&self, request: &crate::LlmRequest, task: &str) {
+        let instructions = request
+            .messages
+            .iter()
+            .filter(|message| message.role == crate::LlmMessageRole::System)
+            .flat_map(|message| &message.content)
+            .filter_map(|part| match part {
+                crate::ContentPart::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        *self.run_request.borrow_mut() =
+            Some(crate::self_heal::blocked_reports::BlockedRunRequest {
+                instructions,
+                briefing: None,
+                task: Some(task.to_owned()),
+            });
     }
 
     pub(super) fn durable_wait(

@@ -17,6 +17,10 @@
 //! each verdict here after the export queue drains. Each record is queued in
 //! the write that keeps its verdict in the row, and a failure gets one run:
 //! a case whose run's blocked report already has a run gets none of its own.
+//! A blocked report whose run is no agent dispatch's attempt, or that has no
+//! durable run, replays from the source its run's host kept (FIX 2343); one
+//! whose caller never gave this engine a model request keeps its work, its
+//! replay unavailable. Every text a question reads goes whole, measured.
 use std::cell::OnceCell;
 use std::ops::Bound;
 use std::time::{Duration, Instant};
@@ -38,10 +42,10 @@ use crate::failure_signals::{
     ReplayRun, ScrubRun, SealedCodeFix, Sealing, ShadowRun, code_fix_subject_in, failed_case_in,
     queue_sealed_in_txn,
 };
+use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::CODE_FIX_JUDGMENT;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    MAX_DECISION_STATE_BYTES, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, Named, SideTable};
@@ -52,19 +56,12 @@ const WORK: SideTable<EntityId, CodeFixWork, Named> =
     SideTable::new(&side_table::FAILURE_SIGNALS_CODE_FIX_WORK);
 /// Domain separator for a blocked report's work key.
 const BLOCKED_WORK_DOMAIN: &[u8] = b"oneiron.code-fix.blocked.v1\0";
-/// Blocked reports one job carries.
-const JOB_REPORTS: usize = 8;
 /// Work rows one owner read returns when its caller names no limit.
 pub const MAX_CODE_FIX_WORK: usize = 256;
 /// Work rows one catch-up step reads, and top-up runs it queues: a newly
 /// pinned candidate reaches past failures a few at a time.
 const TOP_UP_SCAN: usize = 256;
 const TOP_UP_QUEUE: usize = 2;
-/// Most bytes of one report's detail, one message, or one other text a
-/// question's state carries.
-const DETAIL_BYTES: usize = 1024;
-const MESSAGE_BYTES: usize = 768;
-const TEXT_BYTES: usize = 4096;
 
 const CLASSES: [FailureClassV1; 9] = [
     FailureClassV1::RefusalOverreach,
@@ -144,8 +141,8 @@ pub struct CodeFixJob {
     pub route: HealRoute,
     pub failure_class: FailureClassV1,
     pub source: FailureSource,
-    /// The failure's blocked reports: each one's category and the agent's
-    /// own words, data and never an instruction.
+    /// The failure's blocked reports, every one: each one's category and
+    /// the agent's own words, whole, data and never an instruction.
     pub reports: Vec<serde_json::Value>,
 }
 
@@ -218,8 +215,8 @@ impl CodeFixDecisions<'_> {
         Ok(decision.answer)
     }
 
-    /// A yes or no; `None` when the state does not fit, or the ladder failed,
-    /// abstained or answered off the contract.
+    /// A yes or no; `None` when the ladder failed, abstained or answered off
+    /// the contract.
     fn yes(
         &self,
         check: &str,
@@ -227,9 +224,6 @@ impl CodeFixDecisions<'_> {
         evidence: &[EntityId],
         state: &serde_json::Value,
     ) -> Option<bool> {
-        if !fits(state) {
-            return None;
-        }
         match self.ask(check, wording, AnswerContract::Noul, evidence, state) {
             Ok(DecisionAnswer::Noul(yes)) => Some(yes),
             _ => None,
@@ -264,6 +258,8 @@ impl CodeFixDecisions<'_> {
 /// The Coach's in-vault replay of one job: the failing agent's call rebuilt
 /// from the real failure, run with no tools, judged on the ladder.
 struct CoachReplay<'a> {
+    /// Where the texts its questions read whole are measured.
+    vault: &'a Vault,
     job: &'a CodeFixJob,
     host: &'a dyn CodeFixHost,
     decisions: &'a CodeFixDecisions<'a>,
@@ -276,6 +272,18 @@ struct CoachReplay<'a> {
 }
 
 impl CoachReplay<'_> {
+    /// Measures the longest text a question's state carries whole: each
+    /// message of `conversation` and a reply of `reply` bytes.
+    fn measure(&self, conversation: &[InventedMessage], reply: usize) {
+        let longest = conversation
+            .iter()
+            .map(|message| message.text.len())
+            .fold(reply, usize::max);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
+    }
+
     fn failure_state(&self, note: Option<&str>) -> serde_json::Value {
         json!({
             "failure_class": class_name(self.job.failure_class),
@@ -291,10 +299,11 @@ impl CoachReplay<'_> {
         conversation: &[InventedMessage],
         reply: &str,
     ) -> Option<bool> {
+        self.measure(conversation, reply.len());
         let state = json!({
             "failure": self.failure_state(note),
             "conversation": conversation_state(conversation),
-            "reply": clip(reply, TEXT_BYTES),
+            "reply": reply,
         });
         self.decisions
             .yes("reproduced", REPRODUCED_WORDING, self.evidence, &state)
@@ -381,11 +390,12 @@ impl CodeFixReplay for CoachReplay<'_> {
         let Some(after) = self.host.reply(&system, conversation)? else {
             return Ok(ShadowRun::Unavailable);
         };
+        self.measure(conversation, before.len().max(after.len()));
         let state = json!({
             "failure": self.failure_state(None),
             "conversation": conversation_state(conversation),
-            "before": clip(before, TEXT_BYTES),
-            "after": clip(&after, TEXT_BYTES),
+            "before": before,
+            "after": after,
         });
         Ok(
             match self
@@ -400,15 +410,18 @@ impl CodeFixReplay for CoachReplay<'_> {
     }
 }
 
-/// The in-vault scrubber: one typed question over the whole text. A text
-/// too long to ask about whole is not judged.
+/// The in-vault scrubber: one typed question over the whole text, measured.
 struct CoachScrubber<'a> {
+    vault: &'a Vault,
     decisions: &'a CodeFixDecisions<'a>,
     evidence: &'a [EntityId],
 }
 
 impl ExportScrubber for CoachScrubber<'_> {
     fn scrub(&self, text: &str) -> Result<ScrubRun> {
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, text.len() as u64);
         let state = json!({ "text": text });
         Ok(
             match self
@@ -506,7 +519,10 @@ fn run_report_has_work_in(vault: &Vault, txn: &heed::RoTxn<'_>, case_ref: &str) 
     };
     let run = EntityId::from_bytes(*case.failing_attempt_id.as_bytes())?;
     for receipt in crate::self_heal::blocked_reports::receipts_of_run_in(vault, txn, run)? {
-        let key = work_key(&CodeFixSource::Blocked { receipt, run })?;
+        let key = work_key(&CodeFixSource::Blocked {
+            receipt,
+            run: Some(run),
+        })?;
         if WORK.contains(&vault.store, txn, &key)? {
             return Ok(true);
         }
@@ -594,7 +610,8 @@ fn not_run(candidates: &[(String, String)], reason: CodeFixWithheld) -> Vec<Seal
 }
 
 /// The failure's evidence for its questions (the case's own and each report
-/// it still reads), and its reports as those questions read them.
+/// it still reads), and its reports as those questions read them: every one,
+/// each whole, measured.
 fn failure_context(
     vault: &Vault,
     case: Option<&HealerCase>,
@@ -608,13 +625,19 @@ fn failure_context(
         .collect();
     evidence.sort();
     evidence.dedup();
+    let longest = reports
+        .iter()
+        .map(|(_, report)| report.untrusted_detail.len())
+        .max()
+        .unwrap_or(0);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, reports.len() as u64);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
     let reports = reports
         .iter()
-        .take(JOB_REPORTS)
         .map(|(_, report)| {
             json!({
                 "category": report.category.as_str(),
-                "untrusted_detail": clip(&report.untrusted_detail, DETAIL_BYTES),
+                "untrusted_detail": report.untrusted_detail,
             })
         })
         .collect();
@@ -622,9 +645,11 @@ fn failure_context(
 }
 
 /// Queues the Coach's code-fix run for a blocked report it just filed a heal
-/// for (OF-380). A report with no durable run names no failure to replay. A
-/// report whose run's attempt has a failed case gets none of its own: that
-/// case's heal queues the run for the same failure.
+/// for (OF-380). A report with no durable run, or whose run is no agent
+/// dispatch's attempt, gets its run too: it replays from the source its
+/// run's host kept (FIX 2343). A report whose run's attempt has a failed
+/// case gets none of its own: that case's heal queues the run for the same
+/// failure.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn wake_blocked_in_txn(
     vault: &Vault,
@@ -636,12 +661,12 @@ pub(super) fn wake_blocked_in_txn(
     parent: AttemptId,
     now: u64,
 ) -> Result<()> {
-    let Some(run) = run else {
-        return Ok(());
-    };
-    let case_ref = crate::failure_ladder::failure_case_ref(AttemptId::from_bytes(run.as_bytes())?);
-    if failed_case_in(vault, txn, &case_ref)?.is_some() {
-        return Ok(());
+    if let Some(run) = run {
+        let case_ref =
+            crate::failure_ladder::failure_case_ref(AttemptId::from_bytes(run.as_bytes())?);
+        if failed_case_in(vault, txn, &case_ref)?.is_some() {
+            return Ok(());
+        }
     }
     wake_in_txn(
         vault,
@@ -837,11 +862,9 @@ impl Vault {
                 CodeFixWithheld::UnknownCase,
             ));
         };
-        let Some((failure, _)) = subject.failure else {
-            return Ok(withheld(
-                FailureClassV1::Other,
-                CodeFixWithheld::PrivateWorld,
-            ));
+        let (failure, _) = match subject.failure.read() {
+            Ok(read) => read,
+            Err(reason) => return Ok(withheld(FailureClassV1::Other, reason)),
         };
         let case = subject.case.as_ref();
         let (evidence, reports) = failure_context(self, case, &subject.reports)?;
@@ -852,13 +875,20 @@ impl Vault {
         } else {
             "blocked_report"
         };
+        let longest = [failure.briefing.as_deref(), failure.task.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         let class_state = json!({
             "about": about,
             "failure_ladder_class": case.map(|case| &case.failure_class),
             "names_skill": case.map(|case| case.scope.skill_ref.is_some()),
             "reports": reports,
-            "briefing": failure.briefing.as_deref().map(|text| clip(text, TEXT_BYTES)),
-            "task": failure.task.as_deref().map(|text| clip(text, TEXT_BYTES)),
+            "briefing": failure.briefing,
+            "task": failure.task,
         });
         let failure_class = decisions.class(&evidence, &class_state)?;
         let job = CodeFixJob {
@@ -891,6 +921,7 @@ impl Vault {
             return Ok(withheld(failure_class, CodeFixWithheld::NotDrafted));
         }
         let replay = CoachReplay {
+            vault: self,
             job: &job,
             host,
             decisions,
@@ -899,6 +930,7 @@ impl Vault {
             baseline: OnceCell::new(),
         };
         let scrubber = CoachScrubber {
+            vault: self,
             decisions,
             evidence: &evidence,
         };
@@ -949,8 +981,9 @@ impl Vault {
         let Some(subject) = found else {
             return Ok(not_run(missing, CodeFixWithheld::UnknownCase));
         };
-        let Some((failure, _)) = subject.failure else {
-            return Ok(not_run(missing, CodeFixWithheld::PrivateWorld));
+        let (failure, _) = match subject.failure.read() {
+            Ok(read) => read,
+            Err(reason) => return Ok(not_run(missing, reason)),
         };
         let (evidence, reports) = failure_context(self, subject.case.as_ref(), &subject.reports)?;
         let job = CodeFixJob {
@@ -961,6 +994,7 @@ impl Vault {
             reports,
         };
         let replay = CoachReplay {
+            vault: self,
             job: &job,
             host,
             decisions,
@@ -1030,19 +1064,6 @@ const fn class_name(class: FailureClassV1) -> &'static str {
 fn conversation_state(conversation: &[InventedMessage]) -> Vec<serde_json::Value> {
     conversation
         .iter()
-        .map(|message| json!({ "role": message.role, "text": clip(&message.text, MESSAGE_BYTES) }))
+        .map(|message| json!({ "role": message.role, "text": message.text }))
         .collect()
-}
-
-/// At most `bytes` of `text`, cut on a character boundary.
-fn clip(text: &str, bytes: usize) -> &str {
-    let mut end = text.len().min(bytes);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    &text[..end]
-}
-
-fn fits(state: &serde_json::Value) -> bool {
-    serde_json::to_vec(state).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES)
 }

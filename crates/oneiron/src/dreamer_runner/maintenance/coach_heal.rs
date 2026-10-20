@@ -6,11 +6,11 @@
 //! lands as a proposed heal in the owner's run tray, counted by the oversight
 //! receipts. The Coach is propose-only: nothing here edits a skill, injects a
 //! prompt, resumes a run or touches an environment, and a case the ladder
-//! does not answer goes to a person. A case routed to `skill_edit` carries a
-//! drafted revision of its skill for the owner to review (`coach_repair`),
-//! a gated candidate nothing here admits. A filed heal wakes the Coach's code-fix
-//! run for its case, or for its report when the report's run has no failed
-//! case (OF-380), on a deployment that exports.
+//! does not answer goes to a person. A case or report routed to `skill_edit`
+//! carries a drafted revision of its skill for the owner to review
+//! (`coach_repair`), a gated candidate nothing here admits. A filed heal wakes
+//! the Coach's code-fix run for its case, or for its report when the report's
+//! run has no failed case (OF-380), on a deployment that exports.
 use std::time::{Duration, Instant};
 
 use rmpv::Value;
@@ -19,32 +19,38 @@ use serde_json::json;
 use super::coach::COACH_ISSUES_FACET;
 use super::coach_repair::{SkillRepairDraft, land_skill_repair_in_txn};
 use super::proposals;
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::code_run::blocked::{BlockedReceipt, read_blocked_receipt};
 use crate::dreamer_runner::{
     COACH_HEAL_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
+    EnqueueDreamerAttemptOutcome,
 };
+use crate::failure_ladder::{FailureClass, HealerCase, verified_blocked_reports};
 use crate::failure_signals::CodeFixSource;
+use crate::limit_ask::EngineLimit;
 use crate::llm::decision::catalogue::COACH_HEAL_ROUTE;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    MAX_DECISION_STATE_BYTES, Reversibility,
+    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
-use crate::self_heal::blocked_reports;
-use crate::skill_optimize::SkillOptimizeAuthor;
+use crate::self_heal::DiagnosticEventClass;
+use crate::self_heal::blocked_reports::{self, BlockedIssue};
+use crate::side_table::{self, Named, SideTable};
+use crate::skill_optimize::{SkillFailureContext, SkillFailureReport, SkillOptimizeAuthor};
 use crate::{EntityId, Result, Vault};
 
 /// Predicate of a proposed heal for a failure-ladder case.
 pub const COACH_HEAL_PROPOSAL_PREDICATE: &str = "coach.heal.proposal";
 /// Predicate of a proposed heal for a blocked report.
 pub const COACH_ISSUE_PROPOSAL_PREDICATE: &str = "coach.issue.proposal";
-/// Reports one Issues run reads.
+/// Reports one page of an Issues run reads. A page, never a cap: the run
+/// reads on to the last waiting report (FIX 1554).
 const ISSUES_BATCH: usize = 32;
+/// A report that landed while an Issues run held its lease (FIX 1554): the
+/// lease generation it landed under. Key: the run's attempt.
+const REDRIVE: SideTable<AttemptId, u32, Named> = SideTable::new(&side_table::COACH_ISSUES_REDRIVE);
 /// Failed decisions on one report before it goes to a person.
 const ISSUE_RETRIES: u8 = 3;
-/// Most bytes of one report's detail a question's state carries.
-const DETAIL_BYTES: usize = 4096;
 
 /// What the Coach proposes the agent needs (ARCH-0066 #healer). The Coach
 /// fixes the agent, never the task.
@@ -158,7 +164,9 @@ pub struct IssuesRun {
 impl DreamerRunnerStore<'_> {
     /// Wakes the Coach's Issues job on the `coach.heal` queue. One fixed
     /// dedupe key: a queued run absorbs every report that lands before the
-    /// host leases it.
+    /// host leases it. A report that lands while a run holds its lease marks
+    /// that run's lease generation, once however many land, and the commit
+    /// that settles the run queues its successor (FIX 1554).
     pub(crate) fn enqueue_coach_issues_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -166,7 +174,7 @@ impl DreamerRunnerStore<'_> {
         run_id: Option<String>,
         now: u64,
     ) -> Result<()> {
-        self.enqueue_kind_in_txn(
+        let outcome = self.enqueue_kind_in_txn(
             txn,
             COACH_HEAL_ATTEMPT_KIND,
             DreamerAttemptPayload {
@@ -178,7 +186,50 @@ impl DreamerRunnerStore<'_> {
             run_id,
             now,
         )?;
+        if let EnqueueDreamerAttemptOutcome::Existing(status) = outcome
+            && matches!(
+                status.attempt.state,
+                AttemptState::Leased | AttemptState::Landing
+            )
+        {
+            REDRIVE.put(
+                &self.vault().store,
+                txn,
+                &status.attempt.id,
+                &status.attempt.attempt_count,
+            )?;
+        }
         Ok(())
+    }
+
+    /// The successor of a settled `coach.issues` attempt, queued ready in the
+    /// commit that settles it, so no crash between the two strands a report
+    /// (FIX 1554): when a report landed while the attempt held its lease and
+    /// reports still wait, one Issues run is queued. The mark goes either
+    /// way. An attempt with no mark, as every other attempt is, queues
+    /// nothing.
+    pub(crate) fn redrive_coach_issues_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        settled: &AttemptRecord,
+        now: u64,
+    ) -> Result<()> {
+        if settled.kind != COACH_HEAL_ATTEMPT_KIND {
+            return Ok(());
+        }
+        let vault = self.vault();
+        let Some(generation) = REDRIVE.get(&vault.store, &*txn, &settled.id)? else {
+            return Ok(());
+        };
+        // A mark a later lease of the attempt left is that lease's to settle.
+        if generation > settled.attempt_count {
+            return Ok(());
+        }
+        REDRIVE.delete(&vault.store, txn, &settled.id)?;
+        if !blocked_reports::any_pending_in_txn(vault, &*txn)? {
+            return Ok(());
+        }
+        self.enqueue_coach_issues_in_txn(txn, None, None, now)
     }
 }
 
@@ -221,7 +272,13 @@ impl Vault {
             .collect();
         evidence.sort();
         evidence.dedup();
-        let state = fitted(json!({
+        let longest = reports
+            .iter()
+            .map(|(_, report)| report.untrusted_detail.len())
+            .max()
+            .unwrap_or(0);
+        measure_reports(self, reports.len(), longest);
+        let state = json!({
             "about": "failure_case",
             "failure_class": case.failure_class,
             "consecutive_transients": case.consecutive_transients,
@@ -230,11 +287,12 @@ impl Vault {
                 .iter()
                 .map(|(_, report)| report_state(report))
                 .collect::<Vec<_>>(),
-        }));
+        });
         let (route, decided) = decisions.route_or_person(b"case", &evidence, &state);
         let repair = match route {
             HealRoute::SkillEdit => Some(self.draft_coach_skill_repair(
                 &case,
+                case_failure(&case, &reports),
                 author,
                 attempt.status.attempt.id,
                 now,
@@ -305,91 +363,161 @@ impl Vault {
     }
 
     /// The Coach's Issues run, under a leased `coach.issues` attempt: each
-    /// waiting blocked report, oldest first, is asked which fix its agent
-    /// needs and filed as a proposed heal. A report whose decision failed
-    /// waits for the next run, and its third failure goes to a person. A
-    /// report whose receipt is gone leaves nothing to diagnose and drops.
+    /// waiting blocked report, oldest first, a page at a time to the last,
+    /// is asked which fix its agent needs and filed as a proposed heal. A
+    /// `skill_edit` heal carries the revision `author` drafts of the one
+    /// skill the report's run loaded, landed as a gated candidate with the
+    /// heal (FIX 2496). A report whose decision failed waits for the next
+    /// run, and its third failure goes to a person. A report whose receipt
+    /// is gone leaves nothing to diagnose and drops.
     pub fn run_coach_issues(
         &self,
         attempt: &DreamerAdmittedAttempt,
         decisions: &HealDecisions<'_>,
+        author: &dyn SkillOptimizeAuthor,
         now: u64,
     ) -> Result<IssuesRun> {
         self.require_coach_attempt(attempt, COACH_ISSUES_FACET)?;
         let envelope =
             proposals::run_tray_envelope(self, COACH_ISSUES_FACET, attempt.status.attempt.id)?;
-        let subject = envelope.actor().entity_ref();
+        let pass = IssuesPass {
+            attempt: attempt.status.attempt.id,
+            decisions,
+            author,
+            subject: envelope.actor().entity_ref(),
+            envelope: &envelope,
+            now,
+        };
         let mut run = IssuesRun::default();
-        for (receipt, issue) in blocked_reports::pending_blocked_issues(self, ISSUES_BATCH)? {
-            let Some(report) = read_blocked_receipt(self, &receipt)? else {
-                blocked_reports::drop_blocked_issue(self, &receipt)?;
-                continue;
+        // FIX 1554: the batch is a page, and the run reads on to the end.
+        let mut after = None;
+        let mut read = 0usize;
+        loop {
+            let page = blocked_reports::pending_blocked_issues(self, after, ISSUES_BATCH)?;
+            let Some((last, _)) = page.last() else {
+                break;
             };
-            let evidence = [receipt, issue.diagnostic];
-            let state = fitted(json!({
-                "about": "blocked_report",
-                "in_run": issue.run.is_some(),
-                "reports": [report_state(&report)],
-            }));
-            let (route, decided) = match decisions.route(b"report", &evidence, &state) {
-                Ok(Some(route)) => (route, "ladder"),
-                Ok(None) => (HealRoute::Person, "abstained"),
-                Err(_) if issue.retries.saturating_add(1) < ISSUE_RETRIES => {
-                    blocked_reports::defer_blocked_issue(self, &receipt)?;
-                    run.deferred += 1;
-                    continue;
+            after = Some(*last);
+            read += page.len();
+            for (receipt, issue) in page {
+                match self.coach_issue(&pass, receipt, &issue)? {
+                    IssueOutcome::Filed => run.proposed += 1,
+                    IssueOutcome::Deferred => run.deferred += 1,
+                    IssueOutcome::Nothing => {}
                 }
-                Err(_) => (HealRoute::Person, "unanswered"),
-            };
-            let value = json!({
-                "receipt": receipt.to_hex(),
-                "diagnostic": issue.diagnostic.to_hex(),
-                "category": issue.category.as_str(),
-                "reporter": issue.reporter.to_hex(),
-                "run": issue.run.map(|run| run.to_hex()),
-                "reported_at": issue.reported_at,
-                "route": route.as_str(),
-                "decided": decided,
-            });
-            let filed = self.with_write_txn_grouped(|txn| {
-                if blocked_reports::settled_in_txn(self, &*txn, &receipt)?.is_some() {
-                    return Ok(false);
-                }
-                let proposal = proposals::emit_in_txn(
-                    self,
-                    txn,
-                    subject,
-                    COACH_ISSUE_PROPOSAL_PREDICATE,
-                    &value,
-                    &evidence,
-                    &envelope,
-                    now,
-                )?;
-                crate::failure_ladder::oversight::proposed_in_txn(
-                    self,
-                    txn,
-                    &receipt.to_hex(),
-                    now,
-                )?;
-                blocked_reports::settle_in_txn(self, txn, &receipt, proposal, now)?;
-                super::code_fix::wake_blocked_in_txn(
-                    self,
-                    txn,
-                    receipt,
-                    issue.run,
-                    proposal,
-                    route,
-                    attempt.status.attempt.id,
-                    now,
-                )?;
-                Ok(true)
-            })?;
-            if filed {
-                run.proposed += 1;
             }
         }
+        let _ = self.measure_limit(EngineLimit::MaintenanceRowItems, read as u64);
         Ok(run)
     }
+
+    /// One waiting report of an Issues run, asked and filed under `pass`.
+    fn coach_issue(
+        &self,
+        pass: &IssuesPass<'_, '_>,
+        receipt: EntityId,
+        issue: &BlockedIssue,
+    ) -> Result<IssueOutcome> {
+        let Some(report) = read_blocked_receipt(self, &receipt)? else {
+            blocked_reports::drop_blocked_issue(self, &receipt)?;
+            return Ok(IssueOutcome::Nothing);
+        };
+        let evidence = [receipt, issue.diagnostic];
+        measure_reports(self, 1, report.untrusted_detail.len());
+        let state = json!({
+            "about": "blocked_report",
+            "in_run": issue.run.is_some(),
+            "reports": [report_state(&report)],
+        });
+        let (route, decided) = match pass.decisions.route(b"report", &evidence, &state) {
+            Ok(Some(route)) => (route, "ladder"),
+            Ok(None) => (HealRoute::Person, "abstained"),
+            Err(_) if issue.retries.saturating_add(1) < ISSUE_RETRIES => {
+                blocked_reports::defer_blocked_issue(self, &receipt)?;
+                return Ok(IssueOutcome::Deferred);
+            }
+            Err(_) => (HealRoute::Person, "unanswered"),
+        };
+        let repair = match route {
+            HealRoute::SkillEdit => Some(self.draft_coach_issue_repair(
+                issue,
+                issue_failure(self, receipt, issue, &report)?,
+                pass.author,
+                pass.attempt,
+                pass.now,
+            )?),
+            HealRoute::PromptInject | HealRoute::Environment | HealRoute::Person => None,
+        };
+        let value = json!({
+            "receipt": receipt.to_hex(),
+            "diagnostic": issue.diagnostic.to_hex(),
+            "category": issue.category.as_str(),
+            "reporter": issue.reporter.to_hex(),
+            "run": issue.run.map(|run| run.to_hex()),
+            "reported_at": issue.reported_at,
+            "route": route.as_str(),
+            "decided": decided,
+            "repair": repair.as_ref().map(SkillRepairDraft::value),
+        });
+        let now = pass.now;
+        let filed = self.with_write_txn_grouped(|txn| {
+            if blocked_reports::settled_in_txn(self, &*txn, &receipt)?.is_some() {
+                return Ok(false);
+            }
+            if let Some(repair) = &repair {
+                land_skill_repair_in_txn(self, txn, repair, COACH_ISSUES_FACET, pass.attempt, now)?;
+            }
+            let proposal = proposals::emit_in_txn(
+                self,
+                txn,
+                pass.subject,
+                COACH_ISSUE_PROPOSAL_PREDICATE,
+                &value,
+                &evidence,
+                pass.envelope,
+                now,
+            )?;
+            crate::failure_ladder::oversight::proposed_in_txn(self, txn, &receipt.to_hex(), now)?;
+            blocked_reports::settle_in_txn(self, txn, &receipt, proposal, now)?;
+            super::code_fix::wake_blocked_in_txn(
+                self,
+                txn,
+                receipt,
+                issue.run,
+                proposal,
+                route,
+                pass.attempt,
+                now,
+            )?;
+            Ok(true)
+        })?;
+        Ok(if filed {
+            IssueOutcome::Filed
+        } else {
+            IssueOutcome::Nothing
+        })
+    }
+}
+
+/// One Issues run's own inputs, which each report it reads is filed under.
+struct IssuesPass<'a, 'd> {
+    /// The leased `coach.issues` attempt.
+    attempt: AttemptId,
+    decisions: &'a HealDecisions<'d>,
+    author: &'a dyn SkillOptimizeAuthor,
+    subject: EntityId,
+    envelope: &'a crate::WriteEnvelope,
+    now: u64,
+}
+
+/// What an Issues run did with one report.
+enum IssueOutcome {
+    /// Filed as a proposed heal.
+    Filed,
+    /// Its decision failed; it waits for the next run.
+    Deferred,
+    /// Dropped, its receipt gone, or already filed.
+    Nothing,
 }
 
 /// The case's blocked reports that still decode, by receipt.
@@ -409,8 +537,61 @@ pub(super) fn case_reports(
     Ok(decoded)
 }
 
-/// One report as the question's state reads it. The detail is the agent's
-/// own words: data for the ladder, never an instruction.
+/// What a case's skill repair is aimed at (FIX 2495): the case's stored
+/// ladder class and every report of it that still reads, each whole.
+fn case_failure(case: &HealerCase, reports: &[(EntityId, BlockedReceipt)]) -> SkillFailureContext {
+    SkillFailureContext {
+        failure_class: ladder_class_name(case.failure_class).to_owned(),
+        category: None,
+        reports: reports
+            .iter()
+            .map(|(receipt, report)| failure_report(*receipt, report))
+            .collect(),
+    }
+}
+
+/// What a blocked report's skill repair is aimed at (FIX 2495): its class,
+/// `agent_blocked`, with its category, and the report, then every other
+/// verified report its run filed that still reads, each whole.
+fn issue_failure(
+    vault: &Vault,
+    receipt: EntityId,
+    issue: &BlockedIssue,
+    report: &BlockedReceipt,
+) -> Result<SkillFailureContext> {
+    let mut reports = vec![failure_report(receipt, report)];
+    if let Some(run) = issue.run {
+        let filed = verified_blocked_reports(vault, &vault.blocked_reports_of_run(run)?)?;
+        for (other, body) in case_reports(vault, &filed)? {
+            if other != receipt {
+                reports.push(failure_report(other, &body));
+            }
+        }
+    }
+    Ok(SkillFailureContext {
+        failure_class: DiagnosticEventClass::AgentBlocked.as_str().to_owned(),
+        category: Some(issue.category.as_str().to_owned()),
+        reports,
+    })
+}
+
+fn failure_report(receipt: EntityId, report: &BlockedReceipt) -> SkillFailureReport {
+    SkillFailureReport {
+        receipt,
+        category: report.category.as_str().to_owned(),
+        untrusted_detail: report.untrusted_detail.clone(),
+    }
+}
+
+/// The ladder class's stored spelling.
+const fn ladder_class_name(class: FailureClass) -> &'static str {
+    match class {
+        FailureClass::Transient => "transient",
+        FailureClass::Permanent => "permanent",
+        FailureClass::Ambiguous => "ambiguous",
+    }
+}
+
 /// Counts an owner's answer to one of the Coach's proposals as the review of
 /// its heal (ARCH-0066 #oversight), in the transaction that answers it. A
 /// claim that is no Coach proposal, or whose case or report the Coach filed
@@ -447,31 +628,18 @@ pub(crate) fn record_owner_review_in_txn(
     crate::failure_ladder::oversight::reviewed_in_txn(vault, txn, &key, proposed_at, now, true)
 }
 
+/// One report as the question's state reads it, whole (Rule 5). The detail
+/// is the agent's own words: data for the ladder, never an instruction.
 fn report_state(report: &BlockedReceipt) -> serde_json::Value {
-    let mut end = report.untrusted_detail.len().min(DETAIL_BYTES);
-    while !report.untrusted_detail.is_char_boundary(end) {
-        end -= 1;
-    }
     json!({
         "category": report.category.as_str(),
-        "untrusted_detail": &report.untrusted_detail[..end],
+        "untrusted_detail": report.untrusted_detail,
     })
 }
 
-/// `state` within the ladder's bound: the details go first.
-fn fitted(mut state: serde_json::Value) -> serde_json::Value {
-    let fits = |state: &serde_json::Value| {
-        serde_json::to_vec(state).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES)
-    };
-    if !fits(&state) {
-        if let Some(reports) = state
-            .get_mut("reports")
-            .and_then(serde_json::Value::as_array_mut)
-        {
-            for report in reports {
-                report["untrusted_detail"] = json!("");
-            }
-        }
-    }
-    state
+/// Measures the reports a route question reads whole (Rule 5): `count` of
+/// them, the longest detail `longest` bytes.
+fn measure_reports(vault: &Vault, count: usize, longest: usize) {
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, count as u64);
+    let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
 }

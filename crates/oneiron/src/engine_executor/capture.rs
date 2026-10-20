@@ -19,6 +19,11 @@ impl EngineNativeExecutor<'_> {
     /// forks from. An off-record run, a host action's or reader child's run
     /// and a run no lease binds capture nothing, and a capture that fails
     /// leaves no capsule and never fails the step.
+    ///
+    /// Whatever binds a canonical run, its dispatcher is first handed the
+    /// request and the task (FIX 2343): a blocked report the step's program
+    /// files keeps them for its code fix, so a run no lease binds replays
+    /// too.
     pub(super) fn capture_step_start(
         &self,
         config: &EngineExecutorConfig,
@@ -30,6 +35,7 @@ impl EngineNativeExecutor<'_> {
         let ExecutorStorage::Canonical(vault) = &self.storage else {
             return;
         };
+        self.gated_write.observe_run_request(request, &config.task);
         let Some((attempt, lease_generation, exposures)) = self.gated_write.replay_capture() else {
             return;
         };

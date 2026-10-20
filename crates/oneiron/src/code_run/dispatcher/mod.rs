@@ -130,6 +130,11 @@ pub struct HostSelfDispatcher<'a> {
     /// and every verb call's origin carries it. `None` when no ladder
     /// stamped the turn.
     pub(super) model_provider: RefCell<Option<String>>,
+    /// The model request the run's executor bound before its latest call
+    /// (FIX 2343), which a blocked report the run files keeps for its code
+    /// fix's replay. Host-internal: only [`Self::observe_run_request`] sets
+    /// it, from the request the executor assembled. No guest call reaches it.
+    pub(super) run_request: RefCell<Option<crate::self_heal::blocked_reports::BlockedRunRequest>>,
     /// Whose log the fold verbs reach (OF-181): the executor call's own run,
     /// unless a host action bound the live run it acts for.
     fold_log: fold_verbs::FoldLog,
@@ -260,6 +265,7 @@ impl<'a> HostSelfDispatcher<'a> {
             slip_issuer: None,
             replay_exposures: Vec::new(),
             model_provider: RefCell::new(None),
+            run_request: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
             program: None,
         })

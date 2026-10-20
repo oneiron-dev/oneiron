@@ -15,6 +15,7 @@ use oneiron::dreamer_runner::maintenance::code_fix::{
     CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, PublisherCandidate,
 };
 use oneiron::failure_signals::{InventedMessage, InventedRole};
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::HeldLadder;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
@@ -36,8 +37,6 @@ const PURPOSE: &str = "coach_code_fix";
 const BUDGET_UNITS: u64 = 1 << 20;
 /// One question's budget.
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
-/// Most bytes of one text of the real failure the draft call reads.
-const SOURCE_BYTES: usize = 16 * 1024;
 /// The Coach's instruction for the draft. The failure goes as data.
 const DRAFT_SYSTEM: &str = "You are the Coach. An agent failed at its work. The data you get \
     is the real failure: the agent's instructions, what it was briefed on and asked, the \
@@ -236,14 +235,23 @@ impl<'a> HostModels<'a> {
 impl CodeFixHost for HostModels<'_> {
     fn draft(&self, job: &CodeFixJob) -> oneiron::Result<Option<CodeFixDraft>> {
         let source = &job.source;
+        // Rule 5 (FIX 2343): the real failure's texts go whole, measured.
+        let longest = [source.briefing.as_deref(), source.task.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::len)
+            .fold(source.instructions.len(), usize::max);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         let data = serde_json::json!({
             "failure_class": job.failure_class,
             "heal_route": job.route.as_str(),
             "wants_fix": matches!(job.route, HealRoute::SkillEdit | HealRoute::PromptInject),
             "reports": job.reports,
-            "agent_instructions": clip(&source.instructions, SOURCE_BYTES),
-            "briefing": source.briefing.as_deref().map(|text| clip(text, SOURCE_BYTES)),
-            "task": source.task.as_deref().map(|text| clip(text, SOURCE_BYTES)),
+            "agent_instructions": source.instructions,
+            "briefing": source.briefing,
+            "task": source.task,
         });
         let Some(text) = self.generate(
             self.coach(),
