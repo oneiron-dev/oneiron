@@ -114,8 +114,9 @@ pub(crate) struct RoomTerms {
     /// project's slice facet, met with what each later snapshot finds there.
     /// `All` is a room with no facet.
     pub(crate) facets: crate::federation::ScopeAxis<crate::federation::ScopeId>,
-    /// The met clearance of the members that bring one (ILDF2): `None` while
-    /// only the owner and the vault's own agents are in the meet.
+    /// The met clearance of the members that bring one (ILDF2), and of an
+    /// Owner or Admin reading a private thread off the room (FIX 6497):
+    /// `None` while only the owner and the vault's own agents are in the meet.
     pub(crate) clearance: Option<crate::federation::Scope>,
     /// Whether the clearance holds rows to P7. A turn does; a member's own
     /// read of the room outside a turn keeps only the world, audience and
