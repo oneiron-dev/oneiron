@@ -910,21 +910,23 @@ async fn ai_video_answer(
     input: AiCallRequest,
 ) -> MemoryResult<AiVideoTicket> {
     owner_grade(auth, MEDIA_OWNERS)?;
-    ai_video_as_owner(server, input).await
+    ai_video_as_owner(server, input, auth.principal_entity()).await
 }
 
 /// [`ai_video`] past its credential check, for an owner's own program
-/// ([`ai_media_as_owner`]): its job bills the vault owner.
+/// ([`ai_media_as_owner`]): its job bills the vault owner. Its row is
+/// stamped with `actor`, who asked, when the caller names one (KS-2B2).
 pub(crate) async fn ai_video_as_owner(
     server: &SyncServer,
     input: AiCallRequest,
+    actor: Option<EntityId>,
 ) -> MemoryResult<AiVideoTicket> {
     let (request, _) = prepare(server, AiOperation::Video, input)?;
     let ticket = server
         .ai
         .model_runtime()
         .media()
-        .submit(request, None)
+        .submit(request, None, actor)
         .await
         .map_err(|error| failure(AiOperation::Video, &error))?;
     Ok(AiVideoTicket {
