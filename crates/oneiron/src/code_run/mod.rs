@@ -126,6 +126,9 @@ pub(crate) use self::storage::{
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{
+    RESPONSE_ERASED, replay_carriage, replay_owners, retire_actor_responses_in_txn,
+};
+pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
     deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
 };
@@ -138,7 +141,6 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
-pub(crate) use self::storage::{replay_carriage, replay_owners};
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
