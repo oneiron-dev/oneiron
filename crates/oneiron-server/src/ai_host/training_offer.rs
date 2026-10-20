@@ -180,6 +180,7 @@ pub(super) fn draft(
         ),
         None => (serde_json::Value::Null, Vec::new()),
     };
+    let mut read_set_lost = false;
     for (role, model, locality, usage) in seats {
         let Some(brief) = Brief::gather(
             vault,
@@ -196,7 +197,22 @@ pub(super) fn draft(
             continue;
         };
         // The call reads the brief and the offer skill's body (FIX 5760).
+        // The attempt it runs on records that set before the model sees it,
+        // and its pack receipt keeps the union of its calls' (FIX 6934).
         let read = union_source_rows([brief.sources.rows(), Some(vec![offer_skill.0])]);
+        // Capture only (FIX 7021): a storage error recording the set never
+        // ends the pass. The attempt's set goes unknown, as an unsourced
+        // inlet's, and later calls record nothing more.
+        if !read_set_lost && let Err(error) = vault.record_attempt_sources(attempt.id, read.clone())
+        {
+            read_set_lost = true;
+            tracing::warn!(
+                attempt = ?attempt.id,
+                %error,
+                "the offer draft could not record its read set; its pack receipt keeps it unknown"
+            );
+            let _ = vault.record_attempt_sources(attempt.id, None);
+        }
         let Some(text) = models.generate_sourced(
             models.coach(),
             vec![

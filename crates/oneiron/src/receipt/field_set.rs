@@ -14,11 +14,14 @@ use super::kernel::{
 use super::kernel::ReceiptKind;
 use crate::attempt_queue::{ManifestEntry, ManifestKind};
 use crate::context_board::MemoriesSection;
+use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 use crate::prompt::PromptRecompileStamp;
 
 const FIELD_MANIFEST_ENTRIES: &str = "manifest.entries";
 const FIELD_MANIFEST_ATTRIBUTION: &str = "manifest.attribution";
+/// FIX 6934: the complete set of rows the attempt read its inputs from.
+const FIELD_MANIFEST_SOURCE_ROWS: &str = "manifest.source_rows";
 
 /// OF-541: the template seat the attempt's executor was configured with;
 /// `model` is what that seat ran.
@@ -259,6 +262,26 @@ pub fn append_pack_attribution_fields(
     Ok(())
 }
 
+/// Freezes the read set the attempt's producers recorded while it ran
+/// (FIX 6934): the ids of the rows its inputs were read from, sorted. Only a
+/// complete set is stamped, `[]` when it read no vault row; an unknown one
+/// stamps nothing, so an absent key reads as unknown, as on a receipt minted
+/// before the field existed.
+pub(crate) fn append_pack_source_rows_fields(
+    receipt: &mut ReceiptRecord,
+    rows: Option<&[EntityId]>,
+) -> Result<()> {
+    let Some(rows) = rows else {
+        return Ok(());
+    };
+    let encoded = serde_json::to_string(rows)
+        .map_err(|_| Error::InvariantViolation("pack source rows encode"))?;
+    receipt
+        .fields
+        .insert(FIELD_MANIFEST_SOURCE_ROWS.to_owned(), encoded);
+    Ok(())
+}
+
 fn manifest_wire_forms(manifest: &[ManifestEntry], kind: ManifestKind) -> Vec<String> {
     manifest
         .iter()
@@ -400,6 +423,15 @@ impl ReceiptRecord {
     #[must_use]
     pub fn pack_manifest_entries(&self) -> Option<Vec<ManifestEntry>> {
         serde_json::from_str(self.fields.get(FIELD_MANIFEST_ENTRIES)?).ok()
+    }
+
+    /// The complete set of rows the receipt's attempt read its inputs from
+    /// (FIX 6934), read from the recorded field alone. `None`, unknown, when
+    /// its producers recorded no complete set or the receipt predates the
+    /// field.
+    #[must_use]
+    pub fn pack_source_rows(&self) -> Option<Vec<EntityId>> {
+        serde_json::from_str(self.fields.get(FIELD_MANIFEST_SOURCE_ROWS)?).ok()
     }
 
     /// Reads the ARCH-0053 §2 pack manifest recorded on this receipt: the

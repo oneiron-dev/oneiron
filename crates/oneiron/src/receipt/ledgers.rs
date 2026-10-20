@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::field_set::{
     FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, append_pack_attribution_fields,
-    append_pack_manifest_fields, append_task_type_fields, append_team_receipt_fields,
+    append_pack_manifest_fields, append_pack_source_rows_fields, append_task_type_fields,
+    append_team_receipt_fields,
 };
 #[cfg(test)]
 use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
@@ -75,7 +76,8 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
 /// write transaction. Complete, fail, retry-source finalization, queued/paused
 /// cancel, landing cancellation, force-cancel and abandon all call this seam.
 /// An attempt with no manifest, actor binding, attribution context or team-run
-/// stamp mints no row.
+/// stamp mints no row. A row carries the read set the attempt's producers
+/// recorded, when complete (FIX 6934).
 ///
 /// Atomic with the state seal: a terminal attempt with a manifest or actor
 /// binding and no receipt (or the reverse) is not a reachable state. The row
@@ -157,6 +159,9 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
             append_pack_attribution_fields(&mut receipt, &attribution)?;
         }
     }
+    // FIX 6934: the read set its producers recorded while it ran. None, or
+    // an unknown set, stamps nothing: the receipt keeps it unknown.
+    append_pack_source_rows_fields(&mut receipt, record.source_rows())?;
     // OF-543: the terminal spawn/task receipt carries the one type stamp
     // the spawn was placed with.
     if let Some(type_ref) = crate::agent_dispatch::attempt_task_type_ref(record) {

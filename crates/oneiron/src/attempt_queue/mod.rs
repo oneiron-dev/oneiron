@@ -22,6 +22,7 @@ mod executor;
 mod fanout_hold;
 mod observe;
 mod ports;
+mod read_set;
 mod result;
 mod settlement;
 mod telemetry;
@@ -50,6 +51,7 @@ pub use cancel::{
 };
 pub use engine::{AttemptQueue, RequeueAttempt, RequeuedFailure};
 pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
+pub use read_set::AttemptReadSet;
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
 pub use types::{
