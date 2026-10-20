@@ -21057,6 +21057,50 @@ async fn vault_runs_branches_get(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_runs_pause(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.runs.pause",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_runs_resume(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.runs.resume",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_consults_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -34458,6 +34502,8 @@ pub(crate) async fn call_verb(
         "vault.agents.spawn" => vault_agents_spawn(server, call, input).await,
         "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
         "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
+        "vault.runs.pause" => vault_runs_pause(server, call, input).await,
+        "vault.runs.resume" => vault_runs_resume(server, call, input).await,
         "vault.consults.get" => vault_consults_get(server, call, input).await,
         "vault.workspace.establish" => vault_workspace_establish(server, call, input).await,
         "vault.workspace.members.onboard" => {
