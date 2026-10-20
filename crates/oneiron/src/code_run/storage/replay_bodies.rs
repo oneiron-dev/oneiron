@@ -18,6 +18,7 @@
 use super::records::REPLAY_RECORDS;
 use super::response_owners::response_owner_in_txn;
 use crate::code_run::payload::{decode_self_dispatch_outcome, self_dispatch_outcome_value};
+use crate::code_run::wait_rows::keep_erased_answer_rows;
 use crate::code_run::{CodeRunReplayRecord, SelfDispatchOutcome, SelfFailedResult};
 use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
@@ -97,9 +98,10 @@ pub(crate) fn replay_owners(
 /// What an erase of its run's actor leaves of `record` live (FIX 5718,
 /// ruling 1): each call whose recorded outcome holds a reply
 /// ([`outcome_holds_reply`]) fails with `response_erased` under its own
-/// effect, as a checkpoint's image of it does, and each output that holds
-/// reply content ([`holds_reply_content`]) previews as erased. What the run
-/// did stays whole: every call's seq, effect, request, times and action
+/// effect, as a checkpoint's image of it does, a verb's answer keeping the
+/// rows it was served from, and each output that holds reply content
+/// ([`holds_reply_content`]) previews as erased. What the run did stays
+/// whole: every call's seq, effect, request, times and action
 /// digest, every output's path, handle, digest, counts and completeness, its
 /// checkpoints (so its generation), its names and its live run binding. A
 /// resumed run that reaches an erased call traps on it, as a write whose
@@ -110,16 +112,21 @@ pub(crate) fn replay_owners(
 /// An outcome that does not encode.
 pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
     for call in &mut record.bridge_calls {
-        let holds = match decode_self_dispatch_outcome(&call.outcome) {
-            Ok(outcome) => outcome_holds_reply(&outcome),
-            Err(_) => true,
+        // A verb's answer keeps the rows it was served from; one that does
+        // not decode names none it is known to be served from.
+        let rows = match decode_self_dispatch_outcome(&call.outcome) {
+            Ok(outcome) if !outcome_holds_reply(&outcome) => continue,
+            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.rows),
+            Ok(_) => None,
+            Err(_) => Some(None),
         };
-        if holds {
-            call.outcome =
-                self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
-                    effect: call.effect,
-                    error: RESPONSE_ERASED.to_owned(),
-                }))?;
+        call.outcome =
+            self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect,
+                error: RESPONSE_ERASED.to_owned(),
+            }))?;
+        if let Some(rows) = rows {
+            keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
         }
     }
     for output in &mut record.outputs {
