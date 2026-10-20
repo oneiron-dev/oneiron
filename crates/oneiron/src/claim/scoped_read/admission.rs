@@ -238,6 +238,8 @@ impl<'a> ScopedRead<'a> {
     /// authenticates no one reads no private thread. Each turn is read under
     /// the CONTENT rule, save by a personal ceiling's peer read
     /// (`room_peer`), which stands in the thread under CURRENT (FIX 5545).
+    /// A private thread's notice reads only to its recipient and to readers
+    /// of that thread (FIX 6473).
     pub(super) fn private_threads_readable_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -245,6 +247,9 @@ impl<'a> ScopedRead<'a> {
         raw: &[u8],
     ) -> Result<bool> {
         let viewers: Vec<_> = self.actor_key.authenticated_person().into_iter().collect();
+        if !self.thread_notice_readable_in(txn, raw, &viewers)? {
+            return Ok(false);
+        }
         crate::conversation::private_threads_readable_with_read_in(
             self.vault,
             &self.store_read(),

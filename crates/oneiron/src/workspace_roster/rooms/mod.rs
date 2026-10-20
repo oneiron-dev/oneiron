@@ -66,7 +66,7 @@ pub(crate) use audience_events::{
 };
 pub use audience_history::ThreadAudienceOpenFullHistoryRequest;
 pub use audience_notices::ThreadNotice;
-pub(crate) use audience_notices::notify_thread_members_in_txn;
+pub(crate) use audience_notices::{THREAD_NOTICE_PRODUCER, notify_thread_members_in_txn};
 pub(crate) use audience_overlay::overlay_thread_binding_in;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;
