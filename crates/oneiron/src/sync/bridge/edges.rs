@@ -110,6 +110,8 @@ pub(super) fn materialize_edges_from_delta(
         }
         let mut ops = Vec::<BatchOp>::new();
         let mut metas = Vec::<EdgeOpMeta>::new();
+        // FIX 5972: carried `regenerates` ops, held until the rest apply.
+        let mut regenerates = Vec::new();
         for (key, new_val) in delta
             .updated
             .iter()
@@ -186,6 +188,11 @@ pub(super) fn materialize_edges_from_delta(
                         // The erased shell has no recipient carrier to prove.
                         continue;
                     }
+                    // FIX 5972: a stored `regenerates` pair was proven when it
+                    // landed, so a carried copy is no new pair, whatever has
+                    // since become of its MESSAGEs. Any other waits below.
+                    let unproven_regenerates = kind == EdgeKind::Regenerates
+                        && !crate::edge::regeneration_stored(&vault.store, &*wtxn, &src, &tgt)?;
                     let reserved_rejection = crate::edge::validate_public_edge_kind(kind).err();
                     let src_ready = ensure_entity_materialized_from_crdt(
                         vault,
@@ -315,6 +322,9 @@ pub(super) fn materialize_edges_from_delta(
                                 super::childof::defer_child_of(
                                     vault, wtxn, window_key, &src, &tgt, buf,
                                 )?;
+                            }
+                            if unproven_regenerates {
+                                defer_regenerates(vault, wtxn, window_key, &tombstones, src, tgt)?;
                             }
                             tracing::debug!(
                                 edge = %key,
@@ -457,7 +467,7 @@ pub(super) fn materialize_edges_from_delta(
                         Store::encode_edge_key(&src, kind, &tgt),
                         buf.to_vec(),
                     ));
-                    ops.push(BatchOp::EdgeWithCreatedAt {
+                    let op = BatchOp::EdgeWithCreatedAt {
                         src,
                         kind,
                         tgt,
@@ -465,7 +475,12 @@ pub(super) fn materialize_edges_from_delta(
                         created_at: decoded.created_at,
                         vad: decoded.vad.unwrap_or(Vad::NEUTRAL),
                         provenance: decoded.provenance,
-                    });
+                    };
+                    if unproven_regenerates {
+                        regenerates.push((key.to_owned(), buf.to_vec(), src, tgt, op));
+                        continue;
+                    }
+                    ops.push(op);
                     metas.push(EdgeOpMeta::for_key(key, buf));
                 }
                 None => {
@@ -669,6 +684,7 @@ pub(super) fn materialize_edges_from_delta(
             // rejection, so no earlier missing-endpoint obligation remains.
             super::childof::settle_child_of(vault, wtxn, window_key, &src, &tgt)?;
         }
+        admit_regenerates(vault, wtxn, window_key, &tombstones, regenerates)?;
         let facts: Vec<_> = delta
             .updated
             .iter()
@@ -767,6 +783,64 @@ pub(super) fn materialize_edges_from_delta(
         );
     }
     result.ok()
+}
+
+/// Endpoint arrival re-presents only ChildOf and SpawnedBy edges, so a
+/// `regenerates` link waiting on a live endpoint keeps a replay marker for a
+/// later forward remat (FIX 5972). A tombstoned or purged end owes nothing.
+fn defer_regenerates(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    tombstones: &TombstoneIndex,
+    src: EntityId,
+    tgt: EntityId,
+) -> Result<()> {
+    for id in [&src, &tgt] {
+        if tombstones.contains(id) || vault.local_hard_delete_marker_exists_in_txn(wtxn, id)? {
+            return Ok(());
+        }
+    }
+    quarantine::set_replay_remat_marker_in_txn(vault, wtxn, window_key, &src)
+}
+
+/// FIX 5972: each carried `regenerates` link is proven on the topology its
+/// batch has just applied, its MESSAGEs' axes included, as the stream proved
+/// it. A refuted pair is the peer's rejection; one still missing a row or an
+/// axis waits under a replay marker; one onto an erased shell has no body
+/// left to prove it by, and is passed over.
+fn admit_regenerates(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    tombstones: &TombstoneIndex,
+    staged: Vec<(String, Vec<u8>, EntityId, EntityId, BatchOp)>,
+) -> Result<()> {
+    let (mut ops, mut metas) = (Vec::new(), Vec::new());
+    for (key, buf, src, tgt, op) in staged {
+        match crate::edge::regeneration_pair(&vault.store, &*wtxn, &src, &tgt)? {
+            crate::edge::Regeneration::Admits => {
+                ops.push(op);
+                metas.push(EdgeOpMeta::for_key(&key, &buf));
+            }
+            crate::edge::Regeneration::Pending => {
+                quarantine::set_replay_remat_marker_in_txn(vault, wtxn, window_key, &src)?;
+            }
+            crate::edge::Regeneration::Erased => {}
+            crate::edge::Regeneration::Refuses => {
+                quarantine_rejected_op_in_txn(
+                    vault,
+                    wtxn,
+                    window_key,
+                    QuarantineContainer::Edges,
+                    &key,
+                    &crate::edge::reserved_regenerates(),
+                    &buf,
+                )?;
+            }
+        }
+    }
+    apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, tombstones)
 }
 
 /// ONE-1147 (best-effort, post-abort): `true` ONLY when the committed

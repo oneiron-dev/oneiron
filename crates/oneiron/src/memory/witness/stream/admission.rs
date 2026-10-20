@@ -640,7 +640,9 @@ pub(super) fn authorize(
 /// in its terminal transaction: a live companion MESSAGE by the same writer
 /// in the same conversation, other than the new one, and the one the seed's
 /// Retry names (FIX 3152). A continuation answers nothing again, and only a
-/// Retry's seed carries an inherited audience.
+/// Retry's seed carries an inherited audience. The source's own facts are
+/// the check every carrier of the `regenerates` edge shares (FIX 5972),
+/// judged against the seed's axes, so the unborn reply need not exist.
 pub(super) fn validate_regeneration(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -654,7 +656,6 @@ pub(super) fn validate_regeneration(
         return Ok(());
     };
     if seed.continuation
-        || source == seed.message_id
         || seed.author != crate::memory::WitnessAuthor::Companion
         || !seed.action.as_ref().is_some_and(|action| {
             action.action == TurnAction::Retry
@@ -664,23 +665,15 @@ pub(super) fn validate_regeneration(
     {
         return Err(bad());
     }
-    let body = committed_body(vault, txn, &source)?.ok_or_else(bad)?;
-    if body.get("author").and_then(serde_json::Value::as_str)
-        != Some(crate::memory::WitnessAuthor::Companion.as_str())
+    if crate::edge::regeneration_source(
+        &vault.store,
+        txn,
+        &seed.message_id,
+        &source,
+        seed.actor,
+        seed.conversation,
+    )? != crate::edge::Regeneration::Admits
     {
-        return Err(bad());
-    }
-    for (kind, target) in [
-        (EdgeKind::AuthoredBy, seed.actor),
-        (EdgeKind::BelongsTo, seed.conversation),
-    ] {
-        if crate::memory::sole_edge_target(&vault.store, txn, &source, kind, "message")?
-            != Some(target)
-        {
-            return Err(bad());
-        }
-    }
-    if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &source)?.is_live() {
         return Err(bad());
     }
     Ok(())

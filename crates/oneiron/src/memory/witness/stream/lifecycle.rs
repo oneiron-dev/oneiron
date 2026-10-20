@@ -572,13 +572,23 @@ fn terminal_write(
                             seed.occurred_at,
                         )?;
                         if let Some(source) = seed.regenerates {
+                            // The kind's creation is this stream's alone (FIX
+                            // 5972), its pair proven above in this transaction:
+                            // the internal write lands it at the public put's
+                            // weight, neutral VAD, no flags and clock.
+                            let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
                             vault
                                 .batch_in()
-                                .edge(
+                                .edge_with_value_fields(
                                     &seed.message_id,
                                     crate::edge::EdgeKind::Regenerates,
                                     &source,
-                                    1.0,
+                                    crate::batch::EdgeValueFields {
+                                        weight: 1.0,
+                                        created_at,
+                                        vad: crate::affect::Vad::NEUTRAL,
+                                        provenance: None,
+                                    },
                                 )
                                 .apply(txn)?;
                         }
