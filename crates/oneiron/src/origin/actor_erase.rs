@@ -290,6 +290,39 @@ pub(crate) fn settle_in_txn(
     Ok(settled)
 }
 
+/// The canonical form of a captured row `raw` at `id` (FIX 5023): an origin
+/// claim settled against the copy this vault holds by [`settle_in_txn`], as
+/// every export carries it, so a recovery artifact never names an actor this
+/// vault erased. Its id, header, status and outcomes stay, and two live
+/// actors still conflict and keep the captured bytes. `None` for a row that
+/// is not an origin claim, or one that settles as captured.
+///
+/// # Errors
+///
+/// Storage errors, or a settled body that does not encode.
+#[cfg(feature = "sync")]
+pub(crate) fn canonical_origin_claim_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    let Some((kind, captured)) = origin_claim_row(raw) else {
+        return Ok(None);
+    };
+    let held = held_claim_in_txn(vault, txn, kind, id)?;
+    let Some(settled) = settle_in_txn(vault, txn, kind, id, held.as_ref(), &captured)?.carried
+    else {
+        return Ok(None);
+    };
+    let mut blob = raw
+        .get(..ENTITY_METADATA_HEADER_LEN)
+        .ok_or(Error::CorruptedIndex("origin claim header"))?
+        .to_vec();
+    blob.extend_from_slice(&crate::claim::encode_claim_body(&settled)?);
+    Ok(Some(blob))
+}
+
 /// The origin family and body of a whole CLAIM row, if it is one.
 pub(crate) fn origin_claim_row(raw: &[u8]) -> Option<(OriginClaimKind, ClaimBody)> {
     let header = EntityMetadataHeader::parse(raw)?;
