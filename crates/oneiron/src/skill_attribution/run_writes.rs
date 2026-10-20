@@ -15,11 +15,10 @@ use crate::batch::BatchOp;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::limit_ask::EngineLimit;
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::receipt::UsedProvenanceEdge;
 use crate::store::Store;
-
-use super::host::WITNESS_MAX_EDGES;
 
 thread_local! {
     static RUN_WRITES: RefCell<Option<AgentAuthorLease>> = const { RefCell::new(None) };
@@ -84,8 +83,9 @@ pub(crate) fn run_derivations(ops: &[BatchOp], replay: bool) -> Option<RunDeriva
 }
 
 /// Appends `derivations` to their run's live attribution row once the batch
-/// has applied them in `wtxn`: only edges the batch left stored, only while
-/// the run's lease holds and its row is bound, never past the receipt's cap.
+/// has applied them in `wtxn`: only edges the batch left stored, and only
+/// while the run's lease holds and its row is bound. Every edge is kept; the
+/// chain's length is measured (Rule 5).
 pub(crate) fn note_run_derivations_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -107,9 +107,6 @@ pub(crate) fn note_run_derivations_in_txn(
     };
     let before = fields.used_edges.len();
     for (derived, source) in pairs {
-        if fields.used_edges.len() >= WITNESS_MAX_EDGES {
-            break;
-        }
         if derived == source
             || fields
                 .used_edges
@@ -134,5 +131,9 @@ pub(crate) fn note_run_derivations_in_txn(
     if fields.used_edges.len() == before {
         return Ok(());
     }
+    store.limit_watch.measure(
+        EngineLimit::AttemptManifestEntries,
+        fields.used_edges.len() as u64,
+    );
     crate::receipt::put_attempt_pack_attribution_in_txn(store, wtxn, lease.attempt, &fields)
 }

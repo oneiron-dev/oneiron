@@ -6,7 +6,9 @@
 //! identity ask whose names were kept separate for now, a mention a saved
 //! hint or a decision settled, a project's team-shape tree fork the Coach put
 //! in force), and the owner's revert of one. The Coach's findings still wait
-//! in the run tray.
+//! in the run tray. The owner's apply of an action-mode finding's explicit
+//! agent-ceiling patch (FIX 1786) is here too: only it moves a ceiling, and
+//! the finding's revert puts it back.
 
 use std::sync::Arc;
 
@@ -15,6 +17,7 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::dreamer_runner::maintenance::action_mode::{ActionModeCeiling, ActionModeEffect};
 use oneiron::dreamer_runner::maintenance::{
     AppliedMaintenance, MaintenanceRevert, MaintenanceTarget,
 };
@@ -34,6 +37,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/dreamer/maintenance/applied", get(applied))
         .route("/dreamer/maintenance/revert", post(revert))
+        .route(
+            "/dreamer/maintenance/action-mode/apply",
+            post(apply_action_mode),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,6 +69,18 @@ struct RevertMaintenance {
     fork: Option<String>,
 }
 
+/// The owner's apply of one action-mode finding's patch, as it was shown.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApplyActionMode {
+    /// The action-mode finding, as 32 hex.
+    finding: String,
+    /// The agent the finding's patch names, as 32 hex.
+    agent: String,
+    /// The ceiling the patch sets: `proposed` or `auto`.
+    ceiling: ActionModeCeiling,
+}
+
 #[derive(Debug, Serialize)]
 struct AppliedView {
     /// The finding, as 32 hex; none for an identity ask or a project tree
@@ -75,8 +94,8 @@ struct AppliedView {
     /// A project tree fork's fork, as 32 hex.
     fork: Option<String>,
     /// `finding`, `curator`, `proactivity_policy`, `reach_out`,
-    /// `representation_plan`, `identity_provisional`, `identity_settle` or
-    /// `project_tree_fork`.
+    /// `representation_plan`, `identity_provisional`, `identity_settle`,
+    /// `project_tree_fork` or `action_mode`.
     kind: &'static str,
     facet: String,
     /// The attempt that wrote it; none for an identity ask.
@@ -237,4 +256,34 @@ async fn revert(
     })
     .await?;
     Ok(Json(reverted))
+}
+
+/// `POST /v1/owner/dreamer/maintenance/action-mode/apply` with `{"finding",
+/// "agent", "ceiling"}`: the owner's apply of one action-mode finding's
+/// explicit agent-ceiling patch, the agent and ceiling as the owner was
+/// shown them. The finding's patch must be that one; the agent's ceiling
+/// moves through the owner's definition writer, fenced on the definition
+/// revision the finding read, and the finding's applied row keeps the
+/// inverse its revert runs. A second apply returns the first.
+async fn apply_action_mode(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<ApplyActionMode>, JsonRejection>,
+) -> OwnerReply<AppliedView> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let applied = blocking(move || -> OwnerResult<AppliedView> {
+        let finding = entity_id("finding", &request.finding)?;
+        let approved = ActionModeEffect {
+            agent: entity_id("agent", &request.agent)?,
+            ceiling: request.ceiling,
+        };
+        let now = now_unix_ms() / 1_000;
+        let applied = server
+            .vault()
+            .apply_action_mode(&owner, finding, &approved, now)?;
+        Ok(applied_view(applied))
+    })
+    .await?;
+    Ok(Json(applied))
 }

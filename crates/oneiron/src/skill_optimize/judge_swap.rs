@@ -816,8 +816,8 @@ where
 }
 
 /// Where the settled outcome of a case asked under `kind` is read; `None`
-/// for a structural or contrastive audit, which nothing settles, and for a
-/// state that lacks what its kind reads.
+/// for a structural or contrastive audit and for a response score, which
+/// nothing settles, and for a state that lacks what its kind reads.
 fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
     let text = |value: &Value, field: &str| value.get(field)?.as_str().map(str::to_owned);
     let receipts = |value: &Value| {
@@ -854,7 +854,8 @@ fn outcome_link(kind: &str, state: &Value) -> Option<JudgeOutcomeLink> {
         "preference" => Some(JudgeOutcomeLink::ResponsePair {
             pair_ref: text(state, "pair_ref")?,
         }),
-        // `axis.<name>`; a structural or contrastive case has none.
+        // `axis.<name>`; a structural, contrastive or response-score case
+        // has none.
         _ => {
             let axis = kind.strip_prefix("axis.")?;
             Some(JudgeOutcomeLink::Axis {
