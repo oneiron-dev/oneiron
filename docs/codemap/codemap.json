@@ -87388,7 +87388,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "mod": 3,
       "re-export": 10
      }
@@ -87487,8 +87487,29 @@
      "purpose": "A relay room has no engine, vault key, Loro document or inference worker",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/deferred_delete.rs",
+     "purpose": "Locker deletes a host hold guard defers (FIX 1488, Engine 10-20 20:3x)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/hold_guard.rs",
+     "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -88925,17 +88946,7 @@
      "path": "src/owner/backup/relay_hold.rs",
      "purpose": "The relay delete guard over one vault's backup holds (FIX 1488): the adapter L14's relay locker delete takes…",
      "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/owner/backup/relay_hold_guard.rs",
-     "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x), staged here because its home…",
-     "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -91117,7 +91128,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 51,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91152,7 +91163,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 38,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91273,7 +91284,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 941,
+   "source_files": 942,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95371,7 +95382,70 @@
       "const": 18,
       "enum": 4,
       "fn": 12,
+      "re-export": 3,
       "struct": 18
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PieceBatchResultV1",
+      "PieceBatchV1",
+      "PieceBoundsV1",
+      "PieceChunkV1",
+      "PieceCursorV1",
+      "PieceEntryV1",
+      "PieceErrorBodyV1",
+      "PieceErrorV1",
+      "PieceFactsHeadV1",
+      "PieceFinalV1",
+      "PieceInstallCheckV1",
+      "PieceMetaPageV1",
+      "PieceOutcomeV1",
+      "PiecePartV1",
+      "PieceReceiptAskV1",
+      "PieceReceiptBodyV1",
+      "PieceReceiptCursorAskV1",
+      "PieceReceiptEntryV1",
+      "PieceReceiptPageV1",
+      "PieceReceiptV1",
+      "PieceResultV1",
+      "PieceStateV1",
+      "PieceWithdrawalV1",
+      "TrainingKeysV1"
+     ],
+     "path": "src/lib/conversation_training/piece.rs",
+     "purpose": "The anonymous training window (TL-6, FIX 5813): the wire a self-host engine ships its released offers and…",
+     "surface": {
+      "const": 13,
+      "enum": 2,
+      "fn": 1,
+      "struct": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/conversation_training/piece_check.rs",
+     "purpose": "The anonymous training window's shape checks and decoders (TL-6): the shape only",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PieceFactsDigest"
+     ],
+     "path": "src/lib/conversation_training/piece_facts.rs",
+     "purpose": "The anonymous training window's facts digest (TL-6): the one fn the engine and the intake both compute a…",
+     "surface": {
+      "fn": 9,
+      "struct": 1
      }
     },
     {
@@ -95984,7 +96058,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 40,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95993,7 +96067,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 39,
+   "source_files": 42,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

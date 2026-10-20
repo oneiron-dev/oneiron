@@ -49,10 +49,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 47 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 941 | 182 | 52 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 942 | 182 | 52 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 11 | 0 | 4 |
-| [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 39 | 1 | 0 |
+| [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 42 | 1 | 0 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 16 | 1 | 2 |
 
 ## oneiron
@@ -714,12 +714,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `livequery` | file+dir | 29 | L | App-tier framing and coarse live-query state, separate from WindowSync |
 | `logging` | file+dir | 2 | s | What the binaries write to their log sinks, and the panic hook |
 | `machine` | file | 1 | s | What this machine has: cores, memory, descriptors, free disk |
-| `managed` | dir | 51 | XL | Managed serve mode: the vault engine as a supervised child process |
+| `managed` | dir | 53 | XL | Managed serve mode: the vault engine as a supervised child process |
 | `mcp` | dir | 23 | L | MCP connector actor registry |
 | `models` | dir | 49 | XL | The one provider abstraction: `[models]` in, one backend per seat out |
 | `oauth_relay` | file | 1 | L | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `oneironer` | dir | 12 | m | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
-| `owner` | dir | 38 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
+| `owner` | dir | 37 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
 | `projection` | file+dir | 2 | m | — |
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
 | `replay_judge` | file+dir | 3 | m | The serve host's skill judge (OF-495) |
@@ -761,7 +761,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `lib` | dir | 40 | m | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `lib` | dir | 43 | m | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 
 ## oneiron-xlsx-formula
 
