@@ -29115,7 +29115,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 30
      }
     },
     {
@@ -29318,6 +29318,16 @@
      "purpose": "The crate's single git child-process constructor plus its bounded IO and thread-pump helpers",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/git_wire/reachable_blobs.rs",
+     "purpose": "The small blobs a set of tips reaches through its whole history, read in bounded batches: what a caller…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -38906,6 +38916,7 @@
      "path": "src/origin/lfs/pointer.rs",
      "purpose": "Pointer grammar: pushed-pointer parsing, per-repo intents, pointer field consts",
      "surface": {
+      "const": 1,
       "fn": 2,
       "struct": 2
      }
@@ -38992,7 +39003,10 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "OriginMirrorLfsObject",
+      "OriginMirrorNotReadyReason",
       "OriginMirrorPushes",
+      "OriginMirrorReadiness",
       "OriginMirrorRun",
       "OriginMirrorTarget",
       "OriginMirrorTargetInput"
@@ -39000,10 +39014,11 @@
      "path": "src/origin/mirror.rs",
      "purpose": "Outbound mirror pushing (ARCH-0068 RA8)",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 2,
+      "enum": 2,
       "fn": 6,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -64561,7 +64576,7 @@
      "purpose": "OF-336 generated-UI component contract"
     },
     "git_wire": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65431,7 +65446,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4072,
+   "source_files": 4073,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91477,6 +91492,9 @@
       "OriginAuthoritySetRequest",
       "OriginAuthorityView",
       "OriginMirrorCleared",
+      "OriginMirrorLfsObject",
+      "OriginMirrorNotReadyReason",
+      "OriginMirrorReadiness",
       "OriginMirrorRun",
       "OriginMirrorSetRequest",
       "OriginMirrorTarget",
@@ -92956,8 +92974,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 874,
-      "struct": 2775
+      "enum": 876,
+      "struct": 2776
      }
     },
     {

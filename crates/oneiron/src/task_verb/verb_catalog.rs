@@ -11387,7 +11387,7 @@ impl AgentVerb {
                 "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."
             }
             Self::VaultCodeOriginMirrorPush => {
-                "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."
+                "Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them."
             }
             Self::VaultCodeOriginAuthorityGet => {
                 "Read one served origin authority and this host identity under the owner credential."
