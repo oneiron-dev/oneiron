@@ -301,7 +301,7 @@ fn admitted(
         return refusal.map_or(Ok(None), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
-    for part in planned.iter() {
+    for part in &*planned {
         part.scan()?;
     }
     if !accepts(&planned[..]) {

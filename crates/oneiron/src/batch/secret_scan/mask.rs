@@ -238,7 +238,7 @@ fn scan_screened(
         return scan_batch_ops(store, wtxn, ops);
     }
     let mut copy = PlanOps::of(ops);
-    for op in copy.iter_mut() {
+    for op in &mut *copy {
         match op {
             BatchOp::Put { id, data, .. } => {
                 if let Some(filled) = kept.screened(id, data) {

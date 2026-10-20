@@ -305,7 +305,7 @@ impl KnownValues {
             .flatten()
         {
             for hit in self.raw_spans(&view.bytes) {
-                if let Some(span) = view.source(hit.span.clone()) {
+                if let Some(span) = view.source(hit.span) {
                     spelled.push(KnownSpan { span, ..hit });
                 }
             }
