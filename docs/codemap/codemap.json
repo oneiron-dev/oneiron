@@ -52395,7 +52395,7 @@
      "path": "src/store/gate_decision/ledger/custody.rs",
      "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -56187,6 +56187,16 @@
      "surface": {
       "crate-vis": 10,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/sealed_membership.rs",
+     "purpose": "Sealed-mirror membership (FIX 536): before a sealed window's mirror is packed again, a carrier it keeps for…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -66355,7 +66365,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 222,
+     "files": 223,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66553,7 +66563,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4165,
+   "source_files": 4166,
    "test_files": 902
   },
   "oneiron-android": {
