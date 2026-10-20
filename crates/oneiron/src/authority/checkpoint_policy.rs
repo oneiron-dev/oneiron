@@ -111,7 +111,7 @@ fn owner_root(device: &FoldedDevice) -> bool {
 /// Policy hook (CALLS "mesh PR2c selectable roots"): the roots an owner's
 /// choice may name. A live owner root on any host, and on a hosted vault the
 /// managed host root as well, the one root its posture policy names today.
-fn selectable_root(device: &FoldedDevice, managed: bool) -> bool {
+pub(super) fn selectable_root(device: &FoldedDevice, managed: bool) -> bool {
     owner_root(device) || (managed && host_root(device))
 }
 
