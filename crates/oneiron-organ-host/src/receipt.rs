@@ -1,16 +1,13 @@
 //! The engine's receipt for one organ call: facts the host computed, plus
-//! the organ's bounded notes.
+//! the organ's notes, every one of them, whole (Rule 5): how many and how
+//! long they run are `[limits]` rows, which ask whether everything is okay.
 
-use oneiron_organ_protocol::{
-    AskCode, Hash32, Locator, Loss, Notes, OrganIdentity, ProtocolVersion,
-};
+use oneiron::Vault;
+use oneiron::limit_ask::EngineLimit;
+use oneiron_organ_protocol::{AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 
 use crate::spec::CallClass;
-
-const MAX_NOTES: usize = 64;
-const MAX_NOTE_BYTES: usize = 256;
-const MAX_CODE_BYTES: usize = 64;
 
 /// What one call read, made and took. Recall and the Dreamer read it as a
 /// typed record; a landing writes it into the version's `made_by` envelope.
@@ -28,7 +25,7 @@ pub struct CallReceipt {
     pub base_body: Option<Hash32>,
     pub result_body: Option<Hash32>,
     pub outputs: Vec<ReceiptOutput>,
-    /// The organ's word, bounded: 64 entries of each kind, 256 bytes each.
+    /// The organ's word, every entry whole.
     pub notes: Notes,
     pub class: CallClass,
     pub grant: String,
@@ -40,6 +37,15 @@ pub struct CallReceipt {
     /// before 1.1 reads as none.
     #[serde(default)]
     pub asks: Vec<AskReceipt>,
+    /// Memory the call took past the host's budget when every live call
+    /// waited to grow (the soft-target exception, FIX 5284): fully
+    /// accounted, and given back as the call's room drains.
+    #[serde(default)]
+    pub overcommit_bytes: u64,
+    /// Time the call waited for budget room to grow, which its deadline
+    /// does not count.
+    #[serde(default)]
+    pub room_wait_us: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +68,9 @@ pub struct AskReceipt {
     pub value_digest: Hash32,
     /// The refusal, if the ask got one.
     pub refused: Option<AskCode>,
+    /// The answer's bytes the organ was lent, value and data.
+    #[serde(default)]
+    pub answer_len: u64,
     pub answer_digest: Option<Hash32>,
     /// The answer's bytes, hashed by the host as it sent them.
     pub data_hash: Option<Hash32>,
@@ -116,6 +125,9 @@ pub struct FetchTarget {
     pub url_digest: Hash32,
     /// The final HTTP status; 0 when nothing was fetched.
     pub status: u16,
+    /// The redirects it followed, each hop checked afresh.
+    #[serde(default)]
+    pub redirects: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,42 +138,28 @@ pub struct ReceiptOutput {
     pub len: u64,
 }
 
-pub(crate) fn bound_text(text: &str, max: usize) -> String {
-    if text.len() <= max {
-        return text.to_owned();
-    }
-    let mut end = max;
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_owned()
-}
-
-/// Caps an organ's notes so a hostile organ cannot grow a receipt.
-pub(crate) fn bound_notes(notes: Notes) -> Notes {
-    Notes {
-        touched: notes
-            .touched
-            .into_iter()
-            .filter(|locator| encoded_len(locator) <= MAX_NOTE_BYTES)
-            .take(MAX_NOTES)
-            .collect(),
-        warnings: notes
-            .warnings
-            .iter()
-            .take(MAX_NOTES)
-            .map(|warning| bound_text(warning, MAX_NOTE_BYTES))
-            .collect(),
-        losses: notes
-            .losses
-            .iter()
-            .take(MAX_NOTES)
-            .map(|loss| Loss {
-                code: bound_text(&loss.code, MAX_CODE_BYTES),
-                detail: bound_text(&loss.detail, MAX_NOTE_BYTES),
-            })
-            .collect(),
-    }
+/// Measures an organ's notes against the receipt rows and keeps every one,
+/// in order and whole: a touched locator, a warning or a loss is never
+/// dropped or cut for its count or its length.
+pub(crate) fn measured_notes(vault: &Vault, notes: Notes) -> Notes {
+    let items = notes
+        .touched
+        .len()
+        .max(notes.warnings.len())
+        .max(notes.losses.len());
+    vault.measure_limit(EngineLimit::OrganNoteItems, items as u64);
+    let longest = notes
+        .touched
+        .iter()
+        .map(encoded_len)
+        .chain(notes.warnings.iter().map(String::len))
+        .chain(notes.losses.iter().map(|loss| loss.detail.len()))
+        .max()
+        .unwrap_or(0);
+    vault.measure_limit(EngineLimit::OrganNoteBytes, longest as u64);
+    let code = notes.losses.iter().map(|loss| loss.code.len()).max();
+    vault.measure_limit(EngineLimit::OrganLossCodeBytes, code.unwrap_or(0) as u64);
+    notes
 }
 
 fn encoded_len(locator: &Locator) -> usize {

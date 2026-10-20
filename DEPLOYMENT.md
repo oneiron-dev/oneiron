@@ -262,6 +262,35 @@ seal_structural_work = 8000000    # tokens one structural pass of the seal lexes
 seal_revisions = 32               # revisions in the xref chain of a PDF the seal reads; past it every revision is followed and the row asks
 seal_prefix_bytes = 2147483648    # prefix bytes one seal pass over a revision chain parses, summed over its revisions; past it every prefix is parsed and the row asks
 seal_dss_decode_bytes = 268435456 # bytes one extraction of a PDF's DSS material decodes in all; past it the material is read whole and the row asks (one stream still decodes to at most 256 MiB)
+seal_identity_asks = 1            # signing-identity asks one seal call makes; past it the pinned identity is answered again and the row asks
+seal_sign_asks = 3                # signature asks one seal call makes (still one issuance per revision the engine wrote); past it each is answered and the row asks
+seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
+seal_asks = 36                    # asks of every verb one seal call makes; past it they are answered and the row asks
+seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity, signatures, fetched bodies); past it the call's booking grows and the row asks
+seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
+seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
+seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks
+seal_prepared_stream_bytes = 67108864 # bytes the largest object stream of a prepared PDF decodes to, read where the engine writes its signature revisions; past it the PDF is read whole and the row asks (one stream still decodes to at most 256 MiB)
+organ_asks = 32                   # asks of every verb one organ call makes (an install naming its own count is measured at it); past it each granted ask is answered and the row asks
+organ_ask_per_verb = 32           # asks of one verb one organ call makes, measured at the count the install grant names for it; past it each is answered and the row asks
+organ_answer_bytes = 16777216     # answer bytes one organ call is lent (an install naming its own is measured at it); past it the call's booking grows and the row asks
+organ_fetch_bytes = 8388608       # body bytes of one granted net.fetch (an install naming its own is measured at it); past it the body is read to its end and the row asks
+organ_fetch_redirects = 3         # redirects one granted net.fetch follows, every hop checked afresh; past it the fetch goes on and the row asks
+organ_ask_value_bytes = 65536     # bytes of one organ ask's value, as encoded; past it the ask is read whole and the row asks
+organ_fetch_purpose_bytes = 32    # bytes of one fetch ask's purpose; past it the purpose is kept whole and the row asks
+organ_output_bytes = 134217728    # bytes one organ call's outputs hold together (an install naming its own is measured at it); past it the call's booking grows to keep them and the row asks
+organ_call_frame_bytes = 67108864 # bytes of the largest frame the host sends an organ in one call (an install naming its own is measured at it); past it the frame is sent whole and the row asks
+organ_reply_frame_bytes = 67108864 # bytes of the largest frame an organ sends back in one call (an install naming its own is measured at it); past it the frame is read whole and the row asks
+organ_detail_bytes = 512          # bytes of one organ error's or ask refusal's detail; past it the detail is kept whole and the row asks
+organ_verb_bytes = 64             # bytes of one ask's verb on its receipt line; past it the verb is kept whole and the row asks
+organ_output_name_bytes = 256     # bytes of one organ output's name; past it the name is kept whole and the row asks
+organ_media_type_bytes = 256      # bytes of one organ output's media type; past it the media type is kept whole and the row asks
+organ_fetch_origin_bytes = 256    # bytes of one fetch's origin on its receipt line; past it the origin is kept whole and the row asks
+organ_content_type_bytes = 256    # bytes of one fetched body's Content-Type; past it it is kept whole and the row asks
+organ_note_items = 64             # notes of one kind (touched, warnings, losses) one organ call's receipt keeps; past it every note is kept in order and the row asks
+organ_note_bytes = 256            # bytes of one note (an encoded locator, a warning, a loss's detail) an organ call's receipt keeps; past it the note is kept whole and the row asks
+organ_loss_code_bytes = 64        # bytes of one loss's code an organ call's receipt keeps; past it the code is kept whole and the row asks
+organ_memory_bytes = 2147483648   # bytes the organ host's budget holds when a live call grows past it (measured at the host's own budget); one elected call goes on with its overcommit on its receipt, new calls wait for the drain, and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

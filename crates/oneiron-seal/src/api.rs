@@ -243,7 +243,11 @@ pub mod config {
 
     /// Egress policy for the guarded fetcher. Empty `allowed_origins` denies
     /// every remote fetch; AIA/OCSP/CRL URLs discovered in certificates do
-    /// not become implicitly trusted origins.
+    /// not become implicitly trusted origins. The redirect count and the
+    /// per-purpose byte sizes are thresholds, never refusals (Rule 5): a
+    /// response is read to its end, every hop re-checked against the
+    /// origins and addresses, inside `timeout_ms`. In the organ, the engine
+    /// fetches, and its `[limits]` rows measure each one.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct FetchPolicy {
         pub allowed_origins: Vec<url::Url>,

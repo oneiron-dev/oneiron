@@ -26,11 +26,12 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{
     Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hash32, Hello, HelloAck,
-    Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled_len, recv_frame_until,
-    send_frame_if, send_frame_until, spin,
+    Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan, recv_frame_polled_reserved,
+    recv_frame_until, send_frame_if, send_frame_until, spin,
 };
 
 use crate::asks::{AskStep, CallAsks};
+use crate::budget::{Lease, Room};
 use crate::error::HostError;
 use crate::sandbox;
 use crate::spec::{HostConfig, OrganSpec};
@@ -38,11 +39,16 @@ use crate::spec::{HostConfig, OrganSpec};
 /// What the reader thread hands a waiting call.
 #[derive(Debug)]
 enum Delivery {
-    Reply(Reply, Vec<OwnedFd>),
-    Ask(Ask),
+    /// A reply, and the budget room its frame holds.
+    Reply(Reply, Vec<OwnedFd>, Lease),
+    Ask(Ask, Lease),
     /// The process ended.
     Closed,
 }
+
+/// A call's reply as the reader delivered it: the reply, its descriptors,
+/// and the budget room its frame holds until the caller is done with it.
+pub(crate) type Replied = (Reply, Vec<OwnedFd>, Lease);
 
 /// A call in flight, as the reader thread sees it.
 #[derive(Debug)]
@@ -98,9 +104,40 @@ struct Inbox {
     largest_received: AtomicU64,
     /// The largest frame body the host has sent it: a call or an answer.
     largest_sent: AtomicU64,
+    /// How long the reader has waited for budget room for frames.
+    room: Mutex<RoomClock>,
+}
+
+/// The reader's waits for budget room: time a call's deadline does not
+/// count (Engine ruling, 10-20).
+#[derive(Debug, Default)]
+struct RoomClock {
+    waited: Duration,
+    since: Option<Instant>,
 }
 
 impl Inbox {
+    /// How long the reader has waited for room, the wait in progress
+    /// included.
+    fn room_waited(&self) -> Duration {
+        let clock = lock(&self.room);
+        clock.waited + clock.since.map_or(Duration::ZERO, |since| since.elapsed())
+    }
+
+    /// Room for a frame of `len` bytes, waited for on the reader thread
+    /// until the process ends; that wait is on the room clock.
+    fn lease(&self, room: &Room, lifeline: &Lifeline, len: u32) -> Result<Lease, FrameError> {
+        lock(&self.room).since = Some(Instant::now());
+        let lease = room.lease(u64::from(len), &|| {
+            lifeline.reaped.load(Ordering::SeqCst) || !self.alive.load(Ordering::SeqCst)
+        });
+        let mut clock = lock(&self.room);
+        if let Some(since) = clock.since.take() {
+            clock.waited += since.elapsed();
+        }
+        lease.ok_or(FrameError::Closed)
+    }
+
     fn close(&self) {
         self.alive.store(false, Ordering::SeqCst);
         for (_, pending) in lock(&self.pending).drain() {
@@ -111,7 +148,7 @@ impl Inbox {
     /// Hands an ask to the call it names. `false` when the ask breaks the
     /// protocol: a second one in flight for its call, or more stale asks
     /// than cancelled calls.
-    fn route_ask(&self, ask: Ask) -> bool {
+    fn route_ask(&self, ask: Ask, lease: Lease) -> bool {
         let mut pending = lock(&self.pending);
         let Some(call) = pending.get_mut(&ask.call) else {
             drop(pending);
@@ -122,7 +159,7 @@ impl Inbox {
             return false;
         }
         call.asking = true;
-        call.deliver.try_send(Delivery::Ask(ask)).is_ok()
+        call.deliver.try_send(Delivery::Ask(ask, lease)).is_ok()
     }
 
     /// Whether call `id` still waits for its reply: the reader takes its
@@ -361,7 +398,7 @@ fn wait_reply(reply: &mpsc::Receiver<Delivery>, grace: Duration, asks: &mut Call
     loop {
         match reply.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(Delivery::Reply(..)) => return true,
-            Ok(Delivery::Ask(ask)) => asks.skipped(&ask),
+            Ok(Delivery::Ask(ask, _)) => asks.skipped(&ask),
             Ok(Delivery::Closed) | Err(_) => return false,
         }
     }
@@ -370,14 +407,11 @@ fn wait_reply(reply: &mpsc::Receiver<Delivery>, grace: Duration, asks: &mut Call
 /// The reply of a call whose entry the reader has taken; `None` when the
 /// process ended instead. Never waits long: the entry held the only
 /// sender, and the reader drops it right after delivering.
-fn taken(
-    reply: &mpsc::Receiver<Delivery>,
-    asks: &mut CallAsks<'_>,
-) -> Option<(Reply, Vec<OwnedFd>)> {
+fn taken(reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) -> Option<Replied> {
     loop {
         match reply.recv() {
-            Ok(Delivery::Reply(reply, fds)) => return Some((reply, fds)),
-            Ok(Delivery::Ask(ask)) => asks.skipped(&ask),
+            Ok(Delivery::Reply(reply, fds, lease)) => return Some((reply, fds, lease)),
+            Ok(Delivery::Ask(ask, _)) => asks.skipped(&ask),
             Ok(Delivery::Closed) | Err(_) => return None,
         }
     }
@@ -412,6 +446,7 @@ impl OrganProcess {
     pub(crate) fn spawn(
         spec: &OrganSpec,
         config: &HostConfig,
+        room: Room,
         deadline: Option<Instant>,
         on_end: impl FnOnce() + Send + 'static,
     ) -> Result<Arc<Self>, HostError> {
@@ -452,11 +487,10 @@ impl OrganProcess {
         inbox.alive.store(true, Ordering::SeqCst);
         let reader_inbox = Arc::clone(&inbox);
         let reader_lifeline = Arc::clone(&lifeline);
-        let limit = spec.max_reply_frame;
         thread::Builder::new()
             .name(format!("organ-{}", spec.name))
             .spawn(move || {
-                read_replies(&reader, &reader_inbox, &reader_lifeline, limit);
+                read_replies(&reader, &reader_inbox, &reader_lifeline, &room);
                 on_end();
             })?;
         guard.0 = None;
@@ -466,7 +500,9 @@ impl OrganProcess {
             session,
             spawn_time: started.elapsed(),
             net_isolated: sandbox::net_isolated(pid),
-            max_call_frame: spec.max_call_frame,
+            // The wire's own bound: the install grant's frame sizes are
+            // `[limits]` rows the host measures, never refusals (Rule 5).
+            max_call_frame: u32::MAX,
             lifeline,
             writer: Mutex::new(ours),
             inbox,
@@ -568,7 +604,7 @@ impl OrganProcess {
         mut call: Call,
         fds: &[BorrowedFd<'_>],
         wait: Wait<'_, '_>,
-    ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
+    ) -> Result<Replied, CallFailure> {
         self.take_seat(wait.deadline)?;
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         call.id = id;
@@ -614,7 +650,7 @@ impl OrganProcess {
     fn settle(&self, id: u64, reply: &mpsc::Receiver<Delivery>, asks: &mut CallAsks<'_>) {
         lock(&self.inbox.pending).remove(&id);
         while let Ok(delivery) = reply.try_recv() {
-            if let Delivery::Ask(ask) = delivery {
+            if let Delivery::Ask(ask, _) = delivery {
                 asks.skipped(&ask);
             }
         }
@@ -629,11 +665,11 @@ impl OrganProcess {
         fds: &[BorrowedFd<'_>],
         limit: u32,
         deadline: Instant,
-    ) -> Result<(), FrameError> {
+    ) -> Result<u32, FrameError> {
         let writer = lock_until(&self.writer, deadline, || false).ok_or(FrameError::Late)?;
         let len = send_frame_until(&writer, msg, fds, limit, Some(deadline))?;
         self.sent_frame(len);
-        Ok(())
+        Ok(len)
     }
 
     /// Sends the answer to call `id`'s ask; `false` when it is dropped
@@ -667,17 +703,17 @@ impl OrganProcess {
         fds: &[BorrowedFd<'_>],
         deadline: Instant,
         grant: Grant<'_>,
-    ) -> Result<bool, FrameError> {
+    ) -> Result<Option<u32>, FrameError> {
         let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
         let Some(writer) = lock_until(&self.writer, deadline, dropped) else {
             return if dropped() {
-                Ok(false)
+                Ok(None)
             } else {
                 Err(FrameError::Late)
             };
         };
         if dropped() {
-            return Ok(false);
+            return Ok(None);
         }
         // The first byte also holds a read of the host's revocations, taken
         // only while the grant is not among them: recording a revocation
@@ -696,9 +732,9 @@ impl OrganProcess {
         match send_frame_if(&writer, answer, fds, limit, deadline, still, started) {
             Ok(len) => {
                 self.sent_frame(len);
-                Ok(true)
+                Ok(Some(len))
             }
-            Err(FrameError::Withdrawn) => Ok(false),
+            Err(FrameError::Withdrawn) => Ok(None),
             Err(err) => Err(err),
         }
     }
@@ -788,19 +824,24 @@ impl OrganProcess {
         fds: &[BorrowedFd<'_>],
         reply: &mpsc::Receiver<Delivery>,
         wait: Wait<'_, '_>,
-    ) -> Result<(Reply, Vec<OwnedFd>), CallFailure> {
+    ) -> Result<Replied, CallFailure> {
         let Wait {
             grant,
             asks,
-            deadline,
+            deadline: set,
             grace,
         } = wait;
         if !self.is_alive() {
             return Err(CallFailure::Crashed);
         }
         let id = call.id;
+        // The call's deadline, moved on by every wait the reader makes for
+        // budget room meanwhile: waiting for room is not the call's time.
+        let waited = self.inbox.room_waited();
+        let moved = || set + self.inbox.room_waited().saturating_sub(waited);
+        let mut deadline = set;
         match self.send(&ToOrgan::Call(call), fds, self.max_call_frame, deadline) {
-            Ok(()) => {}
+            Ok(len) => asks.frame_sent(len),
             // Nothing left: the organ is in step and keeps its other calls.
             Err(FrameError::Late) => return Err(CallFailure::Deadline { stopped: false }),
             Err(err) if err.is_local() => return Err(CallFailure::Refused(err.into())),
@@ -815,9 +856,11 @@ impl OrganProcess {
             }
         }
         loop {
+            deadline = moved();
             match spin::recv_spinning(reply, Some(deadline)) {
-                Ok(Delivery::Reply(reply, fds)) => return Ok((reply, fds)),
-                Ok(Delivery::Ask(ask)) => {
+                Ok(Delivery::Reply(reply, fds, lease)) => return Ok((reply, fds, lease)),
+                Ok(Delivery::Ask(ask, lease)) => {
+                    asks.frame_received(lease.bytes());
                     // A revocation is ending the call, or the organ has
                     // already replied (the reader took the call's entry, and
                     // the reply waits behind this ask): run and answer
@@ -869,11 +912,12 @@ impl OrganProcess {
                                 region.iter().map(|region| region.fd()).collect();
                             let answer = ToOrgan::Answer(answer);
                             let sent = self.send_answer(id, &answer, &held, deadline, grant);
-                            if !matches!(sent, Ok(true)) {
+                            if !matches!(sent, Ok(Some(_))) {
                                 asks.unsent();
                             }
                             match sent {
-                                Ok(_) => {}
+                                Ok(Some(len)) => asks.frame_sent(len),
+                                Ok(None) => {}
                                 Err(FrameError::Late) => break,
                                 Err(FrameError::TimedOut) => {
                                     self.stop();
@@ -900,6 +944,8 @@ impl OrganProcess {
                 Ok(Delivery::Closed) | Err(RecvTimeoutError::Disconnected) => {
                     return Err(CallFailure::Crashed);
                 }
+                // A wait for room meanwhile moved the deadline on.
+                Err(RecvTimeoutError::Timeout) if moved() > Instant::now() => {}
                 Err(RecvTimeoutError::Timeout) => break,
             }
         }
@@ -1022,8 +1068,10 @@ fn handshake(
         limits: Limits {
             threads: spec.threads,
             memory_bytes: spec.memory_bytes,
-            max_call_frame: spec.max_call_frame,
-            max_reply_frame: spec.max_reply_frame,
+            // The wire's own bound both ways: the install grant's frame
+            // sizes are `[limits]` rows the host measures (Rule 5).
+            max_call_frame: u32::MAX,
+            max_reply_frame: u32::MAX,
         },
     });
     // An organ that dies or stalls before answering failed to start, which
@@ -1041,8 +1089,8 @@ fn handshake(
     };
     send_frame_until(stream, &hello, &[], DEFAULT_FRAME_LIMIT, Some(deadline))
         .map_err(start_failed)?;
-    let (ack, _) = recv_frame_until::<FromOrgan>(stream, DEFAULT_FRAME_LIMIT, Some(deadline))
-        .map_err(start_failed)?;
+    let (ack, _) =
+        recv_frame_until::<FromOrgan>(stream, u32::MAX, Some(deadline)).map_err(start_failed)?;
     let FromOrgan::HelloAck(ack) = ack else {
         return Err(HostError::Handshake(
             "the first reply was not hello_ack".into(),
@@ -1088,27 +1136,31 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 /// Delivers replies until the organ closes, breaks a frame, or sends a
 /// second `hello_ack`; then fails every waiting call and ends the process,
 /// so an organ that exits while idle is reaped at once.
-fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, limit: u32) {
+fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, room: &Room) {
     loop {
         spin::poll_readable(stream);
-        let received = recv_frame_polled_len::<FromOrgan>(stream, limit);
-        if let Ok((_, _, len)) = &received {
+        // Each frame's body has budget room before a byte of it is
+        // allocated, under the wire's own `u32` bound alone.
+        let received = recv_frame_polled_reserved::<FromOrgan, Lease>(stream, u32::MAX, |len| {
+            inbox.lease(room, lifeline, len)
+        });
+        if let Ok((_, _, len, _)) = &received {
             inbox
                 .largest_received
                 .fetch_max(u64::from(*len), Ordering::SeqCst);
         }
-        match received.map(|(message, fds, _)| (message, fds)) {
-            Ok((FromOrgan::Reply(reply), fds)) => {
+        match received.map(|(message, fds, _, lease)| (message, fds, lease)) {
+            Ok((FromOrgan::Reply(reply), fds, lease)) => {
                 // Queued under the lock the call is taken under, so a call
                 // taken for its reply already has the reply waiting.
                 let mut pending = lock(&inbox.pending);
                 // A reply nobody waits for came after its deadline: drop it.
                 if let Some(waiter) = pending.remove(&reply.id) {
-                    let _ = waiter.deliver.try_send(Delivery::Reply(reply, fds));
+                    let _ = waiter.deliver.try_send(Delivery::Reply(reply, fds, lease));
                 }
             }
-            Ok((FromOrgan::Ask(ask), _)) if inbox.asks => {
-                if !inbox.route_ask(ask) {
+            Ok((FromOrgan::Ask(ask), _, lease)) if inbox.asks => {
+                if !inbox.route_ask(ask, lease) {
                     break;
                 }
             }

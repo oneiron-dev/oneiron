@@ -15,6 +15,9 @@ use std::sync::{Arc, OnceLock, PoisonError, RwLock};
 /// read.
 const MEMORY_FALLBACK_BYTES: u64 = 256 << 20;
 
+// Every row's list, config key and default: the row tables.
+mod engine_rows;
+
 /// One engine `[limits]` row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EngineLimit {
@@ -292,286 +295,103 @@ pub enum EngineLimit {
     /// across its Certs, CRLs and OCSPs. Past it the row asks and the
     /// material is read whole; one stream still decodes to at most 256 MiB.
     SealDssDecodeBytes,
-}
-
-impl EngineLimit {
-    /// Every engine row.
-    pub const ALL: [Self; 75] = [
-        Self::KeyedFilterJsonBytes,
-        Self::CodeResultInlineBytes,
-        Self::CodeResultDiskFloorBytes,
-        Self::CodeResultScanBytes,
-        Self::CodeResultMemoryBytes,
-        Self::CodeResultSessionMemoryBytes,
-        Self::ImageRoomBytes,
-        Self::CodeReaderBacklog,
-        Self::AskOptions,
-        Self::AskOptionTextBytes,
-        Self::AskContextRefs,
-        Self::AskRecipients,
-        Self::AskSpecMsgpackBytes,
-        Self::AskReminders,
-        Self::AnswerProvenanceRefs,
-        Self::AskWaitIdentities,
-        Self::LinePushMonthly,
-        Self::ImportFolderTextBytes,
-        Self::ImportFolderNotes,
-        Self::ImportDecodedMessages,
-        Self::ImportDecodedBytes,
-        Self::SignatureDecodeBytes,
-        Self::PptxCommentPatches,
-        Self::ImportXlsxLiveCells,
-        Self::PackScriptOutputBytes,
-        Self::PackScriptOutputRows,
-        Self::AttemptManifestEntries,
-        Self::AttemptCancelReceipts,
-        Self::AttemptRetryTipRows,
-        Self::WorkflowSteps,
-        Self::WorkflowNameBytes,
-        Self::JudgeRubricBytes,
-        Self::MaintenanceRowItems,
-        Self::MaintenanceTextBytes,
-        Self::MaintenanceScanRows,
-        Self::JudgeInstructionsBytes,
-        Self::JudgeReplayTextBytes,
-        Self::ContributionJudgeTaskBytes,
-        Self::ContributionJudgeAnswerBytes,
-        Self::CallableNestDepth,
-        Self::ExecutorRunSteps,
-        Self::VoiceReferenceBytes,
-        Self::EsignPdfBytes,
-        Self::StateVadTurns,
-        Self::StateWindowSeconds,
-        Self::DetectorObservations,
-        Self::DetectorEvents,
-        Self::DetectorReceiptRows,
-        Self::DreamerFactsRows,
-        Self::HealerProposals,
-        Self::RepairDiagnosticRefs,
-        Self::CentroidLabels,
-        Self::DetectorConsecutive,
-        Self::DetectorWindowRuns,
-        Self::BlockedDetailBytes,
-        Self::SealReferenceBytes,
-        Self::TripwireThreshold,
-        Self::EsignSweepDocuments,
-        Self::EsignSigningPrincipals,
-        Self::EsignSignatureInputBytes,
-        Self::EsignSignaturePngBytes,
-        Self::EsignSignatureDocumentBytes,
-        Self::EsignSignatureRecipientImages,
-        Self::EsignBodyBytes,
-        Self::EsignGeometryBodyBytes,
-        Self::SealOutputBytes,
-        Self::SealGrowthBytes,
-        Self::SealPdfObjects,
-        Self::SealRawDefinitions,
-        Self::SealCallFrameBytes,
-        Self::SealReplyFrameBytes,
-        Self::SealStructuralWork,
-        Self::SealRevisions,
-        Self::SealPrefixBytes,
-        Self::SealDssDecodeBytes,
-    ];
-
-    /// The config key that sets the row.
-    pub const fn key(self) -> &'static str {
-        match self {
-            Self::KeyedFilterJsonBytes => "limits.keyed_filter_json_bytes",
-            Self::CodeResultInlineBytes => "limits.code_result_inline_bytes",
-            Self::CodeResultDiskFloorBytes => "limits.code_result_disk_floor_bytes",
-            Self::CodeResultScanBytes => "limits.code_result_scan_bytes",
-            Self::CodeResultMemoryBytes => "limits.code_result_memory_bytes",
-            Self::CodeResultSessionMemoryBytes => "limits.code_result_session_memory_bytes",
-            Self::ImageRoomBytes => "limits.image_room_bytes",
-            Self::CodeReaderBacklog => "limits.code_reader_backlog",
-            Self::AskOptions => "limits.ask_options",
-            Self::AskOptionTextBytes => "limits.ask_option_text_bytes",
-            Self::AskContextRefs => "limits.ask_context_refs",
-            Self::AskRecipients => "limits.ask_recipients",
-            Self::AskSpecMsgpackBytes => "limits.ask_spec_msgpack_bytes",
-            Self::AskReminders => "limits.ask_reminders",
-            Self::AnswerProvenanceRefs => "limits.answer_provenance_refs",
-            Self::AskWaitIdentities => "limits.ask_wait_identities",
-            Self::LinePushMonthly => "line.monthly_push_allowance",
-            Self::ImportFolderTextBytes => "limits.import_folder_text_bytes",
-            Self::ImportFolderNotes => "limits.import_folder_notes",
-            Self::ImportDecodedMessages => "limits.import_decoded_messages",
-            Self::ImportDecodedBytes => "limits.import_decoded_bytes",
-            Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
-            Self::PptxCommentPatches => "limits.pptx_comment_patches",
-            Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
-            Self::PackScriptOutputBytes => "limits.pack_script_output_bytes",
-            Self::PackScriptOutputRows => "limits.pack_script_output_rows",
-            Self::AttemptManifestEntries => "limits.attempt_manifest_entries",
-            Self::AttemptCancelReceipts => "limits.attempt_cancel_receipts",
-            Self::AttemptRetryTipRows => "limits.attempt_retry_tip_rows",
-            Self::WorkflowSteps => "limits.workflow_steps",
-            Self::WorkflowNameBytes => "limits.workflow_name_bytes",
-            Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
-            Self::MaintenanceRowItems => "limits.maintenance_row_items",
-            Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
-            Self::MaintenanceScanRows => "limits.maintenance_scan_rows",
-            Self::JudgeInstructionsBytes => "limits.judge_instructions_bytes",
-            Self::JudgeReplayTextBytes => "limits.judge_replay_text_bytes",
-            Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
-            Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
-            Self::CallableNestDepth => "limits.callable_nest_depth",
-            Self::ExecutorRunSteps => "limits.executor_run_steps",
-            Self::VoiceReferenceBytes => "limits.voice_reference_bytes",
-            Self::EsignPdfBytes => "limits.esign_pdf_bytes",
-            Self::StateVadTurns => "limits.state_vad_turns",
-            Self::StateWindowSeconds => "limits.state_window_seconds",
-            Self::DetectorObservations => "limits.detector_observations",
-            Self::DetectorEvents => "limits.detector_events",
-            Self::DetectorReceiptRows => "limits.detector_receipt_rows",
-            Self::DreamerFactsRows => "limits.dreamer_facts_rows",
-            Self::HealerProposals => "limits.healer_proposals",
-            Self::RepairDiagnosticRefs => "limits.repair_diagnostic_refs",
-            Self::CentroidLabels => "limits.centroid_labels",
-            Self::DetectorConsecutive => "limits.detector_consecutive",
-            Self::DetectorWindowRuns => "limits.detector_window_runs",
-            Self::BlockedDetailBytes => "limits.blocked_detail_bytes",
-            Self::SealReferenceBytes => "limits.seal_reference_bytes",
-            Self::TripwireThreshold => "limits.tripwire_threshold",
-            Self::EsignSweepDocuments => "limits.esign_sweep_documents",
-            Self::EsignSigningPrincipals => "limits.esign_signing_principals",
-            Self::EsignSignatureInputBytes => "limits.esign_signature_input_bytes",
-            Self::EsignSignaturePngBytes => "limits.esign_signature_png_bytes",
-            Self::EsignSignatureDocumentBytes => "limits.esign_signature_document_bytes",
-            Self::EsignSignatureRecipientImages => "limits.esign_signature_recipient_images",
-            Self::EsignBodyBytes => "limits.esign_body_bytes",
-            Self::EsignGeometryBodyBytes => "limits.esign_geometry_body_bytes",
-            Self::SealOutputBytes => "limits.seal_output_bytes",
-            Self::SealGrowthBytes => "limits.seal_growth_bytes",
-            Self::SealPdfObjects => "limits.seal_pdf_objects",
-            Self::SealRawDefinitions => "limits.seal_raw_definitions",
-            Self::SealCallFrameBytes => "limits.seal_call_frame_bytes",
-            Self::SealReplyFrameBytes => "limits.seal_reply_frame_bytes",
-            Self::SealStructuralWork => "limits.seal_structural_work",
-            Self::SealRevisions => "limits.seal_revisions",
-            Self::SealPrefixBytes => "limits.seal_prefix_bytes",
-            Self::SealDssDecodeBytes => "limits.seal_dss_decode_bytes",
-        }
-    }
-
-    /// What the row is set to when nothing sets it.
-    pub fn default_bound(self) -> u64 {
-        match self {
-            Self::KeyedFilterJsonBytes => 64 << 20,
-            Self::CodeResultInlineBytes => 1 << 20,
-            Self::CodeResultDiskFloorBytes => 1 << 30,
-            Self::CodeResultScanBytes => 256 << 20,
-            Self::CodeResultMemoryBytes => memory_share(8),
-            Self::CodeResultSessionMemoryBytes => memory_share(64),
-            Self::ImageRoomBytes => 32 << 20,
-            Self::CodeReaderBacklog => 256,
-            Self::AskOptions => 65_536,
-            Self::AskOptionTextBytes => 1 << 20,
-            Self::AskContextRefs => 65_536,
-            Self::AskRecipients => 65_536,
-            Self::AskSpecMsgpackBytes => 256 << 20,
-            Self::AskReminders => 65_536,
-            Self::AnswerProvenanceRefs => 65_536,
-            Self::AskWaitIdentities => 1 << 20,
-            // LINE's free plan allowance, as the plan row defaults.
-            Self::LinePushMonthly => 200,
-            Self::ImportFolderTextBytes => 256 << 20,
-            Self::ImportFolderNotes => 100_000,
-            Self::ImportDecodedMessages => 1_000_000,
-            Self::ImportDecodedBytes => 1 << 30,
-            Self::SignatureDecodeBytes => 1 << 30,
-            Self::PptxCommentPatches => 10_000,
-            Self::ImportXlsxLiveCells => 200_000,
-            Self::PackScriptOutputBytes => 64 << 10,
-            Self::PackScriptOutputRows => 16,
-            // Sixteen times the 4,096 entries the append door refused past
-            // before Rule 5.
-            Self::AttemptManifestEntries => 65_536,
-            // Sixteen times the 256 receipts the append door refused past
-            // before Rule 5.
-            Self::AttemptCancelReceipts => 4_096,
-            // Sixteen times the 1,024 rows the walk refused past before
-            // Rule 5.
-            Self::AttemptRetryTipRows => 16_384,
-            // Sixteen times the 64 steps a saved workflow refused past before
-            // Rule 5.
-            Self::WorkflowSteps => 1_024,
-            // The 256 bytes a workflow name refused past before Rule 5.
-            Self::WorkflowNameBytes => 256,
-            // The shipped rubric is about 1 KiB; the judgment's state holds
-            // at most 64 KiB in all.
-            Self::JudgeRubricBytes => 8_192,
-            Self::MaintenanceRowItems => 256,
-            Self::MaintenanceTextBytes => 65_536,
-            Self::MaintenanceScanRows => 50_000,
-            // The shares the judge cut to before Rule 5: 8 KiB of
-            // instructions and 40,000 bytes of replay text.
-            Self::JudgeInstructionsBytes => 8_192,
-            Self::JudgeReplayTextBytes => 40_000,
-            // Together they leave room in the judgment's 64 KiB state, whose
-            // ladder refuses a larger one: the row asks before that.
-            Self::ContributionJudgeTaskBytes => 24 << 10,
-            Self::ContributionJudgeAnswerBytes => 16 << 10,
-            Self::CallableNestDepth => 8,
-            // The executor's hard step cap before Rule 5.
-            Self::ExecutorRunSteps => 50,
-            // The serving policy's old reference cap.
-            Self::VoiceReferenceBytes => 16 << 20,
-            Self::EsignPdfBytes => 256 << 20,
-            // The ceilings the affect and self-heal doors refused past before
-            // Rule 5; the state window's is 366 days.
-            Self::StateVadTurns => 256,
-            Self::StateWindowSeconds => 31_622_400,
-            Self::DetectorObservations => 1024,
-            Self::DetectorEvents => 1024,
-            Self::DetectorReceiptRows => 1024,
-            Self::DreamerFactsRows => 1024,
-            Self::HealerProposals => 1024,
-            Self::RepairDiagnosticRefs => 64,
-            Self::CentroidLabels => 62,
-            Self::DetectorConsecutive => 64,
-            Self::DetectorWindowRuns => 64,
-            Self::BlockedDetailBytes => 4096,
-            Self::SealReferenceBytes => 256,
-            Self::TripwireThreshold => 1024,
-            // The batch, principal, image byte and image count ceilings the
-            // e-sign sweeps, principals and signature upload refused past
-            // before Rule 5.
-            Self::EsignSweepDocuments => 100,
-            Self::EsignSigningPrincipals => 256,
-            Self::EsignSignatureInputBytes => 2 << 20,
-            Self::EsignSignaturePngBytes => 2 << 20,
-            Self::EsignSignatureDocumentBytes => 64 << 20,
-            Self::EsignSignatureRecipientImages => 16,
-            // The 3 MiB the public signing doors refused a body past before
-            // token-first ingress (FIX 3808).
-            Self::EsignBodyBytes => 3 << 20,
-            // The 16 MiB the editor's geometry door and page refused a PDF
-            // past before FIX 5618.
-            Self::EsignGeometryBodyBytes => 16 << 20,
-            // The output, growth, object, definition, frame, work, revision,
-            // prefix and DSS-decode ceilings the seal refused past before
-            // Rule 5. The reply frame's was 97 MiB on macOS, where outputs
-            // ride inline, and the 64 MiB default elsewhere.
-            Self::SealOutputBytes => 96 << 20,
-            Self::SealGrowthBytes => 32 << 20,
-            Self::SealPdfObjects => 1_000_000,
-            Self::SealRawDefinitions => 1_000_000,
-            Self::SealCallFrameBytes => 64 << 20,
-            Self::SealReplyFrameBytes => {
-                if cfg!(target_os = "macos") {
-                    97 << 20
-                } else {
-                    64 << 20
-                }
-            }
-            Self::SealStructuralWork => 8_000_000,
-            Self::SealRevisions => 32,
-            Self::SealPrefixBytes => 2 << 30,
-            Self::SealDssDecodeBytes => 256 << 20,
-        }
-    }
+    /// Signing-identity asks (`seal.identity`) one seal call makes. Past it the
+    /// row asks and the pinned identity is answered again.
+    SealIdentityAsks,
+    /// Signature asks (`seal.sign`) one seal call makes, one at most for each
+    /// revision the engine wrote. Past it the row asks and each is answered.
+    SealSignAsks,
+    /// Fetch asks (`net.fetch`, timestamps and CRLs) one seal call makes. Past
+    /// it the row asks and each fetch inside the grant's allowlist runs.
+    SealFetchAsks,
+    /// Asks of every verb one seal call makes. Past it the row asks and the
+    /// call's asks are answered.
+    SealAsks,
+    /// Answer bytes one seal call is lent: values and data, identity, signatures
+    /// and fetched bodies. Past it the row asks and the call's booking grows to
+    /// hold them.
+    SealAnswerBytes,
+    /// Bytes of one CRL a seal fetches. Past it the row asks and the CRL is read
+    /// whole.
+    SealCrlBytes,
+    /// Bytes of one timestamp reply a seal fetches. Past it the row asks and the
+    /// reply is read whole.
+    SealTsaBytes,
+    /// Bytes of one seal verdict's report JSON. Past it the row asks and the
+    /// report is carried whole.
+    SealReportJsonBytes,
+    /// Bytes the largest object stream of a prepared PDF decodes to, read where
+    /// the engine writes its signature revisions. Past it the row asks and the
+    /// PDF is read whole; one stream still decodes to at most 256 MiB.
+    SealPreparedStreamBytes,
+    /// Asks of every verb one organ call makes, against its install grant's own
+    /// count, or this row's for a grant that keeps the factory one. Past it the
+    /// row asks and each granted ask is answered.
+    OrganAsks,
+    /// Asks of one verb one organ call makes, against the count its install
+    /// grant names for the verb. Past it the row asks and each is answered.
+    OrganAskPerVerb,
+    /// Answer bytes one organ call is lent, values and data, against its install
+    /// grant's own. Past it the row asks and the call's booking grows to hold
+    /// them.
+    OrganAnswerBytes,
+    /// Body bytes of one granted fetch, against its install grant's own. Past it
+    /// the row asks and the body is read to its end.
+    OrganFetchBytes,
+    /// Redirects one granted fetch follows, each hop checked against the
+    /// allowlist afresh. Past it the row asks and the fetch goes on.
+    OrganFetchRedirects,
+    /// Bytes of one ask's value, as encoded. Past it the row asks and the ask is
+    /// read whole.
+    OrganAskValueBytes,
+    /// Bytes of one fetch ask's purpose. Past it the row asks and the purpose is
+    /// kept whole.
+    OrganFetchPurposeBytes,
+    /// Bytes one organ call's outputs hold together, against its install grant's
+    /// own. Past it the row asks and the call's booking grows to keep them.
+    OrganOutputBytes,
+    /// Bytes of the largest frame the host sends an organ in one call, as
+    /// encoded, against its install grant's own. Past it the row asks and the
+    /// frame is sent whole.
+    OrganCallFrameBytes,
+    /// Bytes of the largest frame an organ sends back in one call, as encoded,
+    /// against its install grant's own. Past it the row asks and the frame is
+    /// read whole.
+    OrganReplyFrameBytes,
+    /// Bytes of one organ error's or ask refusal's detail. Past it the row asks
+    /// and the detail is kept whole.
+    OrganDetailBytes,
+    /// Bytes of one ask's verb on its receipt line. Past it the row asks and the
+    /// verb is kept whole.
+    OrganVerbBytes,
+    /// Bytes of one organ output's name. Past it the row asks and the name is
+    /// kept whole.
+    OrganOutputNameBytes,
+    /// Bytes of one organ output's media type. Past it the row asks and the
+    /// media type is kept whole.
+    OrganMediaTypeBytes,
+    /// Bytes of one fetch's origin on its receipt line. Past it the row asks and
+    /// the origin is kept whole.
+    OrganFetchOriginBytes,
+    /// Bytes of one fetched body's Content-Type. Past it the row asks and the
+    /// Content-Type is kept whole.
+    OrganContentTypeBytes,
+    /// Notes of one kind one organ call's receipt keeps: touched locators,
+    /// warnings or losses, each kind on its own. Past it the row asks and
+    /// every note is kept, in order.
+    OrganNoteItems,
+    /// Bytes of one note an organ call's receipt keeps: an encoded locator, a
+    /// warning or a loss's detail. Past it the row asks and the note is kept
+    /// whole.
+    OrganNoteBytes,
+    /// Bytes of one loss's code an organ call's receipt keeps. Past it the row
+    /// asks and the code is kept whole.
+    OrganLossCodeBytes,
+    /// Bytes the organ host's budget holds at its peak when a live call grows
+    /// past it: one elected call goes on, its overcommit accounted and on its
+    /// receipt, while new calls wait for the budget to drain. Measured against
+    /// the host's own budget.
+    OrganMemoryBytes,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

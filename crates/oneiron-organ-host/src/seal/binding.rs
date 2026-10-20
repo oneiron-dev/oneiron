@@ -74,6 +74,15 @@ pub(super) struct RevisionArgs {
     byte_range: [u64; 4],
 }
 
+/// The revision a sealed PDF was admitted on: the engine's own ByteRange
+/// for it and the end of the bytes the engine wrote, never the organ's
+/// word. The fresh verification (the `verify` child) must find the signature it
+/// bound here.
+pub(super) struct AdmittedRevision {
+    pub(super) byte_range: [u64; 4],
+    pub(super) byte_end: u64,
+}
+
 /// `seal.sign`'s value. No digest: the host computes every hash it signs.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -232,10 +241,15 @@ impl<'a> SealCall<'a> {
     /// holds one CMS SignedData whose one SignerInfo carries the signature
     /// the key issued for that revision, over the same attributes. Later
     /// revisions (validation data, a document timestamp) may follow only
-    /// when `suffix` allows them; their meaning is the verifier's to judge.
+    /// when `suffix` allows them; their meaning is the fresh verifier's to
+    /// classify (the `verify` child), against the revision returned here.
     /// However much they add, they are admitted (Rule 5): past the PDF
     /// format bound alone an output is not one this side could read.
-    pub(super) fn admit(&self, output: &[u8], suffix: bool) -> Result<(), EsignSealerError> {
+    pub(super) fn admit(
+        &self,
+        output: &[u8],
+        suffix: bool,
+    ) -> Result<AdmittedRevision, EsignSealerError> {
         let unbound = || EsignSealerError::Fatal {
             stage: "binding".to_owned(),
             code: "unbound_output".to_owned(),
@@ -245,14 +259,19 @@ impl<'a> SealCall<'a> {
         }
         let signer = lock(&self.signer).clone().ok_or_else(unbound)?;
         let issued = lock(&self.issued);
-        if issued
+        let carried = issued
             .iter()
-            .any(|issued| self.carries(output, issued, &signer, suffix))
-        {
-            Ok(())
-        } else {
-            Err(unbound())
-        }
+            .find(|issued| self.carries(output, issued, &signer, suffix))
+            .ok_or_else(unbound)?;
+        let revision = self
+            .input
+            .revisions
+            .get(carried.revision)
+            .ok_or_else(unbound)?;
+        Ok(AdmittedRevision {
+            byte_range: revision.byte_range,
+            byte_end: (self.input.pdf.len() + revision.suffix.len()) as u64,
+        })
     }
 
     fn carries(&self, output: &[u8], issued: &Issued, signer: &Signer, suffix: bool) -> bool {

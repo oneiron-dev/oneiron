@@ -93,8 +93,11 @@ const TICK: Duration = Duration::from_secs(30);
 const LEASE_OWNER: &str = "esign-seal-worker";
 /// Documents one tick seals at most.
 const PER_TICK: usize = 8;
-/// The most bytes one CRL or timestamp fetch brings back.
-const FETCH_MAX_BYTES: u64 = 8 * 1024 * 1024;
+/// The grant's own fetch threshold: none below the wire's. A CRL or a
+/// timestamp is read whole (Rule 5); the seal's per-purpose `[limits]` rows
+/// (`seal_crl_bytes`, `seal_tsa_bytes`) measure each one, so the generic
+/// fetch row does not ask twice.
+const FETCH_MAX_BYTES: u64 = u64::MAX;
 
 /// Starts the seal worker on the server's runtime, every tick admitted, on
 /// the environment's seal settings. It seals on the server's organ host,

@@ -22,8 +22,12 @@ mod tests;
 /// The contents ladder: the DER bytes each revision's hole holds.
 pub const SEAL_CONTENTS_LADDER: [usize; 3] = [64 * 1024, 128 * 1024, 256 * 1024];
 const BYTERANGE_DIGITS: usize = 20;
-/// The prepared PDF's own output limit.
-const MAX_DECOMPRESSED: usize = 64 * 1024 * 1024;
+/// The most one stream of the prepared PDF decodes to while it is read: the
+/// per-stream codec bound the seal organ holds itself to (its
+/// `STREAM_DECODE_BYTES`), so the engine refuses no stream the seal would
+/// read. Below it a stream's decoded size is measured against the
+/// `seal_prepared_stream_bytes` row and read whole (Rule 5).
+const STREAM_CODEC_BYTES: usize = 256 * 1024 * 1024;
 
 type Result<T> = std::result::Result<T, PdfPreparationError>;
 
@@ -36,13 +40,48 @@ impl EsignSealInput {
     /// [`PdfPreparationError::MalformedPdf`] for a PDF this writer cannot
     /// append to: it reads the classic xref table the preparation writes.
     pub fn new(pdf: Vec<u8>, operation_id: &str, now_ms: u64) -> Result<Self> {
-        let base = Base::read(&pdf)?;
+        Ok(Self::measured(pdf, operation_id, now_ms)?.0)
+    }
+
+    /// [`Self::new`], with the bytes the prepared PDF's largest stream
+    /// decoded to while it was read, for the `seal_prepared_stream_bytes`
+    /// row.
+    ///
+    /// # Errors
+    /// As [`Self::new`].
+    pub(crate) fn measured(pdf: Vec<u8>, operation_id: &str, now_ms: u64) -> Result<(Self, u64)> {
+        let (base, stream_bytes) = Base::read(&pdf)?;
         let revisions = SEAL_CONTENTS_LADDER
             .iter()
             .map(|&capacity| base.revision(pdf.len(), operation_id, now_ms, capacity))
             .collect::<Result<_>>()?;
-        Ok(Self { pdf, revisions })
+        Ok((Self { pdf, revisions }, stream_bytes))
     }
+}
+
+/// The bytes the largest stream lopdf decoded while it read `doc` came to:
+/// an object stream's or a cross-reference stream's, the ones it decodes
+/// as it loads. Each decoded within the codec bound, or the read failed.
+fn largest_decoded_stream(doc: &Document) -> u64 {
+    doc.objects
+        .values()
+        .filter_map(|object| object.as_stream().ok())
+        .filter(|stream| {
+            let kind = stream
+                .dict
+                .get(b"Type")
+                .ok()
+                .and_then(|kind| kind.as_name().ok());
+            matches!(kind, Some(b"ObjStm" | b"XRef"))
+        })
+        .filter_map(|stream| {
+            stream
+                .decompressed_content_with_limit(STREAM_CODEC_BYTES)
+                .ok()
+        })
+        .map(|content| content.len() as u64)
+        .max()
+        .unwrap_or(0)
 }
 
 /// What appending one revision needs from the prepared PDF.
@@ -74,15 +113,17 @@ fn reference(object: &Object) -> Option<ObjectId> {
 }
 
 impl Base {
-    fn read(pdf: &[u8]) -> Result<Self> {
+    /// The prepared PDF's base, and its largest decoded stream's bytes.
+    fn read(pdf: &[u8]) -> Result<(Self, u64)> {
         let doc = Document::load_mem_with_options(
             pdf,
             LoadOptions {
                 strict: true,
-                max_decompressed_size: Some(MAX_DECOMPRESSED),
+                max_decompressed_size: Some(STREAM_CODEC_BYTES),
                 ..LoadOptions::default()
             },
         )?;
+        let stream_bytes = largest_decoded_stream(&doc);
         let prev_startxref = last_startxref(pdf)?;
         let at = usize::try_from(prev_startxref).map_err(malformed)?;
         if pdf.get(at..at.saturating_add(4)) != Some(b"xref".as_slice())
@@ -147,7 +188,7 @@ impl Base {
                 .ok_or(PdfPreparationError::Limit)?,
             Err(_) => 0,
         };
-        Ok(Self {
+        let base = Self {
             pdf_ends_with_eol: pdf.ends_with(b"\n"),
             max_obj: max_existing.max(size_max),
             root,
@@ -161,7 +202,8 @@ impl Base {
             first_page_dict,
             first_page_annots,
             root_dict,
-        })
+        };
+        Ok((base, stream_bytes))
     }
 
     /// The suffix that appends one signature revision with a hole of

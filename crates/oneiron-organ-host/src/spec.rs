@@ -42,22 +42,29 @@ pub struct OrganSpec {
     pub memory_bytes: u64,
     /// What one call books from the shared budget.
     pub call_memory_bytes: u64,
+    /// The largest frame the host sends one call before the
+    /// `organ_call_frame_bytes` row asks. Frames cross under the wire's own
+    /// `u32` length alone (Rule 5).
     pub max_call_frame: u32,
+    /// The largest frame the organ sends back for one call before the
+    /// `organ_reply_frame_bytes` row asks; read whole under the wire's own
+    /// `u32` length, with budget room made for it before it is read.
     pub max_reply_frame: u32,
-    /// The most bytes one reply's outputs may hold together, inline and
-    /// region. The host checks sealed sizes before it maps or hashes any.
+    /// The bytes one reply's outputs hold together, inline and region,
+    /// before the `organ_output_bytes` row asks; never a refusal (Rule 5).
     /// Outputs are host memory the caller may keep, so they count against
-    /// the call's booking, and stay counted until they drop: the host never
-    /// allows more than `call_memory_bytes`.
+    /// the call's booking, which grows to hold them, and stay counted until
+    /// they drop. The host reads each sealed size before it maps any.
     pub max_output_bytes: u64,
-    /// The asks the grant names (protocol 1.1), each with its cap per call.
-    /// An ask for any other verb is refused.
+    /// The asks the grant names (protocol 1.1), each with its count per
+    /// call, past which the `organ_ask_per_verb` row asks. An ask for any
+    /// other verb is refused.
     pub asks: Vec<AskGrant>,
-    /// Asks of every verb that one call may make.
+    /// Asks of every verb one call makes before the `organ_asks` row asks.
     pub max_asks: u32,
-    /// Answer bytes one call may be lent. They are host memory inside the
-    /// call's booking, so the host never lends more than
-    /// `call_memory_bytes`.
+    /// Answer bytes one call is lent before the `organ_answer_bytes` row
+    /// asks. They are host memory inside the call's booking, which grows to
+    /// hold them.
     pub max_ask_bytes: u64,
     /// Where a granted `net.fetch` may go.
     pub fetch: FetchGrant,
@@ -89,7 +96,8 @@ pub struct FetchGrant {
     /// Addresses a fetch may reach that are not global, such as an in-house
     /// timestamp authority.
     pub private_cidrs: Vec<ipnet::IpNet>,
-    /// The most body bytes one fetch may bring back.
+    /// The body bytes one fetch brings back before the
+    /// `organ_fetch_bytes` row asks; the body is read to its end (Rule 5).
     pub max_bytes: u64,
 }
 

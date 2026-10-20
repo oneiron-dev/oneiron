@@ -24,10 +24,10 @@ use serde_bytes::ByteBuf;
 use crate::frame::{FrameError, recv_frame, send_frame};
 use crate::region::{MappedRegion, SharedRegion};
 use crate::wire::{
-    ASK_VALUE_MAX, Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call,
-    DEFAULT_FRAME_LIMIT, ErrorCode, FromOrgan, Hash32, HelloAck, INLINE_MAX_BYTES, Input, Limits,
-    MAX_FDS_PER_FRAME, Notes, OrganError, OrganIdentity, Outcome, Output, PROTOCOL, Payload,
-    Proposal, ProtocolVersion, Reply, ToOrgan, TypedBody, VerbSpec,
+    Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call, ErrorCode, FromOrgan, Hash32,
+    HelloAck, INLINE_MAX_BYTES, Input, Limits, MAX_FDS_PER_FRAME, Notes, OrganError, OrganIdentity,
+    Outcome, Output, PROTOCOL, Payload, Proposal, ProtocolVersion, Reply, ToOrgan, TypedBody,
+    VerbSpec,
 };
 
 /// Reads every input byte and folds it; the host's read-throughput probe.
@@ -140,8 +140,8 @@ impl<'a> CallContext<'a> {
     /// # Errors
     /// The engine's refusal; [`AskCode::Unsupported`] on a 1.0 session or
     /// outside a served call, where nothing is sent; [`AskCode::Cancelled`]
-    /// once the call is cancelled; [`AskCode::TooLarge`] for a value over
-    /// [`ASK_VALUE_MAX`], refused before it is sent.
+    /// once the call is cancelled. A value of any size is sent whole: past
+    /// [`crate::ASK_VALUE_MAX`] the engine's `[limits]` row asks, and reads it.
     pub fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
         self.asker.ask(verb, value)
     }
@@ -259,13 +259,6 @@ impl AskLine {
             return Err(AskRefusal::new(
                 AskCode::Unsupported,
                 "the engine speaks 1.0, which carries no asks",
-            ));
-        }
-        let encoded = rmp_serde::to_vec_named(&value).map_or(usize::MAX, |bytes| bytes.len());
-        if encoded > ASK_VALUE_MAX {
-            return Err(AskRefusal::new(
-                AskCode::TooLarge,
-                format!("an ask's value is {encoded} bytes, over {ASK_VALUE_MAX}"),
             ));
         }
         let cancelled = || AskRefusal::new(AskCode::Cancelled, "the call was cancelled");
@@ -405,7 +398,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// # Errors
 /// A broken frame or a protocol violation by the engine.
 pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), FrameError> {
-    let (first, _) = recv_frame::<ToOrgan>(stream, DEFAULT_FRAME_LIMIT)?;
+    // The hello is read under the wire's own bound: no frame limit holds
+    // until the handshake sets one.
+    let (first, _) = recv_frame::<ToOrgan>(stream, u32::MAX)?;
     let ToOrgan::Hello(hello) = first else {
         return Err(FrameError::Protocol("the first frame must be hello"));
     };

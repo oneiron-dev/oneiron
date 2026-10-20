@@ -205,11 +205,12 @@ impl Vault {
                 document.to_hex(),
                 crate::entity_id::bytes_to_hex_lower(&fingerprint)
             );
-            let input = EsignSealInput::new(
+            let (input, stream_bytes) = EsignSealInput::measured(
                 prepared.bytes,
                 &operation_id,
                 self.now_recorded_at().saturating_mul(1000),
             )?;
+            self.measure_limit(EngineLimit::SealPreparedStreamBytes, stream_bytes);
             let sealed = sealer.seal(
                 &input,
                 &EsignSealRequest {

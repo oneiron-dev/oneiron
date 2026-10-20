@@ -19,8 +19,8 @@ use crate::spec::{LentInput, OrganCall, OrganSpec};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CallSize {
     /// Memory the call books from the shared budget; its answers and
-    /// outputs draw on it. A booking past the whole budget runs alone, once
-    /// the budget drains.
+    /// outputs draw on it, and it grows past it as they need. A booking
+    /// past the whole budget runs alone, once the budget drains.
     pub booking: u64,
     /// The memory grant of the process started for the call alone.
     pub process: u64,
@@ -83,9 +83,9 @@ impl OrganHost {
     /// [`Self::call_fresh_with`], at `size` rather than the install grant's
     /// booking and process grant: the caller sizes the call from what it
     /// lends, so no input is refused for outgrowing a fixed grant. The
-    /// call's outputs may fill its booking, less the answers it was lent,
-    /// up to the install grant's `max_output_bytes`. `measure` is filled in
-    /// however the call ends.
+    /// call's answers and outputs draw on its booking, which grows to hold
+    /// them; none is refused for its size. `measure` is filled in however
+    /// the call ends.
     ///
     /// # Errors
     /// As [`Self::call_with`].
