@@ -3454,8 +3454,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 31,
-      "re-export": 56
+      "crate-vis": 32,
+      "re-export": 57
      }
     },
     {
@@ -3555,7 +3555,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -3586,6 +3586,16 @@
      "purpose": "The fold's one judgment of key work a world settings edit left (FIX 4704): a request that carries a…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/owner_work/root_basis.rs",
+     "purpose": "A root request's basis witness, checked on its target (FIX 5551): whether the target's heads are the ones…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -6581,7 +6591,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5,
       "struct": 1
      }
@@ -6640,13 +6650,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignDocumentTrail",
+      "EsignDocumentView"
+     ],
+     "path": "src/blob_artifact/esign/document_view.rs",
+     "purpose": "The owner's view of one signing document on `vault.esign.get` (FIX 6481): its delivery receipts always…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignCreateRequest",
       "EsignDispatchRequest",
       "EsignDispatchView",
-      "EsignDocumentView",
       "EsignDraftView",
       "EsignGetRequest",
       "EsignIssuedLink",
@@ -6670,7 +6694,7 @@
      "purpose": "The e-sign doors outside Rust (ARCH-0064 D3, D5, SGN-02)",
      "surface": {
       "fn": 11,
-      "struct": 22
+      "struct": 21
      }
     },
     {
@@ -6734,7 +6758,7 @@
      "purpose": "Claims are the document state machine",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -6762,7 +6786,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -7202,7 +7226,7 @@
      "path": "src/blob_artifact/family.rs",
      "purpose": "The artifact family contract (ARCH-0078): every deliverable is an artifact, and every kind gives the same…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 7,
       "struct": 4
@@ -18721,7 +18745,7 @@
      "purpose": "Dispatch-time resolution of a `ContextSpec` against live vault state",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3,
       "struct": 3
      }
@@ -30596,7 +30620,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "NotificationMark",
@@ -47266,7 +47290,7 @@
      "path": "src/secret_custody/masked_files.rs",
      "purpose": "Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 3
      }
@@ -47359,13 +47383,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/reveal/file.rs",
      "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -47395,7 +47419,7 @@
      "path": "src/secret_custody/sighted_file.rs",
      "purpose": "An ASSET body kept in its file, read as a serving door's reader reads it (FIX 5507)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -48999,6 +49023,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/side_table/classified.rs",
+     "purpose": "One row's read that tells its own value's damage from the store's failure (FIX 6482)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/side_table/codec.rs",
      "purpose": "The value codecs a side table may declare",
      "surface": {
@@ -49088,7 +49122,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -55155,7 +55189,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SealedBundleCommitReceipt"
@@ -55824,7 +55858,7 @@
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -62834,6 +62868,7 @@
      "path": "src/workspace_roster/rooms/audience_doors.rs",
      "purpose": "The doors that edit a private thread's audience (FIX 5545): an add and a remove, each one audience edit TURN…",
      "surface": {
+      "const": 1,
       "crate-vis": 8,
       "fn": 2,
       "struct": 3
@@ -63461,7 +63496,7 @@
      "path": "src/world_keys/doors.rs",
      "purpose": "The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 4
      }
@@ -63474,6 +63509,16 @@
      "purpose": "A key record's appends: one machine's wraps of one key, as side entries of the key's world, split across…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/doors/frontier.rs",
+     "purpose": "The read-only plan of one machine's wraps of one key (FIX 5552): the rows its records name, how its…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -63540,6 +63585,8 @@
      "notable": [
       "BundleHomeWarning",
       "CapsuleRead",
+      "EnsureDiagnostics",
+      "EnsureView",
       "ExecutorObservation",
       "LatestRead",
       "OwnerWorkDiagnostics",
@@ -63559,7 +63606,17 @@
       "crate-vis": 5,
       "enum": 8,
       "fn": 3,
-      "struct": 6
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/owner_work/diagnostics/key_plan.rs",
+     "purpose": "A world's keys and its ensure step on their executor, through the holder's own read checks and the writer's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -63661,13 +63718,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/reassert/holder.rs",
      "purpose": "A holder's re-assertion of one world's keys (contract §4): the step the re-assert door runs on a holder, and…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -63764,7 +63821,7 @@
      "path": "src/world_keys/root_work/mod.rs",
      "purpose": "Root work (WILL L04 row 02): the owner decides a change to one install's recovery root on any surface he is…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 3,
       "fn": 4
      }
@@ -64813,7 +64870,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 188,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64834,7 +64891,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65975,7 +66032,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66255,7 +66312,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 37,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66271,7 +66328,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4139,
+   "source_files": 4144,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66666,7 +66723,7 @@
       "crate-vis": 5,
       "enum": 4,
       "fn": 12,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 2
      }
     },
@@ -66718,6 +66775,20 @@
       "crate-vis": 3,
       "enum": 4,
       "fn": 10,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RootRevisionBasis"
+     ],
+     "path": "src/authority/owner_work/root_basis.rs",
+     "purpose": "A root request's revision basis (FIX 5551): the heads its `seen` is the revision of, as the recorder folded…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -66987,7 +67058,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 33,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67017,7 +67088,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 42,
+   "source_files": 43,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -91530,6 +91601,7 @@
       "EsignDispatchRequest",
       "EsignDispatchView",
       "EsignDocument",
+      "EsignDocumentTrail",
       "EsignDocumentView",
       "EsignDraftView",
       "EsignEvent",
@@ -92239,10 +92311,15 @@
       "MemberRelationshipContext",
       "MemberVerdict",
       "MembershipConsent",
+      "MemoryError",
       "MemoryExport",
+      "MemoryGateDenial",
+      "MemoryPolicyDenial",
+      "MemoryPolicyExceptionProposal",
       "MemoryProjection",
       "MemorySupersedeInput",
       "MemoryWriteOutput",
+      "MemoryWrongRoot",
       "MentionLinkView",
       "MentionReferenceView",
       "MergeCrossover",
@@ -93898,6 +93975,7 @@
       "VectorSearchLane",
       "VectorSearchRequest",
       "VectorSearchResult",
+      "VerbHookStop",
       "VerdictBinding",
       "VerdictMode",
       "VersionReconciliation",
@@ -94060,8 +94138,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 883,
-      "struct": 2791
+      "enum": 885,
+      "struct": 2796
      }
     },
     {

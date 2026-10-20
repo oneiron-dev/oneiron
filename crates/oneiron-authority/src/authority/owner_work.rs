@@ -41,6 +41,7 @@
 mod cancel;
 mod custody;
 mod result;
+mod root_basis;
 
 use rmpv::Value;
 
@@ -57,6 +58,7 @@ pub use self::result::{
     OwnerWorkResult,
 };
 pub(super) use self::result::{decode_owner_work_result, owner_work_result_value};
+pub use self::root_basis::RootRevisionBasis;
 use super::*;
 
 pub const OP_KIND_OWNER_WORK_REQUEST: &str = "owner_work_request";
@@ -71,7 +73,7 @@ const REQUEST_KEYS: [&str; 6] = [
 ];
 const PRIVACY_BASIS_KEYS: [&str; 3] = ["edit", "after", "key_owner"];
 const WORLD_KEY_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "mode"];
-const ROOT_WORK_KEYS: [&str; 4] = [OP_KEY_KIND, "change", "root", "machine"];
+const ROOT_WORK_KEYS: [&str; 5] = [OP_KEY_KIND, "change", "root", "machine", "basis"];
 const PUBLISH_BUNDLE_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "home"];
 
 /// What kind of work a request asks for: the `kind` of its `work` map.
@@ -258,8 +260,13 @@ pub enum OwnerWorkBody {
     /// A change to the target install's own recovery root. The act's target
     /// is that install, which is also the request's executor, and its `seen`
     /// is the revision of the roots and of the target's standing the change
-    /// is for ([`ROOT_WORK_REVISION_CONTEXT`]).
-    Root { change: RootChange },
+    /// is for ([`ROOT_WORK_REVISION_CONTEXT`]). `basis` names those heads as
+    /// the recorder folded them, its witness (FIX 5551): its revision is the
+    /// act's `seen`.
+    Root {
+        change: RootChange,
+        basis: RootRevisionBasis,
+    },
     /// A publication of the vault's sealed bundle to `home`, the install that
     /// keeps it. The act's target is `home`, and its `seen` is the vault-wide
     /// world policy revision when the owner asked
@@ -380,8 +387,11 @@ impl OwnerWorkRequest {
         if self.act.by != ActBy::Owner {
             return Err(invalid_authority());
         }
-        // A root change is done on the install it changes, and only there.
-        if matches!(self.work, OwnerWorkBody::Root { .. }) && self.act.target != self.executor {
+        // A root change is done on the install it changes, and only there,
+        // and its basis is the revision its act saw (FIX 5551).
+        if let OwnerWorkBody::Root { basis, .. } = &self.work
+            && (self.act.target != self.executor || basis.revision() != self.act.seen)
+        {
             return Err(invalid_authority());
         }
         // A publication's act targets the home it names.
@@ -422,10 +432,10 @@ fn signed_alone_by_install_key(entry: &AuthorityLogEntry) -> Result<()> {
 
 /// Canonical field order: kind, carrier, act, executor, work, privacy_basis;
 /// a world key work map is kind, then mode; a root work map is kind, change,
-/// root, then machine, each field the change does not state nil; a
-/// publication work map is kind, then home; a custody work map is
-/// `custody`'s. The basis is nil for work the owner's act asks for, else a
-/// map of edit, after, then key_owner.
+/// root, machine, each field the change does not state nil, then its
+/// revision basis (`root_basis`); a publication work map is kind, then home;
+/// a custody work map is `custody`'s. The privacy basis is nil for work the
+/// owner's act asks for, else a map of edit, after, then key_owner.
 pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
     let work = match &request.work {
         OwnerWorkBody::WorldKey { mode } => Value::Map(vec![
@@ -435,7 +445,7 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             ),
             (Value::from("mode"), Value::from(mode.as_str())),
         ]),
-        OwnerWorkBody::Root { change } => Value::Map(vec![
+        OwnerWorkBody::Root { change, basis } => Value::Map(vec![
             (
                 Value::from(OP_KEY_KIND),
                 Value::from(OwnerWorkKind::Root.as_str()),
@@ -453,6 +463,7 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
                     .machine()
                     .map_or(Value::Nil, |machine| Value::from(machine.to_hex())),
             ),
+            (Value::from("basis"), root_basis::root_basis_value(basis)),
         ]),
         OwnerWorkBody::PublishBundle { home } => Value::Map(vec![
             (
@@ -543,6 +554,7 @@ pub(super) fn decode_owner_work_request(entries: &[(Value, Value)]) -> Result<Au
                     .as_str()
                     .and_then(|name| RootChange::from_parts(name, root, machine))
                     .ok_or_else(invalid_authority)?,
+                basis: root_basis::decode_root_basis(required(work, "basis")?)?,
             }
         }
         OwnerWorkKind::PublishBundle => {

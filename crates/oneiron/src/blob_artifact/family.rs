@@ -203,22 +203,42 @@ impl Vault {
         id: &EntityId,
         version: Option<u64>,
     ) -> Result<Option<ArtifactExport>> {
+        let txn = self.store.env.read_txn()?;
+        self.export_blob_artifact_read_in_txn(&txn, id, version, |record| {
+            let bytes = self
+                .read_blob_artifact_version_in_txn(&txn, id, record.version)?
+                .ok_or(Error::EntityNotFound)?;
+            if blake3::hash(&bytes).as_bytes() != &record.content_hash {
+                return Err(Error::CorruptedIndex("blob content hash"));
+            }
+            Ok(bytes)
+        })
+    }
+
+    /// One version's export in `txn`, its bytes as `read` reads them from the
+    /// version's record (FIX 6507): `version`, or the head when `None`, its
+    /// record bound to its ledger claim. A serving door's reader masks a body
+    /// kept in its file as it reads it, so the stored bytes are never held
+    /// whole beside the copy; the export's `content_hash` still names the
+    /// stored version. `None` when the artifact has no such version.
+    pub(crate) fn export_blob_artifact_read_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        version: Option<u64>,
+        read: impl FnOnce(&BlobArtifactVersion) -> Result<Vec<u8>>,
+    ) -> Result<Option<ArtifactExport>> {
         let version = match version {
             Some(version) => version,
-            None => match self.blob_artifact_head(id)? {
+            None => match super::read_blob_artifact_head_in_txn(&self.store, txn, id)? {
                 Some(head) => head.version,
                 None => return Ok(None),
             },
         };
-        let Some(record) = self.blob_artifact_version_metadata(id, version)? else {
+        let Some(record) = self.blob_artifact_version_metadata_in_txn(txn, id, version)? else {
             return Ok(None);
         };
-        let bytes = self
-            .read_blob_artifact_version(id, version)?
-            .ok_or(Error::EntityNotFound)?;
-        if blake3::hash(&bytes).as_bytes() != &record.content_hash {
-            return Err(Error::CorruptedIndex("blob content hash"));
-        }
+        let bytes = read(&record)?;
         Ok(Some(ArtifactExport {
             artifact_id: *id,
             version,

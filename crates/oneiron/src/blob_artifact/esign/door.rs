@@ -4,7 +4,8 @@
 //!   caller names PDF artifacts it already registered
 //!   (`vault.artifacts.create`), places recipients and fields, and the draft
 //!   lands as the caller, person or agent. Drafting sends nothing.
-//! - `vault.esign.get`: the document's state and its audit trail.
+//! - `vault.esign.get`: the document's state and its audit trail, or why
+//!   its trail does not read, with its delivery receipts either way.
 //! - `vault.esign.links.issue`: the owner mints the recipients' signing
 //!   capabilities in DRAFT and receives them, once, to deliver.
 //! - `vault.esign.send_for_signature`, `vault.esign.remind`,
@@ -20,10 +21,8 @@
 //!   input); the bound caller only classes the act.
 //! - `vault.esign.seal.get`: the seal task's receipts for one document
 //!   and its sealed manifest once sealing lands.
-use super::delivery_settlement::EsignDeliveryReceipt;
-use super::model::{
-    DocumentStatus, EsignAuditActor, EsignDocument, EsignEventRow, RecipientState, SignatureRow,
-};
+use super::document_view::{EsignDocumentTrail, EsignDocumentView};
+use super::model::{DocumentStatus, EsignAuditActor, EsignDocument};
 use super::outbound::{EsignOutboundCommand, EsignOutboundVerb};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -119,32 +118,6 @@ fn document_id(document_ref: &str) -> MemoryResult<EntityId> {
 pub struct EsignGetRequest {
     /// The artifact the signing overlay lives on.
     pub document_ref: String,
-}
-
-/// A signing document as its trail folds, with the trail itself.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EsignDocumentView {
-    pub document_ref: String,
-    pub status: DocumentStatus,
-    /// An event of the document awaits its owner's answer (a held sign
-    /// act); the state shows it folded in, and other acts wait for it.
-    pub awaits_owner_answer: bool,
-    /// The draft as it was sent: items, recipients, fields, expiry.
-    pub document: EsignDocument,
-    /// Each recipient's delivery, signing and access status, by id.
-    pub recipients: BTreeMap<String, RecipientState>,
-    /// The current value of each filled field.
-    pub signatures: Vec<SignatureRow>,
-    /// A recipient's decline reason, once one declined.
-    pub rejection: Option<String>,
-    /// SHA-256 of each sealed item, hex, once sealed.
-    pub sealed_sha256: Vec<String>,
-    /// The hash-chained trail, oldest first: every event, its actor and time.
-    pub audit: Vec<EsignEventRow>,
-    /// The invitations and reminders that ended unsent (FIX 6363), and the
-    /// ones still queued that wait unexported on their own (FIX 6455), each
-    /// with its `state` and typed `reason`, oldest first.
-    pub delivery_receipts: Vec<EsignDeliveryReceipt>,
 }
 
 /// The document whose recipients' signing links to mint.
@@ -385,35 +358,32 @@ pub struct EsignDispatchView {
 }
 
 impl Memory<'_> {
-    /// `vault.esign.get`: the document's folded state and its trail. The
-    /// row's refs admission reads `document_ref` under the caller's scope
-    /// first, so a project's document reads only in its audience.
+    /// `vault.esign.get`: the document's folded state and its trail, with
+    /// its delivery receipts. The row's refs admission reads `document_ref`
+    /// under the caller's scope first, so a project's document reads only in
+    /// its audience. A document whose own trail does not read, or folds to
+    /// no document, answers `trail` `unreadable` with that error and still
+    /// lists its receipts, its `document_unreadable` waits among them
+    /// (FIX 6481); nothing its trail alone proves is filled in.
     /// # Errors
-    /// A `document_ref` that is no id or names no signing document, or a
-    /// broken trail: a document whose own trail does not read errors here,
-    /// before its receipts are built.
+    /// A `document_ref` that is no id, or the store's own failure, its
+    /// receipts' read included.
     pub fn esign_get(&self, input: &EsignGetRequest) -> MemoryResult<EsignDocumentView> {
         let document = document_id(&input.document_ref)?;
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        let (state, audit, held) = super::ledger::read_in(vault, &txn, document)?;
+        let trail = match super::ledger::trail_read_in(vault, &txn, document)? {
+            Ok((state, audit, held)) => EsignDocumentTrail::readable(state, audit, held),
+            Err(unreadable) => EsignDocumentTrail::Unreadable {
+                error: MemoryError::from(unreadable),
+            },
+        };
         let delivery_receipts =
             super::delivery_settlement::delivery_receipts_in(vault, &txn, document)?;
         Ok(EsignDocumentView {
             document_ref: document.to_hex(),
-            status: state.status,
-            awaits_owner_answer: held,
-            document: state.document,
-            recipients: state.recipients,
-            signatures: state.signatures.into_values().collect(),
-            rejection: state.rejection,
-            sealed_sha256: state
-                .sealed_sha256
-                .iter()
-                .map(|digest| crate::entity_id::bytes_to_hex_lower(digest.as_slice()))
-                .collect(),
-            audit,
             delivery_receipts,
+            trail,
         })
     }
 
