@@ -22,6 +22,8 @@ mod raw_writes;
 #[cfg(feature = "test-support")]
 mod read_fixture;
 mod reader_table;
+#[cfg(feature = "sync")]
+mod response_bodies;
 mod retrieval_trace_key;
 mod search_retrieval;
 mod transactions;
