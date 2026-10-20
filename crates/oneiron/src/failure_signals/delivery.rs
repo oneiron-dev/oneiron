@@ -208,6 +208,20 @@ impl Vault {
         }
     }
 
+    /// Keeps the participation grant in step with the owner's switch, with
+    /// no transport and no destination (FIX 1884): a deployment that stopped
+    /// exporting has its grant revoked even when no sender runs, and one
+    /// that exports holds one grant under the current policy. Nothing is
+    /// sent. `now` is seconds since the epoch.
+    ///
+    /// # Errors
+    ///
+    /// Storage and policy errors.
+    pub fn reconcile_failure_signal_participation(&self, now: u64) -> Result<()> {
+        let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
+        self.keep_failure_signal_participation(sender, self.config.failure_signals.exports(), now)
+    }
+
     /// Keeps the participation grant in step with `on`: one active grant
     /// under the current policy while it holds, none once it stops. A grant
     /// a policy change left behind is revoked and minted afresh.

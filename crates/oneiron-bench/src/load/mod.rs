@@ -266,7 +266,9 @@ fn plan_echo(plan: &Plan) -> serde_json::Value {
         "grades": plan.grades.iter().map(|g| json!({"name": g.name, "effort": g.effort, "deadline_ms": g.deadline_ms, "limit": g.limit})).collect::<Vec<_>>(),
         "cell_requests": plan.cell_requests, "cell_seconds": plan.cell_seconds,
         "drain_settle_seconds": plan.drain_settle_seconds,
-        "server_env": plan.server_env, "signal_cells": plan.signal_cells, "skip": plan.skip,
+        // Names only: values (often credentials) stay in the spawned server's environment.
+        "server_env": plan.server_env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+        "signal_cells": plan.signal_cells, "skip": plan.skip,
     })
 }
 
