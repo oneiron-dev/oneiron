@@ -160,6 +160,12 @@ impl BackupSnapshotReceipt {
 /// `None`, read as changed, when the marker is missing, is not a private file
 /// of this user, does not parse, or names a backup no longer there.
 pub fn last_backed_up(dir: &Path, label: &str) -> Option<BackupWatermark> {
+    read_marker(dir, label).map(|marker| marker.covered)
+}
+
+/// The marker of `label`'s newest backup in `dir`, as [`last_backed_up`]
+/// reads it.
+fn read_marker(dir: &Path, label: &str) -> Option<WatermarkMarker> {
     let Ok(PrivateFile::Bytes(bytes)) = read_private_file(&dir.join(marker_name(label))) else {
         return None;
     };
@@ -168,7 +174,93 @@ pub fn last_backed_up(dir: &Path, label: &str) -> Option<BackupWatermark> {
         && !marker.file.starts_with('.')
         && !marker.file.contains(['/', '\\', '\0']);
     (marker.schema_version == MARKER_SCHEMA_VERSION && plain && dir.join(&marker.file).is_file())
-        .then_some(marker.covered)
+        .then_some(marker)
+}
+
+/// A label's backup marker read whole (L14 B2, agreed with L04): the backup
+/// it names, what that backup covered, its artifact's commitment digest and
+/// when the marker landed, which is when the backup was recorded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackupMarker {
+    file: String,
+    covered: BackupWatermark,
+    commitment_digest: String,
+    outer_blake3: String,
+    size: u64,
+    landed_ms: u64,
+}
+
+impl BackupMarker {
+    /// The backup's file name in its directory.
+    pub fn file(&self) -> &str {
+        &self.file
+    }
+
+    /// What the backup covered.
+    pub fn covered(&self) -> BackupWatermark {
+        self.covered
+    }
+
+    /// The backup artifact's commitment digest, as the marker records it in
+    /// hex.
+    pub fn commitment_digest(&self) -> &str {
+        &self.commitment_digest
+    }
+
+    /// When the marker landed, in Unix milliseconds by the wall clock.
+    pub fn landed_ms(&self) -> u64 {
+        self.landed_ms
+    }
+
+    /// Whether the file in `dir` it names is still the backup it recorded:
+    /// a regular file, never read through a symlink, whose evidence the
+    /// shared inspector reads as the marker's commitment digest, BLAKE3 and
+    /// size. It reads the whole file. Anything short of that is `false`,
+    /// which reads as changed.
+    pub fn held(&self, dir: &Path) -> bool {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::custom_flags(
+            &mut options,
+            libc::O_NOFOLLOW | libc::O_NONBLOCK,
+        );
+        let Ok(file) = options.open(dir.join(&self.file)) else {
+            return false;
+        };
+        let Ok(metadata) = file.metadata() else {
+            return false;
+        };
+        if !metadata.is_file() || metadata.len() != self.size {
+            return false;
+        }
+        inspect_backup(std::io::BufReader::new(&file)).is_ok_and(|evidence| {
+            evidence.size == self.size
+                && oneiron_vault_contract::hex(&evidence.commitment_digest)
+                    == self.commitment_digest
+                && oneiron_vault_contract::hex(&evidence.outer_blake3) == self.outer_blake3
+        })
+    }
+}
+
+/// [`last_backed_up`] whole: the backup the marker names and when it landed
+/// as well as what it covered. `None` as there, and when the marker's time
+/// does not read.
+pub fn backup_marker(dir: &Path, label: &str) -> Option<BackupMarker> {
+    let marker = read_marker(dir, label)?;
+    let landed = std::fs::symlink_metadata(dir.join(marker_name(label)))
+        .and_then(|metadata| std::fs::Metadata::modified(&metadata))
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some(BackupMarker {
+        file: marker.file,
+        covered: marker.covered,
+        commitment_digest: marker.commitment_digest,
+        outer_blake3: marker.outer_blake3,
+        size: marker.size,
+        landed_ms: u64::try_from(landed.as_millis()).unwrap_or(u64::MAX),
+    })
 }
 
 /// What a snapshot read under its custody guard, before its own write.

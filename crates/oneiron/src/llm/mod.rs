@@ -67,8 +67,8 @@ pub(crate) use step::{
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
-    erase_step_state_owner_in_txn, retire_step_claim_in_rows, retire_step_claim_in_txn,
-    step_claim_carriage, step_state_carriage, step_state_owners,
+    erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
+    retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
 };
 
 pub use oneiron_model::llm::{
