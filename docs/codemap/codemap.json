@@ -80445,7 +80445,7 @@
      "path": "src/api/ai/chat/sources.rs",
      "purpose": "The rows a live chat turn's call is read from (FIX 6935), ids only, for its run's permits and metered…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
