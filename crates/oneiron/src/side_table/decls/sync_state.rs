@@ -79,6 +79,11 @@ side_tables! {
     /// tombstone accepted but not yet applied; lifted only by a local recreation, never by a peer.
     /// Presence-only, empty value. Key: hex32 (entity id).
     DELETION_ROW_FENCE: SyncState b"df:" Raw;
+    /// Owed `regenerates` link, keyed by window, source and target: the link's original encoded
+    /// value (FIX 6204). Key: yyyy-mm ":" hex32 ":" hex32.
+    DEFERRED_REGENERATES: SyncState b"dg:w:" Raw;
+    /// Endpoint index for an owed `regenerates` link. Key: hex32 ":" full dg:w: key.
+    DEFERRED_REGENERATES_ENDPOINT: SyncState b"dh:" Raw;
     /// Dependency index for a deferred Parent candidate. Key: kind ":" hex32 ":" full dp:w: key.
     DEFERRED_PARENT_DEPENDENCY: SyncState b"di:" Raw;
     /// Deferred Parent candidate, keyed by window, source and target. Key: yyyy-mm ":" hex32 ":" hex32.

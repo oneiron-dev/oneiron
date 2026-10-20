@@ -235,7 +235,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     }
 
     /// Stores what `write` puts in a sink as a body of the run, bound to the
-    /// next auto name: the card the guest and the replay row get for it.
+    /// next auto name: the card the guest and the replay row get for it. The
+    /// body is masked at write (FIX 5718 part 3): one holding a secret no
+    /// handle can stand for is not stored, and the guest gets typed
+    /// unavailable content in its place; the call it answers ran.
     fn store_answer(
         &mut self,
         seq: u64,
@@ -244,14 +247,13 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        let mut sink = storage.code_run_output_sink()?;
+        let mut sink = storage.code_run_reply_spool()?;
         write(&mut sink)?;
-        let output = storage.publish_code_run_output(
-            bridge_result_output_path(seq),
-            sink,
-            true,
-            self.run_id,
-        )?;
+        let path = bridge_result_output_path(seq);
+        let output = match storage.publish_code_run_reply(path, sink, self.run_id)? {
+            Ok(output) => output,
+            Err(unavailable) => return Ok(unavailable),
+        };
         let name = self.next_auto_name();
         self.bind(name.clone(), output.handle.clone());
         let mut card = result_handle_json(&output);
@@ -1480,8 +1482,8 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         // Once an erase of the run's actor took its replies, none is read
         // back (FIX 5718).
         if storage.code_run_response_erased(self.run_id)? {
-            return Err(Error::InvalidConfig(
-                "recorded output read refused: response_erased".into(),
+            return Err(crate::code_run::response_erased_error(
+                "a recorded output read",
             ));
         }
         if path.starts_with(RESULT_READ_ROOT) {
