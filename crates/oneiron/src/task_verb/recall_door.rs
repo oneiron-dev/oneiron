@@ -246,7 +246,7 @@ fn recall_within_ceiling(
                 ..Default::default()
             },
         )?;
-        ready.retrieval_meta.partial = true;
+        ready.mark_cut();
         ready.retrieval_meta.rerank.clone_from(&cut_report);
         if let Some(on_cut) = door.on_cut {
             on_cut(ready.clone());

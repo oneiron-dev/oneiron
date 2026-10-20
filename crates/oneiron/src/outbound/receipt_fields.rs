@@ -18,6 +18,10 @@ use crate::outbound::dispatch_pipeline::retry_after::{
 use crate::receipt::ReceiptRecord;
 use crate::receipt::outbound_intent_receipt;
 
+/// FIX 6424 (Engine 10-20 20:4x): the receipt field a held send's
+/// approve-once digest rides, beside its gate outcome.
+pub(crate) const APPROVAL_DIGEST_FIELD: &str = "approval_digest";
+
 pub(super) fn append_optional_receipt_field(
     receipt: &mut ReceiptRecord,
     key: &'static str,
@@ -282,6 +286,8 @@ pub(super) fn append_window_receipt_fields(
 }
 
 /// Assemble the audit receipt and caller-visible result from one gate verdict.
+/// `approval_digest` is the approve-once digest the Gate composed for the
+/// send's effect, carried only while the Gate holds it (FIX 6424).
 pub(super) fn dispatch_result_receipt(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
@@ -289,6 +295,7 @@ pub(super) fn dispatch_result_receipt(
     space_posting: Option<&FrozenSpacePosting>,
     admission: Option<&AdmissionStage>,
     verdict: DispatchVerdict,
+    approval_digest: Option<String>,
 ) -> OutboundDispatchResult {
     let DispatchVerdict {
         gate_decision_ref,
@@ -306,12 +313,16 @@ pub(super) fn dispatch_result_receipt(
     } = verdict;
     let gate_outcome_kind = gate_outcome;
     let gate_outcome = gate_outcome_kind.as_str().to_owned();
+    // FIX 6424: a send the Gate holds for the owner names the digest his
+    // approve-once press on it must carry.
+    let approval_digest = approval_digest.filter(|_| gate_outcome_kind == GateOutcome::Pending);
     if let Some(receipt) = suppression_receipt {
         return OutboundDispatchResult {
             outcome,
             gate_decision_id: gate_decision_ref,
             gate_outcome,
             gate_reason_codes,
+            approval_digest,
             receipt,
             resolution,
             effector_budget: None,
@@ -375,6 +386,11 @@ pub(super) fn dispatch_result_receipt(
             gate_receipt_reasons.join(","),
         );
     }
+    append_optional_receipt_field(
+        &mut receipt,
+        APPROVAL_DIGEST_FIELD,
+        approval_digest.as_deref(),
+    );
     // The provider's own stated cool-down, normalized to whole seconds and
     // stamped beside the gate evidence rather than mixed into it. Only a
     // well-formed value is promoted: the connector's raw string still
@@ -542,6 +558,7 @@ pub(super) fn dispatch_result_receipt(
         gate_decision_id: gate_decision_ref,
         gate_outcome,
         gate_reason_codes,
+        approval_digest,
         receipt,
         resolution,
         effector_budget,

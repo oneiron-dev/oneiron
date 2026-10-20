@@ -863,6 +863,56 @@ impl Vault {
         })
     }
 
+    /// The quiet bound-use receipt of one spent `once` answer (FIX 1413): the
+    /// assembly that spent it delivered the offer `proposal_ref` to
+    /// `contact_ref` under that answer alone, so no standing clearance is
+    /// asked for; the digests are the contact's clearance as it stands, none
+    /// included. It names the proposal, authorizes nothing and widens
+    /// nothing. Idempotent: a proposal whose Used receipt the ledger holds
+    /// already gets no second one (`None`). Only the assembly that spent the
+    /// single-use answer records it, so no two writers race to.
+    pub(crate) fn record_once_contact_disclosure_use(
+        &self,
+        contact_ref: &EntityId,
+        proposal_ref: &str,
+    ) -> Result<Option<GateDecisionId>> {
+        let named = format!("proposal:{proposal_ref}");
+        let recorded = self
+            .store
+            .gate_decisions_for_grant_ref(&contact_clearance_ref(contact_ref))?
+            .iter()
+            .any(|record| {
+                record
+                    .reason_codes
+                    .iter()
+                    .any(|code| code == CONTACT_DISCLOSURE_REASON_USED)
+                    && record
+                        .system_notices
+                        .iter()
+                        .any(|notice| notice.body == named)
+            });
+        if recorded {
+            return Ok(None);
+        }
+        self.with_write_txn_grouped(|txn| {
+            let clearance =
+                crate::disclosure::contact_clearance_in_txn(&self.store, &*txn, contact_ref)?;
+            let digest = contact_clearance_digest(clearance.as_ref())?;
+            let receipt = DisclosureConfirmationReceipt {
+                decision_id: GateDecisionId::from_bytes([0; 16]),
+                act: ContactClearanceAct::Used,
+                contact_ref: *contact_ref,
+                proposal_ref: Some(proposal_ref.to_owned()),
+                ask_ref: None,
+                before_digest: digest,
+                after_digest: digest,
+                once_digest: None,
+            };
+            self.append_contact_clearance_receipt_in_txn(txn, None, &receipt)
+                .map(Some)
+        })
+    }
+
     /// The `once` answers still deliverable to `contacts`, read in `txn`, in
     /// offer-reference order. An answer is void once its contact is gone or
     /// inactive, or once the owner narrowed, revoked or re-cleared the

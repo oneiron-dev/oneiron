@@ -4,10 +4,13 @@
 //! File-only, like `[models]`. Each start declares every listed space the
 //! vault does not hold yet, then binds every listed slot the vault binds to
 //! nothing yet. The vault's own rows win after that: a space the owner door
-//! changed, or a slot a version move swapped, is left as it is. A listed
-//! space the vault holds at another width stops serve, since a new width is a
-//! new space. A replica of a vault another machine started seeds nothing: its
-//! setup is that vault's rows, even none.
+//! changed, or a slot a version move swapped, is left as it is, and so is a
+//! space the vault retired or a slot it returned to its default, as its
+//! EMBEDDING_SETUP rows read (FIX 1960): only a declaration or a binding
+//! through a door brings one back. A listed space the vault holds at another
+//! width stops serve, since a new width is a new space. A replica of a vault
+//! another machine started seeds nothing: its setup is that vault's rows,
+//! even none.
 //!
 //! ```toml
 //! [[embedding.spaces]]
@@ -89,9 +92,10 @@ impl EmbeddingConfig {
         Ok(())
     }
 
-    /// Declares the listed spaces the vault does not hold, then binds the
-    /// listed slots it binds to nothing and no open move carries. Runs
-    /// before the listener binds. On a replica
+    /// Declares the listed spaces the vault does not hold and never retired,
+    /// then binds the listed slots it binds to nothing, never returned to
+    /// their default, and no open move carries (FIX 1960). Runs before the
+    /// listener binds. On a replica
     /// ([`oneiron::sync::residence::synced_as_replica`]) it only checks the
     /// listed widths: rows it seeded would contend with the home's.
     pub fn apply_to(&self, vault: &Vault) -> anyhow::Result<()> {
@@ -107,6 +111,10 @@ impl EmbeddingConfig {
                 ),
                 Some(_) => {}
                 None if replica => {}
+                None if vault.embedding_space_retired(&space.id)? => tracing::info!(
+                    space = %space.id,
+                    "embedding space stays retired over [embedding]"
+                ),
                 None => {
                     vault.declare_embedding_space(space.clone())?;
                     tracing::info!(space = %space.id, "embedding space declared from [embedding]");
@@ -124,20 +132,37 @@ impl EmbeddingConfig {
             .filter(|moving| moving.state == SpaceMoveState::Open)
             .flat_map(|moving| moving.kinds)
             .collect();
+        let mut unbound = BTreeSet::new();
+        for kind in InputKind::ALL {
+            if vault.kind_slot_unbound(kind)? {
+                unbound.insert(kind);
+            }
+        }
         if let Some(space) = &self.one_space {
             if moving.is_empty()
+                && unbound.is_empty()
                 && InputKind::ALL
                     .iter()
                     .all(|kind| bound.space_for(*kind).is_none())
             {
                 vault.bind_one_space_for_all(space)?;
                 tracing::info!(%space, "one-space preset bound from [embedding]");
+            } else if !unbound.is_empty() {
+                tracing::info!(
+                    %space,
+                    "one-space preset keeps the slots the vault returned to their default"
+                );
             }
             return Ok(());
         }
         for (kind, space) in self.slots.bindings() {
             match bound.space_for(kind) {
                 None if moving.contains(&kind) => {}
+                None if unbound.contains(&kind) => tracing::info!(
+                    ?kind,
+                    listed = %space,
+                    "kind slot stays at its default over [embedding]"
+                ),
                 None => {
                     vault.bind_kind_slot(kind, space)?;
                     tracing::info!(?kind, %space, "kind slot bound from [embedding]");

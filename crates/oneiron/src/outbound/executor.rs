@@ -541,20 +541,10 @@ impl Vault {
 }
 
 pub(super) fn connector_logical_send_intent_ref(task: &ConnectorSendTask) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.connector.logical_send.v1");
-    hasher.update(task.actor_ref.as_bytes());
-    if let Some(idempotency_key) = task.intent.idempotency_key.as_deref() {
-        hasher.update(b"idempotency_key");
-        hasher.update(&(idempotency_key.len() as u64).to_le_bytes());
-        hasher.update(idempotency_key.as_bytes());
-    } else {
-        hasher.update(b"task_ref");
-        hasher.update(task.task_ref.as_bytes());
-    }
-    format!(
-        "intent:logical-send:{}",
-        crate::entity_id::bytes_to_hex_lower(hasher.finalize().as_bytes())
+    super::dispatch_attempt_id::connector_logical_send_ref(
+        task.actor_ref,
+        task.intent.idempotency_key.as_deref(),
+        task.task_ref,
     )
 }
 
