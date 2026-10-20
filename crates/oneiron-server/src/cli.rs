@@ -1079,7 +1079,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Host(HostCommand::RecoverSharedOwner(args)) => {
             commands::host_recover_shared_owner(*args)
         }
-        Command::Host(HostCommand::Relay(args)) => crate::managed::run_relay(&args.config).await,
+        Command::Host(HostCommand::Relay(args)) => crate::managed::run_host_relay(&args).await,
         Command::Host(HostCommand::Vm(args)) => vm_args::run(*args).await,
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,

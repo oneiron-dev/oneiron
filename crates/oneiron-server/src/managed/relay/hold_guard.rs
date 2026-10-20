@@ -6,9 +6,13 @@
 //! standing backup-keeping legal hold of the vault the delete defers
 //! (`held_until_release`); when the holds cannot be read, because the vault
 //! does not open or the read fails, it defers too (`hold_state_unknown`),
-//! never deletes. The unlink, then its directory sync, runs inside the
-//! guard, so a hold placed meanwhile commits before the read or after the
-//! sync. A deferred delete asks again when [`RelayDeleteHoldGuard::subscribe_rechecks`]
+//! never deletes. An in-process guard runs the unlink, then its directory
+//! sync, inside the hold read's exclusion, so a hold placed meanwhile
+//! commits before the read or after the sync. A guard over a vault engine
+//! that runs as another process delegates the delete instead (FIX 6826,
+//! `super::ctl_hold_guard`): the engine claims, unlinks and syncs the object
+//! inside that same exclusion, and the unlink the guard is handed never
+//! runs. A deferred delete asks again when [`RelayDeleteHoldGuard::subscribe_rechecks`]
 //! moves: after a committed hold release, after each hold maintenance pass,
 //! and when the guard's vault first resolves or is rebound. A relay with no
 //! guard deletes as it does today.
@@ -38,7 +42,8 @@ pub(crate) enum RelayDeleteDeferral {
 /// What became of one guarded delete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RelayDeleteHoldOutcome {
-    /// No hold stood: the object was unlinked and its directory synced.
+    /// No hold stood, and the object is gone: unlinked, or found gone by
+    /// the engine that executes the delete, and its directory synced.
     Deleted,
     /// The object stays.
     Deferred(RelayDeleteDeferral),
@@ -55,10 +60,12 @@ pub(crate) enum RelayDeleteHoldError {
 
 /// The hold check a relay locker delete runs through.
 pub(crate) trait RelayDeleteHoldGuard: Send + Sync {
-    /// Runs `unlink` (the unlink, then its directory sync) only while no
-    /// standing hold keeps the vault's backups, inside the hold read's
-    /// exclusion. Never [`RelayDeleteHoldOutcome::Deleted`] when the holds
-    /// could not be read.
+    /// Deletes `target` only while no standing hold keeps the vault's
+    /// backups, inside the hold read's exclusion: through `unlink` (the
+    /// unlink, then its directory sync), or, for a guard that delegates the
+    /// delete to the vault's engine, through the engine's own claim, unlink
+    /// and sync, `unlink` never run. Never [`RelayDeleteHoldOutcome::Deleted`]
+    /// when the holds could not be read or the delete is not confirmed.
     ///
     /// # Errors
     ///

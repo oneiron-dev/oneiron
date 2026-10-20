@@ -94,6 +94,9 @@ impl RelayDeleteHoldGuard for VaultRelayHoldGuard {
         let Some(vault) = (self.vault)() else {
             return Ok(HOLD_STATE_UNKNOWN);
         };
+        if vault.vault_key_vault_id() != self.vault_id {
+            return Ok(HOLD_STATE_UNKNOWN);
+        }
         let guarded = vault.with_backup_hold_exclusion(|holds| {
             if holds.keeps_backups() {
                 return Ok(RelayDeleteHoldOutcome::Deferred(

@@ -29,11 +29,15 @@ use subtle::ConstantTimeEq;
 use tokio::io::AsyncWriteExt;
 use zeroize::Zeroizing;
 
+mod ctl_client;
+mod ctl_hold_guard;
 mod deferred_delete;
 pub(super) mod hold_guard;
+mod installer;
 
 use self::deferred_delete::HeldDeletes;
 use self::hold_guard::RelayDeleteHoldGuard;
+pub(crate) use self::installer::run_host_relay;
 
 /// The relay executable must be built from the same fork revision as the
 /// engine's mesh adapter. It remains a sidecar, not another engine transport.
@@ -234,11 +238,14 @@ async fn write(
     let temporary = room
         .objects
         .join(format!(".{}-{sequence}.tmp", std::process::id()));
+    // A guarded room's uploads are its vault group's to read, so its
+    // vault's engine can hash and delete them (FIX 6826).
+    let mode = if room.held.is_some() { 0o660 } else { 0o600 };
     let result = async {
         let mut file = tokio::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .mode(0o600)
+            .mode(mode)
             .open(&temporary)
             .await?;
         file.write_all(&bytes).await?;
@@ -331,7 +338,10 @@ pub async fn run_relay(config_path: &FsPath) -> anyhow::Result<()> {
 /// [`run_relay`] with the host's hold guard on locker deletes (FIX 1488): a
 /// delete a standing hold covers defers instead of unlinking, and runs once
 /// the hold lifts. Only the host injects a guard; no [`RelayConfig`] field
-/// can. `None` is exactly [`run_relay`].
+/// can. `None` is exactly [`run_relay`]. A room with a guard is a guarded
+/// room (FIX 6826): its directories keep the modes its host provisioned,
+/// with no reset to owner-only, and its uploads are 0660, for its vault's
+/// engine to hash and delete.
 pub(crate) async fn run_relay_with_hold_guard(
     config_path: &FsPath,
     hold_guard: Option<Arc<dyn RelayDeleteHoldGuard>>,
@@ -350,8 +360,10 @@ pub(crate) async fn run_relay_with_hold_guard(
     let directory = config.locker_dir.join(&config.vault_id);
     let objects = directory.join("objects");
     std::fs::create_dir_all(&objects)?;
-    for path in [&config.locker_dir, &directory, &objects] {
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    if hold_guard.is_none() {
+        for path in [&config.locker_dir, &directory, &objects] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+        }
     }
     let held = match hold_guard {
         Some(guard) => {

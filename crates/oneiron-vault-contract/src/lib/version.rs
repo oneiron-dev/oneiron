@@ -83,8 +83,18 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// flag before it touches anything, and a model directory in the root as
 /// outside the vault, so a supervisor passes the flag, and publishes a
 /// model directory in the root, only with installed engines at or after
-/// the floor. Supervisor and vault move to v3 together; no v2 reader is
-/// kept.
+/// the floor. The relay locker delete the engine executes
+/// ([`relay_delete`](crate::relay_delete), FIX 6826: the
+/// `relay_delete_execute`, `relay_delete_rechecks` and `relay_locker_bind`
+/// ctl requests, `Ping`'s `engine_instance`, and `host relay`'s
+/// `--hold-guard-socket`, `--hold-guard-vault` and `--hold-guard-required`)
+/// carries a build floor too, at the engine revision it merged in, proven by
+/// `relay_delete_revision` on `Ping`. A v3 vault built before it answers each
+/// request as an unknown request, which deletes, binds and proves nothing,
+/// and a relay binary before it refuses the flags, so a supervisor binds a
+/// locker, forwards a relay's requests and starts a guarded relay only with
+/// installed engines at or after the floor. Supervisor and vault move to v3
+/// together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

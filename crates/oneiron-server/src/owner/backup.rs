@@ -68,6 +68,7 @@ use self::rehearse::Owned;
 pub(crate) use self::rehearse::rehearse_in;
 use self::rehearse::rehearse_in_with;
 pub(crate) use self::rehearse::{Rehearsal, rehearse, rehearse_keyed};
+pub(crate) use self::relay_hold::VaultRelayHoldGuard;
 pub(crate) use self::restore::{
     RestoreTarget, RestoredFresh, activate, restore_fresh, restore_over, restore_over_keyed,
     restore_target_seal,

@@ -243,12 +243,18 @@ names the field and never its value:
   roots, import and backup folders, the device-sync credential file, the guest
   runtimes) must be absolute, hold no `~` or `..`, exist, and lie under the
   vault's data directory or the settings file's own directory once its links
-  are resolved. An import queue with no `claude_code_root` and `codex_root` of
+  are resolved. A tagger model directory (`[oneironer] model_dir` and each
+  tier's) may instead be its bundle's own directory in the node's read-only
+  shared model root, `<root>/oneironer/<stack_sha16>/` (managed only, below),
+  named by the `stack_sha16` the settings pin beside it and by its manifest.
+  The refusal names the finer cause after the reason (`shared_model_layout`,
+  `shared_model_stack`, `shared_model_unsafe`, `bundle_stack_mismatch` and
+  the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds five more settings on argv alone; a settings file that
-names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind` or
-`mesh_relays` is refused `SupervisorOwned`:
+The supervisor binds six more settings on argv alone; a settings file that
+names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
+`mesh_relays` or `shared_model_root` is refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -264,6 +270,14 @@ names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind` or
 - `--mesh-bind <ip:port>` and `--mesh-relays <url>,<url>`: the paired-machine
   mesh listener's bind and private relays (device-sync.md); without a bind the
   mesh is off. A managed vault never reads `ONEIRON_MESH_*`.
+- `--shared-model-root <path>` (managed only, never a vault VM): the node's
+  read-only shared model root, where the supervisor installs each model
+  bundle once for every vault at `<root>/oneironer/<stack_sha16>/`. The root
+  and every directory above it must be owned by root and writable by no group
+  or other. A root that fails its check is ignored, logged
+  `shared_model_root_ignored` with its cause (and named in a settings refusal
+  that ends the start before logging begins), never a refused start; a model
+  directory only it would admit is then refused `OutsideVault`.
 
 A vault VM reads the guest runtimes and the mesh settings from the one-line
 files `/config/browser-runtime`, `/config/desktop-runtime`, `/config/mesh-bind`
