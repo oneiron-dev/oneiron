@@ -1395,6 +1395,19 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "RenderedWorkflowStepContext"
+     ],
+     "path": "src/agent_dispatch/workflow/model_context.rs",
+     "purpose": "A workflow step's selected memory and chat as model context (FIX 6290)",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/workflow/workflow_task.rs",
      "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
@@ -65712,7 +65725,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -67219,7 +67232,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4216,
+   "source_files": 4217,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80157,6 +80170,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/step/secret_use.rs",
+     "purpose": "`self.use` on a saved-workflow text step (FIX 2315)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/step_failure.rs",
      "purpose": "A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or…",
      "surface": {
@@ -91841,7 +91864,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 65,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92298,7 +92321,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 969,
+   "source_files": 970,
    "test_files": 182
   },
   "oneiron-spawn": {

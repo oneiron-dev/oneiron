@@ -120,6 +120,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/widen_record.rs` | src | m | 1 struct · 22 crate-vis | ContextWidenProposal | Exact, durable widen intents |
 | `src/agent_dispatch/workflow.rs` | src | m | 4 crate-vis | — | Atomic saved-workflow admission |
 | `src/agent_dispatch/workflow/member_context.rs` | src | s | 4 crate-vis | — | A member's bound run reads its context on that member's own lane (FIX 5416): the memory and chat a step… |
+| `src/agent_dispatch/workflow/model_context.rs` | src | m | 1 struct · 4 fn | RenderedWorkflowStepContext | A workflow step's selected memory and chat as model context (FIX 6290) |
 | `src/agent_dispatch/workflow/workflow_task.rs` | src | m | 4 fn · 9 crate-vis | — | A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper… |
 | `src/agent_dispatch/workflow_host.rs` | src | s | 2 fn | — | Typed headless host door for running the one ready workflow leaf |
 | `src/agent_dispatch/workflow_pump.rs` | src | s | 1 fn | — | Ordered workflow host pump |
