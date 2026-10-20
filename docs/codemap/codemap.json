@@ -22728,7 +22728,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CandidateRun",
@@ -22744,10 +22744,66 @@
      "purpose": "The Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 1,
       "fn": 3,
+      "re-export": 1,
       "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/code_fix/engine.rs",
+     "purpose": "A publisher's engine candidate replayed against the real failure (FIX 1661, 2144, 6357): one matched pair on…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/code_fix/instruction.rs",
+     "purpose": "The Coach's in-vault replay of an instruction candidate (OF-380, FIX 1662): the failing agent's call as the…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CodeFixShadowHost",
+      "EngineAdmission",
+      "EngineArm",
+      "EngineArmStatus",
+      "EngineArmSummary",
+      "EngineCallUsage",
+      "EngineCandidateRun",
+      "EngineNotRun",
+      "EnginePairState",
+      "PublisherCandidateKind"
+     ],
+     "path": "src/dreamer_runner/maintenance/code_fix/publisher.rs",
+     "purpose": "A publisher's candidates beyond an instruction (FIX 1661, 2144): a candidate engine build, or a patch over…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 7,
+      "fn": 3,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/code_fix/work.rs",
+     "purpose": "A code fix's work rows (OF-380): each failure's row and its key, the `coach.code_fix` run a filed heal…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -27042,7 +27098,7 @@
      "path": "src/failure_signals/code_fix.rs",
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 11,
       "enum": 9,
       "fn": 3,
@@ -66146,7 +66202,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 104,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -67161,9 +67217,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 188,
+   "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4212,
+   "source_files": 4216,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79737,6 +79793,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/code_fix/shadow.rs",
+     "purpose": "The Coach's shadow runner for a code fix's engine candidates (FIX 1661, 2144): the host's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -86167,7 +86233,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FailureSignalsConfig",
@@ -86178,8 +86244,9 @@
      "surface": {
       "const": 1,
       "crate-vis": 4,
+      "enum": 1,
       "fn": 2,
-      "struct": 2
+      "struct": 1
      }
     },
     {
@@ -91774,7 +91841,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 64,
+     "files": 65,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -92231,7 +92298,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 968,
+   "source_files": 969,
    "test_files": 182
   },
   "oneiron-spawn": {
