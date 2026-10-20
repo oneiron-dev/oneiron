@@ -249,7 +249,7 @@ impl BackupMarker {
 pub fn backup_marker(dir: &Path, label: &str) -> Option<BackupMarker> {
     let marker = read_marker(dir, label)?;
     let landed = std::fs::symlink_metadata(dir.join(marker_name(label)))
-        .and_then(|metadata| metadata.modified())
+        .and_then(|metadata| std::fs::Metadata::modified(&metadata))
         .ok()?
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?;

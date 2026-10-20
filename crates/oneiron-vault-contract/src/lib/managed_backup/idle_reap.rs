@@ -217,7 +217,7 @@ impl BackupCoverageWire {
         anyhow::ensure!(
             [&self.db_txn, &self.custody_epoch, &self.custody_seq]
                 .into_iter()
-                .all(|text| u64_decimal(text)),
+                .all(|text| u64_decimal(text.as_str())),
             "coverage's db_txn, custody_epoch and custody_seq are u64 decimal strings"
         );
         Ok(())

@@ -8,6 +8,7 @@ use oneiron_vault_contract::{CtlResponse, validate_wake_entries};
 use super::ManagedState;
 use crate::managed::ManagedError;
 use crate::managed::ledger::LedgerSnapshot;
+use crate::owner::schedule::OwnerHost;
 
 /// What a reap's freeze, drain and export found
 /// ([`ManagedState::freeze_drain_export`]).
@@ -95,8 +96,8 @@ impl ManagedState {
         let backup_jobs = self
             .server
             .owner_host
-            .as_ref()
-            .map_or(0, |host| host.backup_jobs());
+            .as_deref()
+            .map_or(0, OwnerHost::backup_jobs);
         let drained = self.drain_lease_table().await;
         let (ledger_rev, report) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
