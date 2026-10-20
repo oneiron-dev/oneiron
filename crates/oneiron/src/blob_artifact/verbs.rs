@@ -473,15 +473,16 @@ impl Memory<'_> {
         };
         // The owner's export comes back to the owner, a download or a save to
         // their own machine: the owner's own read (OF-222). Any other
-        // caller's leaves for another party, and reads nothing of a world
-        // kept off an unknown machine.
+        // caller's leaves for another party: it reads nothing of a world kept
+        // off an unknown machine, and prompt text only from the sources its
+        // own read lane reads (FIX 6054).
+        let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact);
         let text = if self.secret_sight()? == SecretSight::Owner {
             vault.born_with_text(&file.artifact_id, Some(&file.made_by))?
         } else {
-            vault.born_with_text_for_another(&file.artifact_id, Some(&file.made_by))?
+            self.born_with_text_for_reader(&file.artifact_id, &file.made_by, &travel)?
         };
-        let born_with =
-            TravelChoice::or_default(input.travel.as_ref(), TravelKind::Artifact).project(text);
+        let born_with = travel.project(text);
         let content_hash = super::hash_hex(&file.content_hash);
         vault.record_export_travel(
             file.artifact_id.to_hex(),
