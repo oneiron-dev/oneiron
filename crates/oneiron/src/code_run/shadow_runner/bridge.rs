@@ -358,16 +358,18 @@ impl<'a> ShadowBridgeHost<'a> {
     }
 
     /// Finishes the body `sink` wrote as a stored value of the arm, named by
-    /// its digest, the taint of `inherit` on it, and binds it to `name`, or
-    /// to the next free `r<n>`: the result and its card.
+    /// the digest of the bytes the wall admitted (FIX 5718 part 3), the
+    /// taint of `inherit` on it, and binds it to `name`, or to the next free
+    /// `r<n>`: the result and its card.
     fn bind_stored(
         &mut self,
         sink: BodySink,
         name: Option<String>,
         inherit: &[Taint],
     ) -> Result<(CodeRunRawOutput, Value)> {
-        let path = store_result_output_path(&sink.digest()?);
-        let (output, secret) = self.store.finish(path, sink, true)?;
+        let (output, secret) = self
+            .store
+            .finish_named(store_result_output_path, sink, true)?;
         let taint = match self
             .results
             .iter()

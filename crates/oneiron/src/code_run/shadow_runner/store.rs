@@ -10,16 +10,23 @@
 //! run's actor releases the arm, and until it does, each read and
 //! publication of the arm asks the store's [`ShadowSourceHold`] and meets
 //! the erase as typed unavailable.
+//!
+//! A store its host binds to the source's vault masks each write at write
+//! (FIX 5718 part 3, `admit`): a body streams into a raw spool, and only
+//! the bytes the side-row wall admits are published, named by their digest.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
+use super::admit::ShadowAdmission;
 use super::types::{ShadowBodyRef, ShadowUnavailable, ShadowUnavailableReason};
+use crate::batch::secret_scan::{BodySpool, SpoolAdmission};
 use crate::code_run::CodeRunRawOutput;
 use crate::compaction::output::OutputRef;
+use crate::engine_executor::RESULT_REPLY_INLINE_BYTES;
 use crate::store::{BodyDir, BodySink, SunkBody, read_body_range};
-use crate::{Error, Result};
+use crate::{EntityId, Error, Result, Vault};
 
 /// Whether an arm's source still holds its content (FIX 5718): `true`
 /// while the source run's actor is here. Asked in a short read of the
@@ -48,6 +55,9 @@ pub struct ShadowBodyStore {
     root: PathBuf,
     /// What its source still holds; `None` for a store no source binds.
     hold: Option<ShadowSourceHold>,
+    /// The vault its writes are admitted under; `None` for a store no
+    /// source binds, whose writes are stored as they come.
+    admit: Option<ShadowAdmission>,
 }
 
 impl ShadowBodyStore {
@@ -60,7 +70,11 @@ impl ShadowBodyStore {
     pub fn open(root: PathBuf) -> Result<Self> {
         BodyDir::at_path(&root, true)?
             .ok_or_else(|| Error::InvalidConfig("shadow arm store was not made".to_owned()))?;
-        Ok(Self { root, hold: None })
+        Ok(Self {
+            root,
+            hold: None,
+            admit: None,
+        })
     }
 
     /// This store, its reads and publications asking `hold` whether its
@@ -68,6 +82,14 @@ impl ShadowBodyStore {
     #[must_use]
     pub fn held_by(mut self, hold: ShadowSourceHold) -> Self {
         self.hold = Some(hold);
+        self
+    }
+
+    /// This store, each write admitted by the side-row wall under `vault`'s
+    /// custody as kept content of its source run `run` (FIX 5718 part 3).
+    #[must_use]
+    pub fn admitted_in(mut self, vault: Weak<Vault>, run: EntityId) -> Self {
+        self.admit = Some(ShadowAdmission::new(vault, run));
         self
     }
 
@@ -101,30 +123,76 @@ impl ShadowBodyStore {
         Ok(dir)
     }
 
-    /// A sink for one body, spilled to the store from its first byte.
+    /// A sink for one body: a raw spool, in memory up to one reply's size
+    /// and past it in a temp file of the store, which its finish admits.
     pub(crate) fn sink(&self) -> Result<BodySink> {
-        Ok(BodySink::new(self.dir()?, 0, None))
+        Ok(BodySink::spooling(
+            self.dir()?,
+            RESULT_REPLY_INLINE_BYTES as u64,
+        ))
     }
 
-    /// Finishes the body `sink` wrote as the store's `path`: its manifest,
-    /// and the reason the secret scan marked it with, if it did.
+    /// Finishes the body `sink` wrote as the store's `path`, as the wall
+    /// admits it: its manifest, and the reason the secret scan marked it
+    /// with, if it did.
     pub(crate) fn finish(
         &self,
         path: String,
         sink: BodySink,
         complete: bool,
     ) -> Result<(CodeRunRawOutput, Option<&'static str>)> {
+        self.finish_named(|_| path, sink, complete)
+    }
+
+    /// [`Self::finish`] at the path `name` gives the digest of the bytes the
+    /// wall admitted. A body with a secret the wall cannot place is stored
+    /// as it came and marked by its scan, as before (CALLS C5718-21).
+    pub(crate) fn finish_named(
+        &self,
+        name: impl FnOnce(&[u8; 32]) -> String,
+        sink: BodySink,
+        complete: bool,
+    ) -> Result<(CodeRunRawOutput, Option<&'static str>)> {
+        let spool = sink.into_spool()?;
+        let admitted = match self.admitted(&spool)? {
+            SpoolAdmission::Unplaceable(_) => SpoolAdmission::AsIs(&spool),
+            admitted => admitted,
+        };
+        self.publish(name, &admitted, complete)
+    }
+
+    /// What the wall admits `spool` as, under the vault this store is bound
+    /// to; as it is, for a store no source binds.
+    fn admitted<'s>(&self, spool: &'s BodySpool) -> Result<SpoolAdmission<'s>> {
+        match &self.admit {
+            Some(admit) => admit.admit(spool),
+            None => Ok(SpoolAdmission::AsIs(spool)),
+        }
+    }
+
+    /// Publishes the admitted body under its digest at the path `name`
+    /// gives that digest: its manifest and its scan's reason.
+    fn publish(
+        &self,
+        name: impl FnOnce(&[u8; 32]) -> String,
+        admitted: &SpoolAdmission<'_>,
+        complete: bool,
+    ) -> Result<(CodeRunRawOutput, Option<&'static str>)> {
+        let mut sink = BodySink::new(self.dir()?, 0, None);
+        admitted.feed(&mut sink)?;
         let (facts, sunk) = sink.finish(crate::serialize::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS)?;
         if let SunkBody::Inline(bytes) = sunk {
             // Only an empty body never spills.
             self.dir()?
                 .import(&facts.digest, facts.len, &mut bytes.as_slice())?;
         }
-        let output = CodeRunRawOutput::from_facts(path, &facts, complete)?;
+        let output = CodeRunRawOutput::from_facts(name(&facts.digest), &facts, complete)?;
         Ok((output, facts.secret))
     }
 
-    /// `bytes`, whole, as the store's `path`: its manifest and its scan.
+    /// `bytes`, whole, as the store's `path`, as the wall admits them: its
+    /// manifest and its scan. Bytes with a secret the wall cannot place are
+    /// stored as they came and marked, as before.
     pub(crate) fn put_output(
         &self,
         path: impl Into<String>,
@@ -135,14 +203,40 @@ impl ShadowBodyStore {
         self.finish(path.into(), sink, true)
     }
 
-    /// `bytes`, whole, as the store's `path`.
+    /// `bytes`, whole, as the store's `path`, as the side-row wall admits
+    /// them (FIX 5718 part 3).
     ///
     /// # Errors
     ///
-    /// Filesystem errors, and a path no result may have.
+    /// Filesystem errors, a path no result may have, and the wall's storage
+    /// and custody errors.
     pub fn put(&self, path: impl Into<String>, bytes: &[u8]) -> Result<ShadowBodyRef> {
         let (output, secret) = self.put_output(path, bytes)?;
         Ok(ShadowBodyRef::of(&output, secret))
+    }
+
+    /// [`Self::put`] for an answer an effect that ran returned (a gateway
+    /// call's, FIX 5718 part 3, Engine ruling 4): `Err` holds the door's
+    /// reason when the answer holds a secret the wall cannot place, and
+    /// nothing of it is stored.
+    ///
+    /// # Errors
+    ///
+    /// Filesystem errors, a path no result may have, and the wall's storage
+    /// and custody errors.
+    pub fn put_answer(
+        &self,
+        path: impl Into<String>,
+        bytes: &[u8],
+    ) -> Result<std::result::Result<ShadowBodyRef, &'static str>> {
+        let spool = BodySpool::of_bytes(bytes.to_vec());
+        let admitted = self.admitted(&spool)?;
+        if let SpoolAdmission::Unplaceable(reason) = admitted {
+            return Ok(Err(reason));
+        }
+        let path = path.into();
+        let (output, secret) = self.publish(|_| path, &admitted, true)?;
+        Ok(Ok(ShadowBodyRef::of(&output, secret)))
     }
 
     /// Copies in the body `body` names from `bytes`, checked against its

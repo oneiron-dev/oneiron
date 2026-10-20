@@ -12,7 +12,9 @@
 //! They are kept content of the arm's source run all the same (FIX 5718):
 //! each arm names the actor whose step it runs, and an erase or actor scrub
 //! of that actor releases it ([`ArmRegistry::release_gone`]), so no erased
-//! byte outlives the arm.
+//! byte outlives the arm. Each write is masked at write under the source
+//! vault's custody (FIX 5718 part 3), so no secret the wall can place
+//! reaches an arm's files.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -20,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron::code_run::shadow_runner::{ShadowArmLease, ShadowBodyStore, ShadowSourceHold};
-use oneiron::{EntityId, Result};
+use oneiron::{EntityId, Result, Vault};
 
 /// The directory under the host's temporary directory that runners keep
 /// their arms in.
@@ -85,14 +87,18 @@ impl ArmRegistry {
     }
 
     /// A new arm under `lease`, its store made, of a step `source_actor`'s
-    /// source run is for, each of its reads and publications asking `hold`.
+    /// source run `source_run` is for, each of its reads and publications
+    /// asking `hold`, each of its writes admitted under `vault`'s custody.
     pub(super) fn open_arm(
         &self,
         lease: ShadowArmLease,
-        source_actor: EntityId,
+        (source_actor, source_run): (EntityId, EntityId),
         hold: ShadowSourceHold,
+        vault: &Arc<Vault>,
     ) -> Result<Arc<ArmEntry>> {
-        let store = ShadowBodyStore::open(self.root.join(lease.to_hex()))?.held_by(hold);
+        let store = ShadowBodyStore::open(self.root.join(lease.to_hex()))?
+            .held_by(hold)
+            .admitted_in(Arc::downgrade(vault), source_run);
         let entry = Arc::new(ArmEntry {
             store,
             source_actor,

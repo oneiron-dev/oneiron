@@ -20,6 +20,15 @@
 //! replies are erased or whose actor is gone is delivered the reply's erased
 //! form, parks on nothing and reads a typed unavailable, so no membership
 //! written after the erase brings the reply back.
+//!
+//! A connector call's caller holds its own call's settled reply too (part 3,
+//! Engine 10-20 19:5x): `connector.call_status` reads it by the call's ref
+//! for that caller and the owner, and no run need hold that copy. Its
+//! membership ([`hold_settled_for_caller_in_txn`], written with the settle)
+//! names the caller, under [`CALLER_GENERATION`]; the caller's erase marks
+//! it Erased, and once no membership of the wait keeps the reply, its
+//! settled row takes its erased form. A settle after that erase lands
+//! erased.
 
 use std::collections::BTreeSet;
 
@@ -37,6 +46,12 @@ use crate::{EntityId, Result, Vault};
 /// The rows. Key: id16(wait) + id16(run) + be64(generation).
 const HOLDERS: SideTable<(EntityId, EntityId, u64), WaitHolder, Named> =
     SideTable::new(&side_table::CODE_RUN_WAIT_HOLDER);
+
+/// The generation a connector call's caller holds its call's settled reply
+/// under (FIX 5718 part 3; CALLS C5718-23): the key names the wait, the
+/// caller's actor where a run's id goes, and this generation, which no
+/// run's park reaches. Such a row names no run.
+const CALLER_GENERATION: u64 = u64::MAX;
 
 /// What one run holds of a wait's reply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -191,9 +206,13 @@ pub(super) fn wait_holder_runs_in_txn(
     let mut runs = Vec::new();
     for row in HOLDERS.iter_raw_from(store, txn, &[])? {
         let (key, bytes) = row?;
-        let Some((_, run, _)) = <(EntityId, EntityId, u64) as SideKey>::decode_key(&key) else {
+        let Some((_, run, generation)) = <(EntityId, EntityId, u64) as SideKey>::decode_key(&key)
+        else {
             continue;
         };
+        if generation == CALLER_GENERATION {
+            continue;
+        }
         if HOLDERS
             .decode_value(&bytes)
             .is_ok_and(|held| held.actor() == Some(*actor))
@@ -239,7 +258,14 @@ pub(super) fn erase_actor_wait_holds_in_txn(
         }
     }
     let mut scope = runs.clone();
-    scope.extend(held.iter().map(|(_, run, _)| *run));
+    let mut called = BTreeSet::new();
+    for &(wait, run, generation) in &held {
+        if generation == CALLER_GENERATION {
+            called.insert(wait);
+        } else {
+            scope.insert(run);
+        }
+    }
     for key in held {
         HOLDERS.put(store, wtxn, &key, &WaitHolder::Erased)?;
     }
@@ -263,7 +289,63 @@ pub(super) fn erase_actor_wait_holds_in_txn(
     for wait in code_consent_waits_bound_to_in_txn(vault, wtxn, &scope)? {
         erase_settled_in_txn(store, wtxn, wait)?;
     }
+    // A connector call's settled copy its caller held goes once no other
+    // membership of the wait keeps it.
+    for wait in called {
+        erase_settled_unheld_in_txn(store, wtxn, wait)?;
+    }
     Ok(())
+}
+
+/// Joins `caller`, the actor whose connector call settles wait `wait_id`,
+/// to the wait's holders in `wtxn`, as the reader of its settled reply by
+/// `connector.call_status` (FIX 5718 part 3): its row names the caller, or
+/// says Erased once the caller is gone, and an erased row stays erased.
+/// An erased one leaves the settled row its erased form when no other
+/// membership of the wait keeps the reply, so a settle that lands after the
+/// caller's erase keeps no copy of it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn hold_settled_for_caller_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+    caller: EntityId,
+) -> Result<()> {
+    let store = &vault.store;
+    let key = (wait_id, caller, CALLER_GENERATION);
+    let held = match HOLDERS.get_lenient(store, wtxn, &key)? {
+        Some(WaitHolder::Erased) => WaitHolder::Erased,
+        _ if actor_gone_in_txn(vault, wtxn, &caller) => WaitHolder::Erased,
+        _ => WaitHolder::Kept {
+            actor: Some(caller),
+        },
+    };
+    HOLDERS.put(store, wtxn, &key, &held)?;
+    if held.erased() {
+        erase_settled_unheld_in_txn(store, wtxn, wait_id)?;
+    }
+    Ok(())
+}
+
+/// Leaves `wait_id`'s settled row its erased form when every membership of
+/// the wait says Erased: no holder keeps its reply. A membership that does
+/// not decode keeps it, so no shared reply goes on a row that cannot be
+/// read.
+fn erase_settled_unheld_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    wait_id: EntityId,
+) -> Result<()> {
+    for row in HOLDERS.iter_raw_from(store, wtxn, wait_id.as_bytes())? {
+        let (_, bytes) = row?;
+        if !HOLDERS.decode_value(&bytes).is_ok_and(WaitHolder::erased) {
+            return Ok(());
+        }
+    }
+    erase_settled_in_txn(store, wtxn, wait_id)
 }
 
 /// Leaves code consent wait `wait_id`'s settled row its erased form in

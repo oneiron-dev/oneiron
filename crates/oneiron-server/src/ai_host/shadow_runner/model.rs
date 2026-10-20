@@ -8,13 +8,20 @@
 //! guard of its own, and its receipts are kept for the arm beside the host's
 //! own sink. A call with no answer still has its receipt: what it used is
 //! never a fictitious zero.
+//!
+//! The call's request and answer are masked at write as every arm write is
+//! (FIX 5718 part 3), each admission on a blocking worker, since it takes
+//! a writer of the source vault. An answer the arm cannot admit once the
+//! call was sent keeps the call's receipt, usage and evidence, and is typed
+//! unavailable content: never stored raw, and the call is never sent again
+//! (Engine ruling 4).
 
 use std::sync::Arc;
 
 use oneiron::code_run::CapsuleRungBinding;
 use oneiron::code_run::shadow_runner::{
-    PreparedShadowStep, ShadowBodyStore, ShadowMeterContext, ShadowModelPin, ShadowModelReceipt,
-    ShadowUnavailable, ShadowUnavailableReason as Reason, ShadowUsage,
+    PreparedShadowStep, ShadowBodyRef, ShadowBodyStore, ShadowMeterContext, ShadowModelPin,
+    ShadowModelReceipt, ShadowUnavailable, ShadowUnavailableReason as Reason, ShadowUsage,
 };
 use oneiron::engine_executor::StepCancellation;
 use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunReceiptSink};
@@ -120,7 +127,8 @@ impl Gateway<'_> {
         let sent = serde_json::to_vec(&request)
             .map_err(|error| Error::InvalidConfig(format!("shadow model request: {error}")))?;
         let path = format!("shadow/{step:06}/call-{call_id:03}.request.json");
-        receipt.request = Some(self.store.put(path, &sent)?);
+        let store = self.store.clone();
+        receipt.request = Some(off_runtime(move || store.put(path, &sent)).await?);
         let run_id = format!("{}:shadow-arm:{}", meter.host_run, EntityId::now().to_hex());
         let guard = match self.vault.coach_authority().and_then(|actor| {
             self.vault.policy_budget_guard(
@@ -172,11 +180,11 @@ impl Gateway<'_> {
                 if let Some(withheld) = self.store.source_withheld() {
                     return Ok(refused(receipt, withheld));
                 }
-                let encoded = serde_json::to_vec(&response).map_err(|error| {
-                    Error::InvalidConfig(format!("shadow model answer: {error}"))
-                })?;
                 let path = format!("shadow/{step:06}/call-{call_id:03}.answer.json");
-                receipt.response = Some(self.store.put(path, &encoded)?);
+                match self.admit_answer(path, &response).await {
+                    Ok(answer) => receipt.response = Some(answer),
+                    Err(unadmitted) => return Ok(refused(receipt, unadmitted)),
+                }
                 Ok(ModelCall {
                     answer: Ok(response),
                     receipt,
@@ -197,6 +205,43 @@ impl Gateway<'_> {
             }
         }
     }
+}
+
+impl Gateway<'_> {
+    /// The answer `response` a sent call returned, stored at `path` as the
+    /// side-row wall admits it, or the typed unavailable that stands in for
+    /// it (Engine ruling 4; CALLS C5718-20): `SourceWithheld`, never
+    /// retryable, when it holds a secret the wall cannot place or its
+    /// admission fails. Its call's receipt is the caller's to keep.
+    async fn admit_answer(
+        &self,
+        path: String,
+        response: &LlmResponse,
+    ) -> std::result::Result<ShadowBodyRef, ShadowUnavailable> {
+        let unadmitted = |cause: &str| ShadowUnavailable::new(Reason::SourceWithheld, cause);
+        let Ok(encoded) = serde_json::to_vec(response) else {
+            return Err(unadmitted("answer_encoding"));
+        };
+        let store = self.store.clone();
+        match off_runtime(move || store.put_answer(path, &encoded)).await {
+            Ok(Ok(answer)) => Ok(answer),
+            Ok(Err(_reason)) => Err(unadmitted("answer_secret_unplaceable")),
+            Err(error) => {
+                tracing::debug!(kind = ?error.kind(), "a shadow model answer was not admitted");
+                Err(unadmitted("answer_admission"))
+            }
+        }
+    }
+}
+
+/// `work` on a blocking worker: an arm write's admission takes a writer of
+/// the source vault, which no runtime thread waits on (FIX 5718 part 3).
+async fn off_runtime<T: Send + 'static>(
+    work: impl FnOnce() -> oneiron::Result<T> + Send + 'static,
+) -> oneiron::Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|error| Error::InvalidConfig(format!("shadow arm write worker: {error}")))?
 }
 
 /// The pins a strict call goes out on (CALLS "strict pins required on the
