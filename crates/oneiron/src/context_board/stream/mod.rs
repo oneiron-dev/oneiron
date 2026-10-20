@@ -5,6 +5,7 @@ mod frames;
 mod provenance;
 mod publish;
 mod registry;
+mod review;
 mod wake;
 
 #[cfg(test)]
@@ -23,6 +24,7 @@ pub use self::frames::{
 };
 pub use self::publish::CommittedTaskBoardState;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
+pub use self::review::PendingDiaryReview;
 pub use self::wake::WakeEnvelope;
 
 use super::one_line_token;

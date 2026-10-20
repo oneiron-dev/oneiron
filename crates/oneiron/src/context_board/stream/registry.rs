@@ -29,6 +29,7 @@ pub struct StreamConnectionState {
 pub struct BoardStreamRegistry {
     pub(super) connections: HashMap<StreamConnectionId, StreamConnectionState>,
     pub(super) published_tasks: super::publish::PublishedTasks,
+    pub(super) published_reviews: super::review::PublishedReviews,
 }
 
 impl BoardStreamRegistry {
@@ -45,6 +46,7 @@ impl BoardStreamRegistry {
                 SubscriptionScope::MyTasks,
                 SubscriptionScope::MyChildren,
                 SubscriptionScope::ConsultsToMe,
+                SubscriptionScope::DiaryReviews,
             ]
             .into_iter()
             .filter(|x| allowed.contains(x))
@@ -221,6 +223,7 @@ impl BoardStreamRegistry {
                     st.actor_ref == event.actor_ref()
                 }
                 BoardEvent::ChildDone { event, .. } => st.actor_ref == event.parent_actor_ref(),
+                BoardEvent::DiaryReviewPending { event, .. } => st.actor_ref == event.agent_ref(),
                 _ => false,
             };
             if !matches {
@@ -239,6 +242,21 @@ impl BoardStreamRegistry {
                         task_ref: event.task_ref().into(),
                         actor_ref: event.actor_ref().into(),
                         line: super::one_line_token(&line),
+                        review_ref: None,
+                    });
+                    o.wake_enqueued += 1;
+                }
+                BoardEvent::DiaryReviewPending { event, line } => {
+                    // The review row stays in the vault as the durable mailbox.
+                    if st.wakes.len() >= PENDING_WAKES_CAP {
+                        st.wakes.pop_front();
+                    }
+                    st.wakes.push_back(WakeEnvelope {
+                        event_ref: event.event_ref().into(),
+                        task_ref: String::new(),
+                        actor_ref: event.agent_ref().into(),
+                        line: super::one_line_token(&line),
+                        review_ref: Some(event.request_ref().into()),
                     });
                     o.wake_enqueued += 1;
                 }

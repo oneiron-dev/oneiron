@@ -24,6 +24,29 @@ impl VerifiedOwnTaskEvent {
     }
 }
 
+/// One pending diary-read review, minted only from its committed Pending
+/// row: the reviewed agent it wakes (the row's `(agent, request)` key, never
+/// the reader), the request and the occurrence id. It carries no reader, no
+/// reason and no diary content.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedDiaryReviewEvent {
+    pub(super) agent_ref: String,
+    pub(super) request_ref: String,
+    pub(super) event_ref: String,
+}
+
+impl VerifiedDiaryReviewEvent {
+    pub(crate) fn agent_ref(&self) -> &str {
+        &self.agent_ref
+    }
+    pub(crate) fn request_ref(&self) -> &str {
+        &self.request_ref
+    }
+    pub(crate) fn event_ref(&self) -> &str {
+        &self.event_ref
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum WakeMintError {

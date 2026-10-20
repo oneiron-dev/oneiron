@@ -14,7 +14,8 @@ use super::{AdapterCommand, Instance, WakeBatch};
 const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The only text a tmux pane is ever typed: this prefix, then the hex TASK
-/// id of each wake, space separated, then Enter. No label, title, frame or
+/// id of each wake (a review wake's `diary-read:<agent>:<request>` handle,
+/// both hex ids), space separated, then Enter. No label, title, frame or
 /// other body text reaches the pane, so nothing a remote author wrote can
 /// run there. The batch itself goes to the helper on stdin, or stays in the
 /// inbox for `wake inbox`.
@@ -148,11 +149,22 @@ async fn send_command(
     }
 }
 
-/// The fixed pane line: the prefix and each hex TASK id. An id that is not
-/// plain hex is left out of the line, never typed.
+/// The fixed pane line: the prefix and each hex TASK id, or a review wake's
+/// handle rebuilt from its two hex ids. An id that is not plain hex is left
+/// out of the line, never typed.
 fn pane_line(wakes: &[WakeEnvelope]) -> String {
+    let is_hex = |id: &str| !id.is_empty() && id.bytes().all(|byte| byte.is_ascii_hexdigit());
     let mut line = String::from(PANE_NUDGE_PREFIX);
     for wake in wakes {
+        if let Some(request) = &wake.review_ref {
+            if is_hex(&wake.actor_ref) && is_hex(request) {
+                line.push_str(" diary-read:");
+                line.push_str(&wake.actor_ref);
+                line.push(':');
+                line.push_str(request);
+            }
+            continue;
+        }
         let hex =
             !wake.task_ref.is_empty() && wake.task_ref.bytes().all(|byte| byte.is_ascii_hexdigit());
         if hex {
