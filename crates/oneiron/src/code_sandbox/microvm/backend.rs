@@ -222,22 +222,17 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
 pub fn select_backend_for_tier(tier: SandboxGuestTier) -> Result<Option<Box<dyn MicroVmBackend>>> {
     match tier {
         SandboxGuestTier::FirstPartyDreamer => Ok(None),
-        SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => {
-            if kvm_available() {
-                firecracker_backend()
-                    .map(Some)
-                    .ok_or_else(|| backend_unavailable(tier))
-            } else {
-                container_backend()
-                    .map(Some)
-                    .ok_or_else(|| backend_unavailable(tier))
-            }
-        }
+        SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => installed_firecracker()
+            .or_else(container_backend)
+            .map(Some)
+            .ok_or_else(|| backend_unavailable(tier)),
     }
 }
 
 /// Browser/native sessions use the host's OCI runtime and image configuration,
-/// but the same KVM-first selection law as finite code runs.
+/// and the same KVM-first selection law as finite code runs: a KVM host
+/// with no Firecracker installed runs them in the OCI fenced container
+/// (`installed_firecracker`).
 pub fn select_backend_for_session(
     tier: SandboxGuestTier,
     runtime: std::path::PathBuf,
@@ -246,8 +241,8 @@ pub fn select_backend_for_session(
     if tier == SandboxGuestTier::FirstPartyDreamer {
         return Err(backend_unavailable(tier));
     }
-    if kvm_available() {
-        return firecracker_backend().ok_or_else(|| backend_unavailable(tier));
+    if let Some(backend) = installed_firecracker() {
+        return Ok(backend);
     }
     #[cfg(target_os = "linux")]
     {
@@ -259,6 +254,15 @@ pub fn select_backend_for_session(
         let _ = (runtime, image);
         Err(backend_unavailable(tier))
     }
+}
+
+/// The Firecracker backend a session or a Foreign/Untrusted run takes: on a
+/// KVM host where Firecracker is installed. A KVM host without it gives
+/// none, so the guest falls back to the OCI fenced container, the posture it
+/// already has on a host with no /dev/kvm; Firecracker still wins wherever
+/// it is installed (Engine 10-21 02:4x and 03:0x, CALLS rows).
+fn installed_firecracker() -> Option<Box<dyn MicroVmBackend>> {
+    kvm_available().then(firecracker_backend).flatten()
 }
 
 fn kvm_available() -> bool {

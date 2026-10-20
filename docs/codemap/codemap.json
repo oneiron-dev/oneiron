@@ -69308,7 +69308,17 @@
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/websocket.rs",
+     "purpose": "CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69334,7 +69344,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/driver.rs",
-     "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
+     "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref",
      "surface": {
       "crate-vis": 25
      }
@@ -69360,6 +69370,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/lightpanda.rs",
+     "purpose": "Where a Lightpanda guest differs from a Chromium one (FIX 6680, BROWSER-SPLIT), on Lightpanda 1.0.0's CDP…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69379,7 +69399,7 @@
      "purpose": "The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt…",
      "surface": {
       "enum": 1,
-      "fn": 1
+      "fn": 3
      }
     },
     {
@@ -69570,7 +69590,7 @@
       "BrowserSession"
      ],
      "path": "src/session.rs",
-     "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
+     "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…",
      "surface": {
       "crate-vis": 3,
       "fn": 23,
@@ -69594,10 +69614,10 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…"
     },
     "desktop": {
@@ -69608,11 +69628,11 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
-     "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
+     "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref"
     },
     "engine": {
      "files": 1,
@@ -69675,12 +69695,12 @@
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file",
-     "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…"
+     "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…"
     }
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 18,
+   "source_files": 20,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -87495,6 +87515,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/restore/host_holds.rs",
+     "purpose": "The host-order legal holds a cold restore installs (FIX 1485, FIX 6598)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/restore/input.rs",
      "purpose": "The restore's two pipes and the plan on the input pipe: each descriptor proven the right end of a pipe…",
      "surface": {
@@ -87597,8 +87627,18 @@
      "path": "src/managed/state_serve/reap.rs",
      "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/reap/host_holds.rs",
+     "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -91077,7 +91117,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 49,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91233,7 +91273,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 939,
+   "source_files": 941,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95633,8 +95673,8 @@
      "surface": {
       "const": 1,
       "fn": 2,
-      "mod": 3,
-      "re-export": 3,
+      "mod": 4,
+      "re-export": 4,
       "struct": 1
      }
     },
@@ -95682,6 +95722,7 @@
      "path": "src/lib/restore/framing.rs",
      "purpose": "The result pipe (`--restore-result-fd`) and the `restore_status` answer",
      "surface": {
+      "crate-vis": 1,
       "enum": 5,
       "fn": 6
      }
@@ -95694,6 +95735,26 @@
      "purpose": "Byte fields on the restore wire, spelled as the rest of the contract spells bytes: lowercase hex strings…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostHoldsBytes",
+      "HostHoldsCursor",
+      "HostHoldsSource",
+      "HostOrderHoldsExport",
+      "HostOrderHoldsNotProven",
+      "ManagedRestoreHostHolds",
+      "RestoreHostHoldsStatus"
+     ],
+     "path": "src/lib/restore/host_holds.rs",
+     "purpose": "The host-order legal holds a cold managed restore carries from its source (FIX 1485, FIX 6598)",
+     "surface": {
+      "enum": 3,
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -95923,7 +95984,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95932,7 +95993,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 38,
+   "source_files": 39,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

@@ -504,9 +504,10 @@ impl CdpDriver {
     /// `DOM.pushNodesByBackendIdsToFrontend` call answers 0 for a node it
     /// cannot find in the tab's frames. A hidden node, or a detached one the
     /// page still holds, answers an id and keeps its binding; a failed call
-    /// proves nothing.
+    /// proves nothing, as a guest that serves no such call (Lightpanda's)
+    /// proves nothing without one.
     fn gone_nodes(&self, nodes: &[u64]) -> BTreeSet<u64> {
-        if nodes.is_empty() {
+        if nodes.is_empty() || !self.probes_gone_nodes() {
             return BTreeSet::new();
         }
         let Ok(reply) = self.page(

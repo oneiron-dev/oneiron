@@ -1,15 +1,19 @@
 //! The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`:
-//! JSON messages, each ended by a NUL byte, on one reader and one writer.
-//! Replies are matched to calls by id. Network events cross the host proxy,
-//! for every page the guest opens; the DOM driver still polls for its
-//! observations and its tabs. Each page session's navigation events are
-//! counted, for the driver's change check (FIX 6680), and a JavaScript
-//! dialog a page opens is answered at once, as before its Page domain was on.
+//! JSON messages, each ended by a NUL byte, on one reader and one writer;
+//! or, for Lightpanda, over a WebSocket its guest's relay carries on the
+//! same two halves (`websocket`). Replies are matched to calls by id.
+//! Network events cross the host proxy, for every page the guest opens; the
+//! DOM driver still polls for its observations and its tabs. Each page
+//! session's navigation events are counted, for the driver's change check
+//! (FIX 6680), and a JavaScript dialog a page opens is answered at once, as
+//! before its Page domain was on.
 
-use crate::BrowserError;
+mod websocket;
+
+use crate::{BrowserEngine, BrowserError};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -34,9 +38,25 @@ type Pending = Arc<Mutex<Option<HashMap<u64, Sender<Reply>>>>>;
 /// Each watched page session's navigation events so far.
 type Navigations = Arc<Mutex<HashMap<String, u64>>>;
 
+/// The half of a transport that takes one whole message to the browser.
+trait Outbound: Send {
+    fn send(&mut self, message: Vec<u8>) -> io::Result<()>;
+}
+
+/// Chromium's pipe: each message ended by a NUL byte.
+struct Nul<W>(W);
+
+impl<W: Write + Send> Outbound for Nul<W> {
+    fn send(&mut self, mut message: Vec<u8>) -> io::Result<()> {
+        message.push(0);
+        self.0.write_all(&message)?;
+        self.0.flush()
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Pipe {
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    writer: Arc<Mutex<Box<dyn Outbound>>>,
     pending: Pending,
     next: Arc<AtomicU64>,
     egress: bool,
@@ -60,23 +80,48 @@ impl Pipe {
         writer: impl Write + Send + 'static,
         relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
     ) -> Self {
-        let pending: Pending = Arc::new(Mutex::new(Some(HashMap::new())));
-        let pipe = Self {
-            writer: Arc::new(Mutex::new(Box::new(writer))),
-            pending,
-            next: Arc::new(AtomicU64::new(1)),
-            egress: relay.is_some(),
-            routed: Arc::default(),
-            navigations: Arc::default(),
-        };
+        let pipe = Self::routed(Box::new(Nul(writer)), relay.is_some());
         let handle = pipe.clone();
         std::thread::spawn(move || {
-            read_replies(BufReader::new(reader), &handle, relay);
-            if let Ok(mut routes) = handle.pending.lock() {
-                routes.take();
-            }
+            read_replies(BufReader::new(reader), &handle, relay.as_ref());
+            handle.end();
         });
         pipe
+    }
+
+    /// The pipe to a guest's browser on `engine`: Chromium's NUL-framed
+    /// pipe, or Lightpanda's WebSocket once its upgrade answered.
+    pub(crate) fn for_engine(
+        engine: BrowserEngine,
+        reader: impl Read + Send + 'static,
+        writer: impl Write + Send + 'static,
+        relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
+    ) -> Result<Self, BrowserError> {
+        match engine {
+            BrowserEngine::Chromium => Ok(Self::with_egress(reader, writer, relay)),
+            BrowserEngine::Lightpanda => websocket::open(reader, writer, relay),
+        }
+    }
+
+    /// A pipe whose calls go out through `outbound`; its transport routes
+    /// each message it reads.
+    fn routed(outbound: Box<dyn Outbound>, egress: bool) -> Self {
+        Self {
+            writer: Arc::new(Mutex::new(outbound)),
+            pending: Arc::new(Mutex::new(Some(HashMap::new()))),
+            next: Arc::new(AtomicU64::new(1)),
+            egress,
+            routed: Arc::default(),
+            navigations: Arc::default(),
+        }
+    }
+
+    /// Ends the pipe once its transport ended: every call waiting, and
+    /// every call after, answers that the guest is gone.
+    fn end(&self) {
+        if let Ok(mut routes) = self.pending.lock() {
+            routes.take();
+        }
     }
 
     pub(crate) fn mediated(&self) -> bool {
@@ -127,15 +172,11 @@ impl Pipe {
         if let Some(session) = session {
             message["sessionId"] = Value::from(session);
         }
-        let mut bytes =
+        let bytes =
             serde_json::to_vec(&message).map_err(|e| BrowserError::Protocol(e.to_string()))?;
-        bytes.push(0);
         {
             let mut writer = self.writer.lock().map_err(|_| BrowserError::GuestLost)?;
-            writer
-                .write_all(&bytes)
-                .and_then(|()| writer.flush())
-                .map_err(|_| BrowserError::GuestLost)?;
+            writer.send(bytes).map_err(|_| BrowserError::GuestLost)?;
         }
         let wait = deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(wait) {
@@ -157,9 +198,8 @@ impl Pipe {
 fn read_replies(
     mut reader: impl BufRead,
     pipe: &Pipe,
-    relay: Option<Arc<dyn oneiron_container::EgressRelay>>,
+    relay: Option<&Arc<dyn oneiron_container::EgressRelay>>,
 ) {
-    let routes = &pipe.pending;
     let mut buf = Vec::new();
     loop {
         buf.clear();
@@ -169,32 +209,45 @@ fn read_replies(
             Ok(_) => {}
         }
         buf.pop();
-        let Ok(message) = serde_json::from_slice::<Value>(&buf) else {
-            continue;
-        };
-        let Some(id) = message.get("id").and_then(Value::as_u64) else {
-            count_navigation(&pipe.navigations, &message);
-            answer_dialog(pipe, &message);
-            if let Some(relay) = &relay {
-                network_event(pipe.clone(), Arc::clone(relay), message);
-            }
-            continue;
-        };
-        let reply = match message.get("error") {
-            Some(error) => Err(error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("error")
-                .to_owned()),
-            None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
-        };
-        let Ok(mut routes) = routes.lock() else {
+        if !route(pipe, relay, &buf) {
             return;
-        };
-        if let Some(tx) = routes.as_mut().and_then(|routes| routes.remove(&id)) {
-            let _ = tx.send(reply);
         }
     }
+}
+
+/// Routes one message the browser sent, on either transport: a reply goes
+/// to its call, an event to its handling. False once the routes are lost.
+fn route(
+    pipe: &Pipe,
+    relay: Option<&Arc<dyn oneiron_container::EgressRelay>>,
+    bytes: &[u8],
+) -> bool {
+    let Ok(message) = serde_json::from_slice::<Value>(bytes) else {
+        return true;
+    };
+    let Some(id) = message.get("id").and_then(Value::as_u64) else {
+        count_navigation(&pipe.navigations, &message);
+        answer_dialog(pipe, &message);
+        if let Some(relay) = relay {
+            network_event(pipe.clone(), Arc::clone(relay), message);
+        }
+        return true;
+    };
+    let reply = match message.get("error") {
+        Some(error) => Err(error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("error")
+            .to_owned()),
+        None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+    };
+    let Ok(mut routes) = pipe.pending.lock() else {
+        return false;
+    };
+    if let Some(tx) = routes.as_mut().and_then(|routes| routes.remove(&id)) {
+        let _ = tx.send(reply);
+    }
+    true
 }
 
 /// Counts `event` for its page session when it is a navigation event of a
