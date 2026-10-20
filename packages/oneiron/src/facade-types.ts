@@ -6417,7 +6417,7 @@ export type DeckGateRequest = { profile?: string | null }
 /** `oneiron_docedit::live::deck_export::StepOutcome` */
 export type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run"
 /** `oneiron_docedit::live::deck_export::OracleReceipt` */
-export type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean }
+export type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean; projector: string; source_sha: string; case_manifest_sha256: string }
 /** `oneiron::office_body::pptx::verbs::DeckGateView` */
 export type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null }
 /** `oneiron::office_body::pptx::verbs::DeckOracleRequest` */

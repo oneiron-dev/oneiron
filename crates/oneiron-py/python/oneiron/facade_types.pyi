@@ -16273,6 +16273,9 @@ class OracleReceipt(TypedDict):
     font_versions: list[str]
     steps: list[StepOutcome]
     clean: bool
+    projector: str
+    source_sha: str
+    case_manifest_sha256: str
 class DeckGateView(TypedDict):
     profile: str
     projector: str

@@ -10,6 +10,7 @@ use super::points::{self, GeomPath};
 use super::pptx::{
     ChartKind, ChartSeries, ChartSource, ConnectorEnd, HeldMedia, NodeId, NodePayload, SmartArtNode,
 };
+use super::svg_fallback;
 use crate::deck::{ShapeKind, ShapeView};
 use crate::design_plan::Cell;
 use crate::edit::geometry::{glue_of, preset_of};
@@ -30,10 +31,11 @@ pub(crate) fn slide_tree(package: &Package, part: &str) -> Result<XmlTree, LiveE
     Ok(xml::read(package, part)?.1)
 }
 
-/// A shape's preset, when it is one the live deck writes. Custom geometry
-/// and other presets read as none and stay as written.
+/// A shape's preset, or the shape a picture is cropped to, when it is one
+/// the live deck writes. Custom geometry and other presets read as none and
+/// stay as written.
 pub(crate) fn shape_preset(tree: &XmlTree, shape: &ShapeView) -> Option<Preset> {
-    if shape.kind != ShapeKind::Shape {
+    if !matches!(shape.kind, ShapeKind::Shape | ShapeKind::Picture) {
         return None;
     }
     preset_of(tree, shape.node.index).and_then(Preset::from_name)
@@ -552,7 +554,11 @@ fn ole(package: &Package, part: &str, tree: &XmlTree, frame: usize) -> Option<No
     Some(NodePayload::Ole { prog_id, preview })
 }
 
-/// The media a picture element shows: its part and content hash.
+/// The media a picture element shows: its part and content hash. Office's
+/// SVG picture shows the SVG its blip's `asvg:svgBlip` extension names, over
+/// the raster the blip embeds as its fallback (FIX 5727); a blip with no
+/// such extension, or one naming no part the package holds, shows what it
+/// embeds.
 pub(crate) fn picture_media(
     package: &Package,
     part: &str,
@@ -560,15 +566,17 @@ pub(crate) fn picture_media(
     picture: usize,
 ) -> Option<HeldMedia> {
     let blip = xml::path(tree, picture, &[(P, "blipFill"), (A, "blip")])?;
-    let embed = tree.nodes[blip].attr_ns(R, "embed")?;
-    let rel = package
-        .relationships(part)
-        .ok()?
-        .into_iter()
-        .find(|rel| rel.id == embed && !rel.external)?;
-    let bytes = package.part(&rel.target).ok()??;
-    Some(HeldMedia {
-        hash: Digest::of(&bytes),
-        part: rel.target,
-    })
+    let rels = package.relationships(part).ok()?;
+    let media = |at: usize| {
+        let embed = tree.nodes[at].attr_ns(R, "embed")?;
+        let rel = rels.iter().find(|rel| rel.id == embed && !rel.external)?;
+        let bytes = package.part(&rel.target).ok()??;
+        Some(HeldMedia {
+            hash: Digest::of(&bytes),
+            part: rel.target.clone(),
+        })
+    };
+    svg_fallback::svg_blip(tree, blip)
+        .and_then(&media)
+        .or_else(|| media(blip))
 }

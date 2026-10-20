@@ -455,6 +455,11 @@ def assemble(run: Path, manifest: dict, results: Path) -> int:
         'font_versions': (office_run or {}).get('font_versions') or [],
         'steps': steps,
         'clean': clean,
+        # The run this receipt is the evidence of (FIX 3772): the vault keeps
+        # these pins as given and opens the gate only for that projector.
+        'projector': manifest.get('projector') or '',
+        'source_sha': manifest.get('source') or '',
+        'case_manifest_sha256': (manifest.get('case_manifest') or {}).get('sha256') or '',
     }
     is_open = clean and len(steps) == 8 and all(step == 'passed' for step in steps)
     request = {'receipt': receipt}

@@ -17,7 +17,9 @@
 //! deck export gate opens for its profile, blob versions stay authoritative: an
 //! export is a proposal artifact, not a version. The gate opens on the deck
 //! oracle's receipt for the profile ([`Vault::record_pptx_oracle_receipt`]),
-//! all eight steps passed on a clean opening against the current projector.
+//! all eight steps passed on a clean opening, from a run of the current
+//! projector: the receipt names its run's projector, source revision and
+//! case manifest, and is that run's evidence.
 //! Once it opens, [`Vault::land_pptx_export`] lands the bytes as the next blob
 //! version, records the frontier it projects, and rebinds the deck to them,
 //! and later exports project over them.
@@ -73,13 +75,11 @@ pub(super) const ORACLE: SideTable<String, OracleRecord, Named> =
 const MAX_PROFILE_LEN: usize = 128;
 
 /// One profile's oracle receipt as recorded: the eight-step check's outcome
-/// and the projector it checked.
+/// and the run it checked, as the receipt names it (FIX 3772); a receipt
+/// from another projector's run opens nothing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct OracleRecord {
     receipt: OracleReceipt,
-    /// The projector the oracle checked (`PROJECTOR_VERSION` when it was
-    /// recorded); a receipt for another projector opens nothing.
-    projector: String,
     /// No one once that actor was erased (FIX 4511).
     pub(super) recorded_by: BodyActor,
     recorded_at: u64,
@@ -377,9 +377,13 @@ impl Vault {
         })
     }
 
-    /// Record the deck oracle's receipt for its profile, checked against the
-    /// current projector. It replaces the profile's earlier receipt, so a
-    /// later failed run closes the gate a pass opened.
+    /// Record the deck oracle's receipt for its profile, as the evidence of
+    /// the run it names: its projector, source revision and case manifest
+    /// hash are checked for form and kept as given, never stamped with this
+    /// server's projector, so a receipt from another projector's run opens
+    /// nothing here. It replaces the profile's earlier receipt, so a later
+    /// failed run, or a run of another projector, closes the gate a pass
+    /// opened.
     pub fn record_pptx_oracle_receipt(
         &self,
         receipt: &OracleReceipt,
@@ -388,17 +392,17 @@ impl Vault {
         if receipt.profile.is_empty() || receipt.profile.len() > MAX_PROFILE_LEN {
             return Err(invalid("an oracle receipt names its export profile"));
         }
+        names_its_run(receipt)?;
         let record = OracleRecord {
             receipt: receipt.clone(),
-            projector: PROJECTOR_VERSION.to_owned(),
             recorded_by: BodyActor::Actor(actor.entity_ref()),
             recorded_at: self.now_recorded_at(),
         };
         self.with_write_txn_grouped(|wtxn| ORACLE.put(&self.store, wtxn, &receipt.profile, &record))
     }
 
-    /// The deck export gate for `profile`: its recorded oracle receipt, when
-    /// that receipt checked the current projector.
+    /// The deck export gate for `profile`: its recorded oracle receipt, with
+    /// the run it names; it opens only for a run of the current projector.
     pub fn pptx_export_gate(&self, profile: &str) -> Result<Gate> {
         let txn = self.store.env.read_txn()?;
         export_gate(&self.store, &txn, profile)
@@ -571,12 +575,46 @@ impl Vault {
 fn export_gate(store: &Store, txn: &RoTxn<'_>, profile: &str) -> Result<Gate> {
     let receipt = ORACLE
         .get(store, txn, &profile.to_owned())?
-        .filter(|record| record.projector == PROJECTOR_VERSION)
         .map(|record| record.receipt);
     Ok(Gate {
         profile: profile.to_owned(),
         receipt,
     })
+}
+
+/// A receipt names the run it came from (FIX 3772), as the run's manifest
+/// pins it: a deck projector version (`live-deck-projector/<n>`), the full
+/// commit id (40 or 64 hex digits) its engine half was built from, and its
+/// case manifest's SHA-256 (64 hex digits). Any projector of the family
+/// records; only the current one opens the gate ([`Gate::is_open`]).
+fn names_its_run(receipt: &OracleReceipt) -> Result<()> {
+    let hex = |text: &str, lengths: &[usize]| {
+        lengths.contains(&text.len()) && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+    };
+    let family = PROJECTOR_VERSION
+        .rsplit_once('/')
+        .map_or(PROJECTOR_VERSION, |(family, _)| family);
+    let projector = receipt
+        .projector
+        .strip_prefix(family)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .is_some_and(|number| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()));
+    if !projector {
+        return Err(invalid(
+            "an oracle receipt names the deck projector its run exported through",
+        ));
+    }
+    if !hex(&receipt.source_sha, &[40, 64]) {
+        return Err(invalid(
+            "an oracle receipt names the full commit its run was built from",
+        ));
+    }
+    if !hex(&receipt.case_manifest_sha256, &[64]) {
+        return Err(invalid(
+            "an oracle receipt names the SHA-256 of its run's case manifest",
+        ));
+    }
+    Ok(())
 }
 
 fn open_record(

@@ -3275,7 +3275,7 @@ declare namespace Sdk {
   type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null; reconciliation?: VersionReconciliation | null };
   type DeckGateRequest = { profile?: string | null };
   type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run";
-  type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
+  type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean; projector: string; source_sha: string; case_manifest_sha256: string };
   type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
   type DeckOracleRequest = { receipt: OracleReceipt };
   type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[] };
