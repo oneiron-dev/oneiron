@@ -27,11 +27,6 @@ use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 pub(crate) mod checkpoint;
 
-/// The count a few producers still cut their birth inputs to. A birth itself
-/// names any number: its row is one Named MessagePack value, so the shape
-/// check refuses no count (Rule 5).
-pub const MAX_BIRTH_INPUTS: usize = 1024;
-
 /// Most hex characters a birth's input hash may carry.
 const MAX_CONTENT_HASH_HEX: usize = 128;
 
@@ -533,6 +528,28 @@ pub(crate) fn erase_row_birth_in_txn(
             BIRTH_BY_TRIGGER.delete(store, txn, &(trigger.row(), *row))?;
         }
         ROW_BIRTH.delete(store, txn, row)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` (FIX 6074): every birth that names it as its process
+/// actor goes, with its born-from index row, in the erase's own transaction.
+/// A birth has no erased form (its process names one actor), so the born
+/// rows and their content stay and their births read unknown, as a KS-7
+/// restore leaves out a birth whose actor does not open.
+///
+/// # Errors
+///
+/// Storage errors, or a stored birth that does not decode.
+pub(crate) fn erase_birth_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    for (row, birth) in ROW_BIRTH.scan(&vault.store, wtxn)? {
+        if birth.made_by.process.actor == *actor {
+            erase_row_birth_in_txn(&vault.store, wtxn, &row)?;
+        }
     }
     Ok(())
 }
