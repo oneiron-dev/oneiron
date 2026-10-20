@@ -20,13 +20,15 @@
 //! self-host shipper is on (`--publisher-training-self-host-shipper`, off by
 //! default, plain serve only). The shipper fetches the intake's public
 //! descriptor (`descriptor`) and installs the same two key files a managed
-//! vault's supervisor pushes, so one reader serves both. Managed serve never
-//! starts it.
+//! vault's supervisor pushes, so one reader serves both. Its own loop
+//! (`shipper`) then carries the released offers and the withdrawals to the
+//! intake and applies its signed receipts. Managed serve never starts it.
 
 mod descriptor;
 mod http;
 mod outbox;
 mod retry;
+mod shipper;
 mod worker;
 
 use std::path::{Path, PathBuf};
@@ -105,14 +107,15 @@ pub(crate) fn spawn(
 }
 
 /// Starts plain serve's outbox on `--publisher-training-outbox-dir`, and
-/// with it the self-host shipper's descriptor fetch while
-/// `--publisher-training-self-host-shipper` is on (TL-6); `None` with no
-/// outbox. The shipper flag without an outbox warns once and stays
-/// inactive: nothing is fetched or shipped.
+/// with it, while `--publisher-training-self-host-shipper` is on (TL-6),
+/// the self-host shipper: its descriptor fetch in the outbox's tick, and its
+/// own loop. Their handles, for serve to stop; none with no outbox. The
+/// shipper flag without an outbox warns once and stays inactive: nothing is
+/// fetched or shipped.
 pub(crate) fn spawn_self_host(
     server: &Arc<SyncServer>,
     config: &ServeConfig,
-) -> Option<tokio::task::JoinHandle<()>> {
+) -> Vec<tokio::task::JoinHandle<()>> {
     let shipper = config.publisher_training_self_host_shipper;
     let Some(dir) = config.publisher_training_outbox_dir.clone() else {
         if shipper {
@@ -121,23 +124,35 @@ pub(crate) fn spawn_self_host(
                  the self-host training shipper stays inactive"
             );
         }
-        return None;
+        return Vec::new();
     };
-    let descriptor = shipper.then(|| {
+    let intake = shipper.then(|| {
         tracing::info!(
             "the self-host training shipper is on: the intake's descriptor is fetched at start \
-             and hourly"
+             and hourly, and released offers and withdrawals go to the intake every 30 s"
         );
-        let intake = Intake::new(&config.publisher_training_intake_origin);
-        Arc::new(Descriptor::new(Arc::new(intake)))
+        Arc::new(Intake::new(&config.publisher_training_intake_origin))
     });
-    Some(worker::spawn(
+    let descriptor = intake
+        .as_ref()
+        .map(|intake| Arc::new(Descriptor::new(Arc::clone(intake))));
+    let mut handles = vec![worker::spawn(
         Arc::clone(server),
         crate::server::admit_every_pass(),
-        dir,
+        dir.clone(),
         Placement::SelfHost,
-        descriptor,
-    ))
+        descriptor.clone(),
+    )];
+    if let (Some(intake), Some(descriptor)) = (intake, descriptor) {
+        handles.push(shipper::spawn(
+            Arc::clone(server),
+            crate::server::admit_every_pass(),
+            dir,
+            intake,
+            descriptor,
+        ));
+    }
+    handles
 }
 
 /// CALLS-5: the intake's sealing key, read from the one fixed file the
