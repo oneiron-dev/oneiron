@@ -40,15 +40,16 @@ const NOTIFICATION_PRODUCER_LIST_UNBOUND: &str = "agent_def.model_list_unbound";
 const NO_LISTED_MODEL_TEXT: &str = "no listed model is eligible";
 
 /// The one policy hook for a run of an agent with a model list that its list
-/// does not bind (FIX 4544, FIX 4539), and the place a later "strict model
-/// lists" ruling changes. `true` keeps today's path, and neither case
-/// refuses: an agent run no seat binds (no model manifest and no seat
-/// receipt) runs on its configured route and the owner is told
-/// ([`note_unbound_listed_run`]); a reader or summary job its inherited list
-/// admits no eligible model for runs on any eligible one
-/// ([`birth_under_inherited_list`]). Set `false`, such a job's seat birth
-/// refuses and the seatless run is not noted; its hold is not built.
-pub const UNBOUND_LIST_KEEPS_ROUTE: bool = true;
+/// does not bind (FIX 4544, FIX 4539). `false`, the owner's ruling (FIX
+/// 6030): the engine enforces only the list, so a reader or summary job its
+/// inherited list admits no eligible model for refuses its seat birth
+/// ([`no_listed_model`]), and an agent run no seat binds (no model manifest
+/// and no seat receipt) whose configured route is not on the list refuses
+/// ([`ensure_listed`]); both name the list. `true` is the old path: the job
+/// runs on any eligible model ([`birth_under_inherited_list`]) and the
+/// seatless run on its configured route, the owner told
+/// ([`note_unbound_listed_run`]).
+pub const UNBOUND_LIST_KEEPS_ROUTE: bool = false;
 
 const MODEL_REF_TEXT: &str =
     "model entry model_ref must be a provider/name@revision model id at most 256 bytes";
@@ -183,15 +184,16 @@ pub fn resolve_compaction_model<'a>(agent: &'a AgentDefinition, house: &'a Model
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] naming the agent and the model when the agent
-/// lists models and `model` is not one of them.
+/// [`Error::InvalidConfig`] naming the agent, the model and the list when
+/// the agent lists models and `model` is not one of them.
 pub fn ensure_listed(agent: &AgentDefinition, model: &ModelId) -> Result<()> {
     if list_admits(&agent.models, model) {
         return Ok(());
     }
     Err(Error::InvalidConfig(format!(
-        "model {model} is not in agent {}'s model list",
-        agent.agent_id
+        "model {model} is not in agent {}'s model list: {}",
+        agent.agent_id,
+        list_text(&agent.models)
     )))
 }
 

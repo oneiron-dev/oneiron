@@ -13,6 +13,7 @@ use super::{
     Carried, FailureKind, INLINE, Offer, PIECE, PeerAnswer, PeerAnswered, PeerAsk, PeerCall,
     PeerInput, PeerOutcome, PeerResult, Reply, Request, decode, encode, exchange,
 };
+use crate::budget::Stop;
 use crate::error::HostError;
 use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
 use crate::outcome::{OrganOutcome, OrganOutput, OutputBytes};
@@ -300,6 +301,9 @@ fn run_handler(
         max_bytes: ask.max_bytes,
         fetch: &fetch,
         signing: &signing,
+        // The organ's host holds the call's room; this node holds none.
+        room: None,
+        revoked: Stop::NEVER,
     };
     let answered = {
         let _scope = HandlerScope::enter();
