@@ -812,12 +812,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/campaign/compliance/pack_store.rs` | src | s | 3 fn · 4 crate-vis | — | Seed loading, pack validation/coverage, and vault persistence plus msgpack encode/decode |
 | `src/campaign/compliance/rules.rs` | src | s | 4 struct · 4 enum · 6 const · 9 crate-vis | B2bExemption, ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind, ComplianceRuleRow, ComplianceSource, ConditionalExemptionEvidence, UnknownJurisdictionDefault | Pack identity consts, predicates, rule-row types, and the CompliancePack container |
 | `src/campaign/compliance/tests.rs` | test | L | — | — | Compliance behaviour: seed shape, evaluator verdicts, hydration, and amendment |
+| `src/campaign/enrollment/approval.rs` | src | s | 2 crate-vis | — | FIX 6424 part 2a (Engine 10-20 21:0x rulings 6 and 7): the owner's approve-once ask on one campaign… |
 | `src/campaign/enrollment/audience.rs` | src | s | 1 struct · 2 fn | AudienceWakeReport | The saved-query sweep's enrollment leg (ARCH-0059, decide-host 1193): a query campaign programs name as… |
 | `src/campaign/enrollment/detection.rs` | src | m | 2 struct · 1 enum · 4 fn · 2 crate-vis | CampaignEnrollmentEvent, DetectEnrollment, EnrollmentDetection | Persisted membership-transition events, detection pass, cause routing, and per-query baseline |
 | `src/campaign/enrollment/home_node.rs` | src | m | 2 struct · 2 enum · 9 fn · 2 crate-vis | CampaignHomeNodeAdmission, CampaignHomeNodeCandidate, CampaignHomeNodeClass, CampaignHomeNodeDesignation | Campaign-local MACRO home-node election, designation persistence, and admission checks |
 | `src/campaign/enrollment/manual.rs` | src | s | 2 crate-vis | — | Manual enrollment beside the saved-query MACRO ingress |
-| `src/campaign/enrollment/mod.rs` | src | s | 8 re-export · 1 crate-vis | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
-| `src/campaign/enrollment/outbound_leg.rs` | src | s | 2 crate-vis | — | Outward leg bridging persisted refs to the outbound chokepoint and the ledger |
+| `src/campaign/enrollment/mod.rs` | src | s | 9 re-export · 1 crate-vis | — | CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership… |
+| `src/campaign/enrollment/outbound_leg.rs` | src | s | 1 fn · 3 crate-vis | — | Outward leg bridging persisted refs to the outbound chokepoint and the ledger |
 | `src/campaign/enrollment/program.rs` | src | L | 8 struct · 10 fn · 1 const · 1 crate-vis | AuthoredCampaignProgram, CampaignProgram, CampaignProgramAudience, CampaignProgramDefinition, CampaignProgramDraft, CampaignProgramOutbound, CampaignProgramStep, CampaignProgramStepDraft | Persisted campaign program and step state authorizing both halves of the consequence |
 | `src/campaign/enrollment/runner.rs` | src | m | 2 struct · 2 enum · 8 fn · 3 crate-vis | CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution | Refs-only attempt payload, advisory dedupe key, leader-gated claim, and membership-leg execution |
 | `src/campaign/enrollment/storage.rs` | src | s | 2 const · 7 crate-vis | — | Shared campaign-enrollment storage primitives: schema version and hex/JSON row helpers |
@@ -1353,7 +1354,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/effect.rs` | src | m | 5 struct · 4 enum · 32 fn · 4 const · 7 crate-vis | CatastropheClass, CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, EffectPlace, ReversibilityClass +1 | — |
 | `src/consent/grant.rs` | src | m | 6 struct · 4 enum · 1 trait · 16 fn · 10 const · 1 crate-vis | ActionGrant, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal +3 | — |
 | `src/consent/lifecycle.rs` | src | s | 9 struct · 1 enum · 5 fn · 1 crate-vis | ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest, DenyConsentRequest, DisclosureBoundRequest, DisclosureEnvelopeRequest +2 | Typed public consent lifecycle calls |
-| `src/consent/mod.rs` | src | s | 3 mod · 11 re-export · 4 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
+| `src/consent/mod.rs` | src | s | 3 mod · 12 re-export · 4 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
 | `src/consent/owner_reason.rs` | src | m | 3 struct · 2 enum · 3 fn · 1 const · 1 crate-vis | OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo, OwnerReasonVerdict, ReasonMatchConfidence | Owner-authenticated confirm reasons, bounded rule rows, and their derived grants |
 | `src/consent/owner_reason/selection.rs` | src | s | 4 crate-vis | — | Pure nearest-reason selection: remove dominated covering bounds first |
 | `src/consent/registry.rs` | src | m | 6 struct · 1 fn · 3 const · 4 crate-vis | ConsentRegistry, ConsentRegistryAgentGrant, ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction | — |
@@ -2199,11 +2200,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/doors/recorded.rs` | src | s | 5 crate-vis | — | Recorded claim decisions retained until transaction commit or selective denial rollback |
 | `src/gate/dreamer_grant.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | DreamerWeaveReach | The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only… |
 | `src/gate/dreamer_precommit.rs` | src | s | 4 crate-vis | — | GATE-12 pre-commit validation for Dreamer-authored claim writes |
-| `src/gate/effect/admitted_approval.rs` | src | s | 2 crate-vis | — | The owner's one-send press a send's admission records on its ledger row (FIX 6362; an L12-B seam the Engine… |
-| `src/gate/effect/approval_target.rs` | src | s | 5 crate-vis | — | FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send |
+| `src/gate/effect/admitted_approval.rs` | src | s | 5 crate-vis | — | The owner's one-send press a send's admission records on its ledger row (FIX 6362; an L12-B seam the Engine… |
+| `src/gate/effect/approval_target.rs` | src | m | 11 crate-vis | — | FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send |
 | `src/gate/effect/effect_consent.rs` | src | s | 5 crate-vis | — | Pure DEC-0006 consent constructors over gate input |
 | `src/gate/effect/effect_contacts.rs` | src | s | 2 crate-vis | — | Counterparty hydration plus send-override and do-not-contact fold |
 | `src/gate/effect/effect_grants.rs` | src | m | 5 crate-vis | — | Standing-grant resolution plus scoped-MCP channel check and grant touch |
+| `src/gate/effect/effect_pair.rs` | src | s | 2 crate-vis | — | The two actor-bound effects one logical external mutation speaks for (OF-427), moved here from… |
 | `src/gate/effect/mod.rs` | src | L | 19 crate-vis | — | — |
 | `src/gate/fanout_policy.rs` | src | s | 16 crate-vis | — | Manifest-backed fan-out policy composition; no executable defaults |
 | `src/gate/foreign_agent.rs` | src | m | 4 fn · 2 crate-vis | — | Owner-bound foreign introductions |
@@ -2550,13 +2552,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | m | 197 mod · 76 re-export · 20 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 3 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/limits.rs` | src | s | 1 crate-vis | — | Traversal safety caps, defined in `oneiron-contracts` |
+| `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 4 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 2 crate-vis | — | Stable link keys, operation/event digests, field hashes |
-| `src/linear_sync/effect.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 crate-vis | LinearEffectKind, LinearEffectRequest | External-effect admission for Linear mirror mutations |
+| `src/linear_sync/effect.rs` | src | m | 1 struct · 1 enum · 4 fn · 2 crate-vis | LinearEffectKind, LinearEffectRequest | External-effect admission for Linear mirror mutations |
 | `src/linear_sync/engine.rs` | src | m | 1 struct · 8 fn · 2 crate-vis | LinearSyncAdapter | LinearSyncAdapter push/pull/apply verbs with replay, conflict, and receipt logic |
 | `src/linear_sync/facade.rs` | src | m | 3 fn | — | The TASK ↔ issue mirror doors (OF-427 C6, C7) |
 | `src/linear_sync/facade_types.rs` | src | s | 8 struct · 1 enum · 1 fn · 2 const | LinearLinkView, LinearMappingEdit, LinearMappingEditReceipt, LinearMappingOp, LinearMappingRequest, LinearMappingView, LinearProvenanceEntry, LinearProvenancePage +1 | The wire shapes of the TASK ↔ issue mirror doors (OF-427 C6, C7): `vault.tasks.linear.mapping`… |
 | `src/linear_sync/mirror_event.rs` | src | m | 2 struct · 25 crate-vis | LinearMirrorEvent, LinearMirrorRecord | The mirror's durable event rows and each TASK's mirror control (OF-427) |
-| `src/linear_sync/mod.rs` | src | s | 9 re-export · 3 crate-vis | — | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
+| `src/linear_sync/mod.rs` | src | s | 10 re-export · 3 crate-vis | — | Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905… |
 | `src/linear_sync/model.rs` | src | m | 11 struct · 3 enum · 3 trait · 5 fn · 2 type · 11 const · 7 crate-vis | LinearChangePage, LinearChangeSource, LinearEgress, LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt, LinearMirrorStatus +9 | Link/issue/mirror domain types, port traits, result aliases, conflict and receipt types |
 | `src/linear_sync/served.rs` | src | s | 1 struct · 1 fn | ServedLinearEgress | Scheduler binding for the production TASK/issue mirror |
 | `src/linear_sync/storage_codec.rs` | src | s | 3 crate-vis | — | Canonical entity references in the private durable link codec |
@@ -3106,11 +3109,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/dispatch_pipeline/effect.rs` | src | s | 2 crate-vis | — | Admitted effect: only this lane enters the replay-first chokepoint |
 | `src/outbound/dispatch_pipeline/esign_delivery.rs` | src | s | 5 crate-vis | — | E-sign delivery authority (FIX 5238 option 3; an L02 seam that changes no existing body) |
 | `src/outbound/dispatch_pipeline/frozen_payload.rs` | src | s | 3 crate-vis | — | Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes |
-| `src/outbound/dispatch_pipeline/govern.rs` | src | s | 1 fn · 5 crate-vis | — | Gate input assembled from the canonical outbound request |
+| `src/outbound/dispatch_pipeline/govern.rs` | src | s | 2 fn · 5 crate-vis | — | Gate input assembled from the canonical outbound request |
 | `src/outbound/dispatch_pipeline/mod.rs` | src | s | 2 re-export · 12 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
 | `src/outbound/dispatch_pipeline/pipeline.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | OutboundDispatchPipeline | O2 dispatch: shared request preparation, ledger replay, execution and receipts |
 | `src/outbound/dispatch_pipeline/policy_risk.rs` | src | s | 2 crate-vis | — | Pending gate-outcome name and gate-vs-manifest policy-risk resolution |
-| `src/outbound/dispatch_pipeline/request_binding.rs` | src | m | 8 crate-vis | — | One normalized outbound request and the single ledger replay validator |
+| `src/outbound/dispatch_pipeline/request_binding.rs` | src | m | 9 crate-vis | — | One normalized outbound request and the single ledger replay validator |
 | `src/outbound/dispatch_pipeline/retry_after.rs` | src | s | 3 crate-vis | — | Provider cool-down receipt/execution field names and whole-seconds parser |
 | `src/outbound/dispatch_pipeline/seat_policy.rs` | src | s | 6 crate-vis | — | Connector-neutral seat wall and its host-supplied LinkedIn policy adapter |
 | `src/outbound/dispatch_pipeline/transport.rs` | src | s | 2 crate-vis | — | Chokepoint OutboundTransport adapter: frozen-call guard, header/invite rehydration, sink execute |
@@ -3150,7 +3153,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_chokepoint/mod.rs` | src | s | 1 re-export · 5 crate-vis | — | Replay-first outbound effect execution |
 | `src/outbound_chokepoint/replay.rs` | src | m | 7 crate-vis | — | Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes |
 | `src/outbound_chokepoint/tests.rs` | test | m | — | — | Recovery-side governance tests (ONE-1885) |
-| `src/outbound_chokepoint/types.rs` | src | s | 13 crate-vis | — | Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper… |
+| `src/outbound_chokepoint/types.rs` | src | s | 17 crate-vis | — | Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper… |
 | `src/outbound_consent/authority.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 crate-vis | FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization | Frozen payload, keyed binding authority, and grant-scope digest |
 | `src/outbound_consent/connector_call.rs` | src | L | 8 struct · 2 enum · 1 trait · 9 fn · 1 const · 20 crate-vis | ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState, ConnectorQuestion +3 | The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare… |
 | `src/outbound_consent/connector_call_asks.rs` | src | s | 1 fn · 1 crate-vis | — | The owner ask a held connector call queues (ONE-2510) |
@@ -3178,7 +3181,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_grant/tests/header_classes.rs` | test | s | — | — | — |
 | `src/outbound_intent_ledger/codec.rs` | src | m | 1 const · 30 crate-vis | — | Pinned key sets, content digest, and MessagePack encode/decode |
 | `src/outbound_intent_ledger/dispatch.rs` | src | m | 2 fn · 5 crate-vis | — | Recovery walk, canonical-JSON intent identity, and test-only execute/recover/replay |
-| `src/outbound_intent_ledger/mod.rs` | src | s | 3 re-export · 10 crate-vis | — | Device-local durable intent ledger for effectful outbound calls |
+| `src/outbound_intent_ledger/mod.rs` | src | s | 3 re-export · 11 crate-vis | — | Device-local durable intent ledger for effectful outbound calls |
+| `src/outbound_intent_ledger/pinned_approval.rs` | src | s | 7 crate-vis | — | FIX 6424 part 2a (Engine 10-20 21:0x ruling 8, CALLS `FIX 6424 pinned Pending proof retention`): the owner's… |
 | `src/outbound_intent_ledger/resolution.rs` | src | s | 6 crate-vis | — | One delivery-knowledge reducer for a logical outbound send |
 | `src/outbound_intent_ledger/store.rs` | src | m | 26 crate-vis | — | Storage-transaction reads, inserts, transitions, and the admission-gate validator |
 | `src/outbound_intent_ledger/store/approval.rs` | src | s | 1 crate-vis | — | The typed owner approval a ledger row may carry (moved out of `validate_record`; FIX 6362, an L12-B seam the… |
