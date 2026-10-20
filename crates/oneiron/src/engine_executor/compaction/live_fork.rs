@@ -9,11 +9,13 @@ use crate::compaction::{CompactionBackend, CompactionDriver, SelfCompactionUnava
 use crate::{LlmRequest, WriteActor};
 
 /// What one breakpoint captured of the run's `live` request (FIX 4465 C):
-/// nothing when the backend does not write from the live context, else the
+/// nothing when the flight is written from the retained turns (a row on
+/// them, or a row on `auto` whose live prefix is cold, FIX 6029), else the
 /// capture or why there is none. Beside it, the input the flight's window
-/// may fill: what the live model leaves beside the captured prefix, else
-/// what the backend takes. The span is sized on the model the fork is sent
-/// on, before any of it is sealed.
+/// may fill: what the live model leaves beside the captured prefix (for
+/// `auto`, no more than its cheap writer takes), else what the backend
+/// takes. The span is sized on the model the flight is sent on, before any
+/// of it is sealed.
 pub(in crate::engine_executor) fn capture(
     driver: &CompactionDriver,
     live: &LlmRequest,

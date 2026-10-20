@@ -16,6 +16,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+pub(super) mod cache_warmth;
 mod live_fork;
 mod shadow_capture;
 mod step_attempt;
@@ -1182,8 +1183,10 @@ impl OfferLadder {
         let gate = call
             .run
             .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let warmth = cache_warmth::Sending::of(rung, &bound);
         match gate.generate(bound, permit.lease()).await {
             Ok(mut response) => {
+                warmth.answered(&self.rests);
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 permit.settle(CallOutcome::Answered(&response.usage))?;
                 response.usage = self.answered(index, walk, response.usage);
@@ -1665,6 +1668,7 @@ impl OfferLadder {
             return Flow::On;
         };
         let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let warmth = cache_warmth::Sending::of(rung, &call);
         let ended = match gate.stream(call, permit.lease()) {
             Ok(stream) => forward(stream, events).await,
             Err(error) => Ended::Failed {
@@ -1678,6 +1682,7 @@ impl OfferLadder {
                 usage,
                 finish_reason,
             } => {
+                warmth.answered(&self.rests);
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
                 let done = match permit.settle(CallOutcome::Answered(&usage)) {
                     Ok(_) => Ok(LlmStreamEvent::Done {

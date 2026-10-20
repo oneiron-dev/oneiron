@@ -10,7 +10,7 @@ mod transport;
 mod wire;
 
 pub use self::backend::{AnthropicMessagesBackend, AnthropicMessagesConfig};
-pub use self::options::{AnthropicProviderOptions, AnthropicThinkingOptions};
+pub use self::options::{AnthropicCacheTier, AnthropicProviderOptions, AnthropicThinkingOptions};
 pub use self::stream::{AnthropicMessagesLlmStream, AnthropicMessagesStreamAccumulator};
 pub use self::transport::{
     AnthropicMessagesFuture, AnthropicMessagesHttpRequest, AnthropicMessagesHttpResponse,

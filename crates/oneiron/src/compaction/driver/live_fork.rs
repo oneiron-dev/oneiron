@@ -1,8 +1,9 @@
 //! The one Frontier-tier binding a compaction may wear (FIX 4465 C, Engine
 //! 10-19): an agent whose profile names `self`, under a row that selects the
-//! live fork, forks its own live request on the rung that admitted it. The
-//! registry still refuses every frontier backend; this admits one capture,
-//! per flight, for the run that made it.
+//! live fork or resolves `auto` to it at the breakpoint (FIX 6029), forks its
+//! own live request on the rung that admitted it. The registry still refuses
+//! every frontier backend; this admits one capture, per flight, for the run
+//! that made it.
 
 use super::CompactionDriver;
 use crate::WriteActor;
@@ -15,8 +16,8 @@ impl CompactionDriver {
     /// Admits `captured`, the live fork its backend captured at the flight's
     /// breakpoint, as the flight's binding: the narrow Frontier exception.
     /// It holds only for an engine-owned profile whose writer is `self`, for
-    /// a capture taken under a row that selects the live fork, for `byline`,
-    /// the run's own actor. Anything else is refused, typed, and the flight
+    /// a capture of the resolved live fork, for `byline`, the run's own
+    /// actor. Anything else is refused, typed, and the flight
     /// keeps its window; a capture that failed keeps its own reason.
     pub(crate) fn admit_self_live_binding(
         &self,

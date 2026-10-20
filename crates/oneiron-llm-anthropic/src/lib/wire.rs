@@ -134,8 +134,9 @@ pub fn build_anthropic_messages_request(
             }
         }
     }
-    // FIX 4465 C: the host's prompt-cache boundaries, when it names any.
-    cache::mark(request, &mut body)?;
+    // FIX 4465 C: the host's prompt-cache boundaries, when it names any, at
+    // the tier the request's own options ask for (FIX 6029).
+    cache::mark(request, &mut body, provider_options.cache_tier())?;
 
     Ok(AnthropicMessagesHttpRequest {
         method: "POST",

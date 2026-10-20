@@ -42,10 +42,11 @@ use crate::vault::Vault;
 /// cheap writer instead, and the run's report names this reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelfCompactionUnavailable {
-    /// The policy row reads the live context, and the flight carries no
+    /// The policy row selects the live fork, and the flight carries no
     /// capture of the run's live request from its breakpoint (FIX 4465 C):
     /// its host bound none there, or the row turned to the live context
-    /// after the breakpoint.
+    /// after the breakpoint. A row on `auto` with no capture is written by
+    /// the cheap writer instead (FIX 6029).
     LiveForkNotCaptured,
     /// At the breakpoint the live route bound no rung to take the run's
     /// request: the route refused it, or every rung of its ladder rested or
@@ -55,8 +56,7 @@ pub enum SelfCompactionUnavailable {
     /// room for the window: the prefix is never cut to make room.
     LivePrefixTooLong,
     /// The run's driver did not admit the capture: the profile's writer is
-    /// not `self`, the row it was captured under is not the live fork, or it
-    /// was captured for another actor.
+    /// not `self`, or it was captured for another actor.
     LiveForkNotAdmitted,
     /// The captured rung is no longer what the live route admits for its
     /// model and offer, so the fork is not sent.
@@ -68,8 +68,9 @@ pub enum SelfCompactionUnavailable {
     IdentityUnreadable,
     /// The vault's self-compaction row could not be read.
     PolicyUnreadable,
-    /// The model the writer runs on (the agent's own compaction model, else
-    /// the house route's) is not served on this host.
+    /// No model the cheap writer may run on is served on this host: the
+    /// agent's own compaction model, else the row's cheap model, else the
+    /// house route's (FIX 6029).
     ModelNotServed,
     /// The writer's model is served wider than the row's bound.
     RouteWiderThanPolicy,
@@ -187,7 +188,9 @@ pub struct CompactionHomeRef {
 pub struct CompactionExecution {
     /// The agent the summary is written as: the run's authenticated actor.
     pub writer: EntityId,
-    /// The context the call read.
+    /// The context the call read as it ran: the retained turns or the live
+    /// fork, never `auto`, which a flight resolves before its first call
+    /// (FIX 6029).
     pub source: SelfCompactionSource,
     /// The model the host admitted the call on.
     pub admitted_model: String,

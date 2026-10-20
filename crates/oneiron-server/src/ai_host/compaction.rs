@@ -7,10 +7,13 @@
 //! seat or no compaction block, compaction is off and says why; an off seat
 //! never calls a model. An agent whose profile names `self` writes its own
 //! summaries (FIX 4465): the same cheap route, wearing its home, on its own
-//! compaction model when its definition names one; or, when the vault's row
-//! reads the live context, a fork of its live request on the rung that
-//! admitted it (FIX 4465 C). The same factory serves a self agent's chat
-//! turn (FIX 4465 D), with or without the code sandbox.
+//! compaction model when its definition names one, else the row's cheap
+//! model (FIX 6029); or, when the vault's row reads the live context, a fork
+//! of its live request on the rung that admitted it (FIX 4465 C). The
+//! shipped row, `auto`, forks while the live prefix is still warm in its
+//! provider's prompt cache and writes on the cheap model otherwise. The same
+//! factory serves a self agent's chat turn (FIX 4465 D), with or without the
+//! code sandbox.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -318,7 +321,8 @@ impl CodeModeCompaction {
     /// `spend` compacts on that scope's meter (OF-533); any other on code
     /// mode's. An agent whose profile names `self` compacts as itself
     /// (FIX 4465), wherever its run is served, reading its live rung through
-    /// `admission` when the row selects the live fork.
+    /// `admission` when the row selects the live fork or resolves `auto` to
+    /// it (FIX 6029).
     #[cfg(feature = "code-sandbox-wasmtime")]
     pub(super) fn for_run(
         &self,
@@ -403,9 +407,9 @@ impl LiveCompaction {
     /// the house compaction seat's route, metered as the run's other passes
     /// are. It wears the agent's home and, when its definition names one,
     /// its own compaction model. It reads its run's live rung through
-    /// `admission` for a flight whose row selects the live fork (C). Its
-    /// calls spend on `meter`, else on the house route's (a chat turn's
-    /// names its own, FIX 4465 D).
+    /// `admission` for a flight whose row selects the live fork (C) or
+    /// resolves `auto` to it (FIX 6029). Its calls spend on `meter`, else on
+    /// the house route's (a chat turn's names its own, FIX 4465 D).
     fn self_registry(
         &self,
         profile: &MemoryProfile,

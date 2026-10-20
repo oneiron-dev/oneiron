@@ -280,6 +280,9 @@ pub struct OfferCooldowns {
     health_changed: tokio::sync::watch::Sender<u64>,
     /// The count of stable recoveries, for the work an outage stopped.
     recovered: tokio::sync::watch::Sender<u64>,
+    /// Which prefixes its offers hold warm in their providers' prompt
+    /// caches (FIX 6029). In memory: a restart starts every prefix cold.
+    pub(super) warmth: super::ladder::cache_warmth::CacheWarmth,
     /// A test's vault clock, which a call's wait moves to the end it waited
     /// for, as time would.
     #[cfg(test)]
@@ -296,6 +299,7 @@ impl OfferCooldowns {
             probes: AtomicU64::new(0),
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
+            warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             #[cfg(test)]
             waits_move: None,
         })
@@ -312,6 +316,7 @@ impl OfferCooldowns {
             probes: AtomicU64::new(0),
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
+            warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             #[cfg(test)]
             waits_move: None,
         })
@@ -331,6 +336,7 @@ impl OfferCooldowns {
             probes: AtomicU64::new(0),
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
+            warmth: super::ladder::cache_warmth::CacheWarmth::default(),
             waits_move: Some(clock),
         })
     }

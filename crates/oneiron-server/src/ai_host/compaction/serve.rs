@@ -2,24 +2,28 @@
 //! pass's request, admitted on the role's live route or as exactly the
 //! model the host resolved, held to the admitted model's context, dressed in
 //! the room it leaves, sent on the run's meter and booked. A live fork's
-//! call (FIX 4465 C) is admitted its own way and sent the same way.
+//! call (FIX 4465 C) is admitted its own way and sent the same way; the
+//! first one of a flight under a row on `auto` goes out only while its live
+//! prefix is still warm (FIX 6029).
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use oneiron::LlmResponse;
 use oneiron::agent_dispatch::AgentDispatcher;
+use oneiron::code_run::LiveCompactionFork;
 use oneiron::compaction::{
     CompactionBackend, CompactionCheck, CompactionOff, CompactionProduct, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionTierClass, compaction_reply_schema,
     compaction_request_input,
 };
 use oneiron::engine_executor::ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME;
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability, LlmError,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence,
 };
+use oneiron::{BudgetGuard, LlmResponse};
 
 use super::{
     BACKEND_KEY, COMPACTION_RUN, CompactionMeter, ServedCompactionBackend, output_tokens, refused,
@@ -86,6 +90,18 @@ pub(super) enum Admit {
     },
 }
 
+/// How a pass's admitted call goes out: on its route's walk, as the house's
+/// calls do; as exactly its one model, with no fallback; or, for the first
+/// live-fork call of a flight under a row on `auto` (FIX 6029), as exactly
+/// its one model only while the live prefix it forks is still warm, asked
+/// again right before it is dispatched; any stop before it goes out leaves
+/// the flight to its cheap writer.
+pub(super) enum Dispatch<'a> {
+    Walk,
+    Exact,
+    WhileWarm(&'a LiveCompactionFork),
+}
+
 /// What one admitted call leaves room for: the admitted model's context,
 /// the input it already holds and the reply's reserve.
 #[derive(Clone, Copy)]
@@ -132,22 +148,103 @@ impl ServedCompactionBackend {
             }
         };
         let call = admitted.map_err(admission_refused)?;
-        let exact = matches!(admit, Admit::Exact { .. });
-        self.send(started, call, exact, request.summary_token_budget, dress)
+        let dispatch = match admit {
+            Admit::Role => Dispatch::Walk,
+            Admit::Exact { .. } => Dispatch::Exact,
+        };
+        self.send(started, call, dispatch, request.summary_token_budget, dress)?
+            .ok_or_else(|| {
+                refused(
+                    CompactionSuppression::TurnScoped { check: None },
+                    "the call was not sent".to_owned(),
+                )
+            })
     }
 
-    /// One admitted call, `exact` when it was admitted as exactly one model
-    /// (sent with no fallback, and its request kept for its step): held to
-    /// the admitted model's context, `dress`ed in the room it leaves, sent
-    /// on the run's meter with a permit of its own, and booked.
+    /// One admitted call, sent as `dispatch` says (one admitted as exactly
+    /// one model is sent with no fallback, and its request kept for its
+    /// step): held to the admitted model's context, `dress`ed in the room it
+    /// leaves, sent on the run's meter with a permit of its own, and booked.
+    /// `None` only for [`Dispatch::WhileWarm`], when anything stopped it
+    /// before it went out, a cold prefix included: nothing was sent, and
+    /// the flight's cheap writer runs instead (FIX 6029).
     pub(super) fn send<D>(
         &self,
         started: Instant,
         mut call: RoleCall,
-        exact: bool,
+        dispatch: Dispatch<'_>,
         summary_token_budget: u64,
         dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
-    ) -> Result<Served<D>, CompactionRefusal> {
+    ) -> Result<Option<Served<D>>, CompactionRefusal> {
+        let (worn, guard, payer) = match self.ready(&mut call, summary_token_budget, dress) {
+            Ok(ready) => ready,
+            // Under `auto` nothing has gone out yet: the flight's cheap
+            // writer runs instead (FIX 6029).
+            Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
+            Err(refusal) => return Err(refusal),
+        };
+        let step_hash = call.request.canonical_hash().ok();
+        let sent = if matches!(dispatch, Dispatch::Walk) {
+            None
+        } else {
+            serde_json::to_vec(&call.request).ok()
+        };
+        let model = call.request.model.clone();
+        let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
+        let reply = match dispatch {
+            Dispatch::Walk => self
+                .handle
+                .block_on(call.ladder.generate(&run, call.request, None))
+                .map(Some),
+            Dispatch::Exact => self
+                .handle
+                .block_on(call.ladder.generate_exact(&run, call.request, None))
+                .map(Some),
+            Dispatch::WhileWarm(fork) => {
+                self.handle.block_on(call.ladder.generate_exact_while_warm(
+                    &run,
+                    call.request,
+                    fork.rung(),
+                    fork.request(),
+                ))
+            }
+        };
+        if let CompactionMeter::Scope(scope) = &self.meter
+            && let Err(error) =
+                AgentDispatcher::new(&self.vault).record_guard_spend(scope, guard.read().used_units)
+        {
+            tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
+        }
+        match reply {
+            Ok(Some(response)) => Ok(Some(Served {
+                response,
+                model,
+                step_hash,
+                sent,
+                worn,
+                latency: started.elapsed(),
+            })),
+            Ok(None) => Ok(None),
+            Err(error) => {
+                let suppression = match &error {
+                    LlmError::Fatal(FatalLlmError::Auth) => CompactionSuppression::Auth,
+                    LlmError::BudgetDenied(_) => CompactionSuppression::NoCredit,
+                    _ => CompactionSuppression::TurnScoped { check: None },
+                };
+                Err(refused(suppression, error.to_string()))
+            }
+        }
+    }
+
+    /// What a call needs before it is sent: held to the admitted model's
+    /// context, `dress`ed in the room it leaves, asked in plain text on a
+    /// route that cannot hold a schema, and the meter it spends on.
+    fn ready<D>(
+        &self,
+        call: &mut RoleCall,
+        summary_token_budget: u64,
+        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
+    ) -> Result<(D, BudgetGuard, Option<PayerPerson>), CompactionRefusal> {
         // The admitted model, not the configured ladder, must hold the call.
         let Some(&context) = self.allowances.get(&call.request.model) else {
             return Err(refused(
@@ -201,45 +298,7 @@ impl ServedCompactionBackend {
                 (guard, payer)
             }
         };
-        let step_hash = call.request.canonical_hash().ok();
-        let sent = if exact {
-            serde_json::to_vec(&call.request).ok()
-        } else {
-            None
-        };
-        let model = call.request.model.clone();
-        let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
-        let reply = if exact {
-            self.handle
-                .block_on(call.ladder.generate_exact(&run, call.request, None))
-        } else {
-            self.handle
-                .block_on(call.ladder.generate(&run, call.request, None))
-        };
-        if let CompactionMeter::Scope(scope) = &self.meter
-            && let Err(error) =
-                AgentDispatcher::new(&self.vault).record_guard_spend(scope, guard.read().used_units)
-        {
-            tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
-        }
-        match reply {
-            Ok(response) => Ok(Served {
-                response,
-                model,
-                step_hash,
-                sent,
-                worn,
-                latency: started.elapsed(),
-            }),
-            Err(error) => {
-                let suppression = match &error {
-                    LlmError::Fatal(FatalLlmError::Auth) => CompactionSuppression::Auth,
-                    LlmError::BudgetDenied(_) => CompactionSuppression::NoCredit,
-                    _ => CompactionSuppression::TurnScoped { check: None },
-                };
-                Err(refused(suppression, error.to_string()))
-            }
-        }
+        Ok((worn, guard, payer))
     }
 
     /// What its context holds beside the reply and the prompt on `model`.
