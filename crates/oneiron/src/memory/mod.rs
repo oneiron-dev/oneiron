@@ -79,6 +79,7 @@ mod entity_delete;
 mod entity_erase;
 pub mod erase_sweep;
 mod export;
+mod export_audit;
 mod expression_preference;
 pub mod extraction;
 pub mod foreign_code;
@@ -188,8 +189,12 @@ pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
 pub use export::{
-    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, ExportReceipt, MemoryExport,
-    MemoryExportReceipt,
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, MemoryExport, MemoryExportReceipt,
+};
+pub use export_audit::{ExportAuditScope, ExportReceipt};
+pub(crate) use export_audit::{
+    ExportCopy, owner_copy_in_txn, record_export, record_raw_export, record_raw_json_export,
+    turn_thread_root,
 };
 pub use expression_preference::{
     ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView,

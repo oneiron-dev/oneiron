@@ -207,7 +207,9 @@ pub use rooms::{
     RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk,
     RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
 };
-pub(crate) use rooms::{THREAD_NOTICE_PRODUCER, notify_thread_members_in_txn};
+pub(crate) use rooms::{
+    THREAD_NOTICE_PRODUCER, notify_thread_members_in_txn, thread_has_member_now_in,
+};
 pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{

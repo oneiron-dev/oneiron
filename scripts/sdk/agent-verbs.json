@@ -5894,7 +5894,7 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault.",
+      "description": "A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in.",
       "input": "crate::task_verb::sdk::OffRecordRoomRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",

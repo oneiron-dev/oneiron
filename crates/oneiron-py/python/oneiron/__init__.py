@@ -2586,7 +2586,7 @@ class Oneiron:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_save_from_here(json.dumps(spec))))
         def export(self, spec):
-            """A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."""
+            """A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in."""
             return json.loads(_translate(lambda: self._client.vault_off_record_rooms_export(json.dumps(spec))))
         def suggest_save(self, spec):
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
