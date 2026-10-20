@@ -688,7 +688,8 @@ impl Memory<'_> {
 
 /// The OF-327 request for one e-sign act by the bound caller: channel
 /// `esign`, the act's verb, the document as target, sent now. Its intent ref
-/// carries the retry key, so a retry replays the first receipt.
+/// carries the retry key, so a retry replays the first receipt. A call with
+/// no key keeps the first key no admission has used (FIX 6424).
 fn esign_dispatch_request(
     vault: &Vault,
     verb: EsignOutboundVerb,
@@ -703,9 +704,11 @@ fn esign_dispatch_request(
             return Err(MemoryError::bad_request("idempotency_key is empty"));
         }
         Some(key) => key.to_owned(),
-        None => vault.new_entity_id()?.to_hex(),
+        None => {
+            super::dispatch_key::first_unadmitted_key(vault, verb, document, actor, on_behalf_of)?
+        }
     };
-    let intent_ref = format!("esign:{}:{}:{key}", verb.as_str(), document.to_hex());
+    let intent_ref = super::dispatch_key::esign_intent_ref(verb, document, &key);
     let mut draft =
         OutboundIntentDraft::new(actor.to_hex(), verb.as_str(), "esign", document.to_hex())
             .idempotency_key(key)

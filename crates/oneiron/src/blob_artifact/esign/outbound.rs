@@ -67,6 +67,8 @@ fn admitted_owner_press_in(
         target: String,
         #[serde(default)]
         content_ref: Option<String>,
+        #[serde(default)]
+        approval_send_ref: Option<String>,
     }
     let attempt = crate::outbound::outbound_dispatch_attempt_id(request.intent_ref)
         .map_err(|_| invalid("dispatch attempt id"))?;
@@ -90,6 +92,8 @@ fn admitted_owner_press_in(
         || frozen.verb != verb
         || frozen.target != request.intent.target
         || frozen.content_ref.as_deref() != Some(binding)
+        // FIX 6424: the one send the press approved is this act's own.
+        || frozen.approval_send_ref.as_deref() != Some(request.intent_ref)
     {
         return Ok(None);
     }

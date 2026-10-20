@@ -56,6 +56,10 @@ pub(crate) struct GateProvenanceHandles {
     /// Native-mail one-shot content handle, supplied by the frozen intent
     /// and hashed into the owner-approved effect. Never an authority source.
     pub(crate) mail_content_ref: Option<String>,
+    /// FIX 6424: the one send a non-mail approve-once press on this effect
+    /// approves, supplied by its canonical producer and hashed into that
+    /// one-shot digest only. Never an authority source; no Grant reads it.
+    pub(crate) approval_target: Option<super::effect::ApprovalTarget>,
     pub(crate) dreamer_run_id: Option<String>,
 }
 
