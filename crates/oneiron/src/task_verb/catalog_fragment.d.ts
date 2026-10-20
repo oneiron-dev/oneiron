@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3788 declarations.
-// Replies: 1000 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1127 code-mode rows (1102 host rows, 25 run rows), 3808 declarations.
+// Replies: 1007 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2172,10 +2172,30 @@ declare namespace Sdk {
   type OriginMirrorLfsObject = { oid: string; size: number };
   type OriginMirrorReadiness = { state: "ready" } | { state: "not_ready"; reason: OriginMirrorNotReadyReason; objects: OriginMirrorLfsObject[]; omitted_objects: number };
   type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null; readiness?: OriginMirrorReadiness | null };
-  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[] };
+  type OriginMirrorSyncStrategy = "ask_me" | "schedule";
+  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[]; sync_strategy?: OriginMirrorSyncStrategy; strategy_revision?: number; target_generation?: number };
   type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null };
-  type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number };
+  type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number; sync_strategy?: OriginMirrorSyncStrategy | null };
+  type OriginMirrorStrategyRequest = { repo: string; sync_strategy: OriginMirrorSyncStrategy };
   type OriginMirrorCleared = { repo: string; cleared: boolean };
+  type OriginPublishForce = "fast_forward" | "rewrite";
+  type OriginPublishRequestInput = { repo: string; ref_name: string; commit: string; force?: OriginPublishForce; idempotency_key?: string | null; expires_at?: number | null; code_repo?: EntityId | null };
+  type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation: number };
+  type OriginPublishRemote = { state: "absent" } | { state: "at"; commit: string };
+  type OriginPublishLfsBytes = "not_sent";
+  type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes };
+  type OriginPublishState = "pending" | "approved" | "dispatching" | "published" | "observed_published" | "refused" | "cancelled" | "expired";
+  type OriginPublishActorClass = "human" | "agent" | "system";
+  type OriginPublishAuthority = { kind: "owner" } | { kind: "grant"; grant: EntityId };
+  type OriginPublishAct = { actor?: EntityId | null; class: OriginPublishActorClass; authority: OriginPublishAuthority; at: number };
+  type OriginPublishRefusalReason = "destination_changed" | "remote_moved" | "rejected" | "outcome_unknown" | "authority_changed" | "objects_missing";
+  type OriginPublishRefusal = { reason: OriginPublishRefusalReason; observed?: OriginPublishRemote | null; changed_fields: string[]; detail?: string | null };
+  type OriginPublishRequestView = { request_id: EntityId; repo: string; repo_id: EntityId; destination: OriginPublishDestination; ref_name: string; commit: string; expected_remote: OriginPublishRemote; force: OriginPublishForce; code_repo?: EntityId | null; idempotency_key?: string | null; expires_at?: number | null; review: OriginPublishReview; state: OriginPublishState; requested: OriginPublishAct; approved?: OriginPublishAct | null; dispatched?: OriginPublishAct | null; refusal?: OriginPublishRefusal | null; created_at: number; finished_at?: number | null };
+  type OriginPublishReviewRequest = { repo: string; request_id: EntityId; page: number; code_repo?: EntityId | null };
+  type OriginPublishReviewItem = { kind: "commit"; commit: string; parents: string[] } | { kind: "path"; status: string; mode: string; object?: string | null; path: string };
+  type OriginPublishReviewView = { request_id: EntityId; digest: string; page: number; pages: number; items: OriginPublishReviewItem[] };
+  type OriginPublishIdRequest = { repo: string; request_id: EntityId; code_repo?: EntityId | null };
+  type OriginPublishApproveRequest = { repo: string; request_id: EntityId; review_digest: string; code_repo?: EntityId | null };
   type OriginResidence = "local-vault" | "cloud-vault";
   type OriginAuthority = { epoch: number; residence: OriginResidence; writer: string; mirror: boolean };
   type OriginAuthorityView = { repo: string; host?: string | null; authority?: OriginAuthority | null };
@@ -4801,13 +4821,29 @@ declare const vault: Sdk.VaultHost & {
         clear(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorCleared | StoredResult>;
         /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
         get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorView | StoredResult>;
-        /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them. */
+        /** Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs. */
         push(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorRun | StoredResult>;
-        /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+        /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write. */
         set(input: Sdk.OriginMirrorSetRequest): Promise<Sdk.OriginMirrorTarget | StoredResult>;
+        /** Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision. */
+        strategy(input: Sdk.OriginMirrorStrategyRequest): Promise<Sdk.OriginMirrorTarget | StoredResult>;
       };
       /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
       publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
+      publish: {
+        /** Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked. */
+        approve(input: Sdk.OriginPublishApproveRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is. */
+        cancel(input: Sdk.OriginPublishIdRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Push one approved exact publish request's commit to its branch once, leased on the recorded tip; an unproven outcome settles from the mirror and is never sent again. */
+        execute(input: Sdk.OriginPublishIdRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Read one exact publish request: its tuple, review digest, state, acts and the typed refusal that ended it, if one did. */
+        get(input: Sdk.OriginPublishIdRequest): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose. */
+        request(input: Sdk.OriginPublishRequestInput): Promise<Sdk.OriginPublishRequestView | StoredResult>;
+        /** Read one page of an exact publish request's full-ancestry review: each commit the push would expose, with its parents, and every path, mode and object those commits introduce. */
+        review(input: Sdk.OriginPublishReviewRequest): Promise<Sdk.OriginPublishReviewView | StoredResult>;
+      };
       /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
       register(input: Sdk.OriginRegisterRequest): Promise<Sdk.OriginRegistered | StoredResult>;
     };

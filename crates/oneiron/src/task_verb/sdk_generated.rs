@@ -3307,6 +3307,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.origin.mirror.strategy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::origin_doors::OriginMirrorStrategyRequest,
+                >(),
+            ),
+            (
                 "vault.code.origin.mirror.clear",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRepoRequest,
@@ -3316,6 +3322,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.origin.mirror.push",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::origin_doors::OriginRepoRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publish.request",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginPublishRequestInput,
+                >(),
+            ),
+            (
+                "vault.code.origin.publish.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginPublishReviewRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publish.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginPublishIdRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publish.approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginPublishApproveRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publish.execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginPublishIdRequest,
+                >(),
+            ),
+            (
+                "vault.code.origin.publish.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::origin::publish::OriginPublishIdRequest,
                 >(),
             ),
             (
@@ -6547,8 +6589,15 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.register",
     "vault.code.origin.mirror.get",
     "vault.code.origin.mirror.set",
+    "vault.code.origin.mirror.strategy",
     "vault.code.origin.mirror.clear",
     "vault.code.origin.mirror.push",
+    "vault.code.origin.publish.request",
+    "vault.code.origin.publish.review",
+    "vault.code.origin.publish.get",
+    "vault.code.origin.publish.approve",
+    "vault.code.origin.publish.execute",
+    "vault.code.origin.publish.cancel",
     "vault.code.origin.authority.get",
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
@@ -8153,12 +8202,33 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.code.origin.mirror.set" => crate::code_run::vault_read::request_schema::<
             crate::origin::mirror::OriginMirrorTarget,
         >(),
+        "vault.code.origin.mirror.strategy" => crate::code_run::vault_read::request_schema::<
+            crate::origin::mirror::OriginMirrorTarget,
+        >(),
         "vault.code.origin.mirror.clear" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginMirrorCleared,
         >(),
         "vault.code.origin.mirror.push" => {
             crate::code_run::vault_read::request_schema::<crate::origin::mirror::OriginMirrorRun>()
         }
+        "vault.code.origin.publish.request" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginPublishRequestView,
+        >(),
+        "vault.code.origin.publish.review" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginPublishReviewView,
+        >(),
+        "vault.code.origin.publish.get" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginPublishRequestView,
+        >(),
+        "vault.code.origin.publish.approve" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginPublishRequestView,
+        >(),
+        "vault.code.origin.publish.execute" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginPublishRequestView,
+        >(),
+        "vault.code.origin.publish.cancel" => crate::code_run::vault_read::request_schema::<
+            crate::origin::publish::OriginPublishRequestView,
+        >(),
         "vault.code.origin.authority.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::OriginAuthorityView,
         >(),
@@ -13355,6 +13425,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.origin.mirror.strategy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.origin.mirror.clear" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13363,6 +13440,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.origin.mirror.push" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publish.request" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publish.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publish.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publish.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publish.execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.origin.publish.cancel" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18760,11 +18879,34 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::origin_doors::OriginMirrorSetRequest =
                 decode(value.clone())?;
         }
+        "vault.code.origin.mirror.strategy" => {
+            let _input: crate::memory::origin_doors::OriginMirrorStrategyRequest =
+                decode(value.clone())?;
+        }
         "vault.code.origin.mirror.clear" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
         }
         "vault.code.origin.mirror.push" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.publish.request" => {
+            let _input: crate::origin::publish::OriginPublishRequestInput = decode(value.clone())?;
+        }
+        "vault.code.origin.publish.review" => {
+            let _input: crate::origin::publish::OriginPublishReviewRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.publish.get" => {
+            let _input: crate::origin::publish::OriginPublishIdRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.publish.approve" => {
+            let _input: crate::origin::publish::OriginPublishApproveRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.origin.publish.execute" => {
+            let _input: crate::origin::publish::OriginPublishIdRequest = decode(value.clone())?;
+        }
+        "vault.code.origin.publish.cancel" => {
+            let _input: crate::origin::publish::OriginPublishIdRequest = decode(value.clone())?;
         }
         "vault.code.origin.authority.get" => {
             let _input: crate::memory::origin_doors::OriginRepoRequest = decode(value.clone())?;
@@ -21703,11 +21845,32 @@ pub fn invoke(
         "vault.code.origin.mirror.set" => {
             encode(vault_code_origin_mirror_set(memory, decode(value)?)?)
         }
+        "vault.code.origin.mirror.strategy" => {
+            encode(vault_code_origin_mirror_strategy(memory, decode(value)?)?)
+        }
         "vault.code.origin.mirror.clear" => {
             encode(vault_code_origin_mirror_clear(memory, decode(value)?)?)
         }
         "vault.code.origin.mirror.push" => {
             encode(vault_code_origin_mirror_push(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publish.request" => {
+            encode(vault_code_origin_publish_request(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publish.review" => {
+            encode(vault_code_origin_publish_review(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publish.get" => {
+            encode(vault_code_origin_publish_get(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publish.approve" => {
+            encode(vault_code_origin_publish_approve(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publish.execute" => {
+            encode(vault_code_origin_publish_execute(memory, decode(value)?)?)
+        }
+        "vault.code.origin.publish.cancel" => {
+            encode(vault_code_origin_publish_cancel(memory, decode(value)?)?)
         }
         "vault.code.origin.authority.get" => {
             encode(vault_code_origin_authority_get(memory, decode(value)?)?)
@@ -27831,6 +27994,15 @@ pub fn vault_code_origin_mirror_set(
         input,
     )
 }
+pub fn vault_code_origin_mirror_strategy(
+    memory: &Memory<'_>,
+    input: crate::memory::origin_doors::OriginMirrorStrategyRequest,
+) -> MemoryResult<crate::origin::mirror::OriginMirrorTarget> {
+    memory.origin_mirror_strategy_as(
+        &memory.embedded_owner("vault.code.origin.mirror.strategy")?,
+        input,
+    )
+}
 pub fn vault_code_origin_mirror_clear(
     memory: &Memory<'_>,
     input: crate::memory::origin_doors::OriginRepoRequest,
@@ -27846,6 +28018,60 @@ pub fn vault_code_origin_mirror_push(
 ) -> MemoryResult<crate::origin::mirror::OriginMirrorRun> {
     memory.origin_mirror_push_as(
         &memory.embedded_owner("vault.code.origin.mirror.push")?,
+        input,
+    )
+}
+pub fn vault_code_origin_publish_request(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginPublishRequestInput,
+) -> MemoryResult<crate::origin::publish::OriginPublishRequestView> {
+    memory.origin_publish_request_as(
+        &memory.origin_publish_proof("vault.code.origin.publish.request"),
+        input,
+    )
+}
+pub fn vault_code_origin_publish_review(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginPublishReviewRequest,
+) -> MemoryResult<crate::origin::publish::OriginPublishReviewView> {
+    memory.origin_publish_review_as(
+        &memory.origin_publish_proof("vault.code.origin.publish.review"),
+        input,
+    )
+}
+pub fn vault_code_origin_publish_get(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginPublishIdRequest,
+) -> MemoryResult<crate::origin::publish::OriginPublishRequestView> {
+    memory.origin_publish_get_as(
+        &memory.origin_publish_proof("vault.code.origin.publish.get"),
+        input,
+    )
+}
+pub fn vault_code_origin_publish_approve(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginPublishApproveRequest,
+) -> MemoryResult<crate::origin::publish::OriginPublishRequestView> {
+    memory.origin_publish_approve_as(
+        &memory.origin_publish_proof("vault.code.origin.publish.approve"),
+        input,
+    )
+}
+pub fn vault_code_origin_publish_execute(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginPublishIdRequest,
+) -> MemoryResult<crate::origin::publish::OriginPublishRequestView> {
+    memory.origin_publish_execute_as(
+        &memory.origin_publish_proof("vault.code.origin.publish.execute"),
+        input,
+    )
+}
+pub fn vault_code_origin_publish_cancel(
+    memory: &Memory<'_>,
+    input: crate::origin::publish::OriginPublishIdRequest,
+) -> MemoryResult<crate::origin::publish::OriginPublishRequestView> {
+    memory.origin_publish_cancel_as(
+        &memory.origin_publish_proof("vault.code.origin.publish.cancel"),
         input,
     )
 }

@@ -1085,6 +1085,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/origin-mirror/strategy",
+        summary: "Set one origin mirror's sync strategy (FIX 6866): `repo` and `sync_strategy`, `ask_me` (nothing goes out until an exact publish request is approved; push refuses publish_request_required) or `schedule` (the cadenced push of every published ref). Changes the strategy and its revision only; answers the mirror target.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/owner-work/{request}",
         summary: "Where one owner work request stands, from this install's fold: the receipt (ids only), recorded and awaiting a holder until its executor's result arrives, then enacted or refused, with the engine's words.",

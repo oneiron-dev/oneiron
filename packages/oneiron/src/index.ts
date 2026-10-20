@@ -1979,12 +1979,28 @@ export class Oneiron {
         mirror: {
           /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
           get: (input: Facade.OriginRepoRequest): Facade.OriginMirrorView => this.#call(() => this.#client.vaultCodeOriginMirrorGet(input) as Facade.OriginMirrorView),
-          /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+          /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write. */
           set: (input: Facade.OriginMirrorSetRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorSet(input) as Facade.OriginMirrorTarget),
+          /** Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision. */
+          strategy: (input: Facade.OriginMirrorStrategyRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorStrategy(input) as Facade.OriginMirrorTarget),
           /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
           clear: (input: Facade.OriginRepoRequest): Facade.OriginMirrorCleared => this.#call(() => this.#client.vaultCodeOriginMirrorClear(input) as Facade.OriginMirrorCleared),
-          /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them. */
+          /** Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs. */
           push: (input: Facade.OriginRepoRequest): Facade.OriginMirrorRun => this.#call(() => this.#client.vaultCodeOriginMirrorPush(input) as Facade.OriginMirrorRun),
+        },
+        publish: {
+          /** Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose. */
+          request: (input: Facade.OriginPublishRequestInput): Facade.OriginPublishRequestView => this.#call(() => this.#client.vaultCodeOriginPublishRequest(input) as Facade.OriginPublishRequestView),
+          /** Read one page of an exact publish request's full-ancestry review: each commit the push would expose, with its parents, and every path, mode and object those commits introduce. */
+          review: (input: Facade.OriginPublishReviewRequest): Facade.OriginPublishReviewView => this.#call(() => this.#client.vaultCodeOriginPublishReview(input) as Facade.OriginPublishReviewView),
+          /** Read one exact publish request: its tuple, review digest, state, acts and the typed refusal that ended it, if one did. */
+          get: (input: Facade.OriginPublishIdRequest): Facade.OriginPublishRequestView => this.#call(() => this.#client.vaultCodeOriginPublishGet(input) as Facade.OriginPublishRequestView),
+          /** Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked. */
+          approve: (input: Facade.OriginPublishApproveRequest): Facade.OriginPublishRequestView => this.#call(() => this.#client.vaultCodeOriginPublishApprove(input) as Facade.OriginPublishRequestView),
+          /** Push one approved exact publish request's commit to its branch once, leased on the recorded tip; an unproven outcome settles from the mirror and is never sent again. */
+          execute: (input: Facade.OriginPublishIdRequest): Facade.OriginPublishRequestView => this.#call(() => this.#client.vaultCodeOriginPublishExecute(input) as Facade.OriginPublishRequestView),
+          /** Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is. */
+          cancel: (input: Facade.OriginPublishIdRequest): Facade.OriginPublishRequestView => this.#call(() => this.#client.vaultCodeOriginPublishCancel(input) as Facade.OriginPublishRequestView),
         },
         authority: {
           /** Read one served origin authority and this host identity under the owner credential. */

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1085 facade rows, 3735 declarations.
-Inputs: 1020 of 1085 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 972 of 1085 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1092 facade rows, 3755 declarations.
+Inputs: 1027 of 1092 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 979 of 1092 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -10406,6 +10406,7 @@ class OriginMirrorRun(TypedDict):
     deleted: int
     failure: NotRequired[str | None]
     readiness: NotRequired[OriginMirrorReadiness | None]
+OriginMirrorSyncStrategy = Literal["ask_me", "schedule"]
 class OriginMirrorTarget(TypedDict):
     repo: str
     url: str
@@ -10414,6 +10415,9 @@ class OriginMirrorTarget(TypedDict):
     every_secs: int
     last: NotRequired[OriginMirrorRun | None]
     pushed: list[str]
+    sync_strategy: NotRequired[OriginMirrorSyncStrategy]
+    strategy_revision: NotRequired[int]
+    target_generation: NotRequired[int]
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
@@ -10423,9 +10427,108 @@ class OriginMirrorSetRequest(TypedDict):
     secret_ref: str
     user: NotRequired[str | None]
     every_secs: int
+    sync_strategy: NotRequired[OriginMirrorSyncStrategy | None]
+class OriginMirrorStrategyRequest(TypedDict):
+    repo: str
+    sync_strategy: OriginMirrorSyncStrategy
 class OriginMirrorCleared(TypedDict):
     repo: str
     cleared: bool
+OriginPublishForce = Literal["fast_forward", "rewrite"]
+class OriginPublishRequestInput(TypedDict):
+    repo: str
+    ref_name: str
+    commit: str
+    force: NotRequired[OriginPublishForce]
+    idempotency_key: NotRequired[str | None]
+    expires_at: NotRequired[int | None]
+    code_repo: NotRequired[EntityId | None]
+class OriginPublishDestination(TypedDict):
+    url: str
+    user: str
+    secret_ref: str
+    target_generation: int
+class OriginPublishRemoteAbsent(TypedDict):
+    state: Literal["absent"]
+class OriginPublishRemoteAt(TypedDict):
+    state: Literal["at"]
+    commit: str
+OriginPublishRemote = OriginPublishRemoteAbsent | OriginPublishRemoteAt
+OriginPublishLfsBytes = Literal["not_sent"]
+class OriginPublishReview(TypedDict):
+    digest: str
+    subtracted: NotRequired[str | None]
+    commits: int
+    entries: int
+    paths: int
+    pages: int
+    lfs_bytes: OriginPublishLfsBytes
+OriginPublishState = Literal["pending", "approved", "dispatching", "published", "observed_published", "refused", "cancelled", "expired"]
+OriginPublishActorClass = Literal["human", "agent", "system"]
+class OriginPublishAuthorityOwner(TypedDict):
+    kind: Literal["owner"]
+class OriginPublishAuthorityGrant(TypedDict):
+    kind: Literal["grant"]
+    grant: EntityId
+OriginPublishAuthority = OriginPublishAuthorityOwner | OriginPublishAuthorityGrant
+OriginPublishAct = TypedDict("OriginPublishAct", {"actor": NotRequired[EntityId | None], "class": OriginPublishActorClass, "authority": OriginPublishAuthority, "at": int})
+OriginPublishRefusalReason = Literal["destination_changed", "remote_moved", "rejected", "outcome_unknown", "authority_changed", "objects_missing"]
+class OriginPublishRefusal(TypedDict):
+    reason: OriginPublishRefusalReason
+    observed: NotRequired[OriginPublishRemote | None]
+    changed_fields: list[str]
+    detail: NotRequired[str | None]
+class OriginPublishRequestView(TypedDict):
+    request_id: EntityId
+    repo: str
+    repo_id: EntityId
+    destination: OriginPublishDestination
+    ref_name: str
+    commit: str
+    expected_remote: OriginPublishRemote
+    force: OriginPublishForce
+    code_repo: NotRequired[EntityId | None]
+    idempotency_key: NotRequired[str | None]
+    expires_at: NotRequired[int | None]
+    review: OriginPublishReview
+    state: OriginPublishState
+    requested: OriginPublishAct
+    approved: NotRequired[OriginPublishAct | None]
+    dispatched: NotRequired[OriginPublishAct | None]
+    refusal: NotRequired[OriginPublishRefusal | None]
+    created_at: int
+    finished_at: NotRequired[int | None]
+class OriginPublishReviewRequest(TypedDict):
+    repo: str
+    request_id: EntityId
+    page: int
+    code_repo: NotRequired[EntityId | None]
+class OriginPublishReviewItemCommit(TypedDict):
+    kind: Literal["commit"]
+    commit: str
+    parents: list[str]
+class OriginPublishReviewItemPath(TypedDict):
+    kind: Literal["path"]
+    status: str
+    mode: str
+    object: NotRequired[str | None]
+    path: str
+OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath
+class OriginPublishReviewView(TypedDict):
+    request_id: EntityId
+    digest: str
+    page: int
+    pages: int
+    items: list[OriginPublishReviewItem]
+class OriginPublishIdRequest(TypedDict):
+    repo: str
+    request_id: EntityId
+    code_repo: NotRequired[EntityId | None]
+class OriginPublishApproveRequest(TypedDict):
+    repo: str
+    request_id: EntityId
+    review_digest: str
+    code_repo: NotRequired[EntityId | None]
 OriginResidence = Literal["local-vault", "cloud-vault"]
 class OriginAuthority(TypedDict):
     epoch: int

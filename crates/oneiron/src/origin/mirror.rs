@@ -24,11 +24,20 @@
 //! objects nothing has verified at the mirror. The census behind it
 //! (`mirror_census`) reads histories of any size in pages and never fails or
 //! holds back the push.
+//!
+//! Each mirror carries a sync strategy (FIX 6866, `mirror_strategy`): only a
+//! `schedule` mirror is pushed on its cadence or by a push-now. An `ask_me`
+//! mirror, the default, sends nothing whole: its push-now refuses with
+//! `publish_request_required`, and exact reviewed commits go out through
+//! `origin::publish` instead.
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use super::mirror_census::LfsCensus;
+use super::mirror_strategy::{
+    OriginMirrorSyncStrategy, PublishRequestRequired, configured_strategy,
+};
 use super::publication::OriginPublicationStatus;
 use super::residence::OriginHostAuthority;
 use super::smart_http::origin_repo_dir;
@@ -59,7 +68,7 @@ const MAX_URL_BYTES: usize = 2048;
 const MAX_USER_BYTES: usize = 128;
 
 /// One repository's mirror. Key: repo id.
-const TARGETS: SideTable<EntityId, OriginMirrorTarget, Named> =
+pub(super) const TARGETS: SideTable<EntityId, OriginMirrorTarget, Named> =
     SideTable::new(&side_table::ORIGIN_MIRROR_TARGET);
 
 /// The owner's outbound mirror of one served repository.
@@ -80,6 +89,17 @@ pub struct OriginMirrorTarget {
     /// The refs the mirror took from this vault's last successful push. A
     /// ref that leaves the published set is deleted there on the next push.
     pub pushed: Vec<String>,
+    /// How the mirror sends what this vault publishes; a row that names
+    /// none is `ask_me`.
+    #[serde(default)]
+    pub sync_strategy: OriginMirrorSyncStrategy,
+    /// Moves by one each time the strategy changes.
+    #[serde(default)]
+    pub strategy_revision: u64,
+    /// Moves each time the URL, user, custody record or served name
+    /// changes; an exact publish request is bound to the one it was made at.
+    #[serde(default)]
+    pub target_generation: u64,
 }
 
 /// One push to a mirror.
@@ -153,6 +173,9 @@ pub struct OriginMirrorTargetInput {
     pub user: Option<String>,
     /// Seconds between pushes, at least [`ORIGIN_MIRROR_MIN_EVERY_SECS`].
     pub every_secs: u64,
+    /// The strategy; when absent the same URL keeps its own and a new one
+    /// starts at `ask_me`.
+    pub sync_strategy: Option<OriginMirrorSyncStrategy>,
 }
 
 /// What one scheduled pass over the mirror targets did.
@@ -208,6 +231,13 @@ impl Vault {
         self.check_secret_at_door_in_txn(txn, &input.secret_ref, ORIGIN_MIRROR_PUSH_EFFECTOR)?;
         let repo_id = self.served_mirror_repo_id(repo_name)?;
         let previous = TARGETS.get(&self.store, txn, &repo_id)?;
+        let configured = configured_strategy(
+            previous.as_ref(),
+            repo_name,
+            (&input.url, &user, &input.secret_ref),
+            input.sync_strategy,
+            self.now_recorded_at(),
+        );
         let (last, pushed) = match previous {
             Some(row) if row.url == input.url => (row.last, row.pushed),
             _ => (None, Vec::new()),
@@ -220,6 +250,9 @@ impl Vault {
             every_secs: input.every_secs,
             last,
             pushed,
+            sync_strategy: configured.strategy,
+            strategy_revision: configured.revision,
+            target_generation: configured.generation,
         };
         TARGETS.put(&self.store, txn, &repo_id, &row)?;
         Ok(row)
@@ -260,6 +293,7 @@ impl Vault {
             TARGETS.get(&self.store, &txn, &repo_id)?
         }
         .ok_or(Error::EntityNotFound)?;
+        require_whole_ref_strategy(repo_name, &target)?;
         self.require_mirror_pusher(repo_name)?;
         Ok(self.push_mirror_target(repo_id, &target))
     }
@@ -277,6 +311,7 @@ impl Vault {
             TARGETS.get(&self.store, &txn, &repo_id)?
         }
         .ok_or(Error::EntityNotFound)?;
+        require_whole_ref_strategy(repo_name, &target)?;
         self.require_mirror_pusher(repo_name)?;
         let (run, pushed) = self.attempt_mirror_target(repo_id, &target);
         let mut txn = self.store.env.write_txn()?;
@@ -286,8 +321,9 @@ impl Vault {
         Ok(run)
     }
 
-    /// One pass over every mirror target: each that is due, and whose
-    /// repository this host is the origin of, is pushed. `admit` takes the
+    /// One pass over every mirror target: each `schedule` mirror that is
+    /// due, and whose repository this host is the origin of, is pushed. An
+    /// `ask_me` mirror is never due. `admit` takes the
     /// host's hold for one push, or returns `None` when it has none to give;
     /// `stop` asks the pass to start no further push.
     pub fn push_due_origin_mirrors(
@@ -305,10 +341,11 @@ impl Vault {
         };
         let now = self.now_recorded_at();
         for (repo_id, target) in targets {
-            let due = target
-                .last
-                .as_ref()
-                .is_none_or(|run| now.saturating_sub(run.at) >= target.every_secs);
+            let due = target.sync_strategy.runs_on_interval()
+                && target
+                    .last
+                    .as_ref()
+                    .is_none_or(|run| now.saturating_sub(run.at) >= target.every_secs);
             if !due || stop() || self.require_mirror_pusher(&target.repo).is_err() {
                 report.skipped += 1;
                 continue;
@@ -334,7 +371,7 @@ impl Vault {
 
     /// Refuses unless this host is the repository's origin: no authority row
     /// (this vault alone serves it) or this host's held epoch.
-    fn require_mirror_pusher(&self, repo_name: &str) -> Result<()> {
+    pub(super) fn require_mirror_pusher(&self, repo_name: &str) -> Result<()> {
         match self.origin_host_authority(repo_name)? {
             OriginHostAuthority::Unconfigured | OriginHostAuthority::Held(_) => Ok(()),
             OriginHostAuthority::Mirror(_)
@@ -345,7 +382,7 @@ impl Vault {
         }
     }
 
-    fn served_mirror_repo_id(&self, repo_name: &str) -> Result<EntityId> {
+    pub(super) fn served_mirror_repo_id(&self, repo_name: &str) -> Result<EntityId> {
         let repo_root = origin_repo_dir(self, repo_name)?;
         let identity = GitWire::new(self)?.repository_identity(&repo_root)?;
         super::lfs::lfs_repo_id(&identity.as_hex())
@@ -517,6 +554,18 @@ impl Vault {
         TARGETS.put(&self.store, txn, &repo_id, &row)?;
         Ok(())
     }
+}
+
+/// Refuses a whole-ref push of a mirror whose strategy asks first.
+fn require_whole_ref_strategy(repo_name: &str, target: &OriginMirrorTarget) -> Result<()> {
+    if target.sync_strategy.pushes_whole_refs() {
+        return Ok(());
+    }
+    Err(PublishRequestRequired {
+        repo: repo_name.to_owned(),
+        strategy: target.sync_strategy,
+    }
+    .into())
 }
 
 /// An https URL with a host, and no credential, query, fragment, space or

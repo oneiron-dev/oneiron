@@ -610,8 +610,15 @@ both bindings and their export-census tests in one change.
 - `vault.code.origin.register`
 - `vault.code.origin.mirror.get`
 - `vault.code.origin.mirror.set`
+- `vault.code.origin.mirror.strategy`
 - `vault.code.origin.mirror.clear`
 - `vault.code.origin.mirror.push`
+- `vault.code.origin.publish.request`
+- `vault.code.origin.publish.review`
+- `vault.code.origin.publish.get`
+- `vault.code.origin.publish.approve`
+- `vault.code.origin.publish.execute`
+- `vault.code.origin.publish.cancel`
 - `vault.code.origin.authority.get`
 - `vault.code.origin.authority.set`
 - `vault.code.origin.publications`

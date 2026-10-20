@@ -3021,6 +3021,11 @@ export_facade! {
     let output = client.vault_code_origin_mirror_set(&input)?;
     crate::codec::lift_record("vault.code.origin.mirror.set", &output)
 };
+"vault.code.origin.mirror.strategy" => fn vault_code_origin_mirror_strategy(&self, input: OriginMirrorStrategyRequest) -> OriginMirrorTarget = |client| {
+    let input: oneiron::memory::origin_doors::OriginMirrorStrategyRequest = crate::codec::lower_record("vault.code.origin.mirror.strategy", input)?;
+    let output = client.vault_code_origin_mirror_strategy(&input)?;
+    crate::codec::lift_record("vault.code.origin.mirror.strategy", &output)
+};
 "vault.code.origin.mirror.clear" => fn vault_code_origin_mirror_clear(&self, input: OriginRepoRequest) -> OriginMirrorCleared = |client| {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.clear", input)?;
     let output = client.vault_code_origin_mirror_clear(&input)?;
@@ -3030,6 +3035,36 @@ export_facade! {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.mirror.push", input)?;
     let output = client.vault_code_origin_mirror_push(&input)?;
     crate::codec::lift_record("vault.code.origin.mirror.push", &output)
+};
+"vault.code.origin.publish.request" => fn vault_code_origin_publish_request(&self, input: OriginPublishRequestInput) -> OriginPublishRequestView = |client| {
+    let input: oneiron::origin::publish::OriginPublishRequestInput = crate::codec::lower_record("vault.code.origin.publish.request", input)?;
+    let output = client.vault_code_origin_publish_request(&input)?;
+    crate::codec::lift_record("vault.code.origin.publish.request", &output)
+};
+"vault.code.origin.publish.review" => fn vault_code_origin_publish_review(&self, input: OriginPublishReviewRequest) -> OriginPublishReviewView = |client| {
+    let input: oneiron::origin::publish::OriginPublishReviewRequest = crate::codec::lower_record("vault.code.origin.publish.review", input)?;
+    let output = client.vault_code_origin_publish_review(&input)?;
+    crate::codec::lift_record("vault.code.origin.publish.review", &output)
+};
+"vault.code.origin.publish.get" => fn vault_code_origin_publish_get(&self, input: OriginPublishIdRequest) -> OriginPublishRequestView = |client| {
+    let input: oneiron::origin::publish::OriginPublishIdRequest = crate::codec::lower_record("vault.code.origin.publish.get", input)?;
+    let output = client.vault_code_origin_publish_get(&input)?;
+    crate::codec::lift_record("vault.code.origin.publish.get", &output)
+};
+"vault.code.origin.publish.approve" => fn vault_code_origin_publish_approve(&self, input: OriginPublishApproveRequest) -> OriginPublishRequestView = |client| {
+    let input: oneiron::origin::publish::OriginPublishApproveRequest = crate::codec::lower_record("vault.code.origin.publish.approve", input)?;
+    let output = client.vault_code_origin_publish_approve(&input)?;
+    crate::codec::lift_record("vault.code.origin.publish.approve", &output)
+};
+"vault.code.origin.publish.execute" => fn vault_code_origin_publish_execute(&self, input: OriginPublishIdRequest) -> OriginPublishRequestView = |client| {
+    let input: oneiron::origin::publish::OriginPublishIdRequest = crate::codec::lower_record("vault.code.origin.publish.execute", input)?;
+    let output = client.vault_code_origin_publish_execute(&input)?;
+    crate::codec::lift_record("vault.code.origin.publish.execute", &output)
+};
+"vault.code.origin.publish.cancel" => fn vault_code_origin_publish_cancel(&self, input: OriginPublishIdRequest) -> OriginPublishRequestView = |client| {
+    let input: oneiron::origin::publish::OriginPublishIdRequest = crate::codec::lower_record("vault.code.origin.publish.cancel", input)?;
+    let output = client.vault_code_origin_publish_cancel(&input)?;
+    crate::codec::lift_record("vault.code.origin.publish.cancel", &output)
 };
 "vault.code.origin.authority.get" => fn vault_code_origin_authority_get(&self, input: OriginRepoRequest) -> OriginAuthorityView = |client| {
     let input: oneiron::memory::origin_doors::OriginRepoRequest = crate::codec::lower_record("vault.code.origin.authority.get", input)?;

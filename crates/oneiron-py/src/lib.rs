@@ -5680,6 +5680,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_origin_mirror_strategy(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.strategy")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.mirror.strategy", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_origin_mirror_clear(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.code.origin.mirror.clear")?;
         let output = py
@@ -5696,6 +5710,86 @@ impl NativeClient {
             .detach(|| {
                 self.inner
                     .agent_verb("vault.code.origin.mirror.push", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_publish_request(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.publish.request")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.publish.request", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_publish_review(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.publish.review")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.publish.review", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_publish_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.publish.get")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.publish.get", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_publish_approve(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.publish.approve")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.publish.approve", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_publish_execute(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.publish.execute")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.publish.execute", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_origin_publish_cancel(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.origin.publish.cancel")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.code.origin.publish.cancel", input)
             })
             .map_err(raise)?;
         encode(&output)

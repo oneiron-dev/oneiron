@@ -2816,6 +2816,8 @@ class Oneiron:
         @property
         def mirror(self) -> "Oneiron._VaultCodeOriginMirrorVerbs": ...
         @property
+        def publish(self) -> "Oneiron._VaultCodeOriginPublishVerbs": ...
+        @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
         def publications(self, spec: Facade.OriginPublicationsRequest) -> Facade.OriginPublicationsView:
             """Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement."""
@@ -2823,11 +2825,26 @@ class Oneiron:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorView:
             """Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."""
         def set(self, spec: Facade.OriginMirrorSetRequest) -> Facade.OriginMirrorTarget:
-            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."""
+            """Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write."""
+        def strategy(self, spec: Facade.OriginMirrorStrategyRequest) -> Facade.OriginMirrorTarget:
+            """Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision."""
         def clear(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorCleared:
             """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
         def push(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorRun:
-            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them."""
+            """Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs."""
+    class _VaultCodeOriginPublishVerbs:
+        def request(self, spec: Facade.OriginPublishRequestInput) -> Facade.OriginPublishRequestView:
+            """Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose."""
+        def review(self, spec: Facade.OriginPublishReviewRequest) -> Facade.OriginPublishReviewView:
+            """Read one page of an exact publish request's full-ancestry review: each commit the push would expose, with its parents, and every path, mode and object those commits introduce."""
+        def get(self, spec: Facade.OriginPublishIdRequest) -> Facade.OriginPublishRequestView:
+            """Read one exact publish request: its tuple, review digest, state, acts and the typed refusal that ended it, if one did."""
+        def approve(self, spec: Facade.OriginPublishApproveRequest) -> Facade.OriginPublishRequestView:
+            """Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked."""
+        def execute(self, spec: Facade.OriginPublishIdRequest) -> Facade.OriginPublishRequestView:
+            """Push one approved exact publish request's commit to its branch once, leased on the recorded tip; an unproven outcome settles from the mirror and is never sent again."""
+        def cancel(self, spec: Facade.OriginPublishIdRequest) -> Facade.OriginPublishRequestView:
+            """Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is."""
     class _VaultCodeOriginAuthorityVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginAuthorityView:
             """Read one served origin authority and this host identity under the owner credential."""

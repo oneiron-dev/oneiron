@@ -1891,11 +1891,32 @@ impl OneironClient {
                 "vault.code.origin.mirror.set" => remote_agent_verb_output::<
                     oneiron::origin::mirror::OriginMirrorTarget,
                 >(client, verb, &input),
+                "vault.code.origin.mirror.strategy" => remote_agent_verb_output::<
+                    oneiron::origin::mirror::OriginMirrorTarget,
+                >(client, verb, &input),
                 "vault.code.origin.mirror.clear" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginMirrorCleared,
                 >(client, verb, &input),
                 "vault.code.origin.mirror.push" => remote_agent_verb_output::<
                     oneiron::origin::mirror::OriginMirrorRun,
+                >(client, verb, &input),
+                "vault.code.origin.publish.request" => remote_agent_verb_output::<
+                    oneiron::origin::publish::OriginPublishRequestView,
+                >(client, verb, &input),
+                "vault.code.origin.publish.review" => remote_agent_verb_output::<
+                    oneiron::origin::publish::OriginPublishReviewView,
+                >(client, verb, &input),
+                "vault.code.origin.publish.get" => remote_agent_verb_output::<
+                    oneiron::origin::publish::OriginPublishRequestView,
+                >(client, verb, &input),
+                "vault.code.origin.publish.approve" => remote_agent_verb_output::<
+                    oneiron::origin::publish::OriginPublishRequestView,
+                >(client, verb, &input),
+                "vault.code.origin.publish.execute" => remote_agent_verb_output::<
+                    oneiron::origin::publish::OriginPublishRequestView,
+                >(client, verb, &input),
+                "vault.code.origin.publish.cancel" => remote_agent_verb_output::<
+                    oneiron::origin::publish::OriginPublishRequestView,
                 >(client, verb, &input),
                 "vault.code.origin.authority.get" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::OriginAuthorityView,
@@ -10808,6 +10829,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.code.origin.mirror.set", value)
     }
+    pub fn vault_code_origin_mirror_strategy(
+        &self,
+        input: &oneiron::memory::origin_doors::OriginMirrorStrategyRequest,
+    ) -> Result<oneiron::origin::mirror::OriginMirrorTarget, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.mirror.strategy", value)
+    }
     pub fn vault_code_origin_mirror_clear(
         &self,
         input: &oneiron::memory::origin_doors::OriginRepoRequest,
@@ -10831,6 +10864,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.origin.mirror.push", value)
+    }
+    pub fn vault_code_origin_publish_request(
+        &self,
+        input: &oneiron::origin::publish::OriginPublishRequestInput,
+    ) -> Result<oneiron::origin::publish::OriginPublishRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.publish.request", value)
+    }
+    pub fn vault_code_origin_publish_review(
+        &self,
+        input: &oneiron::origin::publish::OriginPublishReviewRequest,
+    ) -> Result<oneiron::origin::publish::OriginPublishReviewView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.publish.review", value)
+    }
+    pub fn vault_code_origin_publish_get(
+        &self,
+        input: &oneiron::origin::publish::OriginPublishIdRequest,
+    ) -> Result<oneiron::origin::publish::OriginPublishRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.publish.get", value)
+    }
+    pub fn vault_code_origin_publish_approve(
+        &self,
+        input: &oneiron::origin::publish::OriginPublishApproveRequest,
+    ) -> Result<oneiron::origin::publish::OriginPublishRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.publish.approve", value)
+    }
+    pub fn vault_code_origin_publish_execute(
+        &self,
+        input: &oneiron::origin::publish::OriginPublishIdRequest,
+    ) -> Result<oneiron::origin::publish::OriginPublishRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.publish.execute", value)
+    }
+    pub fn vault_code_origin_publish_cancel(
+        &self,
+        input: &oneiron::origin::publish::OriginPublishIdRequest,
+    ) -> Result<oneiron::origin::publish::OriginPublishRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.origin.publish.cancel", value)
     }
     pub fn vault_code_origin_authority_get(
         &self,

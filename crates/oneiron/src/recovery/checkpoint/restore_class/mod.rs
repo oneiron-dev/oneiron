@@ -206,6 +206,12 @@ const ORIGIN_AUTHORITY: Class = refuse("repository origin authority");
 /// restores. A cutover moves the epoch, so it still refuses.
 const ERASED_ORIGIN_AUTHORITY: Class = LIVE;
 const ORIGIN_MIRRORS: Class = refuse("repository mirror targets");
+/// An exact publish request (FIX 6866) records an act whose effect left the
+/// vault: it stays as the live vault holds it, so a request made after a
+/// checkpoint never refuses that checkpoint's restore, and no restore
+/// unspends a push (CALLS "FIX 6866 restore class"). A request whose commit
+/// a restore took refuses at dispatch, not here.
+const ORIGIN_PUBLISH_REQUESTS: Class = LIVE;
 const ROOMS: Class = Class::Refuse {
     what: "room roles and membership",
     scope: Scope::ImageEntities,

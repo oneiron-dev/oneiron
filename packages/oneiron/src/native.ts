@@ -636,8 +636,15 @@ vaultCodeExport(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
+vaultCodeOriginMirrorStrategy(input: unknown): unknown
 vaultCodeOriginMirrorClear(input: unknown): unknown
 vaultCodeOriginMirrorPush(input: unknown): unknown
+vaultCodeOriginPublishRequest(input: unknown): unknown
+vaultCodeOriginPublishReview(input: unknown): unknown
+vaultCodeOriginPublishGet(input: unknown): unknown
+vaultCodeOriginPublishApprove(input: unknown): unknown
+vaultCodeOriginPublishExecute(input: unknown): unknown
+vaultCodeOriginPublishCancel(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown

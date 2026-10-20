@@ -1486,8 +1486,15 @@ fn mcp_agent_verb_input(
         "vault.code.origin.register" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.mirror.get" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.mirror.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.origin.mirror.strategy" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.mirror.clear" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.mirror.push" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.origin.publish.request" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.origin.publish.review" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.origin.publish.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.origin.publish.approve" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.origin.publish.execute" => a.spec.clone().ok_or_else(invalid),
+        "vault.code.origin.publish.cancel" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.get" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.authority.set" => a.spec.clone().ok_or_else(invalid),
         "vault.code.origin.publications" => a.spec.clone().ok_or_else(invalid),
@@ -3948,10 +3955,31 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.code.origin.mirror.set" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.code.origin.mirror.strategy" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.code.origin.mirror.clear" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.origin.mirror.push" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.origin.publish.request" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.origin.publish.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.origin.publish.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.origin.publish.approve" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.origin.publish.execute" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.code.origin.publish.cancel" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.origin.authority.get" => {
@@ -14430,6 +14458,23 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
+        "vault.code.origin.mirror.strategy" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.origin.mirror.strategy", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::origin_doors::OriginMirrorStrategyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_origin_mirror_strategy(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "vault.code.origin.mirror.clear" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
             oneiron::task_verb::sdk::validate_input("vault.code.origin.mirror.clear", &input)
@@ -14454,6 +14499,106 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_origin_mirror_push(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.origin.publish.request" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.origin.publish.request", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::origin::publish::OriginPublishRequestInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_origin_publish_request(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.origin.publish.review" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.origin.publish.review", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::origin::publish::OriginPublishReviewRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_origin_publish_review(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.origin.publish.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.origin.publish.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::origin::publish::OriginPublishIdRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_origin_publish_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.origin.publish.approve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.origin.publish.approve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::origin::publish::OriginPublishApproveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_origin_publish_approve(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.origin.publish.execute" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.origin.publish.execute", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::origin::publish::OriginPublishIdRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_origin_publish_execute(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.code.origin.publish.cancel" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.code.origin.publish.cancel", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::origin::publish::OriginPublishIdRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_code_origin_publish_cancel(
+                    server, auth, input,
+                )
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

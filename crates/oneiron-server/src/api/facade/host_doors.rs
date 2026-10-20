@@ -169,6 +169,8 @@ pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
+// The exact publish doors (FIX 6866): the owner, or one Grant's holder.
+pub(crate) use super::origin_publish_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::code_view_doors::*;
 pub(crate) use super::codebase_doors::*;
@@ -1730,6 +1732,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.register"
         | "vault.code.origin.mirror.get"
         | "vault.code.origin.mirror.set"
+        | "vault.code.origin.mirror.strategy"
         | "vault.code.origin.mirror.clear"
         | "vault.code.origin.mirror.push"
         | "vault.code.origin.authority.get"
@@ -1830,6 +1833,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.propose"
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
+        }
+        // The exact publish rows (FIX 6866): the owner, or a bound principal
+        // whose one Grant the engine door admits in its own snapshot.
+        "vault.code.origin.publish.request"
+        | "vault.code.origin.publish.review"
+        | "vault.code.origin.publish.get"
+        | "vault.code.origin.publish.approve"
+        | "vault.code.origin.publish.execute"
+        | "vault.code.origin.publish.cancel" => {
+            super::origin_publish_doors::publish_admits(server, auth, verb)
         }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.

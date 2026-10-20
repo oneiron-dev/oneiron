@@ -5250,6 +5250,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_code_origin_mirror_strategy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.strategy", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_origin_mirror_clear(
         &self,
         input: serde_json::Value,
@@ -5265,6 +5274,60 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.origin.mirror.push", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_publish_request(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.publish.request", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_publish_review(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.publish.review", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_publish_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.publish.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_publish_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.publish.approve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_publish_execute(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.publish.execute", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_publish_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.publish.cancel", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

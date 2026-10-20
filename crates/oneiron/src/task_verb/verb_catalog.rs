@@ -608,8 +608,15 @@ pub enum AgentVerb {
     VaultCodeOriginRegister,
     VaultCodeOriginMirrorGet,
     VaultCodeOriginMirrorSet,
+    VaultCodeOriginMirrorStrategy,
     VaultCodeOriginMirrorClear,
     VaultCodeOriginMirrorPush,
+    VaultCodeOriginPublishRequest,
+    VaultCodeOriginPublishReview,
+    VaultCodeOriginPublishGet,
+    VaultCodeOriginPublishApprove,
+    VaultCodeOriginPublishExecute,
+    VaultCodeOriginPublishCancel,
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
@@ -1716,8 +1723,15 @@ impl AgentVerb {
         Self::VaultCodeOriginRegister,
         Self::VaultCodeOriginMirrorGet,
         Self::VaultCodeOriginMirrorSet,
+        Self::VaultCodeOriginMirrorStrategy,
         Self::VaultCodeOriginMirrorClear,
         Self::VaultCodeOriginMirrorPush,
+        Self::VaultCodeOriginPublishRequest,
+        Self::VaultCodeOriginPublishReview,
+        Self::VaultCodeOriginPublishGet,
+        Self::VaultCodeOriginPublishApprove,
+        Self::VaultCodeOriginPublishExecute,
+        Self::VaultCodeOriginPublishCancel,
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
@@ -2845,8 +2859,15 @@ impl AgentVerb {
             Self::VaultCodeOriginRegister => "vault.code.origin.register",
             Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
             Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
+            Self::VaultCodeOriginMirrorStrategy => "vault.code.origin.mirror.strategy",
             Self::VaultCodeOriginMirrorClear => "vault.code.origin.mirror.clear",
             Self::VaultCodeOriginMirrorPush => "vault.code.origin.mirror.push",
+            Self::VaultCodeOriginPublishRequest => "vault.code.origin.publish.request",
+            Self::VaultCodeOriginPublishReview => "vault.code.origin.publish.review",
+            Self::VaultCodeOriginPublishGet => "vault.code.origin.publish.get",
+            Self::VaultCodeOriginPublishApprove => "vault.code.origin.publish.approve",
+            Self::VaultCodeOriginPublishExecute => "vault.code.origin.publish.execute",
+            Self::VaultCodeOriginPublishCancel => "vault.code.origin.publish.cancel",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
@@ -3965,8 +3986,15 @@ impl AgentVerb {
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
                 | Self::VaultCodeOriginMirrorPush
+                | Self::VaultCodeOriginPublishRequest
+                | Self::VaultCodeOriginPublishReview
+                | Self::VaultCodeOriginPublishGet
+                | Self::VaultCodeOriginPublishApprove
+                | Self::VaultCodeOriginPublishExecute
+                | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -5101,8 +5129,15 @@ impl AgentVerb {
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
                 | Self::VaultCodeOriginMirrorPush
+                | Self::VaultCodeOriginPublishRequest
+                | Self::VaultCodeOriginPublishReview
+                | Self::VaultCodeOriginPublishGet
+                | Self::VaultCodeOriginPublishApprove
+                | Self::VaultCodeOriginPublishExecute
+                | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -6332,8 +6367,15 @@ impl AgentVerb {
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
                 | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
                 | Self::VaultCodeOriginMirrorPush
+                | Self::VaultCodeOriginPublishRequest
+                | Self::VaultCodeOriginPublishReview
+                | Self::VaultCodeOriginPublishGet
+                | Self::VaultCodeOriginPublishApprove
+                | Self::VaultCodeOriginPublishExecute
+                | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -7164,8 +7206,13 @@ impl AgentVerb {
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
                 | Self::VaultCodeOriginMirrorPush
+                | Self::VaultCodeOriginPublishRequest
+                | Self::VaultCodeOriginPublishApprove
+                | Self::VaultCodeOriginPublishExecute
+                | Self::VaultCodeOriginPublishCancel
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -8101,8 +8148,15 @@ impl AgentVerb {
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
             Self::VaultCodeOriginMirrorPush => &["spec"],
+            Self::VaultCodeOriginPublishRequest => &["spec"],
+            Self::VaultCodeOriginPublishReview => &["spec"],
+            Self::VaultCodeOriginPublishGet => &["spec"],
+            Self::VaultCodeOriginPublishApprove => &["spec"],
+            Self::VaultCodeOriginPublishExecute => &["spec"],
+            Self::VaultCodeOriginPublishCancel => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -9210,8 +9264,15 @@ impl AgentVerb {
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
             Self::VaultCodeOriginMirrorPush => &["spec"],
+            Self::VaultCodeOriginPublishRequest => &["spec"],
+            Self::VaultCodeOriginPublishReview => &["spec"],
+            Self::VaultCodeOriginPublishGet => &["spec"],
+            Self::VaultCodeOriginPublishApprove => &["spec"],
+            Self::VaultCodeOriginPublishExecute => &["spec"],
+            Self::VaultCodeOriginPublishCancel => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -11494,13 +11555,34 @@ impl AgentVerb {
                 "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."
             }
             Self::VaultCodeOriginMirrorSet => {
-                "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."
+                "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me unless named; the same URL keeps its own); the token binding is checked in the setup write."
+            }
+            Self::VaultCodeOriginMirrorStrategy => {
+                "Set one served origin mirror's sync strategy: ask_me sends nothing until an exact publish request is approved, schedule pushes every published ref on its cadence; it changes only the strategy and its revision."
             }
             Self::VaultCodeOriginMirrorClear => {
                 "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."
             }
             Self::VaultCodeOriginMirrorPush => {
-                "Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them."
+                "Push one origin's published Git refs to its schedule mirror now, recording the real outcome (ask_me refuses publish_request_required); refs pushed are not readiness, which names the LFS objects the history needs."
+            }
+            Self::VaultCodeOriginPublishRequest => {
+                "Ask to publish one exact commit to one branch of a served origin's mirror, once: the request leases the push on the branch tip an authenticated read saw and records a full-ancestry review of what it would expose."
+            }
+            Self::VaultCodeOriginPublishReview => {
+                "Read one page of an exact publish request's full-ancestry review: each commit the push would expose, with its parents, and every path, mode and object those commits introduce."
+            }
+            Self::VaultCodeOriginPublishGet => {
+                "Read one exact publish request: its tuple, review digest, state, acts and the typed refusal that ended it, if one did."
+            }
+            Self::VaultCodeOriginPublishApprove => {
+                "Approve one pending exact publish request by naming its review digest, as the owner or under one Grant covering the branch and every reviewed path; no second approval is asked."
+            }
+            Self::VaultCodeOriginPublishExecute => {
+                "Push one approved exact publish request's commit to its branch once, leased on the recorded tip; an unproven outcome settles from the mirror and is never sent again."
+            }
+            Self::VaultCodeOriginPublishCancel => {
+                "Cancel one pending or approved exact publish request; a request whose push is in flight or that already settled stays as it is."
             }
             Self::VaultCodeOriginAuthorityGet => {
                 "Read one served origin authority and this host identity under the owner credential."
