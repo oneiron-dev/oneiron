@@ -11,6 +11,7 @@ use super::spec::Recipe;
 use crate::edit::Preset;
 use crate::live::{
     ChartKind, ChartSeries, ChartSource, ConnectorEnd, DeckOp, NodeId, NodeKind, NodePayload,
+    TableBody,
 };
 
 /// One mutation over the probed baseline.
@@ -167,13 +168,11 @@ fn carried(
                     NodeKind::GraphicFrame,
                     "Oracle table",
                     None,
-                    Some(NodePayload::Table {
-                        header: vec!["Region".to_owned(), "Units".to_owned()],
-                        rows: vec![
-                            vec![Some("North".to_owned()), Some("12".to_owned())],
-                            vec![Some("South".to_owned()), None],
-                        ],
-                    }),
+                    Some(NodePayload::Table(table_of(&[
+                        &["Region", "Units"],
+                        &["North", "12"],
+                        &["South", ""],
+                    ]))),
                 ),
                 place,
             ],
@@ -399,6 +398,20 @@ fn connector(n: NodeId, s: NodeId, t: NodeId, ids: &mut Ids) -> Plan {
         Scope::SLIDE,
         vec![markup("cxnSp>"), markup("stCxn")],
     )
+}
+
+/// A live-born table of `grid`'s text; its rows and columns are named 1 to
+/// n, which the table's own identities need not be past.
+fn table_of(grid: &[&[&str]]) -> TableBody {
+    let grid: Vec<Vec<String>> = grid
+        .iter()
+        .map(|line| line.iter().map(|text| (*text).to_owned()).collect())
+        .collect();
+    let mut next = 0;
+    TableBody::of_grid(&grid, || {
+        next += 1;
+        NodeId(next)
+    })
 }
 
 fn markup(contains: &str) -> OfficeCheck {

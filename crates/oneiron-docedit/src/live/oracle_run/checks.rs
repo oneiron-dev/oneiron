@@ -581,6 +581,11 @@ fn same_payload(
                 && series.len() == read_series.len()
                 && series.iter().zip(read_series).all(same_series)
         }
+        // A table reads back as its grid and its drawn merges: the import
+        // names its rows and columns afresh.
+        (Some(NodePayload::Table(table)), Some(NodePayload::Table(read))) => {
+            table.grid() == read.grid() && table.effective().spans() == read.effective().spans()
+        }
         (Some(a), Some(b)) => a == b,
         (Some(_), None) => false,
     };

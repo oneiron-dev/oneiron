@@ -20,7 +20,16 @@ use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Model identity for slides, shapes and paragraphs. The root is `NodeId(0)`.
+mod merge;
+mod table;
+mod table_ops;
+
+pub use merge::{diff, preflight, preflight_merged};
+pub use table::{MergeFault, TableBinding, TableBody, TableEdit, TableMerge};
+pub(crate) use table::{UNBOUND_GRID, positions};
+
+/// Model identity for slides, shapes, paragraphs, and a table's rows and
+/// columns. The root is `NodeId(0)`.
 #[derive(
     Debug,
     Clone,
@@ -73,6 +82,9 @@ pub struct NodeBinding {
     pub creation_id: Option<String>,
     /// Content fingerprint at import; the staleness guard for export edits.
     pub fingerprint: [u8; 32],
+    /// A table frame's rows and columns as its retained XML holds them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableBinding>,
 }
 
 /// Own (never inherited) geometry, in EMU and 60,000ths of a degree.
@@ -131,12 +143,9 @@ pub enum NodePayload {
     /// picture takes new media as an engine asset ([`Self::Picture`]), and
     /// shows any image part the deck holds again under this payload.
     HeldPicture { media: HeldMedia },
-    /// A native table: a header row of column names, then rows of cell text
-    /// (`None` is an empty cell), one cell per column.
-    Table {
-        header: Vec<String>,
-        rows: Vec<Vec<Option<String>>>,
-    },
+    /// A native table: rows and columns by stable identity, cells by row and
+    /// column, and merge rectangles by corner identity ([`TableBody`]).
+    Table(TableBody),
     /// A classic chart: one category per point, each series one value per
     /// category (`None` is a missing point), or a scatter series one value
     /// per x value.
@@ -339,7 +348,7 @@ impl NodePayload {
     /// A picture, imported or live-born, shows any image part the deck
     /// holds; a SmartArt settles its nodes' levels and identities
     /// ([`diagram::settle`]); a shape takes paths naming only guides it
-    /// defines; a table pads ragged rows to its widest. A chart settles as
+    /// defines; a table settles to its one written form. A chart settles as
     /// [`convert::settle_chart`] lays it out: Change Chart Type between any
     /// families, for the chart or one series, data written to a chart read
     /// from its caches embedded, and a live-born chart of any family over
@@ -394,44 +403,20 @@ impl NodePayload {
                 points::check(paths, was)?;
                 same()
             }
-            Self::Table { header, rows } => {
-                // A table is a grid (a merge spans cells and removes none):
-                // a ragged row, or a short header, is padded with empty
-                // cells to the widest row, live-born or written.
-                let columns = rows
-                    .iter()
-                    .map(Vec::len)
-                    .chain([header.len()])
-                    .max()
-                    .unwrap_or(0);
-                // Kept: a table of no column has no grid, and PowerPoint
-                // deletes a table whose last column goes, which
-                // `RemoveNode` does.
-                if columns == 0 {
-                    return Err(LiveError::Invalid(WRITTEN_TABLE));
-                }
+            Self::Table(table) => {
+                // A table is a grid of its rows and columns: a cell it does
+                // not hold is empty ([`TableBody::settle`]).
+                let was = match held {
+                    Some(Self::Table(was)) => Some(was),
+                    _ => None,
+                };
+                let (table, done) = table.settled(was)?;
                 // Kept: PowerPoint has no direct table/chart swap: it turns
                 // no chart or diagram into a table.
-                if bound && !matches!(held, Some(Self::Table { .. })) {
+                if bound && was.is_none() {
                     return Err(LiveError::Invalid(WRITTEN_FRAME));
                 }
-                if header.len() == columns && rows.iter().all(|row| row.len() == columns) {
-                    return same();
-                }
-                let mut header = header.clone();
-                header.resize(columns, String::new());
-                let rows = rows
-                    .iter()
-                    .map(|row| {
-                        let mut row = row.clone();
-                        row.resize(columns, None);
-                        row
-                    })
-                    .collect();
-                Ok((
-                    Self::Table { header, rows },
-                    vec![Conversion::TableRowsPadded { columns }],
-                ))
+                Ok((Self::Table(table), done))
             }
             Self::Chart { .. } => {
                 // Kept: PowerPoint has no direct table/chart swap, and a
@@ -458,8 +443,9 @@ impl NodePayload {
 /// from the retained package; changing them needs the embedding app.
 pub(crate) const HELD: &str =
     "read from the retained package: no deck op writes an OLE object (it needs its embedding app)";
-/// The empty-table refusal: a table holds at least one column.
-pub(crate) const WRITTEN_TABLE: &str = "a table holds at least one column";
+/// The empty-table refusal: a table holds at least one row and column.
+pub(crate) const WRITTEN_TABLE: &str =
+    "a table holds at least one row and one column; RemoveNode removes the table";
 /// A written frame stays the kind of frame the live deck read in it.
 pub(crate) const WRITTEN_FRAME: &str =
     "a written frame keeps the table or chart the live deck reads in it";
@@ -571,6 +557,7 @@ impl LiveDeck {
                         native_id: Some(slide.sld_id),
                         creation_id: slide.creation_id.map(|id| id.to_string()),
                         fingerprint: slide.content_fingerprint,
+                        table: None,
                     }),
                     geometry: GeometryProps::default(),
                     placeholder: None,
@@ -609,6 +596,7 @@ impl LiveDeck {
                             native_id: shape.id,
                             creation_id: shape.creation_id.clone(),
                             fingerprint: shape.content_fingerprint,
+                            table: None,
                         }),
                         geometry,
                         placeholder: shape
@@ -647,12 +635,24 @@ impl LiveDeck {
                 .zip(&ids)
                 .filter_map(|(shape, id)| Some((shape.id?, *id)))
                 .collect();
+            // A table's rows and columns are minted once, here, in retained
+            // order, and bound to the coordinates its XML holds them at.
             for (shape, id) in slide.shapes.iter().zip(&ids) {
+                let (payload, table) = match held::table::import(&tree, shape, || deck.mint()) {
+                    Some((body, binding)) => (Some(NodePayload::Table(body)), Some(binding)),
+                    None => (
+                        held::payload(package, &slide.part, &tree, shape, |at| {
+                            native.get(&at).copied()
+                        }),
+                        None,
+                    ),
+                };
                 let node = deck.nodes.get_mut(id).expect("shape inserted above");
                 node.preset = held::shape_preset(&tree, shape);
-                node.payload = held::payload(package, &slide.part, &tree, shape, |at| {
-                    native.get(&at).copied()
-                });
+                node.payload = payload;
+                if let Some(binding) = &mut node.binding {
+                    binding.table = table;
+                }
             }
         }
         for name in package.names() {
@@ -874,10 +874,19 @@ pub enum DeckOp {
     /// series, categories), and a chart its type, for the whole chart or one
     /// series, as PowerPoint does; the export rewrites it. A reshaped
     /// written table's frame takes its grid's size: its own extent clears.
-    /// The edit's effects name what it did PowerPoint's way.
+    /// A whole table written over a table is logged as the table edits that
+    /// make it ([`LiveDeck::lower`]). The edit's effects name what it did
+    /// PowerPoint's way.
     SetPayload {
         node: NodeId,
         payload: NodePayload,
+    },
+    /// Edits to the table a graphic frame holds, by row and column
+    /// identity, in order. A reshaped written table's frame takes its grid's
+    /// size: its own extent clears.
+    EditTable {
+        node: NodeId,
+        edits: Vec<TableEdit>,
     },
     /// Whole-part replacement of an opaque part, guarded by its source hash.
     ReplaceOpaque {
@@ -898,7 +907,8 @@ impl DeckOp {
             | DeckOp::SetRunMarks { node, .. }
             | DeckOp::SetGeometry { node, .. }
             | DeckOp::SetPreset { node, .. }
-            | DeckOp::SetPayload { node, .. } => Some(*node),
+            | DeckOp::SetPayload { node, .. }
+            | DeckOp::EditTable { node, .. } => Some(*node),
             DeckOp::AddSlide { .. } | DeckOp::ReplaceOpaque { .. } => None,
         }
     }
@@ -923,16 +933,6 @@ impl DeckOp {
         }
     }
 
-    /// Name the identity of a creation that names none, from `mint`: what a
-    /// writer records so every replay makes the same node.
-    pub fn name_creation(&mut self, mint: impl FnOnce() -> NodeId) {
-        if let DeckOp::AddSlide { id } | DeckOp::AddNode { id, .. } = self
-            && id.is_none()
-        {
-            *id = Some(mint());
-        }
-    }
-
     pub fn kind(&self) -> ChangeKind {
         match self {
             DeckOp::AddSlide { .. } | DeckOp::AddNode { .. } | DeckOp::RemoveNode { .. } => {
@@ -944,6 +944,7 @@ impl DeckOp {
             DeckOp::SetGeometry { .. }
             | DeckOp::SetPreset { .. }
             | DeckOp::SetPayload { .. }
+            | DeckOp::EditTable { .. }
             | DeckOp::ReplaceOpaque { .. } => ChangeKind::Property,
         }
     }
@@ -1186,18 +1187,21 @@ impl LiveDeck {
                 // A written table that changes shape takes its grid's size at
                 // export, as PowerPoint lays it out: its own extent clears.
                 if bound
-                    && let (
-                        Some(NodePayload::Table {
-                            header: was,
-                            rows: had,
-                        }),
-                        NodePayload::Table { header, rows },
-                    ) = (&found.payload, &settled)
-                    && (was.len() != header.len() || had.len() != rows.len())
+                    && let (Some(NodePayload::Table(was)), NodePayload::Table(now)) =
+                        (&found.payload, &settled)
+                    && was.shape() != now.shape()
                 {
                     found.geometry.extent = None;
                 }
                 found.payload = Some(settled);
+                effects.extend(done.into_iter().map(|conversion| Effect::Converted {
+                    node: *node,
+                    conversion,
+                }));
+                vec![*node]
+            }
+            DeckOp::EditTable { node, edits } => {
+                let done = table_ops::edit_table(self, *node, edits)?;
                 effects.extend(done.into_iter().map(|conversion| Effect::Converted {
                     node: *node,
                     conversion,
@@ -1252,17 +1256,10 @@ impl AttributionIndex {
     pub fn build(deck: &LiveDeck, log: &[StampedOp]) -> Self {
         let mut index = Self::default();
         // Minting is sequential, so the identities creation operations
-        // produced are recoverable: the log's creations are the last
-        // mints below the deck's high-water mark, in log order.
-        let creates = log
-            .iter()
-            .filter(|stamped| {
-                matches!(
-                    stamped.op,
-                    DeckOp::AddSlide { id: None } | DeckOp::AddNode { id: None, .. }
-                )
-            })
-            .count() as u64;
+        // produced are recoverable: the log's mints (its unnamed creations,
+        // and the rows and columns its table edits inserted unnamed) are the
+        // last mints below the deck's high-water mark, in log order.
+        let creates: u64 = log.iter().map(|stamped| stamped.op.unnamed()).sum();
         let mut next_mint = deck.next_node.saturating_sub(creates);
         for stamped in log {
             let kind = stamped.op.kind();
@@ -1275,7 +1272,10 @@ impl AttributionIndex {
                     next_mint += 1;
                     Some(id)
                 }
-                _ => None,
+                _ => {
+                    next_mint += stamped.op.unnamed();
+                    None
+                }
             };
             let effective = created.or_else(|| stamped.op.target());
             if let Some(target) = effective {
@@ -1416,6 +1416,12 @@ pub enum Conflict {
     BothReplacedOpaque { part: String },
     /// Both sides changed one node's preset or payload differently.
     PayloadVsPayload { node: NodeId },
+    /// Both sides wrote one table cell differently.
+    CellVsCell {
+        node: NodeId,
+        row: NodeId,
+        column: NodeId,
+    },
 }
 
 /// One relationship that differs between the head's export and the merged
@@ -1530,166 +1536,6 @@ fn sibling_index(deck: &LiveDeck, node: NodeId) -> Option<usize> {
         .position(|child| *child == node)
 }
 
-/// Compare base, current head and proposal. Text and formatting are
-/// reported separately; own geometry separately from moves, and preset and
-/// payload on their own.
-pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
-    let mut out = DeckDiff {
-        base_version: base.version,
-        head_version: head.version,
-        proposal_version: proposal.version,
-        added: Vec::new(),
-        removed: Vec::new(),
-        moved: Vec::new(),
-        text_changed: Vec::new(),
-        formatting_changed: Vec::new(),
-        geometry_changed: Vec::new(),
-        payload_changed: Vec::new(),
-        opaque_changed: Vec::new(),
-        affected_slides: Vec::new(),
-        head_only: Vec::new(),
-        conflicts: Vec::new(),
-        relationships: Vec::new(),
-        renders: None,
-    };
-    let mut affected: BTreeSet<NodeId> = BTreeSet::new();
-    for id in proposal.nodes.keys() {
-        if !base.nodes.contains_key(id) {
-            out.added.push(*id);
-            if let Some(slide) = slide_of(proposal, *id) {
-                affected.insert(slide);
-            }
-        }
-    }
-    for id in base.nodes.keys() {
-        if !proposal.nodes.contains_key(id) {
-            out.removed.push(*id);
-            if let Some(slide) = slide_of(base, *id) {
-                affected.insert(slide);
-            }
-        }
-    }
-    for (id, node) in &proposal.nodes {
-        let Some(was) = base.nodes.get(id) else {
-            continue;
-        };
-        let moved =
-            was.parent != node.parent || sibling_index(base, *id) != sibling_index(proposal, *id);
-        if moved {
-            out.moved.push(NodeMove {
-                node: *id,
-                old_parent: was.parent,
-                new_parent: node.parent,
-                old_index: sibling_index(base, *id),
-                new_index: sibling_index(proposal, *id),
-                cross_slide: slide_of(base, *id) != slide_of(proposal, *id),
-            });
-        }
-        if was.geometry != node.geometry {
-            out.geometry_changed.push(*id);
-        }
-        let rewritten = written(was) != written(node);
-        if rewritten {
-            out.payload_changed.push(*id);
-        }
-        match (base.texts.get(id), proposal.texts.get(id)) {
-            (a, b) if a == b => {}
-            (Some(a), Some(b)) if a.plain() == b.plain() => out.formatting_changed.push(*id),
-            _ => out.text_changed.push(*id),
-        }
-        if moved
-            || rewritten
-            || was.geometry != node.geometry
-            || base.texts.get(id) != proposal.texts.get(id)
-        {
-            if let Some(slide) = slide_of(proposal, *id).or_else(|| slide_of(base, *id)) {
-                affected.insert(slide);
-            }
-        }
-        // Head-only work: changed on the head, untouched by the proposal.
-        if unit_changed(base, head, *id) && !unit_changed(base, proposal, *id) {
-            out.head_only.push(*id);
-        }
-        // Conflicts: both sides changed the same unit incompatibly.
-        let head_node = head.nodes.get(id);
-        if head_node.is_none() && unit_changed(base, proposal, *id) {
-            out.conflicts.push(Conflict::DeletedVsEdited {
-                node: *id,
-                deleted_by_head: true,
-            });
-        } else if let Some(head_node) = head_node {
-            let head_moved = was.parent != head_node.parent
-                || sibling_index(base, *id) != sibling_index(head, *id);
-            if moved
-                && head_moved
-                && (node.parent != head_node.parent
-                    || sibling_index(proposal, *id) != sibling_index(head, *id))
-            {
-                out.conflicts.push(Conflict::BothMoved { node: *id });
-            }
-            if moved != head_moved
-                && ((moved && was.geometry != head_node.geometry)
-                    || (head_moved && was.geometry != node.geometry))
-            {
-                out.conflicts
-                    .push(Conflict::GeometryVsReparent { node: *id });
-            }
-            if base.texts.get(id) != head.texts.get(id)
-                && base.texts.get(id) != proposal.texts.get(id)
-                && head.texts.get(id) != proposal.texts.get(id)
-            {
-                out.conflicts.push(Conflict::TextVsText { node: *id });
-            }
-            if written(was) != written(head_node)
-                && rewritten
-                && written(head_node) != written(node)
-            {
-                out.conflicts.push(Conflict::PayloadVsPayload { node: *id });
-            }
-        }
-    }
-    for id in base.nodes.keys() {
-        if !proposal.nodes.contains_key(id) && unit_changed(base, head, *id) {
-            out.conflicts.push(Conflict::DeletedVsEdited {
-                node: *id,
-                deleted_by_head: false,
-            });
-        }
-    }
-    let mut parts: BTreeSet<&str> = BTreeSet::new();
-    parts.extend(base.opaque_parts.keys().map(String::as_str));
-    parts.extend(proposal.opaque_parts.keys().map(String::as_str));
-    for part in parts {
-        let (b, h, p) = (
-            base.opaque_parts.get(part),
-            head.opaque_parts.get(part),
-            proposal.opaque_parts.get(part),
-        );
-        if b != p {
-            out.opaque_changed.push(OpaqueChange {
-                part: part.to_owned(),
-                base: b.copied(),
-                proposal: p.copied(),
-            });
-            // A master, layout or theme replacement can affect every slide.
-            affected.extend(
-                proposal
-                    .nodes
-                    .iter()
-                    .filter(|(_, node)| node.kind == NodeKind::Slide)
-                    .map(|(id, _)| *id),
-            );
-        }
-        if b != h && b != p && h != p {
-            out.conflicts.push(Conflict::BothReplacedOpaque {
-                part: part.to_owned(),
-            });
-        }
-    }
-    out.affected_slides = affected.into_iter().collect();
-    out
-}
-
 /// The scratch-candidate check before any merge: the fork's actual
 /// operations replayed onto the current head. Operations are never
 /// cherry-picked and merging is never replaced with a rewrite.
@@ -1701,26 +1547,6 @@ pub struct PreflightReport {
     pub diff: DeckDiff,
     pub replay_refusals: Vec<String>,
     pub ok: bool,
-}
-
-pub fn preflight(head: &LiveDeck, fork: &DeckFork) -> Result<PreflightReport, LiveError> {
-    let proposal = fork.candidate()?;
-    let comparison = diff(&fork.base, head, &proposal);
-    let mut candidate = head.clone();
-    let mut refusals = Vec::new();
-    for op in &fork.ops {
-        if let Err(error) = candidate.apply(op) {
-            refusals.push(error.to_string());
-        }
-    }
-    let ok = comparison.conflicts.is_empty() && refusals.is_empty();
-    Ok(PreflightReport {
-        head_version: head.version,
-        candidate,
-        diff: comparison,
-        replay_refusals: refusals,
-        ok,
-    })
 }
 
 /// The three ruled approve-all scopes. A finer scope is a later addition

@@ -1,6 +1,7 @@
 //! What a retained element is written as, in live-model terms: a shape's
-//! preset or custom geometry, a connector's preset and glue, a table's cell
-//! text, a chart's plots, categories and series read from its caches, a
+//! preset or custom geometry, a connector's preset and glue, a table's rows,
+//! columns, cells and merges ([`table`]), a chart's plots, categories and
+//! series read from its caches, a
 //! SmartArt's text outline, an OLE object's program id and preview, and a
 //! picture's media identity. The import records it on each node, and the
 //! export projector reads it again to write only what the live model changed.
@@ -26,6 +27,8 @@ pub(crate) const DGM: &str = "http://schemas.openxmlformats.org/drawingml/2006/d
 const OLE: &str = "http://schemas.openxmlformats.org/presentationml/2006/ole";
 const FRAME_DATA: &[(&str, &str)] = &[(A, "graphic"), (A, "graphicData")];
 
+pub(super) mod table;
+
 /// A slide part's parsed tree; [`ShapeView::node`] indexes into it.
 pub(crate) fn slide_tree(package: &Package, part: &str) -> Result<XmlTree, LiveError> {
     Ok(xml::read(package, part)?.1)
@@ -43,10 +46,11 @@ pub(crate) fn shape_preset(tree: &XmlTree, shape: &ShapeView) -> Option<Preset> 
 
 /// A retained element's payload: a shape's custom geometry, a picture's
 /// media, a connector's preset and glue (each end through `node_of`, the
-/// live node holding a native id on the slide), a table's cells, a chart's
-/// data, a SmartArt's text outline, or an OLE object's program id and
-/// preview. Anything else, and a chart the reader cannot read, reads as none
-/// and stays in the retained markup.
+/// live node holding a native id on the slide), a chart's data, a
+/// SmartArt's text outline, or an OLE object's program id and preview (a
+/// table is read with its identities by [`table::import`]). Anything else,
+/// and a chart the reader cannot read, reads as none and stays in the
+/// retained markup.
 pub(crate) fn payload(
     package: &Package,
     part: &str,
@@ -79,20 +83,6 @@ pub(crate) fn payload(
             })
         }
         ShapeKind::GraphicFrame => {
-            if let Some(cells) = table_cells(tree, at) {
-                let (header, rows) = cells.split_first()?;
-                return Some(NodePayload::Table {
-                    header: header.clone(),
-                    rows: rows
-                        .iter()
-                        .map(|row| {
-                            row.iter()
-                                .map(|text| (!text.is_empty()).then(|| text.clone()))
-                                .collect()
-                        })
-                        .collect(),
-                });
-            }
             let data = xml::path(tree, at, FRAME_DATA)?;
             match tree.nodes[data].attr("uri")? {
                 C => chart(package, &chart_part(package, part, tree, at)?),
@@ -128,32 +118,6 @@ pub(crate) fn children<'t>(
 pub(crate) fn within(tree: &XmlTree, at: usize) -> impl Iterator<Item = usize> + '_ {
     let end = tree.nodes[at].span.end;
     (at + 1..tree.nodes.len()).take_while(move |&index| tree.nodes[index].span.start < end)
-}
-
-/// A table frame's `a:tbl`.
-pub(crate) fn table_of(tree: &XmlTree, frame: usize) -> Option<usize> {
-    let data = xml::path(tree, frame, FRAME_DATA)?;
-    xml::child(tree, data, A, "tbl")
-}
-
-/// A table frame's rows of cell text, header row first, each cell read as
-/// `NativeEdit::SetTableCell` reads it: the `a:t` text of each paragraph,
-/// joined by `\n`. `None` when the frame holds no table.
-pub(crate) fn table_cells(tree: &XmlTree, frame: usize) -> Option<Vec<Vec<String>>> {
-    let tbl = table_of(tree, frame)?;
-    Some(
-        children(tree, tbl, A, "tr")
-            .map(|tr| {
-                children(tree, tr, A, "tc")
-                    .map(|tc| cell_text(tree, tc))
-                    .collect()
-            })
-            .collect(),
-    )
-}
-
-fn cell_text(tree: &XmlTree, tc: usize) -> String {
-    xml::child(tree, tc, A, "txBody").map_or_else(String::new, |body| paragraphs(tree, body))
 }
 
 /// The `a:t` text of each `a:p` under `body`, joined by `\n`.

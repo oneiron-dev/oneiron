@@ -34,7 +34,7 @@ use oneiron_docedit::edit::transaction::{AssetRef, Assets};
 use oneiron_docedit::graphic::AssetRecord;
 use oneiron_docedit::live::deck_export::export_key;
 use oneiron_docedit::live::{
-    ExportKey, ExportOutcome, ExportProfile, HeldAssets, LiveDeck, preflight, project,
+    ExportKey, ExportOutcome, ExportProfile, HeldAssets, LiveDeck, project,
 };
 use oneiron_docedit::retained_opc::Package;
 
@@ -257,8 +257,8 @@ struct Projection {
 }
 
 impl Vault {
-    /// The deck at its head, or with `fork` that open fork's merge candidate
-    /// over the head, as [`Vault::pptx_body_fork_review`] reads it.
+    /// The deck at its head, or with `fork` that open fork's actual merged
+    /// candidate over the head, as [`Vault::pptx_body_fork_review`] reads it.
     fn deck_projection(&self, artifact: &EntityId, fork: Option<&EntityId>) -> Result<Projection> {
         let source = self
             .office_body_head(artifact)?
@@ -270,7 +270,8 @@ impl Vault {
                 Some(fork) => {
                     let record = open_record(&self.store, &txn, artifact, fork)?;
                     let work = self.deck_fork(&txn, &record)?;
-                    Some(preflight(&body.deck, &work).map_err(live)?.candidate)
+                    let report = self.deck_preflight(&txn, artifact, &body.deck, &record, &work)?;
+                    Some(report.candidate)
                 }
                 None => None,
             };

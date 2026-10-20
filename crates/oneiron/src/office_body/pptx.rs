@@ -24,12 +24,16 @@
 //! version, records the frontier it projects, and rebinds the deck to them,
 //! and later exports project over them.
 //!
-//! Every creation names its node identity before it is logged, so a fork's
-//! operations replay onto the head as the same nodes.
+//! Every creation names its node identity before it is logged, and so does
+//! every row or column a table edit inserts, so a fork's operations replay
+//! onto the head as the same nodes, rows and columns; a whole table written
+//! over a table is logged as the table edits that make it. A fork's review,
+//! preview and landing read its actual merged candidate ([`merge`]).
 
 mod doc;
 mod export;
 mod log;
+mod merge;
 mod preview;
 mod verbs;
 
@@ -62,7 +66,7 @@ use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
     HeldAssets, Landing, LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt,
-    PreflightReport, StampedOp, attach_evidence, check_picture, effect_receipt, land, preflight,
+    PreflightReport, StampedOp, attach_evidence, check_picture, effect_receipt, land,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -163,15 +167,9 @@ impl Vault {
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
         self.check_pictures(ops)?;
-        let ops = self.name_creations(ops)?;
-        let stamped: Vec<StampedOp> = ops
-            .iter()
-            .map(|op| StampedOp {
-                made_by: actor.entity_ref().to_hex(),
-                at: made_by.at,
-                op: op.clone(),
-            })
-            .collect();
+        let mut fresh = Fresh::new(self.new_entity_id()?);
+        let ops = name_creations(ops, &mut fresh);
+        let maker = actor.entity_ref().to_hex();
         // What the operations did PowerPoint's way, for the receipt.
         let mut effects = Vec::new();
         let mut edit = self.edit_live(
@@ -182,10 +180,13 @@ impl Vault {
             |base, head| doc::admit(base, head, &ops),
             |doc| {
                 let mut body = doc::read(doc)?;
-                for op in &stamped {
-                    let (_, done) = body.deck.apply_with_effects(op).map_err(live)?;
-                    effects.extend(done.iter().map(effect_receipt));
-                }
+                let stamped = apply_ops(
+                    &mut body.deck,
+                    &ops,
+                    (&maker, made_by.at),
+                    &mut fresh,
+                    &mut effects,
+                )?;
                 doc::sync_to(doc, &body.deck)?;
                 doc::append_log(doc, &log::logged(doc, &stamped))?;
                 Ok(ops
@@ -213,15 +214,9 @@ impl Vault {
         bounded_ops(ops.len())?;
         check_made_by(actor, made_by)?;
         self.check_pictures(ops)?;
-        let ops = self.name_creations(ops)?;
-        let stamped: Vec<StampedOp> = ops
-            .iter()
-            .map(|op| StampedOp {
-                made_by: actor.entity_ref().to_hex(),
-                at: made_by.at,
-                op: op.clone(),
-            })
-            .collect();
+        let mut fresh = Fresh::new(self.new_entity_id()?);
+        let ops = name_creations(ops, &mut fresh);
+        let maker = actor.entity_ref().to_hex();
         self.with_write_txn_grouped(|wtxn| {
             let key = (*artifact, *fork);
             let mut record = open_record(&self.store, wtxn, artifact, fork)?;
@@ -233,10 +228,13 @@ impl Vault {
             let (_, commit) =
                 edit_typed_body_fork_in_txn(self, wtxn, artifact, fork, writer, |doc| {
                     let mut body = doc::read(doc)?;
-                    for op in &stamped {
-                        let (_, done) = body.deck.apply_with_effects(op).map_err(live)?;
-                        effects.extend(done.iter().map(effect_receipt));
-                    }
+                    let stamped = apply_ops(
+                        &mut body.deck,
+                        &ops,
+                        (&maker, made_by.at),
+                        &mut fresh,
+                        &mut effects,
+                    )?;
                     doc::sync_to(doc, &body.deck)?;
                     doc::append_log(doc, &log::logged(doc, &stamped))
                 })?;
@@ -274,7 +272,7 @@ impl Vault {
             let (head, body) = self.deck_head(&txn, artifact)?;
             let record = open_record(&self.store, &txn, artifact, fork)?;
             let work = self.deck_fork(&txn, &record)?;
-            let report = preflight(&body.deck, &work).map_err(live)?;
+            let report = self.deck_preflight(&txn, artifact, &body.deck, &record, &work)?;
             let assets = HeldAssets::resolve(
                 &VaultAssets {
                     vault: self,
@@ -338,7 +336,7 @@ impl Vault {
                 return Err(invalid("the deck moved since the review; review it again"));
             }
             let work = self.deck_fork(wtxn, &record)?;
-            let report = preflight(&body.deck, &work).map_err(live)?;
+            let report = self.deck_preflight(wtxn, artifact, &body.deck, &record, &work)?;
             let mut receipt = land(
                 &mut body.deck,
                 &work,
@@ -453,25 +451,6 @@ impl Vault {
             return Err(Error::CorruptedIndex(corrupt));
         }
         Ok((bytes, rows))
-    }
-
-    /// `ops` with every creation naming a fresh identity, so the log, a fork's
-    /// replay onto the head and a concurrent writer all make the same node.
-    /// Fresh identities set the top bit, above the import's sequential ones.
-    fn name_creations(&self, ops: &[DeckOp]) -> Result<Vec<DeckOp>> {
-        ops.iter()
-            .map(|op| {
-                let mut op = op.clone();
-                if matches!(
-                    op,
-                    DeckOp::AddSlide { id: None } | DeckOp::AddNode { id: None, .. }
-                ) {
-                    let entropy = self.new_entity_id()?;
-                    op.name_creation(|| fresh_node(&entropy));
-                }
-                Ok(op)
-            })
-            .collect()
     }
 
     /// Refuse a picture an operation writes whose asset does not resolve, or
@@ -632,12 +611,67 @@ fn open_record(
     Ok(record)
 }
 
-/// A node identity drawn from fresh entity entropy, top bit set.
-fn fresh_node(entropy: &EntityId) -> NodeId {
-    let hash = blake3::hash(entropy.as_bytes());
-    let mut word = [0u8; 8];
-    word.copy_from_slice(&hash.as_bytes()[..8]);
-    NodeId(u64::from_le_bytes(word) | 1 << 63)
+/// Node identities drawn from one call's fresh entity entropy, top bit set
+/// (above the import's sequential ones): each the hash of the entropy and
+/// its ordinal.
+struct Fresh {
+    entropy: EntityId,
+    next: u64,
+}
+
+impl Fresh {
+    fn new(entropy: EntityId) -> Self {
+        Self { entropy, next: 0 }
+    }
+
+    fn node(&mut self) -> NodeId {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(self.entropy.as_bytes());
+        hasher.update(&self.next.to_le_bytes());
+        self.next += 1;
+        let mut word = [0u8; 8];
+        word.copy_from_slice(&hasher.finalize().as_bytes()[..8]);
+        NodeId(u64::from_le_bytes(word) | 1 << 63)
+    }
+}
+
+/// `ops` with every creation, and every row or column a table edit inserts,
+/// naming a fresh identity, so the log, a fork's replay onto the head and a
+/// concurrent writer all make the same node, row or column.
+fn name_creations(ops: &[DeckOp], fresh: &mut Fresh) -> Vec<DeckOp> {
+    ops.iter()
+        .map(|op| {
+            let mut op = op.clone();
+            op.name_creation(|| fresh.node());
+            op
+        })
+        .collect()
+}
+
+/// Apply `ops` to `deck` as `maker` at `at`, each first lowered against the
+/// deck it applies to ([`LiveDeck::lower`]: a whole table written over a
+/// table becomes the table edits that make it, its new rows and columns
+/// named from `fresh`); what they did PowerPoint's way joins `effects`. The
+/// operations as logged.
+fn apply_ops(
+    deck: &mut LiveDeck,
+    ops: &[DeckOp],
+    (maker, at): (&str, u64),
+    fresh: &mut Fresh,
+    effects: &mut Vec<String>,
+) -> Result<Vec<StampedOp>> {
+    let mut stamped = Vec::with_capacity(ops.len());
+    for op in ops {
+        let op = StampedOp {
+            made_by: maker.to_owned(),
+            at,
+            op: deck.lower(op, || fresh.node()),
+        };
+        let (_, done) = deck.apply_with_effects(&op).map_err(live)?;
+        effects.extend(done.iter().map(effect_receipt));
+        stamped.push(op);
+    }
+    Ok(stamped)
 }
 
 fn live(error: LiveError) -> Error {

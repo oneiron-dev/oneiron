@@ -1,7 +1,7 @@
 //! What a deck edit or export did PowerPoint's way, named on its receipt
 //! (OF-510; the Office ruling of 10-18).
 
-use super::pptx::{ChartKind, ChartSource};
+use super::pptx::{ChartKind, ChartSource, MergeFault, TableMerge};
 use crate::edit::Effect;
 use serde::{Deserialize, Serialize};
 
@@ -58,9 +58,15 @@ pub enum Conversion {
     HeldMediaShown { part: String },
     /// A reshaped table's frame took its grid's size.
     TableFrameFitted { extent: (i64, i64) },
-    /// A written table's ragged rows (and header) were padded with empty
-    /// cells to the widest row, `columns` wide: a table is a grid.
-    TableRowsPadded { columns: usize },
+    /// A table merge is not drawn: a corner row or column went, the order
+    /// puts one corner past the other, it covers one cell, it overlaps a
+    /// merge before it in corner order, or a new table's merge would hide a
+    /// cell's text. Its cells keep their text and properties, and it draws
+    /// again once the order allows (CALLS, the invalid-merge rule).
+    TableMergeDeactivated {
+        merge: TableMerge,
+        fault: MergeFault,
+    },
     /// A preset shape given paths became a freeform, as Edit Points
     /// converts it.
     ConvertedToFreeform,
@@ -220,9 +226,14 @@ impl Conversion {
             Self::TableFrameFitted { extent: (cx, cy) } => {
                 format!("table frame fitted to its grid: {cx} x {cy} EMU")
             }
-            Self::TableRowsPadded { columns } => {
-                format!("table rows padded with empty cells to {columns} column(s)")
-            }
+            Self::TableMergeDeactivated { merge, fault } => format!(
+                "table merge of rows {} to {} and columns {} to {} not drawn ({}); its cells keep their text",
+                merge.first_row.0,
+                merge.last_row.0,
+                merge.first_column.0,
+                merge.last_column.0,
+                fault.describe()
+            ),
             Self::ConvertedToFreeform => {
                 "the shape became a freeform to take its points".to_owned()
             }
