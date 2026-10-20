@@ -53755,7 +53755,7 @@
      "path": "src/sync/bridge/mod.rs",
      "purpose": "Entity bridge: CRDT ↔ LMDB materialization observers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 4
      }
     },
@@ -53812,6 +53812,16 @@
      "purpose": "Recovery preflight through the existing replay doors, in an aborted transaction",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/regenerates.rs",
+     "purpose": "FIX 6204: the exact obligation ledger for carried `regenerates` links",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -66299,7 +66309,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 221,
+     "files": 222,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66497,7 +66507,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4160,
+   "source_files": 4161,
    "test_files": 902
   },
   "oneiron-android": {
