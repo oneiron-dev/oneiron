@@ -26,6 +26,12 @@ impl OfficeDoc {
         }
     }
 
+    /// The decomposed package itself, for the pipeline's own inspection, diff
+    /// and gate over the input it handed the session.
+    pub(super) fn package(&self) -> &OpcPackage {
+        &self.package
+    }
+
     /// Read-only view of the decomposed parts, for a session that reasons in
     /// Rust (a session shelling out to Python uses [`OfficeDoc::bytes`]).
     pub fn parts(&self) -> impl Iterator<Item = (&str, &[u8])> {

@@ -240,26 +240,28 @@ pub(crate) fn apply_create(
 
     // Copies of the quote in the visible text. Without `occurrence` the anchor
     // goes where it always went; `occurrence` picks the n-th copy instead.
-    let (visible, map) = visible_text(&para.segments);
-    let starts = copy_starts(&visible, expect);
-    let quote_len = expect.chars().count();
+    // The per-char map is built only when a copy is chosen or the fast path
+    // misses; the copies are counted as they stream past.
     let fast = find_span(&para.segments, expect);
+    let (visible, map) = visible_text(&para.segments, occurrence.is_some() || fast.is_none());
+    let quote_len = expect.chars().count();
     let fast_start = fast
         .as_ref()
-        .and_then(|plan| span_plan_visible_start(&para.segments, &map, plan));
+        .map(|plan| span_plan_visible_start(&para.segments, plan));
+    let copies = copy_summary(&visible, expect, occurrence, fast_start);
     let chosen = match occurrence {
-        Some(n) if !starts.is_empty() => {
-            if n == 0 || n > starts.len() {
+        Some(n) if copies.count > 0 => match copies.nth_start {
+            Some(start) => Some((n, start)),
+            None => {
                 return Err(EditError::CommentAnchorOccurrenceOutOfRange {
                     block_id: block_id.clone(),
                     expected: expect.to_string(),
                     occurrence: n,
-                    occurrences: starts.len(),
+                    occurrences: copies.count,
                     step_index,
                 });
             }
-            Some((n, starts[n - 1]))
-        }
+        },
         _ => None,
     };
     // The copy a default anchor encloses: the fast path's hit, else the first
@@ -268,9 +270,7 @@ pub(crate) fn apply_create(
     let anchored = match chosen {
         Some((n, _)) => Some(n),
         None if fast.is_none() => Some(1),
-        None => fast_start
-            .and_then(|at| starts.iter().position(|&s| s == at))
-            .map(|i| i + 1),
+        None => copies.at_copy,
     };
 
     match (fast, chosen) {
@@ -300,7 +300,14 @@ pub(crate) fn apply_create(
             // segment. Resolve it against the paragraph's VISIBLE text and place
             // the range markers on segment boundaries (widening over whole
             // tracked containers).
-            let cross = resolve_cross_segment_anchor(&para.segments, expect, block_id, step_index)?;
+            let cross = resolve_cross_segment_anchor(
+                &para.segments,
+                visible,
+                &map,
+                expect,
+                block_id,
+                step_index,
+            )?;
             apply_cross_segment_markers(&mut para.segments, cross, &comment_id);
         }
     }
@@ -327,11 +334,11 @@ pub(crate) fn apply_create(
         content_hash,
         tracking_status: None,
     });
-    Ok((starts.len() > 1).then(|| EditNote::RepeatedCommentQuote {
+    Ok((copies.count > 1).then(|| EditNote::RepeatedCommentQuote {
         step_index,
         block_id: block_id.clone(),
         expected: expect.to_string(),
-        copies: starts.len(),
+        copies: copies.count,
         anchored,
     }))
 }
@@ -1075,14 +1082,16 @@ fn segment_is_visible(status: &TrackingStatus) -> bool {
 
 /// Resolve `expect` against the paragraph's visible text and decide where the
 /// two range markers land. Refuses (never guesses) when the anchor cannot be
-/// located, or when it falls on deleted content.
+/// located, or when it falls on deleted content. `visible` and `map` are the
+/// caller's [`visible_text`] of `segments`, built with its map.
 fn resolve_cross_segment_anchor(
     segments: &[TrackedSegment],
+    visible: String,
+    map: &[(usize, usize)],
     expect: &str,
     block_id: &NodeId,
     step_index: usize,
 ) -> Result<CrossPlan, EditError> {
-    let (visible, map) = visible_text(segments);
     let Some((start_k, end_k)) = char_find(&visible, expect) else {
         // Not in the visible text. If it IS present once deleted text is folded
         // back in, the caller is trying to comment on struck content — say so
@@ -1109,13 +1118,14 @@ fn resolve_cross_segment_anchor(
             step_index,
         });
     };
-    Ok(cross_plan(segments, &map, start_k, end_k))
+    Ok(cross_plan(segments, map, start_k, end_k))
 }
 
 /// The paragraph's visible text + a per-visible-char map to (segment index,
 /// char offset within that segment's text). Text char offsets only — non-text
 /// inlines never advance the offset, matching `splice_markers_in_segment`.
-fn visible_text(segments: &[TrackedSegment]) -> (String, Vec<(usize, usize)>) {
+/// Without `with_map` the map stays empty and only the text is built.
+fn visible_text(segments: &[TrackedSegment], with_map: bool) -> (String, Vec<(usize, usize)>) {
     let mut visible = String::new();
     let mut map: Vec<(usize, usize)> = Vec::new();
     for (si, seg) in segments.iter().enumerate() {
@@ -1125,6 +1135,10 @@ fn visible_text(segments: &[TrackedSegment]) -> (String, Vec<(usize, usize)>) {
         let mut local = 0usize;
         for inline in &seg.inlines {
             if let InlineNode::Text(t) = inline {
+                if !with_map {
+                    visible.push_str(&t.text);
+                    continue;
+                }
                 for ch in t.text.chars() {
                     visible.push(ch);
                     map.push((si, local));
@@ -1136,40 +1150,60 @@ fn visible_text(segments: &[TrackedSegment]) -> (String, Vec<(usize, usize)>) {
     (visible, map)
 }
 
-/// Char offsets where each copy of `expect` starts in `visible`, counted the
-/// way `set_format` counts its targets (non-overlapping `match_indices`). The
-/// first equals `char_find`'s start.
-fn copy_starts(visible: &str, expect: &str) -> Vec<usize> {
+/// The copies of `expect` in `visible`, counted the way `set_format` counts
+/// its targets (non-overlapping `match_indices`), as they stream past: how
+/// many, the char offset where copy `nth` (1-based) starts, and which copy
+/// starts at char `at`. The first copy's start equals `char_find`'s.
+struct CopySummary {
+    count: usize,
+    nth_start: Option<usize>,
+    at_copy: Option<usize>,
+}
+
+fn copy_summary(visible: &str, expect: &str, nth: Option<usize>, at: Option<usize>) -> CopySummary {
+    let mut summary = CopySummary {
+        count: 0,
+        nth_start: None,
+        at_copy: None,
+    };
     if expect.is_empty() {
-        return Vec::new();
+        return summary;
     }
     // Advance one cursor through the gaps so each char is counted once.
     let (mut chars, mut bytes) = (0, 0);
-    visible
-        .match_indices(expect)
-        .map(|(byte, _)| {
-            chars += visible[bytes..byte].chars().count();
-            bytes = byte;
-            chars
-        })
-        .collect()
+    for (byte, _) in visible.match_indices(expect) {
+        chars += visible[bytes..byte].chars().count();
+        bytes = byte;
+        summary.count += 1;
+        if nth == Some(summary.count) {
+            summary.nth_start = Some(chars);
+        }
+        if at == Some(chars) {
+            summary.at_copy = Some(summary.count);
+        }
+    }
+    summary
 }
 
-/// The visible char offset where a fast-path [`SpanPlan`] starts.
-fn span_plan_visible_start(
-    segments: &[TrackedSegment],
-    map: &[(usize, usize)],
-    plan: &SpanPlan,
-) -> Option<usize> {
-    let before: usize = segments[plan.seg_idx].inlines[..plan.first]
+/// The visible char offset where a fast-path [`SpanPlan`] starts: the Text
+/// chars of every earlier visible segment, then those of its own segment
+/// before the plan's run, then the plan's start in that run.
+fn span_plan_visible_start(segments: &[TrackedSegment], plan: &SpanPlan) -> usize {
+    let text_chars = |inlines: &[InlineNode]| -> usize {
+        inlines
+            .iter()
+            .map(|inline| match inline {
+                InlineNode::Text(t) => t.text.chars().count(),
+                _ => 0,
+            })
+            .sum()
+    };
+    let earlier: usize = segments[..plan.seg_idx]
         .iter()
-        .map(|inline| match inline {
-            InlineNode::Text(t) => t.text.chars().count(),
-            _ => 0,
-        })
+        .filter(|seg| segment_is_visible(&seg.status))
+        .map(|seg| text_chars(&seg.inlines))
         .sum();
-    map.iter()
-        .position(|&at| at == (plan.seg_idx, before + plan.start))
+    earlier + text_chars(&segments[plan.seg_idx].inlines[..plan.first]) + plan.start
 }
 
 /// A fast-path [`SpanPlan`] for the visible chars `[start_k, end_k)` when they

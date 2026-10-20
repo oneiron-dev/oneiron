@@ -46,6 +46,7 @@
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
+use crate::retention::HandleRetention;
 use crate::{
     AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserError, BrowserPersonInput,
     BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY,
@@ -130,10 +131,13 @@ pub struct BrowserSession {
 impl BrowserSession {
     /// The engine selects and proves a backend before attaching the browser.
     /// A lower driver crate must never silently select a weaker backend.
+    /// The session's live-handle registry is charged to the host's memory
+    /// floor through `retention` (C013).
     pub fn attach(
         config: &BrowserGuest,
         transport: SessionTransport,
         relay: Arc<dyn EgressRelay>,
+        retention: Box<dyn HandleRetention>,
     ) -> Result<Self, BrowserError> {
         if transport.manifest.fence_unproven || transport.manifest.fence_proof.is_none() {
             return Err(BrowserError::Unavailable(
@@ -149,6 +153,7 @@ impl BrowserSession {
         let driver = CdpDriver::attach(
             Pipe::with_egress(reader, writer, Some(relay)),
             config.wait_cap,
+            retention,
         )?;
         Ok(Self {
             driver,

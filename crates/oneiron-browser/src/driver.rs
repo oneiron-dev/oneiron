@@ -27,6 +27,7 @@ use crate::capture::{self, Capture, Captures};
 use crate::cdp::Pipe;
 use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
 use crate::outline::{self, Line};
+use crate::retention::HandleRetention;
 use crate::{
     BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput,
     ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation, ObservationPage,
@@ -159,7 +160,12 @@ impl CdpDriver {
     /// Opens one blank page in the guest and attaches to it. With the
     /// host's proxy, every page the guest opens after it (a popup, a tab a
     /// link opens) reaches the network only through the proxy, as it does.
-    pub(crate) fn attach(pipe: Pipe, wait_cap: Duration) -> Result<Self, BrowserError> {
+    /// The live-handle registry is charged through `retention`.
+    pub(crate) fn attach(
+        pipe: Pipe,
+        wait_cap: Duration,
+        retention: Box<dyn HandleRetention>,
+    ) -> Result<Self, BrowserError> {
         let ignored = page_targets(&pipe)?
             .iter()
             .map(target_id)
@@ -188,7 +194,7 @@ impl CdpDriver {
             media: VecDeque::new(),
             captures: Captures::new(&token),
             pages: Observations::default(),
-            handles: Handles::new(token),
+            handles: Handles::new(token, retention),
             wait_cap,
             switched: None,
             agent_known: HashSet::from([target.clone()]),

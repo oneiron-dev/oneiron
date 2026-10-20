@@ -19,7 +19,7 @@ use oneiron::connector_key::{
     BROWSER_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK, PackConnectionCheck, PackConnectionEvidence,
     PackConnectionVerifier, ProviderConnectionChecks,
 };
-use oneiron_browser::{BrowserGuest, BrowserSession};
+use oneiron_browser::{BrowserGuest, BrowserSession, HandleRetention};
 use oneiron_container::{
     EgressRelay, GuestSeccomp, GuestSpec, HttpRequest, HttpResponse, ImageRef, SessionManifest,
 };
@@ -34,6 +34,8 @@ const BROWSER_GUEST_COMMAND: &str = "/usr/local/bin/oneiron-browser-guest";
 pub(crate) struct HostConnectionChecks {
     provider: ProviderConnectionChecks,
     browser: Option<BrowserGuest>,
+    /// The retained line the readiness session's live handles are charged to.
+    browser_handles: crate::server::HandleLine,
     native_mail: Option<NativeMailConfig>,
 }
 
@@ -42,6 +44,7 @@ impl HostConnectionChecks {
         Ok(Self {
             provider: ProviderConnectionChecks::new()?,
             browser: server.browser_guest().cloned(),
+            browser_handles: crate::server::HandleLine::of(server),
             native_mail: server.config.native_mail.clone(),
         })
     }
@@ -59,7 +62,7 @@ impl PackConnectionVerifier for HostConnectionChecks {
                     .browser
                     .as_ref()
                     .ok_or_else(|| "this host has no [browser] guest configured".to_owned())?;
-                browser_session_ready(guest)
+                browser_session_ready(guest, self.browser_handles.charge())
             }
             NATIVE_MAIL_JMAP_CHECK => {
                 let server = self
@@ -130,7 +133,10 @@ fn native_mail_ready(
 
 /// Starts one browser session the way a code run does, and closes it. The
 /// evidence is the digest of what the guest's fence proved.
-fn browser_session_ready(guest: &BrowserGuest) -> Result<PackConnectionEvidence, String> {
+fn browser_session_ready(
+    guest: &BrowserGuest,
+    retention: Box<dyn HandleRetention>,
+) -> Result<PackConnectionEvidence, String> {
     let backend = select_backend_for_session(
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
@@ -149,7 +155,7 @@ fn browser_session_ready(guest: &BrowserGuest) -> Result<PackConnectionEvidence,
     let transport = backend
         .start_session(&spec, &[BROWSER_GUEST_COMMAND.into()], Arc::clone(&relay))
         .map_err(|error| format!("the browser guest did not start: {error}"))?;
-    let session = BrowserSession::attach(guest, transport, relay)
+    let session = BrowserSession::attach(guest, transport, relay, retention)
         .map_err(|error| format!("the browser driver did not open a page: {error}"))?;
     let manifest = session.manifest().clone();
     drop(session);

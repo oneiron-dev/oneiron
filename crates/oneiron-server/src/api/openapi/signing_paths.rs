@@ -331,7 +331,7 @@ fn editor_security() -> Value {
 /// and its capability-free door's `anonymous_limit`.
 fn editor_description(row: &str, anonymous_limit: &str) -> String {
     format!(
-        "With an x-oneiron-esign-editor token, the request is admitted from its head before the body is read, then waits its turn for one of the editor's two computation slots; no queue length or wait refuses it. Its body spools whole under the vault's disk floor: past the [limits] {row} row the vault owner is asked whether everything is okay (GET /v1/owner/decisions/asks), and the work still runs. A token that is unknown or expired, or whose caller's credential no longer stands, is refused with 401 and the body unread; it is never served as an anonymous request. With no editor header the route is the public, capability-free door it was: a {anonymous_limit} body limit, and two slots taken only when free with 60 requests a minute, else 429 with Retry-After: 60."
+        "With an x-oneiron-esign-editor token, the request is admitted from its head before the body is read, then waits its turn for one of the editor's two computation slots, at most [limits] queue_wait_timeout_ms (then 503 editor_waited_out); no queue length refuses it. After the wait its token and caller are checked again. Its body spools whole under the vault's disk floor: past the [limits] {row} row the vault owner is asked whether everything is okay (GET /v1/owner/decisions/asks), and the work still runs. A token that is unknown or expired, or whose caller's credential no longer stands, is refused with 401 and the body unread; it is never served as an anonymous request. With no editor header the route is the public, capability-free door it was: a {anonymous_limit} body limit, and two slots taken only when free with 60 requests a minute, else 429 with Retry-After: 60."
     )
 }
 
@@ -356,7 +356,7 @@ fn editor_responses(ok: Value) -> Value {
         ),
         (
             "401",
-            "The x-oneiron-esign-editor token is unknown or expired (editor_token_unadmitted), or its caller's credential no longer stands (editor_caller_not_live); the body is unread. Reload GET /sign/editor for a new token.",
+            "The x-oneiron-esign-editor token is unknown or expired (editor_token_unadmitted), or its caller's credential no longer stands (editor_caller_not_live), at the head or after the slot wait; the body is unread. Reload GET /sign/editor for a new token.",
             true,
         ),
         (
@@ -376,7 +376,7 @@ fn editor_responses(ok: Value) -> Value {
         ),
         (
             "503",
-            "The editor's state is unavailable (signing_transport_unavailable).",
+            "The editor's state is unavailable (signing_transport_unavailable), or an admitted request waited [limits] queue_wait_timeout_ms for a slot (editor_waited_out, Retry-After: 1).",
             true,
         ),
         (

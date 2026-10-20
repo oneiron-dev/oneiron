@@ -10,6 +10,8 @@
 //! `browser`; the owner's take or return clears it, and so does the seat's
 //! end.
 
+mod handles;
+
 use std::sync::Arc;
 
 use oneiron::{EntityId, Vault};
@@ -17,6 +19,8 @@ use oneiron_browser::{AbandonedTakeover, BrowserError, BrowserSession, Takeover}
 
 use super::SyncServer;
 use super::desktop_seats::{RunSeats, Seat, SeatGuest};
+
+pub(crate) use handles::HandleLine;
 
 /// One run's browser seat.
 pub(crate) type BrowserSeat = Seat<BrowserSession>;

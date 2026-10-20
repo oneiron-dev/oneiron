@@ -36,6 +36,7 @@ mod observation;
 #[cfg(feature = "driver")]
 mod outline;
 mod receipt_evidence;
+mod retention;
 #[cfg(feature = "driver")]
 mod session;
 
@@ -54,6 +55,7 @@ pub use observation::{
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
+pub use retention::HandleRetention;
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserSession};
 
@@ -1100,6 +1102,13 @@ pub enum BrowserError {
         "the window's tree walk stopped before its end at its longest and never reached {0}; observe and walk on with walk_next"
     )]
     TreeCut(String),
+    /// C013: the host's memory floor will not admit the live handles a
+    /// read would add. Nothing was minted; the session and the handles it
+    /// already gave out stay.
+    #[error(
+        "the host's memory floor admits no more live handles for this browser now; handles already given out still work"
+    )]
+    MemoryFloor,
 }
 
 /// One verb's observation as its answer pages it: `act`'s observation, as
@@ -1750,6 +1759,7 @@ impl BrowserError {
             Self::TakenOver(_) => "desktop_taken_over",
             Self::BrowserTakenOver(_) => "browser_taken_over",
             Self::TreeCut(_) => "desktop_tree_cut",
+            Self::MemoryFloor => "browser_memory_floor",
         }
     }
 }

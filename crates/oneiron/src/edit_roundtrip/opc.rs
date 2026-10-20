@@ -22,11 +22,17 @@
 //! compression methods other than STORED/DEFLATE are rejected as corruption
 //! rather than silently mishandled.
 //!
+//! Before any payload is copied or inflated, its local header must repeat its
+//! central entry (name bytes, method, flags other than the DEFLATE option
+//! hints, and, without a data descriptor, checksum and sizes), and its local
+//! record must not overlap another entry's or reach the central directory, so
+//! one compressed payload is never inflated twice under two names.
+//!
 //! This is original code written against the published ZIP appnote and the
 //! ECMA-376 OPC part-naming conventions (facts, not expression); it copies no
 //! source from any packaging library.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 
 use crate::error::{ArtifactError, Error, Result};
@@ -39,6 +45,12 @@ const CENTRAL_DIR_MIN_LEN: usize = 46;
 const LOCAL_FILE_MIN_LEN: usize = 30;
 const ZIP_STORED: u16 = 0;
 const ZIP_DEFLATE: u16 = 8;
+const DATA_DESCRIPTOR_SIGNATURE: u32 = 0x0807_4b50;
+/// General-purpose bits 1-2: DEFLATE option hints, which Excel writes
+/// differently in some local headers than in the central record.
+const DEFLATE_OPTION_FLAGS: u16 = 0x0006;
+/// General-purpose bit 3: CRC and sizes follow the payload in a descriptor.
+const DATA_DESCRIPTOR_FLAG: u16 = 0x0008;
 
 /// Per-entry ceiling on a central-directory *declared* uncompressed size. An
 /// OPC part advertising more than this is rejected before inflation, bounding a
@@ -189,6 +201,8 @@ fn read_bounded(
 
     let mut parts = Vec::with_capacity(entry_count);
     let mut seen_names = BTreeSet::new();
+    // Every local record's `[start, end)` bytes, by start, for this decode.
+    let mut local_ranges = BTreeMap::new();
     let mut total_declared: u64 = 0;
     let mut cursor = cd_offset as usize;
     for _ in 0..entry_count {
@@ -254,11 +268,17 @@ fn read_bounded(
 
         let data = read_local_entry(
             bytes,
-            local_offset as usize,
-            method,
-            comp_size as usize,
-            declared_size,
-            expected_crc,
+            &CentralEntry {
+                name: name.as_bytes(),
+                flags,
+                method,
+                crc: expected_crc,
+                comp_size,
+                declared_size,
+                local_offset: local_offset as usize,
+            },
+            cd_offset as usize,
+            &mut local_ranges,
         )?;
         parts.push(OpcPart { name, data });
 
@@ -407,34 +427,86 @@ fn locate_eocd(bytes: &[u8]) -> Result<usize> {
     )))
 }
 
+/// What one central-directory entry says about its local record, which the
+/// local header must repeat before its payload is read.
+struct CentralEntry<'a> {
+    name: &'a [u8],
+    flags: u16,
+    method: u16,
+    crc: u32,
+    comp_size: u32,
+    declared_size: u64,
+    local_offset: usize,
+}
+
 fn read_local_entry(
     bytes: &[u8],
-    local_offset: usize,
-    method: u16,
-    comp_size: usize,
-    declared_size: u64,
-    expected_crc: u32,
+    entry: &CentralEntry<'_>,
+    cd_offset: usize,
+    local_ranges: &mut BTreeMap<usize, usize>,
 ) -> Result<Vec<u8>> {
+    let local_offset = entry.local_offset;
     if read_u32(bytes, local_offset)? != LOCAL_FILE_SIGNATURE {
         return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "opc local file header signature mismatch",
         )));
     }
+    // The local header is bound to its central entry before a byte of the
+    // payload is copied or inflated. Extra fields and timestamps may differ.
+    let local_flags = read_u16(bytes, local_offset + 6)?;
+    if (local_flags ^ entry.flags) & !DEFLATE_OPTION_FLAGS != 0
+        || read_u16(bytes, local_offset + 8)? != entry.method
+    {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local header flags or method do not match its central entry",
+        )));
+    }
+    let descriptor = entry.flags & DATA_DESCRIPTOR_FLAG != 0;
+    if !descriptor
+        && (read_u32(bytes, local_offset + 14)? != entry.crc
+            || read_u32(bytes, local_offset + 18)? != entry.comp_size
+            || u64::from(read_u32(bytes, local_offset + 22)?) != entry.declared_size)
+    {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local header checksum or sizes do not match its central entry",
+        )));
+    }
     let local_name_len = read_u16(bytes, local_offset + 26)? as usize;
     let local_extra_len = read_u16(bytes, local_offset + 28)? as usize;
+    let name_start = local_offset + LOCAL_FILE_MIN_LEN;
+    if bytes.get(name_start..name_start + local_name_len) != Some(entry.name) {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local header name does not match its central entry",
+        )));
+    }
     let data_start = local_offset
         .checked_add(LOCAL_FILE_MIN_LEN + local_name_len + local_extra_len)
         .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
             "opc local data offset overflow",
         )))?;
-    let data_end = data_start.checked_add(comp_size).ok_or(Error::Artifact(
-        ArtifactError::EditRoundtripFailed("opc local data length overflow"),
-    ))?;
+    let data_end = data_start
+        .checked_add(entry.comp_size as usize)
+        .ok_or(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local data length overflow",
+        )))?;
+    let record_end = if descriptor {
+        descriptor_end(bytes, data_end, entry)
+    } else {
+        data_end
+    };
+    if record_end > cd_offset {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local record reaches the central directory",
+        )));
+    }
+    claim_local_range(local_ranges, local_offset, record_end)?;
     let raw = bytes.get(data_start..data_end).ok_or(Error::Artifact(
         ArtifactError::EditRoundtripFailed("opc entry data truncated"),
     ))?;
+    let declared_size = entry.declared_size;
+    let expected_crc = entry.crc;
 
-    let data = match method {
+    let data = match entry.method {
         ZIP_STORED => raw.to_vec(),
         ZIP_DEFLATE => inflate(raw, declared_size)?,
         _ => {
@@ -458,6 +530,53 @@ fn read_local_entry(
         )));
     }
     Ok(data)
+}
+
+/// Where a bit-3 entry's record ends: past its data descriptor when one
+/// follows the payload in the unsigned (12-byte) or signed (16-byte) ZIP32
+/// layout, repeating the central checksum and sizes. A CRC equal to the
+/// signature word can match both layouts; the shorter is taken. Anything else
+/// claims no descriptor bytes: the payload is still checked against the
+/// central CRC and size after it is read.
+fn descriptor_end(bytes: &[u8], data_end: usize, entry: &CentralEntry<'_>) -> usize {
+    let word = |at: usize| {
+        data_end
+            .checked_add(at)
+            .and_then(|offset| read_u32(bytes, offset).ok())
+    };
+    let declared = u32::try_from(entry.declared_size).ok();
+    if word(0) == Some(entry.crc) && word(4) == Some(entry.comp_size) && word(8) == declared {
+        data_end + 12
+    } else if word(0) == Some(DATA_DESCRIPTOR_SIGNATURE)
+        && word(4) == Some(entry.crc)
+        && word(8) == Some(entry.comp_size)
+        && word(12) == declared
+    {
+        data_end + 16
+    } else {
+        data_end
+    }
+}
+
+/// Claims one local record's `[start, end)` bytes for this decode. A record
+/// starting where another starts, or overlapping either neighbour, aliases
+/// another entry's bytes and is refused before its payload is read.
+fn claim_local_range(ranges: &mut BTreeMap<usize, usize>, start: usize, end: usize) -> Result<()> {
+    let overlaps_before = ranges
+        .range(..=start)
+        .next_back()
+        .is_some_and(|(_, &prev_end)| prev_end > start);
+    let overlaps_after = ranges
+        .range(start..)
+        .next()
+        .is_some_and(|(&next_start, _)| next_start < end);
+    if overlaps_before || overlaps_after {
+        return Err(Error::Artifact(ArtifactError::EditRoundtripFailed(
+            "opc local records overlap",
+        )));
+    }
+    ranges.insert(start, end);
+    Ok(())
 }
 
 fn inflate(raw: &[u8], declared_size: u64) -> Result<Vec<u8>> {

@@ -2,7 +2,8 @@
 //! header is public and capability-free: it takes a slot only when one is
 //! free and meets a 60-per-minute window, or a 429. An owner's admitted
 //! editor POST (FIX 5618, `editor_auth`) never meets either: it waits its
-//! turn for one of the same two slots, with no queue length or wait bound.
+//! turn for one of the same two slots, with no queue length bound, for at
+//! most `limits.queue_wait_timeout_ms`.
 use super::*;
 use axum::extract::Request;
 use axum::middleware::Next;
@@ -34,12 +35,26 @@ impl EditorBudget {
         Some(Arc::new(permit))
     }
 
-    /// One of the two slots for an admitted editor POST, waited for. No
-    /// queue length, count or wait refuses it; `None` only once the
-    /// semaphore is closed, which nothing does while the router lives.
-    pub(super) async fn queue(&self) -> Option<OwnedSemaphorePermit> {
-        self.slots.clone().acquire_owned().await.ok()
+    /// One of the two slots for an admitted editor POST, waited for at most
+    /// `wait` (`limits.queue_wait()`). No queue length or count refuses it.
+    pub(super) async fn queue(
+        &self,
+        wait: Duration,
+    ) -> Result<OwnedSemaphorePermit, EditorWaitError> {
+        match tokio::time::timeout(wait, self.slots.clone().acquire_owned()).await {
+            Ok(Ok(permit)) => Ok(permit),
+            Ok(Err(_)) => Err(EditorWaitError::Closed),
+            Err(_) => Err(EditorWaitError::TimedOut),
+        }
     }
+}
+
+/// Why an admitted editor POST got no slot.
+pub(super) enum EditorWaitError {
+    /// It waited its whole deadline for its turn; nothing was started.
+    TimedOut,
+    /// The semaphore is closed, which nothing does while the router lives.
+    Closed,
 }
 
 pub(super) async fn admit(
