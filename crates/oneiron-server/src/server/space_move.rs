@@ -204,9 +204,9 @@ impl ServerProbeAuthor<'_> {
     /// third-party media author as before.
     fn media_egress(&self) -> Option<MediaEgress> {
         let request = match &self.transcriber {
-            Some((model, locality)) => {
-                self.transcription(model, *locality, Vec::new()).admission_request()
-            }
+            Some((model, locality)) => self
+                .transcription(model, *locality, Vec::new())
+                .admission_request(),
             None => self.probe_request(Vec::new()),
         };
         self.server

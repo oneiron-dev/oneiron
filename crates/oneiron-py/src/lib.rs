@@ -4206,6 +4206,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_usage_events_undecodable(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.usage.events.undecodable")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.usage.events.undecodable", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_usage_events_remove_undecodable(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.usage.events.remove_undecodable")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.usage.events.remove_undecodable", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_entities_mention(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.entities.mention")?;
         let output = py

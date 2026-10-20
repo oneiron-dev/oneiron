@@ -6759,6 +6759,37 @@
       "openapi": true
     },
     {
+      "name": "vault.usage.events.undecodable",
+      "description": "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb.",
+      "input": "crate::memory::usage_repair::UsageRepairListRequest",
+      "output": "crate::memory::usage_repair::UndecodableUsageList",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.usage.events.undecodable\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.usage.events.remove_undecodable",
+      "description": "Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb.",
+      "input": "crate::memory::usage_repair::UsageRepairRemoveRequest",
+      "output": "crate::memory::usage_repair::UsageRepairReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.usage.events.remove_undecodable\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.entities.mention",
       "description": "The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate.",
       "input": "crate::ingest::EntityMentionRequest",
@@ -17649,6 +17680,70 @@
       "scope": "Write",
       "context": "run",
       "effect": "WorkflowDispatch"
+    },
+    {
+      "name": "self.code.snapshots.get",
+      "input": "crate::memory::repo_doors::RepoSnapshotsGetInput",
+      "output": "crate::memory::repo_doors::RepoSnapshotsGetOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoSnapshotsGet"
+    },
+    {
+      "name": "self.code.snapshots.read",
+      "input": "crate::memory::repo_doors::RepoSnapshotsReadInput",
+      "output": "crate::memory::repo_doors::RepoSnapshotsReadOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoSnapshotsRead"
+    },
+    {
+      "name": "self.code.symbols.definitions",
+      "input": "crate::memory::repo_doors::RepoSymbolsDefinitionsInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsDefinitionsOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoSymbolsDefinitions"
+    },
+    {
+      "name": "self.code.views.get",
+      "input": "crate::memory::repo_doors::RepoViewsGetInput",
+      "output": "crate::memory::repo_doors::RepoViewsGetOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoViewsGet"
+    },
+    {
+      "name": "self.code.views.read",
+      "input": "crate::memory::repo_doors::RepoViewsReadInput",
+      "output": "crate::memory::repo_doors::RepoViewsReadOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoViewsRead"
+    },
+    {
+      "name": "self.code.merge_queue.observe",
+      "input": "crate::memory::repo_doors::RepoMergeQueueObserveInput",
+      "output": "crate::memory::repo_doors::RepoMergeQueueObserveOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoMergeQueueObserve"
+    },
+    {
+      "name": "self.code.snapshots.ingest",
+      "input": "crate::memory::repo_doors::RepoSnapshotsIngestInput",
+      "output": "crate::memory::repo_doors::RepoSnapshotsIngestOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSnapshotsIngest"
+    },
+    {
+      "name": "self.code.work.open",
+      "input": "crate::memory::repo_doors::RepoWorkOpenInput",
+      "output": "crate::memory::repo_doors::RepoWorkOpenOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoWorkOpen"
     },
     {
       "name": "self.leader.advice",

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1085 facade rows, 3735 declarations.
-Inputs: 1020 of 1085 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 972 of 1085 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1087 facade rows, 3747 declarations.
+Inputs: 1022 of 1087 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 974 of 1087 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -8006,6 +8006,48 @@ class CleanupRunView(TypedDict):
     proposal: NotRequired[EntityId | None]
     archived: list[EntityId]
     digest: NotRequired[EntityId | None]
+class UsageRepairListRequest(TypedDict):
+    ...
+UndecodableUsageReason = Literal["stored_event_decode_failed"]
+class UndecodableUsageRow(TypedDict):
+    rowRef: str
+    byteLength: int
+    hash: str
+    decodeReason: UndecodableUsageReason
+class UndecodableUsageList(TypedDict):
+    events: list[UndecodableUsageRow]
+class UsageRepairRemoveRequest(TypedDict):
+    rowRef: str
+    expectedHash: str
+UsageRepairReason = Literal["undecodable_event_removed"]
+class UsageRepairAuthorityOwner(TypedDict):
+    kind: Literal["owner"]
+    ref: str
+class UsageRepairAuthorityGrant(TypedDict):
+    kind: Literal["grant"]
+    ref: str
+UsageRepairAuthority = UsageRepairAuthorityOwner | UsageRepairAuthorityGrant
+class UsageRepairSurfaceThisInstall(TypedDict):
+    kind: Literal["this_install"]
+class UsageRepairSurfaceLinkedDevice(TypedDict):
+    kind: Literal["linked_device"]
+    machine: str
+class UsageRepairSurfaceHostedConsole(TypedDict):
+    kind: Literal["hosted_console"]
+UsageRepairSurface = UsageRepairSurfaceThisInstall | UsageRepairSurfaceLinkedDevice | UsageRepairSurfaceHostedConsole
+class UsageRepairReceipt(TypedDict):
+    receiptId: str
+    owner: str
+    vaultId: str
+    rowRef: str
+    hash: str
+    byteLength: int
+    reason: UsageRepairReason
+    actorRef: str
+    actorClass: str
+    authority: UsageRepairAuthority
+    surface: UsageRepairSurface
+    recordedAt: int
 class EntityMentionRequest(TypedDict):
     candidates: list[EntityResolutionCandidate]
     high_collision_mention: NotRequired[bool]
@@ -12275,7 +12317,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team", "WorkflowDispatch", "RepoSnapshotsGet", "RepoSnapshotsRead", "RepoSymbolsDefinitions", "RepoViewsGet", "RepoViewsRead", "RepoMergeQueueObserve", "RepoSnapshotsIngest", "RepoWorkOpen"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -18474,6 +18516,11 @@ BrowserAnswer = BrowserAnswerItem[T]
 class RowSplice(TypedDict):
     start: int
     delete_count: int
+RowGapField = Literal["href", "level", "datetime"]
+RowGapReason = Literal["no_dom_node", "stale_node", "outside_dom_read", "read_failed", "unresolvable"]
+class RowFieldGap(TypedDict):
+    field: RowGapField
+    reason: RowGapReason
 class Row(TypedDict):
     ref: str
     locator: str
@@ -18482,6 +18529,10 @@ class Row(TypedDict):
     value: NotRequired[str | None]
     states: NotRequired[list[str]]
     depth: int
+    href: NotRequired[str | None]
+    level: NotRequired[int | None]
+    datetimes: NotRequired[list[str]]
+    unavailable: NotRequired[list[RowFieldGap]]
 class Rebound(TypedDict):
     old: str
     new: str

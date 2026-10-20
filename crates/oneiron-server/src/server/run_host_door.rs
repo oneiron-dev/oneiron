@@ -220,19 +220,24 @@ impl AgentVerbDoor for RunHostDoor {
 
     /// The run's own calls keep the run's own admission. A consult landing
     /// reads its refs, a TASK binding its TASK and workflow (FIX 5316), and
-    /// a search its hits (FIX 5976), on the agent's own lane, on this device
-    /// (DOOR-063): the run holds no credential, and its lane is never the
-    /// owner's.
+    /// a search its hits (FIX 5976), and a repo row its repo (FIX 6867), on
+    /// the agent's own lane, on this device (DOOR-063): the run holds no
+    /// credential, and its lane is never the owner's.
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        if !matches!(
-            call,
-            RunCall::Bridge(
-                SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch | SelfEffect::MemorySearch
+        let repo = matches!(call, RunCall::Bridge(effect) if effect.is_repo());
+        if !repo
+            && !matches!(
+                call,
+                RunCall::Bridge(
+                    SelfEffect::ConsultResult
+                        | SelfEffect::WorkflowDispatch
+                        | SelfEffect::MemorySearch
+                )
             )
-        ) {
+        {
             return Ok(None);
         }
         self.server
@@ -247,6 +252,11 @@ impl AgentVerbDoor for RunHostDoor {
     /// Its keyed search drops only rows the agent's lane may not read.
     fn keyed_search_surfaceable_only(&self) -> bool {
         false
+    }
+
+    /// A browser row's refusal words, as the run's guests kept them (FIX 6887).
+    fn refusal_words(&self) -> Option<oneiron::code_run::AgentVerbRefusalWords> {
+        self.guests.refusal_words()
     }
 
     /// The run's answer to its own connector call's questions (ONE-2510),

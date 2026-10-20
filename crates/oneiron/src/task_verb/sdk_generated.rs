@@ -2342,6 +2342,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.usage.events.undecodable",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::usage_repair::UsageRepairListRequest,
+                >(),
+            ),
+            (
+                "vault.usage.events.remove_undecodable",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::usage_repair::UsageRepairRemoveRequest,
+                >(),
+            ),
+            (
                 "vault.entities.mention",
                 crate::code_run::vault_read::request_schema::<crate::ingest::EntityMentionRequest>(
                 ),
@@ -6077,6 +6089,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.code.snapshots.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSnapshotsGetInput,
+                >(),
+            ),
+            (
+                "self.code.snapshots.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSnapshotsReadInput,
+                >(),
+            ),
+            (
+                "self.code.symbols.definitions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSymbolsDefinitionsInput,
+                >(),
+            ),
+            (
+                "self.code.views.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoViewsGetInput,
+                >(),
+            ),
+            (
+                "self.code.views.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoViewsReadInput,
+                >(),
+            ),
+            (
+                "self.code.merge_queue.observe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoMergeQueueObserveInput,
+                >(),
+            ),
+            (
+                "self.code.snapshots.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoSnapshotsIngestInput,
+                >(),
+            ),
+            (
+                "self.code.work.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::repo_doors::RepoWorkOpenInput,
+                >(),
+            ),
+            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),
@@ -6436,6 +6496,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.reserve_exploration",
     "vault.research.budget",
     "vault.cleanup.run",
+    "vault.usage.events.undecodable",
+    "vault.usage.events.remove_undecodable",
     "vault.entities.mention",
     "vault.policy.owner.get",
     "vault.policy.owner.configure",
@@ -7815,6 +7877,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
+        >(),
+        "vault.usage.events.undecodable" => crate::code_run::vault_read::request_schema::<
+            crate::memory::usage_repair::UndecodableUsageList,
+        >(),
+        "vault.usage.events.remove_undecodable" => crate::code_run::vault_read::request_schema::<
+            crate::memory::usage_repair::UsageRepairReceipt,
         >(),
         "vault.entities.mention" => crate::code_run::vault_read::request_schema::<
             crate::ingest::EntityResolutionWaterfallDecision,
@@ -12222,6 +12290,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.cleanup.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.usage.events.undecodable" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.usage.events.remove_undecodable" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18187,6 +18269,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.cleanup.run" => {
             let _input: crate::vault_cleanup::surface::CleanupRunRequest = decode(value.clone())?;
         }
+        "vault.usage.events.undecodable" => {
+            let _input: crate::memory::usage_repair::UsageRepairListRequest =
+                decode(value.clone())?;
+        }
+        "vault.usage.events.remove_undecodable" => {
+            let _input: crate::memory::usage_repair::UsageRepairRemoveRequest =
+                decode(value.clone())?;
+        }
         "vault.entities.mention" => {
             let _input: crate::ingest::EntityMentionRequest = decode(value.clone())?;
         }
@@ -21393,6 +21483,13 @@ pub fn invoke(
             encode(vault_roots_requests_cancel(memory, decode(value)?)?)
         }
         "vault.cleanup.run" => encode(vault_cleanup_run(memory, decode(value)?)?),
+        "vault.usage.events.undecodable" => {
+            encode(vault_usage_events_undecodable(memory, decode(value)?)?)
+        }
+        "vault.usage.events.remove_undecodable" => encode(vault_usage_events_remove_undecodable(
+            memory,
+            decode(value)?,
+        )?),
         "vault.entities.mention" => encode(vault_entities_mention(memory, decode(value)?)?),
         "vault.legal_holds.place" => encode(vault_legal_holds_place(memory, decode(value)?)?),
         "vault.legal_holds.widen" => encode(vault_legal_holds_widen(memory, decode(value)?)?),
@@ -26452,6 +26549,18 @@ pub fn vault_cleanup_run(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_usage_events_undecodable(
+    memory: &Memory<'_>,
+    input: crate::memory::usage_repair::UsageRepairListRequest,
+) -> MemoryResult<crate::memory::usage_repair::UndecodableUsageList> {
+    crate::task_verb::sdk::host_only(memory, "vault.usage.events.undecodable", &input)
+}
+pub fn vault_usage_events_remove_undecodable(
+    memory: &Memory<'_>,
+    input: crate::memory::usage_repair::UsageRepairRemoveRequest,
+) -> MemoryResult<crate::memory::usage_repair::UsageRepairReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.usage.events.remove_undecodable", &input)
 }
 pub fn vault_entities_mention(
     memory: &Memory<'_>,

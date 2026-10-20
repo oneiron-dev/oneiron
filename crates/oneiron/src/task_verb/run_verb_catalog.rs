@@ -19,6 +19,14 @@ pub enum RunVerb {
     SelfReportBlocked,
     SelfAgentsSpawn,
     SelfWorkflowsDispatchBound,
+    SelfCodeSnapshotsGet,
+    SelfCodeSnapshotsRead,
+    SelfCodeSymbolsDefinitions,
+    SelfCodeViewsGet,
+    SelfCodeViewsRead,
+    SelfCodeMergeQueueObserve,
+    SelfCodeSnapshotsIngest,
+    SelfCodeWorkOpen,
     SelfLeaderAdvice,
     SelfLeaderPattern,
     SelfLeaderSplit,
@@ -47,6 +55,14 @@ impl RunVerb {
         Self::SelfReportBlocked,
         Self::SelfAgentsSpawn,
         Self::SelfWorkflowsDispatchBound,
+        Self::SelfCodeSnapshotsGet,
+        Self::SelfCodeSnapshotsRead,
+        Self::SelfCodeSymbolsDefinitions,
+        Self::SelfCodeViewsGet,
+        Self::SelfCodeViewsRead,
+        Self::SelfCodeMergeQueueObserve,
+        Self::SelfCodeSnapshotsIngest,
+        Self::SelfCodeWorkOpen,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
         Self::SelfLeaderSplit,
@@ -78,6 +94,14 @@ impl RunVerb {
             Self::SelfReportBlocked => "self.report_blocked",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfWorkflowsDispatchBound => "self.workflows.dispatch_bound",
+            Self::SelfCodeSnapshotsGet => "self.code.snapshots.get",
+            Self::SelfCodeSnapshotsRead => "self.code.snapshots.read",
+            Self::SelfCodeSymbolsDefinitions => "self.code.symbols.definitions",
+            Self::SelfCodeViewsGet => "self.code.views.get",
+            Self::SelfCodeViewsRead => "self.code.views.read",
+            Self::SelfCodeMergeQueueObserve => "self.code.merge_queue.observe",
+            Self::SelfCodeSnapshotsIngest => "self.code.snapshots.ingest",
+            Self::SelfCodeWorkOpen => "self.code.work.open",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
             Self::SelfLeaderSplit => "self.leader.split",
@@ -106,6 +130,8 @@ impl RunVerb {
                 | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfWorkflowsDispatchBound
+                | Self::SelfCodeSnapshotsIngest
+                | Self::SelfCodeWorkOpen
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
                 | Self::SelfTeamStart
@@ -132,6 +158,14 @@ impl RunVerb {
             Self::SelfReportBlocked => crate::code_run::SelfEffect::ReportBlocked,
             Self::SelfAgentsSpawn => crate::code_run::SelfEffect::AgentsSpawn,
             Self::SelfWorkflowsDispatchBound => crate::code_run::SelfEffect::WorkflowDispatch,
+            Self::SelfCodeSnapshotsGet => crate::code_run::SelfEffect::RepoSnapshotsGet,
+            Self::SelfCodeSnapshotsRead => crate::code_run::SelfEffect::RepoSnapshotsRead,
+            Self::SelfCodeSymbolsDefinitions => crate::code_run::SelfEffect::RepoSymbolsDefinitions,
+            Self::SelfCodeViewsGet => crate::code_run::SelfEffect::RepoViewsGet,
+            Self::SelfCodeViewsRead => crate::code_run::SelfEffect::RepoViewsRead,
+            Self::SelfCodeMergeQueueObserve => crate::code_run::SelfEffect::RepoMergeQueueObserve,
+            Self::SelfCodeSnapshotsIngest => crate::code_run::SelfEffect::RepoSnapshotsIngest,
+            Self::SelfCodeWorkOpen => crate::code_run::SelfEffect::RepoWorkOpen,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderSplit => crate::code_run::SelfEffect::LeaderSplit,

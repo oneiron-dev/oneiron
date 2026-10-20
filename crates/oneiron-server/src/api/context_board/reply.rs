@@ -237,6 +237,10 @@ async fn reply(
             &[],
         ));
     }
+    // The call reads what the board assembled from `rows` (FIX 6935): its
+    // permit and metered settlement carry them.
+    let read = oneiron::skill_optimize::union_source_rows([Some(rows.as_slice())]);
+    let run = run.sourced(read);
     let response = ladder
         .generate_exact(&run, request, None)
         .await

@@ -168,6 +168,13 @@ impl Store {
         Ok(())
     }
 
+    /// Deletes every attempt run index row, for a restore that rebuilds the
+    /// index from the attempt rows it landed (FIX 6577).
+    pub(crate) fn clear_attempt_run_index_in_txn(&self, wtxn: &mut RwTxn<'_>) -> Result<()> {
+        ATTEMPT_RUN_INDEX.delete_from(self, wtxn, &[])?;
+        Ok(())
+    }
+
     pub(crate) fn attempt_ids_for_run_in_txn(
         &self,
         txn: &RoTxn<'_>,
