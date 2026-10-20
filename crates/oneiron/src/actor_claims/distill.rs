@@ -8,6 +8,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::limit_ask::EngineLimit;
 use crate::llm::CallPurpose;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
@@ -130,7 +131,7 @@ pub fn run_session_end_actor_distill(
     let brief = SessionDistillBrief {
         session: *session,
         ended_at,
-        turns: session_turns(vault, sitting)?,
+        turns: sitting_turns(vault, session, sitting)?,
     };
     if brief.turns.is_empty() {
         // Nothing to learn from, and nothing that can arrive later: the sitting
@@ -210,25 +211,28 @@ fn sitting_window(vault: &Vault, session: &EntityId, ended_at: u64) -> Result<Si
         ended_at: ended_at.max(record.started_at),
     })
 }
-/// The sitting's turns — derived from what production actually writes.
-///
-/// **There is no SESSION→TURN edge in this engine**, so there is none to read.
-/// The witness door (`Memory::witness`) writes CONVERSATION/TURN/MESSAGE
-/// and bumps the open sitting's activity clock; the core turn door writes a
-/// TURN plus a `ChildOf` edge into its CONVERSATION. What binds a turn to a
-/// SITTING is TIME, and at most one sitting is open per vault
-/// (`session_lifecycle`), so the sitting's window names exactly the turns
-/// learned during it — which is also the index `dreamer_consolidation` walks to
-/// find turns to dream about.
-///
-/// Both production body shapes are read, because production writes both: the
-/// core door's `spkr`/`txt` TURN body, and — when the turn body has no text,
-/// including the witness door's speaker-only stamp — the turn's MESSAGE
-/// children, where the witnessed words actually live.
-///
-/// Bounded by [`ACTOR_CLAIM_MAX_CITED_EVIDENCE`], keeping the LAST turns: the
-/// brief and the citation list are the same set of turns, so a long sitting
-/// cannot produce a brief the evidence bound would then refuse to cite.
+/// The sitting's own turns (FIX 2015): the turns its membership rows name
+/// (`session_lifecycle`'s SESSION_TURNS, which the witness door writes as it
+/// records each turn), whoever spoke them. Many sittings may be open at once,
+/// so a time window would also name a neighbour's turns; only a sitting
+/// recorded before the membership rows, which has none, keeps the window
+/// ([`session_turns`]) and so never reads nothing.
+fn sitting_turns(
+    vault: &Vault,
+    session: &EntityId,
+    window: SittingWindow,
+) -> Result<Vec<SessionDistillTurn>> {
+    match vault.session_member_turns(session)? {
+        Some(turn_ids) => distill_turns(vault, turn_ids),
+        None => session_turns(vault, window),
+    }
+}
+
+/// The turns learned during a sitting's window. A sitting recorded before
+/// the membership rows has only its time: the witness door bumps the open
+/// sitting's activity clock and the core turn door writes a TURN plus a
+/// `ChildOf` edge into its CONVERSATION, so the window names the turns
+/// learned during it, which is also the index `dreamer_consolidation` walks.
 pub(super) fn session_turns(
     vault: &Vault,
     window: SittingWindow,
@@ -248,6 +252,20 @@ pub(super) fn session_turns(
             }
         }
     }
+    distill_turns(vault, turn_ids)
+}
+
+/// What each of `turn_ids` said. Both production body shapes are read,
+/// because production writes both: the core door's `spkr`/`txt` TURN body,
+/// and, when the turn body has no text (the witness door's speaker-only stamp
+/// included), the turn's MESSAGE children, where the witnessed words live.
+///
+/// The whole count is measured. The brief keeps the LAST
+/// [`ACTOR_CLAIM_MAX_CITED_EVIDENCE`] turns: the brief and the citation list
+/// are the same set, and the chat lane's evidence refuses a longer list, so a
+/// longer brief would fail its sitting on every pass.
+fn distill_turns(vault: &Vault, mut turn_ids: Vec<EntityId>) -> Result<Vec<SessionDistillTurn>> {
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, turn_ids.len() as u64);
     if turn_ids.len() > ACTOR_CLAIM_MAX_CITED_EVIDENCE {
         turn_ids.drain(..turn_ids.len() - ACTOR_CLAIM_MAX_CITED_EVIDENCE);
     }
