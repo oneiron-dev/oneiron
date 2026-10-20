@@ -646,6 +646,16 @@ pub trait AgentVerbDoor: Send + Sync {
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
 
+    /// Whether the run's own `vault.search`, admitted with a key, keeps only
+    /// surfaceable claims, as the memory surface's own BM25 channel serves
+    /// them. A door that answers `false` has its search filtered by the
+    /// key's authorization alone: every row that key may read stays, claims
+    /// of every status among them, as its unkeyed search served them before
+    /// the door keyed it (FIX 5976).
+    fn keyed_search_surfaceable_only(&self) -> bool {
+        true
+    }
+
     /// Admits one read a run bound to an off-record session serves through
     /// the room's view (WILL L11-01): `vault.get`, `vault.hydrate`,
     /// `vault.refs.resolve` or `vault.search.bm25`. The answer is the key

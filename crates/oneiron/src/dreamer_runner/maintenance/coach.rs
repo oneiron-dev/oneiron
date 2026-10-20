@@ -53,6 +53,9 @@ pub const COACH_TRADEOFF_ESCALATION_FACET: &str = "coach.tradeoff_escalation";
 /// Training offers (OF-577), drafted on the host from the offer skill's draft
 /// and recorded through [`Vault::run_coach_training_offer`].
 pub const COACH_TRAINING_OFFER_FACET: &str = "coach.training_offer";
+/// Digest settings (FIX 5609): each owner's rhythm or lead step, drafted by
+/// the Coach's model and filed through [`Vault::run_coach_weave_digest_settings`].
+pub const COACH_WEAVE_DIGEST_SETTINGS_FACET: &str = "coach.weave_digest_settings";
 /// Eval authoring (OF-578, ARCH-0053): each seat's test set kept from the
 /// vault's own history by the eval-authoring skill, and applied through
 /// [`Vault::run_coach_eval_authoring`].
@@ -136,7 +139,7 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 12] = [
+const HOST_FACETS: [&str; 13] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -149,6 +152,7 @@ const HOST_FACETS: [&str; 12] = [
     COACH_FORK_PROMOTE_FACET,
     COACH_ATTRIBUTION_AUDITS_FACET,
     COACH_JUDGE_LABEL_RECHECKS_FACET,
+    COACH_WEAVE_DIGEST_SETTINGS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 10] = [
@@ -546,7 +550,7 @@ impl Vault {
     }
 
     /// The leased attempt is this facet's, stamped for the Coach.
-    pub(super) fn require_coach_attempt(
+    pub(crate) fn require_coach_attempt(
         &self,
         attempt: &DreamerAdmittedAttempt,
         facet: &str,
