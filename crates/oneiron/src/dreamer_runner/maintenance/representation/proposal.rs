@@ -111,44 +111,89 @@ pub(super) struct LiveProposal {
     pub(super) run: String,
     pub(super) revision: [u8; 32],
 }
+/// A plan checked and its draft stored, not yet queued (FIX 1000): the
+/// planner, every citation check and the content's publish ran outside any
+/// writer, so its caller queues it in a write of its own choosing.
+pub(in crate::dreamer_runner::maintenance) struct PreparedPlan {
+    id: EntityId,
+    packet: Packet,
+    owner: EntityId,
+    /// The queued landing's input: the packet's own bytes.
+    input: String,
+}
+impl PreparedPlan {
+    /// Writes the plan's row and queues the facet that saves it, both in the
+    /// caller's write. The owner waits in the plan's envelope, not in the
+    /// queue (FIX 4512). A plan queued or landed for them keeps its row; one
+    /// whose owner was erased never takes a live owner again.
+    pub(in crate::dreamer_runner::maintenance) fn enqueue_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        match PROPOSAL.get(&vault.store, &*txn, &self.id)? {
+            Some(held) if held.owner.is(self.owner) => {}
+            Some(_) => return Err(invalid()),
+            None => {
+                let envelope = StoredProposal {
+                    packet: self.packet.clone(),
+                    owner: ApprovalOwner::Actor(self.owner),
+                    landed: None,
+                };
+                PROPOSAL.put(&vault.store, txn, &self.id, &envelope)?;
+            }
+        }
+        DreamerRunnerStore::new(vault).enqueue_maintenance_in_txn(
+            txn,
+            REPRESENTATION_FACET,
+            Value::from(self.input.as_str()),
+            format!("representation:{}", self.id.to_hex()),
+            now,
+        )
+    }
+}
 impl Vault {
     /// Reads real context, verifies the pre-materialized draft, stores it below
     /// the claim graph, then queues the maintenance facet that saves the plan
-    /// for the owner's send review. Nothing is sent.
+    /// for the owner's send review, in the one write that keeps its row.
+    /// Nothing is sent.
     pub fn schedule_representation(
         &self,
         request: &RepresentationRequest,
         planner: &mut dyn RepresentationPlanner,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        self.schedule_plan(request, None, planner, now)
+        let plan = self.prepare_plan(request, None, planner)?;
+        self.with_write_txn_grouped(|txn| plan.enqueue_in_txn(self, txn, now))
     }
 
-    /// [`Self::schedule_representation`] for a stewardship follow-up: the plan
+    /// [`Self::schedule_representation`]'s checked plan for a stewardship
+    /// follow-up, for the scheduler to queue in its own write: the plan
     /// carries the reach-out it drafts, at `revision`, and lands only while
     /// that reach-out still stands there.
-    pub(in crate::dreamer_runner::maintenance) fn schedule_follow_up(
+    pub(in crate::dreamer_runner::maintenance) fn prepare_follow_up(
         &self,
         request: &RepresentationRequest,
         reach_out: EntityId,
         revision: [u8; 32],
         planner: &mut dyn RepresentationPlanner,
-        now: u64,
-    ) -> Result<EnqueueDreamerAttemptOutcome> {
+    ) -> Result<PreparedPlan> {
         let pin = ReachOutPin {
             claim: reach_out,
             revision,
         };
-        self.schedule_plan(request, Some(pin), planner, now)
+        self.prepare_plan(request, Some(pin), planner)
     }
 
-    fn schedule_plan(
+    /// Context, planner, citation checks and the content's publish, outside
+    /// any writer: [`PreparedPlan::enqueue_in_txn`] queues the result.
+    fn prepare_plan(
         &self,
         request: &RepresentationRequest,
         reach_out: Option<ReachOutPin>,
         planner: &mut dyn RepresentationPlanner,
-        now: u64,
-    ) -> Result<EnqueueDreamerAttemptOutcome> {
+    ) -> Result<PreparedPlan> {
         let context = self.representation_context(request)?;
         let draft = planner.plan(&context)?;
         if draft.text.trim().is_empty() {
@@ -167,32 +212,12 @@ impl Vault {
         // Re-read after the host callback. A source edited while authoring is
         // not the source the model saw, even when its old quote still exists.
         validate_packet(self, &packet, request.owner)?;
-        let id = packet.id()?;
-        // The owner waits in the plan's envelope, not in the queue (FIX 4512).
-        // A plan queued or landed for them keeps its row; one whose owner was
-        // erased never takes a live owner again.
-        self.with_write_txn_grouped(|txn| {
-            let held = PROPOSAL.get(&self.store, &*txn, &id)?;
-            match held {
-                Some(held) if held.owner.is(request.owner) => Ok(()),
-                Some(_) => Err(invalid()),
-                None => {
-                    let envelope = StoredProposal {
-                        packet: packet.clone(),
-                        owner: ApprovalOwner::Actor(request.owner),
-                        landed: None,
-                    };
-                    PROPOSAL.put(&self.store, txn, &id, &envelope)
-                }
-            }
-        })?;
-        let input = String::from_utf8(packet.bytes()?).map_err(|_| invalid())?;
-        DreamerRunnerStore::new(self).enqueue_maintenance(
-            REPRESENTATION_FACET,
-            Value::from(input),
-            format!("representation:{}", id.to_hex()),
-            now,
-        )
+        Ok(PreparedPlan {
+            id: packet.id()?,
+            input: String::from_utf8(packet.bytes()?).map_err(|_| invalid())?,
+            owner: request.owner,
+            packet,
+        })
     }
 }
 /// Measures a plan where it is written against the `[limits]` rows (OF-520):

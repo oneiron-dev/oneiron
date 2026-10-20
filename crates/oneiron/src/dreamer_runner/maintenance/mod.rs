@@ -55,6 +55,7 @@ use super::{
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
+pub use curator::approved::apply_after_consent as apply_curator_after_consent;
 pub(crate) use curator::curator_slot_in_txn;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
 pub use evaluation::{
@@ -77,19 +78,31 @@ impl DreamerRunnerStore<'_> {
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
         self.vault.with_write_txn_grouped(|txn| {
-            self.enqueue_kind_in_txn(
-                txn,
-                MAINTENANCE_QUEUE_KIND,
-                DreamerAttemptPayload {
-                    attempt_type: facet.into(),
-                    input,
-                    parent_attempt: None,
-                },
-                Some(dedupe),
-                None,
-                now,
-            )
+            self.enqueue_maintenance_in_txn(txn, facet, input, dedupe, now)
         })
+    }
+    /// [`Self::enqueue_maintenance`] in the caller's write, so a facet's own
+    /// rows and the job that runs it commit together (FIX 1000).
+    pub(super) fn enqueue_maintenance_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        facet: &str,
+        input: Value,
+        dedupe: String,
+        now: u64,
+    ) -> Result<EnqueueDreamerAttemptOutcome> {
+        self.enqueue_kind_in_txn(
+            txn,
+            MAINTENANCE_QUEUE_KIND,
+            DreamerAttemptPayload {
+                attempt_type: facet.into(),
+                input,
+                parent_attempt: None,
+            },
+            Some(dedupe),
+            None,
+            now,
+        )
     }
     /// The Dreamer's check of one self-written compaction landing (FIX 4465
     /// B), queued in the landing's own write under the key the landing

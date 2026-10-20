@@ -222,6 +222,24 @@ impl Memory<'_> {
             )?;
             Ok((settlement, metrics, vad))
         })?;
+        // A curator rung this approval landed applies now, not at the next
+        // nightly pass (FIX 470); one that cannot waits for that pass.
+        if approve {
+            crate::dreamer_runner::maintenance::apply_curator_after_consent(
+                self.vault(),
+                input
+                    .review
+                    .changes
+                    .iter()
+                    .zip(&settlement.changes)
+                    .filter(|(_, outcome)| outcome.verdict == RunChangeVerdict::Landed)
+                    .filter_map(|(member, _)| match member {
+                        RunReviewChange::Claim { claim_ref } => EntityId::from_hex(claim_ref).ok(),
+                        _ => None,
+                    }),
+                now,
+            );
+        }
         for decision in metrics {
             decision.record_metrics(&self.vault().store.diagnostics.gate);
         }

@@ -32,7 +32,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-mod approved;
+pub(super) mod approved;
 
 /// The curator's finding predicate.
 const PROPOSAL_PREDICATE: &str = "dreamer.curator.proposal";

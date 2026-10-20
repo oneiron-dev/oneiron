@@ -13,6 +13,60 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::ports::EntityStoreRead;
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
 
+/// Applies the curator findings among `approved` once the owner's approval
+/// of them has committed (FIX 470), so a run-tray approval moves its rungs at
+/// once rather than at the next nightly pass. Each finding applies in a
+/// grouped write of its own, as the nightly pass applies it, through
+/// `Vault::apply_approved_curator_in_txn` with no pass attempt: a finding
+/// already applied, or one whose target moved, applies nothing. A finding
+/// that fails stays approved for the nightly pass to retry, and failures are
+/// logged by count and kind alone. The approval never fails here.
+pub fn apply_after_consent(vault: &Vault, approved: impl IntoIterator<Item = EntityId>, now: u64) {
+    let findings = match curator_findings(vault, approved) {
+        Ok(findings) => findings,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "curator: approved findings were not read; the nightly pass applies them"
+            );
+            return;
+        }
+    };
+    let mut kinds = Vec::new();
+    for proposal in findings {
+        if let Err(error) = vault.with_write_txn_grouped(|txn| {
+            vault.apply_approved_curator_in_txn(txn, proposal, None, now)
+        }) {
+            kinds.push(error.kind());
+        }
+    }
+    if !kinds.is_empty() {
+        tracing::warn!(
+            failed = kinds.len(),
+            ?kinds,
+            "curator: approved findings did not apply; the nightly pass retries them"
+        );
+    }
+}
+
+/// The curator findings among `ids` that stand approved, read in one
+/// snapshot, so an approval that holds none opens no writer.
+fn curator_findings(
+    vault: &Vault,
+    ids: impl IntoIterator<Item = EntityId>,
+) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut findings = Vec::new();
+    for id in ids {
+        if vault.get_claim_in_txn(&txn, &id)?.is_some_and(|body| {
+            body.predicate == PROPOSAL_PREDICATE && body.approval == ClaimApprovalStatus::Approved
+        }) {
+            findings.push(id);
+        }
+    }
+    Ok(findings)
+}
+
 impl Vault {
     /// Applies the owner-approved curator finding `proposal` in the caller's
     /// write, as the Dreamer, and records it applied with its inverse and
