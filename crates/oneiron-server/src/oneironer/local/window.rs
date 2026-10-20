@@ -1,6 +1,11 @@
 //! One causal window with byte-accurate message coordinates. Tokenization
 //! never truncates the current turn and never changes the stored text.
 //!
+//! `oneironer qualify` alone may build the conversation window instead: the
+//! whole conversation as the model project's reference predictor tags it,
+//! cut by the tokenizer at the end of that predictor's own window. No
+//! production caller builds it.
+//!
 //! A bundle with a character head decodes names in full
 //! (`oneironer-decode-v1`): BIO, the DATE snap, character refinement. That
 //! decode counts in Unicode scalars, as the model project's does, from the
@@ -10,7 +15,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, SpeakerRole};
-use tokenizers::{Encoding, Tokenizer};
+use tokenizers::{Encoding, Tokenizer, TruncationDirection, TruncationParams, TruncationStrategy};
 
 pub(super) struct Segment<'a> {
     pub(super) turn: &'a str,
@@ -34,6 +39,35 @@ fn encode(tokenizer: &Tokenizer, text: &str, special: bool) -> anyhow::Result<En
     tokenizer
         .encode(text, special)
         .map_err(|_| anyhow::anyhow!("local extraction tokenization failed"))
+}
+
+/// The loaded tokenizer, cut as the model project's reference predictor
+/// cuts a conversation: its `tokenizer(text, max_length=2048,
+/// truncation=True)` sets exactly these parameters on the same tokenizers
+/// core (keep the start, no stride, the special tokens inside `cap`). That
+/// 2,048-token truncation is the reference predictor's own window, used only
+/// to qualify against it; the live window never cuts its current turn.
+pub(super) fn conversation_tokenizer(
+    tokenizer: &Tokenizer,
+    cap: usize,
+) -> anyhow::Result<Tokenizer> {
+    // The tokenizers core subtracts its special tokens from `cap`, so a cap
+    // below them would underflow rather than fail.
+    let specials = encode(tokenizer, "", true)?.len();
+    anyhow::ensure!(
+        cap >= specials,
+        "oneironer.max_input_tokens leaves no room for the special tokens"
+    );
+    let mut tokenizer = tokenizer.clone();
+    tokenizer
+        .with_truncation(Some(TruncationParams {
+            max_length: cap,
+            strategy: TruncationStrategy::LongestFirst,
+            stride: 0,
+            direction: TruncationDirection::Right,
+        }))
+        .map_err(|_| anyhow::anyhow!("invalid local extraction tokenizer truncation"))?;
+    Ok(tokenizer)
 }
 
 impl<'a> Window<'a> {
@@ -111,6 +145,52 @@ impl<'a> Window<'a> {
         });
         Ok(Self {
             text: text[cut..].to_owned(),
+            segments,
+            encoding,
+        })
+    }
+
+    /// The whole conversation in one window, as the model project's
+    /// reference predictor tags it over its `flatten()`: every context turn
+    /// in order, then the current turn, each with the role prefix the live
+    /// window writes and its messages joined by a newline; turns joined by
+    /// one newline, with none after the last. One encoding with special
+    /// tokens through `tokenizer`, which must come from
+    /// [`conversation_tokenizer`]: a conversation longer than its window is
+    /// cut at the end, never refused. Every message keeps its segment, in
+    /// order, so a segment's index is the message's ordinal in the flattened
+    /// conversation. Only `oneironer qualify` builds this window.
+    pub(super) fn conversation(
+        input: &'a EncoderInput,
+        tokenizer: &Tokenizer,
+    ) -> anyhow::Result<Self> {
+        let mut text = String::new();
+        let mut segments = Vec::new();
+        for (index, turn) in input.context.iter().enumerate() {
+            append(
+                &mut text,
+                &mut segments,
+                &turn.turn,
+                &turn.messages,
+                index,
+                turn.speaker,
+                false,
+            );
+        }
+        append(
+            &mut text,
+            &mut segments,
+            &input.turn,
+            &input.messages,
+            input.context.len(),
+            input.speaker,
+            true,
+        );
+        // `append` ends every turn with a newline; `flatten()` ends none.
+        text.pop();
+        let encoding = encode(tokenizer, &text, true)?;
+        Ok(Self {
+            text,
             segments,
             encoding,
         })
