@@ -2,13 +2,16 @@
 //! pass's request, admitted on the role's live route or as exactly the
 //! model the host resolved, held to the admitted model's context, dressed in
 //! the room it leaves, sent on the run's meter and booked. A live fork's
-//! call (FIX 4465 C) is admitted its own way and sent the same way.
+//! call (FIX 4465 C) is admitted its own way and sent the same way; the
+//! first one of a flight under a row on `auto` goes out only while its live
+//! prefix is still warm (FIX 6029).
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use oneiron::LlmResponse;
 use oneiron::agent_dispatch::AgentDispatcher;
+use oneiron::code_run::LiveCompactionFork;
 use oneiron::compaction::{
     CompactionBackend, CompactionCheck, CompactionOff, CompactionProduct, CompactionRefusal,
     CompactionRequest, CompactionSuppression, CompactionTierClass, compaction_reply_schema,
@@ -86,6 +89,17 @@ pub(super) enum Admit {
     },
 }
 
+/// How a pass's admitted call goes out: on its route's walk, as the house's
+/// calls do; as exactly its one model, with no fallback; or, for the first
+/// live-fork call of a flight under a row on `auto` (FIX 6029), as exactly
+/// its one model only while the live prefix it forks is still warm, asked
+/// again right before it is dispatched.
+pub(super) enum Dispatch<'a> {
+    Walk,
+    Exact,
+    WhileWarm(&'a LiveCompactionFork),
+}
+
 /// What one admitted call leaves room for: the admitted model's context,
 /// the input it already holds and the reply's reserve.
 #[derive(Clone, Copy)]
@@ -132,22 +146,33 @@ impl ServedCompactionBackend {
             }
         };
         let call = admitted.map_err(admission_refused)?;
-        let exact = matches!(admit, Admit::Exact { .. });
-        self.send(started, call, exact, request.summary_token_budget, dress)
+        let dispatch = match admit {
+            Admit::Role => Dispatch::Walk,
+            Admit::Exact { .. } => Dispatch::Exact,
+        };
+        self.send(started, call, dispatch, request.summary_token_budget, dress)?
+            .ok_or_else(|| {
+                refused(
+                    CompactionSuppression::TurnScoped { check: None },
+                    "the call was not sent".to_owned(),
+                )
+            })
     }
 
-    /// One admitted call, `exact` when it was admitted as exactly one model
-    /// (sent with no fallback, and its request kept for its step): held to
-    /// the admitted model's context, `dress`ed in the room it leaves, sent
-    /// on the run's meter with a permit of its own, and booked.
+    /// One admitted call, sent as `dispatch` says (one admitted as exactly
+    /// one model is sent with no fallback, and its request kept for its
+    /// step): held to the admitted model's context, `dress`ed in the room it
+    /// leaves, sent on the run's meter with a permit of its own, and booked.
+    /// `None` only for [`Dispatch::WhileWarm`] when the prefix went cold
+    /// before it was dispatched: nothing went out (FIX 6029).
     pub(super) fn send<D>(
         &self,
         started: Instant,
         mut call: RoleCall,
-        exact: bool,
+        dispatch: Dispatch<'_>,
         summary_token_budget: u64,
         dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
-    ) -> Result<Served<D>, CompactionRefusal> {
+    ) -> Result<Option<Served<D>>, CompactionRefusal> {
         // The admitted model, not the configured ladder, must hold the call.
         let Some(&context) = self.allowances.get(&call.request.model) else {
             return Err(refused(
@@ -202,19 +227,30 @@ impl ServedCompactionBackend {
             }
         };
         let step_hash = call.request.canonical_hash().ok();
-        let sent = if exact {
-            serde_json::to_vec(&call.request).ok()
-        } else {
+        let sent = if matches!(dispatch, Dispatch::Walk) {
             None
+        } else {
+            serde_json::to_vec(&call.request).ok()
         };
         let model = call.request.model.clone();
         let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
-        let reply = if exact {
-            self.handle
-                .block_on(call.ladder.generate_exact(&run, call.request, None))
-        } else {
-            self.handle
+        let reply = match dispatch {
+            Dispatch::Walk => self
+                .handle
                 .block_on(call.ladder.generate(&run, call.request, None))
+                .map(Some),
+            Dispatch::Exact => self
+                .handle
+                .block_on(call.ladder.generate_exact(&run, call.request, None))
+                .map(Some),
+            Dispatch::WhileWarm(fork) => {
+                self.handle.block_on(call.ladder.generate_exact_while_warm(
+                    &run,
+                    call.request,
+                    fork.rung(),
+                    fork.request(),
+                ))
+            }
         };
         if let CompactionMeter::Scope(scope) = &self.meter
             && let Err(error) =
@@ -223,14 +259,15 @@ impl ServedCompactionBackend {
             tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
         }
         match reply {
-            Ok(response) => Ok(Served {
+            Ok(Some(response)) => Ok(Some(Served {
                 response,
                 model,
                 step_hash,
                 sent,
                 worn,
                 latency: started.elapsed(),
-            }),
+            })),
+            Ok(None) => Ok(None),
             Err(error) => {
                 let suppression = match &error {
                     LlmError::Fatal(FatalLlmError::Auth) => CompactionSuppression::Auth,
