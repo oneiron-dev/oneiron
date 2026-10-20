@@ -196,6 +196,8 @@ fn confirm_walk_began(bytes: &[u8]) -> Option<u64> {
 /// passes. A vault with no horizon prunes nothing.
 fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     vault.finish_gate_decision_retirements()?;
+    // An erased holder's known-value history (KS-3), retried here.
+    vault.finish_known_history_retirements_after_commit();
     let mut removed = 0;
     let mut complete = true;
     if vault.gate_decision_retention_secs()?.is_some() {

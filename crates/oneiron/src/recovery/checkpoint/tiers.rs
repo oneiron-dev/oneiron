@@ -35,9 +35,6 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // The key over stored fork hashes stays with the node, like
                 // the telemetry it keys.
                 b"retrieval_trace_key:",
-                // The known-value index and its key stay with the node: the
-                // index is derived from custody here (OF-560 C).
-                b"secret_known:",
                 b"tasks.create.rate.",
                 b"own_rate.",
                 b"vault_cleanup.scan",
@@ -57,6 +54,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // So is the checkpoint upkeep's own accounting: its totals,
                 // the head it kept and the adopted rows it awaits (OF-469).
                 b"authority.checkpoint.local.",
+                // A mirror's kept LFS census is this host's own walk; a
+                // restore walks the whole history again (FIX 6331).
+                b"origin:mirror_lfs_census:v1:",
                 // Host orders and the host-only log never enter an owner's
                 // image (OF-470 C2).
                 HOST_HOLD_PREFIX,

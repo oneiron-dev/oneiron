@@ -523,6 +523,10 @@ fn put_run_results_in_txn<R: Read + Seek>(
     known: crate::code_run::StagedSinks,
 ) -> Result<(usize, usize)> {
     let (mut imported, mut withheld) = (0, 0);
+    // The values custody knows, read in this writer and kept no longer
+    // (KS-3): each body's sweep replaces them with their handles.
+    let swept = crate::secret_custody::KnownValues::load_in_writer(&vault.store, wtxn)?
+        .map(std::sync::Arc::new);
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);
     while let Some((_, run)) = runs.next_parsed::<ExportRun>(&archive.spool)? {
         let run_id = parse_id(&run.run_id)?;
@@ -547,7 +551,7 @@ fn put_run_results_in_txn<R: Read + Seek>(
             let body = std::io::Cursor::new(archive.files.read_file(blake3)?);
             let finished = vault.stage_code_run_output_from(
                 output.path.clone(),
-                vault.code_run_output_sink_knowing(known.clone())?,
+                vault.code_run_output_sink_knowing(known.clone(), swept.clone())?,
                 body,
             )?;
             let occurrence = finished.at(output.path.clone(), output.complete)?;

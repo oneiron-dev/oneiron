@@ -69,9 +69,13 @@ impl CompartmentScope {
     pub(crate) fn of(kind: CustodyKind) -> Self {
         match kind {
             // A body instance's key is one the host engine reads in its own
-            // process, as a claim key is (KS-2A).
+            // process, as a claim key is (KS-2A); so are the known-value
+            // index's master and its history entries (KS-3), which no kit
+            // need open.
             CustodyKind::ClaimDecision
             | CustodyKind::BodyInstance
+            | CustodyKind::KnownValueIndex
+            | CustodyKind::KnownValueEntry
             | CustodyKind::CheckpointPayload
             | CustodyKind::TrainingLink => Self::HostReadable,
         }
