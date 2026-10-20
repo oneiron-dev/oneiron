@@ -12,8 +12,8 @@
 //! root is implicit. Each tree node's meta map holds its model identity (`id`,
 //! decimal, kept apart from the Loro handle), its kind, name, binding,
 //! placeholder, its preset and payload (a table's in root `tables`, see
-//! [`table`]), and one key per geometry field, so concurrent writes of
-//! different fields merge. Root `texts` maps a text shape's identity to its
+//! [`table`]; a chart's in root `charts`, see [`chart`]), and one key per
+//! geometry field, so concurrent writes of different fields merge. Root `texts` maps a text shape's identity to its
 //! body: `order`, a movable list of paragraph identities, and `paras`, each
 //! paragraph's level and one rich text whose run formatting rides as marks,
 //! one mark key per run property, each written only where it changed.
@@ -26,6 +26,8 @@
 //! deck with the fewest container writes, so an edit read against an older
 //! frontier merges with the head unit by unit.
 
+mod chart;
+mod node;
 mod order;
 mod table;
 
@@ -36,10 +38,10 @@ use loro::{
     LoroValue, StyleConfig, StyleConfigMap, TextDelta, TreeParentId, UpdateOptions,
     ValueOrContainer,
 };
+use node::{node_of, root, sync_meta};
 use oneiron_docedit::edit::transaction::IdMarks;
 use oneiron_docedit::live::{
-    DeckNode, DeckOp, GeometryProps, LiveDeck, LiveError, NodeId, NodeKind, NodePayload, Paragraph,
-    Run, TextBody,
+    DeckOp, LiveDeck, LiveError, NodeId, NodeKind, NodePayload, Paragraph, Run, TextBody,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -50,6 +52,7 @@ const ALLOC: &str = "alloc";
 const TREE: &str = "tree";
 const TEXTS: &str = "texts";
 const TABLES: &str = "tables";
+const CHARTS: &str = "charts";
 const OPAQUE: &str = "opaque";
 const LOG: &str = "log";
 const LANDED: &str = "landed";
@@ -147,10 +150,15 @@ pub(super) fn read(doc: &LoroDoc) -> Result<Body> {
     let mut nodes = BTreeMap::from([(NodeId(0), root())]);
     let tree = doc.get_tree(TREE);
     let tables = doc.get_map(TABLES);
+    let charts = doc.get_map(CHARTS);
     let mut stack = vec![(TreeParentId::Root, NodeId(0), NodeKind::Root)];
     while let Some((parent, parent_id, parent_kind)) = stack.pop() {
         for handle in tree.children(parent).unwrap_or_default() {
-            let (id, node) = node_of(&tree.get_meta(handle).map_err(loro)?, parent_id, &tables)?;
+            let (id, node) = node_of(
+                &tree.get_meta(handle).map_err(loro)?,
+                parent_id,
+                (&tables, &charts),
+            )?;
             // A table concurrent deletes left no row or column is gone, as
             // PowerPoint deletes a table whose last row or column goes.
             if matches!(&node.payload, Some(NodePayload::Table(table))
@@ -226,6 +234,7 @@ pub(super) fn sync_to(doc: &LoroDoc, target: &LiveDeck) -> Result<()> {
     sync_tree(&doc.get_tree(TREE), target)?;
     sync_texts(&doc.get_map(TEXTS), target)?;
     table::sync(&doc.get_map(TABLES), target)?;
+    chart::sync(&doc.get_map(CHARTS), target)?;
     let opaque = doc.get_map(OPAQUE);
     for part in keys(&opaque) {
         if !target.opaque_parts.contains_key(&part) {
@@ -408,24 +417,6 @@ fn sync_tree(tree: &LoroTree, target: &LiveDeck) -> Result<()> {
     Ok(())
 }
 
-fn sync_meta(meta: &LoroMap, id: NodeId, node: &DeckNode) -> Result<()> {
-    put(meta, ID, id.0.to_string())?;
-    put_json(meta, KIND, &node.kind)?;
-    put_json(meta, NAME, &node.name)?;
-    put_json(meta, BINDING, &node.binding)?;
-    put_json(meta, PLACEHOLDER, &node.placeholder)?;
-    put_json(meta, PRESET, &node.preset)?;
-    match &node.payload {
-        Some(NodePayload::Table(_)) => put(meta, PAYLOAD, table::MARK.to_owned())?,
-        payload => put_json(meta, PAYLOAD, payload)?,
-    }
-    put_json(meta, OFFSET, &node.geometry.offset)?;
-    put_json(meta, EXTENT, &node.geometry.extent)?;
-    put_json(meta, ROTATION, &node.geometry.rotation)?;
-    put_json(meta, FLIP_H, &node.geometry.flip_h)?;
-    put_json(meta, FLIP_V, &node.geometry.flip_v)
-}
-
 fn sync_texts(map: &LoroMap, target: &LiveDeck) -> Result<()> {
     for key in keys(map) {
         if node_id(&key).map_or(true, |id| !target.texts.contains_key(&id)) {
@@ -564,50 +555,6 @@ fn configure(doc: &LoroDoc) {
         styles.insert(key.into(), StyleConfig { expand: EXPAND });
     }
     doc.config_text_style(styles);
-}
-
-fn root() -> DeckNode {
-    DeckNode {
-        kind: NodeKind::Root,
-        parent: None,
-        children: Vec::new(),
-        name: None,
-        binding: None,
-        geometry: GeometryProps::default(),
-        placeholder: None,
-        preset: None,
-        payload: None,
-    }
-}
-
-/// A tree node's model identity and node; a table frame's table is its
-/// `tables` entry.
-fn node_of(meta: &LoroMap, parent: NodeId, tables: &LoroMap) -> Result<(NodeId, DeckNode)> {
-    let id = identity(meta)?;
-    let payload = match string(meta, PAYLOAD).as_deref() {
-        Some(table::MARK) => Some(NodePayload::Table(table::read(tables, id)?)),
-        _ => json(meta, PAYLOAD)?,
-    };
-    Ok((
-        id,
-        DeckNode {
-            kind: json(meta, KIND)?,
-            parent: Some(parent),
-            children: Vec::new(),
-            name: json(meta, NAME)?,
-            binding: json(meta, BINDING)?,
-            geometry: GeometryProps {
-                offset: json(meta, OFFSET)?,
-                extent: json(meta, EXTENT)?,
-                rotation: json(meta, ROTATION)?,
-                flip_h: json(meta, FLIP_H)?,
-                flip_v: json(meta, FLIP_V)?,
-            },
-            placeholder: json(meta, PLACEHOLDER)?,
-            preset: json(meta, PRESET)?,
-            payload,
-        },
-    ))
 }
 
 /// A tree node's model identity; the implicit root is never a tree node.
