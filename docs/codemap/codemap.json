@@ -848,7 +848,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExceptionalWidthCheck",
@@ -863,7 +863,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 4
      }
     },
@@ -86181,7 +86181,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 12,
       "struct": 1
      }
