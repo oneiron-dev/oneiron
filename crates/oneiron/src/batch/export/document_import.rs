@@ -278,19 +278,26 @@ impl Vault {
                 )?;
             }
         }
-        let mut edges = archive.spool.rows(ArchiveRecordKind::Edge);
-        while let Some((_, edge)) = edges.next_parsed::<ExportEdge>(&archive.spool)? {
-            let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
-            if archive
-                .index
-                .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
-                || archive
+        // FIX 5972: an archived `regenerates` link is proven on its
+        // MESSAGEs' restored axes, so it lands after every other edge.
+        for regenerates in [false, true] {
+            let mut edges = archive.spool.rows(ArchiveRecordKind::Edge);
+            while let Some((_, edge)) = edges.next_parsed::<ExportEdge>(&archive.spool)? {
+                if (edge.kind == EdgeKind::Regenerates as u8) != regenerates {
+                    continue;
+                }
+                let edge = super::provenance_import::mapped_edge(&edge, &archive.index)?;
+                if archive
                     .index
-                    .contains(Tag::Omitted, parse_id(&edge.target)?.as_bytes())?
-            {
-                continue;
+                    .contains(Tag::Omitted, parse_id(&edge.source)?.as_bytes())?
+                    || archive
+                        .index
+                        .contains(Tag::Omitted, parse_id(&edge.target)?.as_bytes())?
+                {
+                    continue;
+                }
+                import_edge(self, &mut wtxn, &edge, &archive.index)?;
             }
-            import_edge(self, &mut wtxn, &edge, &archive.index)?;
         }
         let mut archived_receipt_sources = 0;
         let mut envelopes = archive.spool.rows(ArchiveRecordKind::DerivationEnvelope);
@@ -1079,6 +1086,31 @@ pub(super) fn import_edge(
             arousal: v[1],
             dominance: v[2],
         });
+    // The stream alone creates this kind (FIX 5972): an archived link comes
+    // back through the internal write, with its own value fields, only once
+    // its restored pair proves what the stream proved, and is left out
+    // otherwise. A byte-equal stored link returned above.
+    if kind == EdgeKind::Regenerates {
+        if crate::edge::regeneration_pair(&vault.store, wtxn, &source, &target)?
+            != crate::edge::Regeneration::Admits
+        {
+            return Ok(());
+        }
+        return vault
+            .batch_in()
+            .edge_with_value_fields(
+                &source,
+                kind,
+                &target,
+                crate::batch::EdgeValueFields {
+                    weight: edge.weight,
+                    created_at: edge.created_at,
+                    vad,
+                    provenance: None,
+                },
+            )
+            .apply(wtxn);
+    }
     vault
         .batch_in()
         .edge_with_created_at_and_vad(&source, kind, &target, edge.weight, edge.created_at, vad)
