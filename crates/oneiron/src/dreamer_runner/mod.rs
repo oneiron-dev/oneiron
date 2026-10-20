@@ -10,6 +10,7 @@ mod codec;
 mod constants;
 mod free_time;
 mod home;
+mod lease_fence;
 mod milestone;
 pub mod observation;
 mod owner_doors;
@@ -43,6 +44,7 @@ pub use self::codec::*;
 pub use self::constants::*;
 pub use self::free_time::*;
 pub(crate) use self::home::reelect_home_in_txn;
+pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
 pub use self::owner_doors::*;
 pub use self::program::{

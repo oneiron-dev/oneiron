@@ -91,7 +91,7 @@ pub fn turn_program_admission(
         cursor,
         limit,
     };
-    let (records, next) = admissions_of_turn_in_txn(vault, &txn, &page, &caller)?;
+    let (records, next, undecodable) = admissions_of_turn_in_txn(vault, &txn, &page, &caller)?;
     drop(txn);
     if records.is_empty() && next.is_none() && cursor.is_none() {
         return Ok(None);
@@ -115,6 +115,7 @@ pub fn turn_program_admission(
             .map(|record| admission_item(record, &readable))
             .collect(),
         next_cursor: next.map(|key| bytes_to_hex_lower(&key)),
+        undecodable_admission_rows_examined: undecodable,
     }))
 }
 
@@ -154,6 +155,7 @@ pub fn program_run(
         .unwrap_or(program.root);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     let status = store.status_with_park_in_txn(&txn, current)?;
+    let held_by_try = held_by_try_in_txn(&store, &txn, &tries)?;
     let run = program_run_in_txn(vault, &txn, &program.code_run)?
         .filter(|run| run.admission == program.admission);
     let page = program_steps_page_in_txn(vault, &txn, program.code_run, cursor, limit)?;
@@ -178,6 +180,7 @@ pub fn program_run(
         tries,
         queue,
         held,
+        held_by_try,
         run: run.map(run_view),
         steps: page
             .steps
@@ -393,15 +396,17 @@ struct TurnPage {
 
 /// One page of the admissions `page.turn`'s wakes decided that `caller`
 /// reads, in admission-id order after the cursor: at most `limit` of them,
-/// out of at most [`ADMISSION_SCAN_ROWS`] decoded rows examined, and the id
-/// the next page goes on after while a row is left. A row that does not
-/// decode is skipped.
+/// out of at most [`ADMISSION_SCAN_ROWS`] decoded rows examined, the id the
+/// next page goes on after while a row is left, and how many rows that do
+/// not decode the page passed over (FIX 5839). Such a row is skipped, and
+/// counted only once a later decoded row is examined or the scan ends, so
+/// one past the page's cursor is counted by the next page alone.
 fn admissions_of_turn_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     page: &TurnPage,
     caller: &Caller,
-) -> Result<(Vec<TurnProgramAdmissionRecord>, Option<[u8; 32]>)> {
+) -> Result<(Vec<TurnProgramAdmissionRecord>, Option<[u8; 32]>, u64)> {
     let start = page
         .cursor
         .as_ref()
@@ -409,17 +414,22 @@ fn admissions_of_turn_in_txn(
     let mut matched = Vec::new();
     let mut examined = 0_usize;
     let mut last = None;
+    let (mut undecodable, mut pending) = (0_u64, 0_u64);
     for row in ADMISSION.iter_range(vault, txn, start, Bound::Unbounded)? {
         let (key, record) = match row {
             Ok(row) => row,
-            Err(error) if error.kind() == ErrorKind::SideTableRow => continue,
+            Err(error) if error.kind() == ErrorKind::SideTableRow => {
+                pending = pending.saturating_add(1);
+                continue;
+            }
             Err(error) => return Err(error),
         };
         if matched.len() >= page.limit || examined >= ADMISSION_SCAN_ROWS {
-            return Ok((matched, last));
+            return Ok((matched, last, undecodable));
         }
         examined += 1;
         last = Some(key);
+        undecodable = undecodable.saturating_add(std::mem::take(&mut pending));
         let wake = &record.wake;
         if wake.turn.turn == page.turn
             && page
@@ -430,7 +440,7 @@ fn admissions_of_turn_in_txn(
             matched.push(record);
         }
     }
-    Ok((matched, None))
+    Ok((matched, None, undecodable.saturating_add(pending)))
 }
 
 fn admission_item(
@@ -510,22 +520,8 @@ fn queue_and_held(
     let Some((status, parked)) = status else {
         return (None, None);
     };
+    let held = held_view(current, &status, parked);
     let row = status.attempt;
-    let pending = matches!(
-        row.state,
-        AttemptState::Queued
-            | AttemptState::Leased
-            | AttemptState::Paused
-            | AttemptState::Scheduled
-            | AttemptState::Landing
-    );
-    let held = parked.filter(|_| pending).map(|park| ProgramHeldView {
-        attempt: attempt_hex(current),
-        cause: park.cause.as_str().to_owned(),
-        owner: park.park_owner,
-        reason: park.reason,
-        parked_at: park.parked_at,
-    });
     let queue = ProgramQueueView {
         attempt: attempt_hex(current),
         state: row.state.as_str().to_owned(),
@@ -534,6 +530,48 @@ fn queue_and_held(
         updated_at: row.updated_at,
     };
     (Some(queue), held)
+}
+
+/// `attempt`'s park while its queue row is not terminal: work the program
+/// still owes, held.
+fn held_view(
+    attempt: AttemptId,
+    status: &DreamerAttemptStatus,
+    parked: Option<DreamerParkedAttemptRecord>,
+) -> Option<ProgramHeldView> {
+    let pending = matches!(
+        status.attempt.state,
+        AttemptState::Queued
+            | AttemptState::Leased
+            | AttemptState::Paused
+            | AttemptState::Scheduled
+            | AttemptState::Landing
+    );
+    parked.filter(|_| pending).map(|park| ProgramHeldView {
+        attempt: attempt_hex(attempt),
+        cause: park.cause.as_str().to_owned(),
+        owner: park.park_owner,
+        reason: park.reason,
+        parked_at: park.parked_at,
+    })
+}
+
+/// Each of `tries` held at `txn`'s revision, in their order (FIX 5840).
+fn held_by_try_in_txn(
+    store: &DreamerRunnerStore<'_>,
+    txn: &heed::RoTxn<'_>,
+    tries: &[ProgramTryView],
+) -> MemoryResult<Vec<ProgramHeldView>> {
+    let mut held = Vec::new();
+    for one in tries {
+        let attempt = attempt_ref(&one.attempt, "a run-tree attempt id did not parse")?;
+        if let Some((status, parked)) = store.status_with_park_in_txn(txn, attempt)?
+            && let Some(view) = held_view(attempt, &status, parked)
+        {
+            held.push(view);
+        }
+    }
+    Ok(held)
 }
 
 /// Every try in the run's tree, in the order the queue made them: by
