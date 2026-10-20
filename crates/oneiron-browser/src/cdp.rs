@@ -8,20 +8,23 @@
 //! (FIX 6680), and a JavaScript dialog a page opens is answered at once, as
 //! before its Page domain was on. The pages' committed top-level origins
 //! and an engine switch's one-shot seed document ride the same routing
-//! (`state`).
+//! (`state`), as do the storage reads a Chromium document sends as it is
+//! left, kept in the session's snapshots (`storage`).
 
 mod state;
+mod storage;
 mod websocket;
 
 pub(crate) use state::{Visits, web_origin};
 
+use crate::session::storage::Sink;
 use crate::{BrowserEngine, BrowserError};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 /// The largest message the pipe reads. A 1,366 px PNG screenshot in base64
@@ -74,6 +77,8 @@ pub(crate) struct Pipe {
     pages: Arc<Mutex<state::Pages>>,
     /// The one-shot seed document an engine switch armed, if any.
     seed: Arc<Mutex<Option<state::Seed>>>,
+    /// Where the pages' storage reads are kept, once the session gave one.
+    sink: Arc<OnceLock<Sink>>,
 }
 
 impl Pipe {
@@ -117,6 +122,7 @@ impl Pipe {
             navigations: Arc::default(),
             pages: Arc::default(),
             seed: Arc::default(),
+            sink: Arc::default(),
         }
     }
 
@@ -234,6 +240,7 @@ fn route(
     let Some(id) = message.get("id").and_then(Value::as_u64) else {
         count_navigation(&pipe.navigations, &message);
         pipe.note_page(&message);
+        pipe.note_storage(&message);
         answer_dialog(pipe, &message);
         if let Some(relay) = relay {
             network_event(pipe.clone(), Arc::clone(relay), message);

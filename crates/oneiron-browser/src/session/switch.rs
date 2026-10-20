@@ -1,16 +1,18 @@
-//! The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3), under the
-//! seat lock the call already holds, so no person's look or input meets a
-//! half-made switch.
+//! The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b),
+//! under the seat lock the call already holds, so no person's look or input
+//! meets a half-made switch.
 //!
 //! The model asks; nothing here switches by itself, falls back, or reads an
 //! act's fact. The agent must have the browser and give its reason; the
 //! engine already running answers `unchanged`. Otherwise the source page's
 //! state is read (its URL, scroll, cookies, and the local and session
-//! storage of its current top-level origin, within [`switch_state_limits`],
-//! charged to the host's retained line), a guest is started on the target
-//! engine through the host's starter and attached as every guest is, the
-//! cookies go in first, each carried origin's stores are seeded into a
-//! one-shot inert document of that origin before any page script runs, the
+//! storage of its current top-level origin, within [`switch_state_limits`]),
+//! every other origin the tab visited is taken from the session's snapshots
+//! (`storage`), all charged to the host's retained line, a guest is started
+//! on the target engine through the host's starter and attached as every
+//! guest is, the cookies go in first, each carried origin's stores are
+//! seeded into a one-shot inert document of that origin before any page
+//! script runs, one origin after another and the current one last, the
 //! carried URL loads, the scroll is set and read back, and the target is
 //! read whole. Only then does the target replace the source's engine group,
 //! and the source guest goes. A target that does not start, attach, take
@@ -20,15 +22,19 @@
 //!
 //! The run keeps its press policy and spent batch counts, its receipts and
 //! their sequence, its decider, library and receipt sink, its takeover
-//! record and the origin history of the tab it carries. The target's driver
-//! starts anew: its handles, tabs, observations, images and pending tab
-//! move, and its change check, which runs anew on the target.
+//! record, and the origin history and storage snapshots of the tab it
+//! carries. The target's driver starts anew: its handles, tabs,
+//! observations, images and pending tab move, and its change check, which
+//! runs anew on the target.
 
 use super::BrowserSession;
 use super::guest::{BrowserGuestStarter, EngineGuest};
+use super::storage::{
+    Items, OriginSnapshots, STORES, Sink, SwitchStateLimits, export_stores, not_held, store_bytes,
+    store_loss, switch_state_limits, switch_storage_scope,
+};
 use crate::cdp::{Visits, web_origin};
 use crate::driver::CdpDriver;
-use crate::driver::state::{Store, StoreRead};
 use crate::retention::HandleRetention;
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, EffectReceipt, EngineSwitchRecord, Observation,
@@ -44,47 +50,10 @@ use std::time::Duration;
 const SWITCH_VERB: &str = "switch_engine";
 /// The page a guest starts on: nothing to carry.
 const BLANK: &str = "about:blank";
-/// Each store a switch carries, and the component its record names.
-const STORES: [(Store, SwitchComponent); 2] = [
-    (Store::Local, SwitchComponent::LocalStorage),
-    (Store::Session, SwitchComponent::SessionStorage),
-];
 
 /// The longest reason a switch may give, in characters, as a handover's
 /// (`SWITCH_REASON_CHARS`, CALLS row, open).
 const SWITCH_REASON_CHARS: usize = 500;
-
-/// What a switch holds of a page at most (`switch_state_limits`, CALLS row,
-/// open). A page's cookies and storage are page-controlled input: a part
-/// past a bound is not carried, and the record says so, never cut short and
-/// called whole.
-pub(crate) struct SwitchStateLimits {
-    /// Cookies carried, in the order the source lists them.
-    pub(crate) cookies: usize,
-    /// Bytes of the carried cookies' names, values, domains and paths.
-    pub(crate) cookie_bytes: usize,
-    /// Items one store holds.
-    pub(crate) items: usize,
-    /// UTF-16 code units of one store's keys and values: at six bytes each
-    /// as JSON at worst, one store's read stays inside the host's 32 MiB
-    /// bound on one CDP message.
-    pub(crate) store_chars: usize,
-    /// Top-level origins one tab's history keeps; older ones are counted.
-    pub(crate) origins: usize,
-}
-
-/// See [`SwitchStateLimits`]: as many cookies as Chromium keeps for one
-/// profile before it prunes, and the five million characters Chromium
-/// grants one origin's store, less room for its JSON.
-pub(crate) const fn switch_state_limits() -> SwitchStateLimits {
-    SwitchStateLimits {
-        cookies: 3_000,
-        cookie_bytes: 8 << 20,
-        items: 10_000,
-        store_chars: 4 << 20,
-        origins: 256,
-    }
-}
 
 /// Whether a switch from `from` to `to` restarts the browser
 /// (`switch_request_policy`, CALLS row, open; owner ruling FIX 6680 = B):
@@ -178,39 +147,6 @@ fn switch_cookie_policy(
     (Value::Object(param), losses)
 }
 
-/// The origins whose stores a switch seeds into the target, in order, the
-/// final origin last, and the origins the carried tab visited whose stores
-/// it reports not collected (`switch_storage_scope`, CALLS row, open;
-/// Engine 10-21 01:3x): the current top-level origin only, seeded before
-/// any page script through a one-shot inert document. The per-origin
-/// collector (PR3b) adds the others to the same loop.
-fn switch_storage_scope(current: Option<&str>, visited: Option<&Visits>) -> StorageScope {
-    let mut report = Vec::new();
-    let mut evicted = 0;
-    if let Some(visited) = visited {
-        let others = visited.origins.iter();
-        report.extend(
-            others
-                .filter(|origin| Some(origin.as_str()) != current)
-                .cloned(),
-        );
-        evicted = visited.evicted;
-    }
-    StorageScope {
-        seed: current.map(str::to_owned).into_iter().collect(),
-        report,
-        evicted,
-    }
-}
-
-/// What a switch seeds and what it reports of the carried tab's origins.
-struct StorageScope {
-    seed: Vec<String>,
-    report: Vec<String>,
-    /// Origins the tab's history no longer holds.
-    evicted: u64,
-}
-
 /// A switch's hard step that went wrong, and its stage.
 struct Halt {
     stage: SwitchStage,
@@ -247,11 +183,8 @@ impl OriginHistory {
     }
 }
 
-/// One store's items, key and value, and their UTF-16 code units.
-type Items = (Vec<(String, String)>, u64);
-
-/// What a switch read off its source page. Its values stay here, in
-/// memory: never logged, never recorded.
+/// What a switch read off its source page, and took of its snapshots. Its
+/// values stay here, in memory: never logged, never recorded.
 struct Exported {
     url: String,
     title: String,
@@ -260,20 +193,39 @@ struct Exported {
     scroll: Option<(f64, f64)>,
     /// None when the cookies were not read or not held.
     cookies: Option<Vec<Value>>,
-    /// The origin's local and session store, as [`STORES`] orders them:
-    /// their items and UTF-16 code units, none when not carried.
+    /// The origin's local and session store, as [`STORES`] orders them,
+    /// none when not carried.
     stores: [Option<Items>; 2],
+    /// Every other origin the tab visited with a store its snapshots hold,
+    /// in the order they are seeded.
+    others: Vec<(String, [Option<Items>; 2])>,
 }
 
 impl Exported {
     /// The stores this switch carries for `origin`.
     fn stores_of(&self, origin: &str) -> [Option<&Items>; 2] {
-        if self.origin.as_deref() == Some(origin) {
-            [self.stores[0].as_ref(), self.stores[1].as_ref()]
+        let stores = if self.origin.as_deref() == Some(origin) {
+            Some(&self.stores)
         } else {
-            [None, None]
-        }
+            let other = self.others.iter().find(|(other, _)| other == origin);
+            other.map(|(_, stores)| stores)
+        };
+        stores.map_or([None, None], |stores| {
+            [stores[0].as_ref(), stores[1].as_ref()]
+        })
     }
+}
+
+/// The origins a switch seeds into the target, in order
+/// (`switch_storage_seed_policy`, CALLS row, open): one at a time, each
+/// through its own one-shot inert document in the target's tab, the other
+/// origins oldest read first and the current one last, before the carried
+/// URL loads. An origin whose carried stores are empty needs no document;
+/// each written store is read back, every key with its value, and a store
+/// or a document that does not stand is listed, the switch going on.
+fn switch_storage_seed_policy(state: &Exported) -> impl Iterator<Item = &str> {
+    let others = state.others.iter().map(|(origin, _)| origin.as_str());
+    others.chain(state.origin.as_deref())
 }
 
 fn lost(
@@ -287,6 +239,8 @@ fn lost(
         cookies: Vec::new(),
         attribute: None,
         count: None,
+        phase: None,
+        after_receipt: None,
         reason,
     }
 }
@@ -296,6 +250,8 @@ fn carried(component: SwitchComponent, origin: Option<&str>, count: Option<u64>)
         component,
         origin: origin.map(str::to_owned),
         count,
+        phase: None,
+        after_receipt: None,
     }
 }
 
@@ -305,11 +261,12 @@ fn cookie_id(cookie: &Value) -> String {
     format!("{}@{}", field("name"), field("domain"))
 }
 
-/// Reads the source page's state, within `limits`; what it cannot read, or
-/// what is past a bound, is listed in `losses`.
+/// Reads the source page's state, within `limits`, after receipt `after`;
+/// what it cannot read, or what is past a bound, is listed in `losses`.
 fn export(
     driver: &CdpDriver,
     limits: &SwitchStateLimits,
+    after: u64,
     losses: &mut Vec<SwitchNotCarried>,
 ) -> Exported {
     let (url, title) = driver.page_now().unwrap_or_else(|_| {
@@ -335,20 +292,10 @@ fn export(
             None
         }
     };
-    let mut stores = [None, None];
-    if let Some(origin) = &origin {
-        for ((store, component), kept) in STORES.into_iter().zip(&mut stores) {
-            let at = Some(origin.clone());
-            match driver.read_store(store, origin, limits) {
-                StoreRead::Items { pairs, chars } => *kept = Some((pairs, chars)),
-                StoreRead::Over { count } => losses.push(SwitchNotCarried {
-                    count: Some(count),
-                    ..lost(component, at, SwitchLoss::Limit)
-                }),
-                StoreRead::Failed => losses.push(lost(component, at, SwitchLoss::ReadFailed)),
-            }
-        }
-    }
+    let stores = match &origin {
+        Some(origin) => export_stores(driver, origin, limits, after, losses),
+        None => [None, None],
+    };
     Exported {
         url,
         title,
@@ -356,6 +303,7 @@ fn export(
         scroll,
         cookies,
         stores,
+        others: Vec::new(),
     }
 }
 
@@ -392,7 +340,8 @@ fn bound_cookies(
 }
 
 /// Charges what the switch holds of the page to the host's retained line.
-/// What the line will not hold is not carried, the stores first.
+/// What the line will not hold is not carried: the other origins' stores
+/// first, then the current one's, then the cookies.
 fn hold(
     state: &mut Exported,
     charge: &mut dyn HandleRetention,
@@ -404,23 +353,24 @@ fn hold(
         .flatten()
         .map(|cookie| cookie.to_string().len())
         .sum();
-    let store_bytes: usize = state
-        .stores
+    let current = store_bytes(&state.stores);
+    let others: usize = state
+        .others
         .iter()
-        .flatten()
-        .flat_map(|(pairs, _)| pairs)
-        .map(|(key, value)| key.len() + value.len())
+        .map(|(_, stores)| store_bytes(stores))
         .sum();
-    if charge.resize(cookie_bytes + store_bytes) {
+    if charge.resize(cookie_bytes + current + others) {
         return;
     }
-    for ((_, component), store) in STORES.into_iter().zip(&mut state.stores) {
-        if let Some((pairs, _)) = store.take() {
-            losses.push(SwitchNotCarried {
-                count: Some(pairs.len() as u64),
-                ..lost(component, state.origin.clone(), SwitchLoss::HostCapacity)
-            });
-        }
+    for (origin, stores) in std::mem::take(&mut state.others) {
+        not_held(&origin, stores, losses);
+    }
+    if charge.resize(cookie_bytes + current) {
+        return;
+    }
+    if let Some(origin) = &state.origin {
+        let stores = std::mem::replace(&mut state.stores, [None, None]);
+        not_held(origin, stores, losses);
     }
     if charge.resize(cookie_bytes) {
         return;
@@ -454,23 +404,26 @@ fn adapt(cookies: &[Value], to: BrowserEngine) -> (Vec<Value>, Vec<SwitchNotCarr
             count: Some(cookies.len() as u64),
             cookies,
             attribute: Some(attribute.to_owned()),
+            phase: None,
+            after_receipt: None,
             reason,
         });
     (params, losses.collect())
 }
 
 /// Starts and readies the target, everything after the export up to its
-/// whole read, filling `record`'s lists. A hard step that went wrong halts
-/// it, and the target drops with it.
+/// whole read, filling `record`'s lists; its pipe's storage reads go to
+/// `sink`, kept from its commit. A hard step that went wrong halts it, and
+/// the target drops with it.
 fn stage(
     starter: &mut dyn BrowserGuestStarter,
     wait_cap: Duration,
     state: &Exported,
-    scope: &StorageScope,
+    sink: Option<Sink>,
     record: &mut EngineSwitchRecord,
 ) -> Result<(EngineGuest, Observation), Halt> {
     let started = switch_commit_policy(SwitchStage::Start, starter.start(record.to))?;
-    let attached = EngineGuest::attach(record.to, started, wait_cap);
+    let attached = EngineGuest::attach(record.to, started, wait_cap, sink);
     let mut target = switch_commit_policy(SwitchStage::Attach, attached)?;
     if let Some(cookies) = &state.cookies {
         let (params, losses) = adapt(cookies, record.to);
@@ -481,7 +434,7 @@ fn stage(
         let item = carried(SwitchComponent::Cookies, None, Some(count));
         record.carried.push(item);
     }
-    for origin in &scope.seed {
+    for origin in switch_storage_seed_policy(state) {
         seed(&target.driver, origin, state, record);
     }
     if state.origin.is_some() {
@@ -512,37 +465,38 @@ fn stage(
 }
 
 /// Seeds `origin`'s carried stores into the target through its one-shot
-/// inert document; a store that does not read back as written, or a
-/// document that did not stand, is listed.
+/// inert document; a store that does not read back as written, key by key,
+/// or a document that did not stand, is listed. An origin whose carried
+/// stores are empty needs no document: the target's stores start empty.
 fn seed(driver: &CdpDriver, origin: &str, state: &Exported, record: &mut EngineSwitchRecord) {
     let stores = state.stores_of(origin);
-    let empty = stores.iter().flatten().all(|(pairs, _)| pairs.is_empty());
+    let empty = stores.iter().flatten().all(|items| items.pairs.is_empty());
     let written = if empty {
-        // Nothing to write: the target's stores start empty.
-        Ok([Some((0, 0)), Some((0, 0))])
+        Ok([Some((0, 0, true)), Some((0, 0, true))])
     } else {
-        let pairs = stores.map(|store| store.map(|(pairs, _)| pairs.as_slice()));
+        let pairs = stores.map(|store| store.map(|items| items.pairs.as_slice()));
         driver.seed_origin(origin, pairs)
     };
     for (at, (_, component)) in STORES.into_iter().enumerate() {
-        let Some((pairs, chars)) = stores[at] else {
+        let Some(items) = stores[at] else {
             continue;
         };
-        let count = pairs.len() as u64;
+        let count = items.pairs.len() as u64;
         let reason = match &written {
             Err(_) => SwitchLoss::SeedFailed,
-            Ok(readback) if readback[at] == Some((count, *chars)) => {
-                let item = carried(component, Some(origin), Some(count));
-                record.carried.push(item);
+            Ok(readback) if readback[at] == Some((count, items.chars, true)) => {
+                record.carried.push(SwitchCarried {
+                    phase: Some(items.phase),
+                    after_receipt: Some(items.after),
+                    ..carried(component, Some(origin), Some(count))
+                });
                 continue;
             }
             Ok(_) => SwitchLoss::ReadbackMismatch,
         };
-        let item = lost(component, Some(origin.to_owned()), reason);
-        record.not_carried.push(SwitchNotCarried {
-            count: Some(count),
-            ..item
-        });
+        let when = (items.phase, items.after);
+        let item = store_loss(component, origin, reason, Some(count), when);
+        record.not_carried.push(item);
     }
 }
 
@@ -602,32 +556,38 @@ impl BrowserSession {
         let limits = switch_state_limits();
         let tab = self.driver.front_target().to_owned();
         let drained = self.driver.drain_visits();
+        let shown = drained.get(&tab).map(|shown| shown.origins.clone());
         self.history.absorb(drained, limits.origins);
-        let mut state = export(&self.driver, &limits, &mut record.not_carried);
-        let mut charge = starter.state_charge();
-        hold(&mut state, charge.as_mut(), &mut record.not_carried);
-        record.url.clone_from(&state.url);
-        let scope = switch_storage_scope(state.origin.as_deref(), self.history.tabs.get(&tab));
-        for origin in &scope.report {
-            let visited = Some(origin.clone());
-            let report = lost(SwitchComponent::Storage, visited, SwitchLoss::NotCollected);
-            record.not_carried.push(report);
+        let after = self.receipt_seq;
+        let mut state = export(&self.driver, &limits, after, &mut record.not_carried);
+        let visited = self.history.tabs.get(&tab);
+        if let Some(collector) = &self.snapshots {
+            let current = state.origin.as_deref();
+            let shown = shown.unwrap_or_default();
+            let plan = switch_storage_scope(collector, &tab, current, visited, &shown);
+            state.others = plan.seed;
+            record.not_carried.extend(plan.losses);
         }
-        if scope.evicted > 0 {
+        let evicted = visited.map_or(0, |visited| visited.evicted);
+        if evicted > 0 {
             record.not_carried.push(SwitchNotCarried {
-                count: Some(scope.evicted),
+                count: Some(evicted),
                 ..lost(SwitchComponent::Storage, None, SwitchLoss::Limit)
             });
         }
+        let mut charge = starter.state_charge();
+        hold(&mut state, charge.as_mut(), &mut record.not_carried);
+        record.url.clone_from(&state.url);
         for url in self.driver.other_tabs() {
             let other = lost(SwitchComponent::Tab, web_origin(&url), SwitchLoss::OtherTab);
             record.not_carried.push(other);
         }
         let wait_cap = self.driver.wait_cap();
-        let staged = stage(starter, wait_cap, &state, &scope, &mut record);
+        let sink = self.snapshots.as_ref().map(OriginSnapshots::sink);
+        let staged = stage(starter, wait_cap, &state, sink.clone(), &mut record);
         drop(charge);
         match staged {
-            Ok((target, observation)) => self.commit(record, &tab, target, observation),
+            Ok((target, observation)) => self.commit(record, &tab, sink, target, observation),
             Err(Halt { stage, error }) => {
                 // Nothing moved: the page stays on the source as it was.
                 record.carried.clear();
@@ -647,11 +607,13 @@ impl BrowserSession {
     }
 
     /// Replaces the source's engine group with `target`'s; the source guest
-    /// goes with its lease. The carried tab's history is the target tab's.
+    /// goes with its lease. The carried tab's history is the target tab's,
+    /// and so are its snapshots, kept through `sink`'s pipe from now on.
     fn commit(
         &mut self,
         mut record: EngineSwitchRecord,
         tab: &str,
+        sink: Option<Sink>,
         target: EngineGuest,
         observation: Observation,
     ) -> SwitchEngineOutput {
@@ -667,6 +629,9 @@ impl BrowserSession {
         };
         drop(source);
         let carried_to = self.driver.front_target().to_owned();
+        if let (Some(collector), Some(sink)) = (&self.snapshots, &sink) {
+            OriginSnapshots::carry(collector, tab, carried_to.clone(), sink);
+        }
         self.history.carry(tab, carried_to);
         record.outcome = SwitchOutcome::Switched;
         let (url, title) = (observation.url.clone(), observation.title.clone());
@@ -729,6 +694,7 @@ impl BrowserSession {
             self.receipt_sink = Some(sink);
         }
         self.receipts.push(receipt.clone());
+        self.landed();
         receipt
     }
 }
