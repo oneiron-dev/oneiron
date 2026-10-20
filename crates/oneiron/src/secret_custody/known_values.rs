@@ -403,7 +403,7 @@ impl SweepFrom {
     fn pass<T>(&self, use_pass: impl FnOnce(Option<&KnownValues>) -> T) -> Result<T> {
         match self {
             Self::Source(source) => source.pass(use_pass),
-            Self::Writer(known) => Ok(use_pass(Some(known))),
+            Self::Writer(known) => Ok(use_pass(Some(&**known))),
         }
     }
 }
@@ -441,14 +441,14 @@ impl KnownSweep {
         let held = &mut self.held;
         self.from.pass(|known| {
             let Some(known) = known else {
-                return held.drain(..).collect();
+                return held.drain(..).collect::<Vec<u8>>();
             };
             let hold = known.longest().saturating_sub(1);
             if held.len() <= hold {
                 return Vec::new();
             }
             let limit = held.len() - hold;
-            let (out, end) = known.replaced_until(held, limit);
+            let (out, end) = known.replaced_until(&held[..], limit);
             held.drain(..end).for_each(drop);
             out
         })
