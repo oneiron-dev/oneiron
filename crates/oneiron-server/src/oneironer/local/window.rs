@@ -256,8 +256,13 @@ pub(super) struct Span {
     pub(super) confidence: f32,
 }
 
-/// BIO decoding repairs an orphan I into a new span, as the reference does.
-/// A span crossing a message or speaker prefix is never emitted.
+/// BIO runs form over the window's whole token sequence, role prefixes and
+/// separators included: a special token or `O` ends a run, B opens one, and
+/// I extends a run of its own type or else opens one, an orphan repaired.
+/// A finished run is kept only wholly inside one message, never clipped or
+/// split (FIX 6805: oneiroNER `decode_bio_to_char_spans`, `decode_record`).
+/// The mention head decodes here too; its reference (`_decode_spans`, then
+/// `_unit_for_span`) also builds the whole run before it asks for a turn.
 pub(super) fn decode(
     window: &Window<'_>,
     logits: &[Vec<f32>],
@@ -272,7 +277,10 @@ pub(super) fn decode(
     let mut active: Option<Span> = None;
     let mut count = 0usize;
     let finish = |active: &mut Option<Span>, count: &mut usize, spans: &mut Vec<Span>| {
-        if let Some(mut span) = active.take() {
+        if let Some(mut span) = active.take()
+            && let Some((segment, _)) = window.segment(span.start, span.end)
+        {
+            span.segment = segment;
             span.confidence /= *count as f32;
             spans.push(span);
         }
@@ -288,20 +296,19 @@ pub(super) fn decode(
         let mut scores = scores.clone();
         scores[0] += o_bias;
         let (choice, probability) = best_probability(&scores)?;
-        let label = labels[choice].split_once('-');
-        let location = window.segment(start, end);
-        let (Some((prefix, label)), Some((segment, _))) = (label, location) else {
+        // A special token sits at (0, 0) and ends the run, as `O` does.
+        let special = (start, end) == (0, 0);
+        let label = labels[choice].split_once('-').filter(|_| !special);
+        let Some((prefix, label)) = label else {
             finish(&mut active, &mut count, &mut spans);
             continue;
         };
-        let continues = prefix == "I"
-            && active
-                .as_ref()
-                .is_some_and(|span| span.segment == segment && span.label == label);
+        let continues = prefix == "I" && active.as_ref().is_some_and(|span| span.label == label);
         if !continues {
             finish(&mut active, &mut count, &mut spans);
             active = Some(Span {
-                segment,
+                // A run names its message when it ends.
+                segment: 0,
                 start,
                 end,
                 first_token: token,
