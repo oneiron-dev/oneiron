@@ -103,6 +103,8 @@ pub(crate) struct McpCodeModeVerbs {
 pub(crate) struct RunGuests {
     browser: Option<RunBrowser>,
     desktop: Option<RunDesktop>,
+    /// The words the newest browser call was refused with (FIX 6887).
+    refused: browser_guest::KeptRefusal,
 }
 
 /// One run's browser guest. It starts on the first call that needs it and
@@ -690,6 +692,7 @@ impl RunGuests {
         Self {
             browser: RunBrowser::new(server, run_id),
             desktop: RunDesktop::new(server, run_id),
+            refused: browser_guest::KeptRefusal::default(),
         }
     }
 
@@ -698,7 +701,14 @@ impl RunGuests {
         Self {
             browser: RunBrowser::new(server, run_id),
             desktop: None,
+            refused: browser_guest::KeptRefusal::default(),
         }
+    }
+
+    /// The words the run's newest browser call was refused with, for
+    /// `browser_unsupported` alone (FIX 6887).
+    pub(crate) fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
+        self.refused.words()
     }
 
     /// A code-mode call fires the row's hooks once around the shared guest door.
@@ -716,6 +726,7 @@ impl RunGuests {
         asker: VerdictAsker,
         by: oneiron::EntityId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        self.refused.keep(None);
         if let Err(refusal) = self.admits(call.verb, server) {
             return Ok(Err(refusal));
         }
@@ -734,7 +745,10 @@ impl RunGuests {
         let answer =
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
-                Err(refused) => return Ok(Err(AgentVerbRefusal { code: refused.code })),
+                Err(refused) => {
+                    self.refused.keep(Some(&refused));
+                    return Ok(Err(AgentVerbRefusal { code: refused.code }));
+                }
             };
         match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         {
@@ -1149,6 +1163,11 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 code: "engine_error".to_owned(),
             },
         )
+    }
+
+    /// A browser row's refusal words, as the run's guests kept them (FIX 6887).
+    fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
+        self.guests.refusal_words()
     }
 }
 

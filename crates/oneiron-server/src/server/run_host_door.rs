@@ -254,6 +254,11 @@ impl AgentVerbDoor for RunHostDoor {
         false
     }
 
+    /// A browser row's refusal words, as the run's guests kept them (FIX 6887).
+    fn refusal_words(&self) -> Option<oneiron::code_run::AgentVerbRefusalWords> {
+        self.guests.refusal_words()
+    }
+
     /// The run's answer to its own connector call's questions (ONE-2510),
     /// for its agent: checked under that call's grant and sent through the
     /// server's live question registry. It waits on the connector and maybe

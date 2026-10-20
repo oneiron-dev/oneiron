@@ -367,8 +367,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/board_setup.rs` | src | XL | 21 crate-vis | — | Board state, setup grammar, and page preflight |
 | `src/api/mcp_gateway/booking_call.rs` | src | s | 4 crate-vis | — | A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on… |
 | `src/api/mcp_gateway/call_meta.rs` | src | s | 4 crate-vis | — | What a `tools/call` names in its `_meta` beside its arguments: the logical verb it runs (ARCH-0080 §3), and… |
-| `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 14 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
-| `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 3 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
+| `src/api/mcp_gateway/code_mode_verbs.rs` | src | L | 15 crate-vis | — | Code mode's verb calls at their SDK paths: the SDK verb table through the tool door |
+| `src/api/mcp_gateway/code_mode_verbs/browser_guest.rs` | src | s | 6 crate-vis | — | A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start… |
 | `src/api/mcp_gateway/code_mode_verbs/receipt_evidence.rs` | src | s | 2 crate-vis | — | A run's receipt screenshots kept for the caller its guest call came from (FIX 2150) |
 | `src/api/mcp_gateway/code_mode_verbs/session_write.rs` | src | s | 1 crate-vis | — | A room write a session-bound code run stages, at this connector's door (WILL L11-01, S01-2a) |
 | `src/api/mcp_gateway/device_release.rs` | src | m | 10 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
@@ -447,6 +447,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/legal_hold_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/legal-holds`: the owner's legal holds (OF-470), behind the same owner door as every other owner… |
 | `src/api/owner_routes/machine_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b) |
 | `src/api/owner_routes/model_setting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/settings/models`: the owner's model settings |
+| `src/api/owner_routes/owner_key_enrollment_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/owner-signing-keys`: the owner enrols a device's own Ed25519 owner signing key on the vault's… |
 | `src/api/owner_routes/owner_work_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736) |
 | `src/api/owner_routes/pack_preview_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/packs/preview` (FIX 5493): the owner's look at a pack folder before `POST /v1/owner/packs`… |
 | `src/api/owner_routes/pack_routes.rs` | src | L | 2 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
@@ -1084,11 +1085,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_credentials.rs` | src | m | 13 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
-| `src/usage/ledger.rs` | src | m | 4 struct · 7 fn · 2 crate-vis | CycleSettlements, SeatUsage, UnpricedCache, UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
+| `src/usage/ledger.rs` | src | m | 4 struct · 6 fn · 2 crate-vis | CycleSettlements, SeatUsage, UnpricedCache, UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
 | `src/usage/limit.rs` | src | s | 2 struct · 4 fn | CachedBudgetLimit, ExchangeRate | A host-pushed limit converts once |
 | `src/usage/mod.rs` | src | s | 5 re-export | — | Provider-list metering and host-pushed vault budget limits |
-| `src/usage/model.rs` | src | m | 10 struct · 4 enum · 9 fn · 3 crate-vis | CacheDimension, Money, UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent +6 | Provider-list money facts and per-vault usage counters |
+| `src/usage/model.rs` | src | m | 10 struct · 5 enum · 9 fn · 4 crate-vis | CacheDimension, Money, UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent +7 | Provider-list money facts and per-vault usage counters |
 | `src/usage/pricing.rs` | src | s | 1 fn | — | Catalog list prices as fixed-point usage rates |
+| `src/usage/rollup.rs` | src | s | 1 fn · 4 crate-vis | — | The derived per-vault rollup, kept from the stamped events |
 | `src/usage/tests.rs` | test | s | — | — | — |
 | `src/voice_host/attachment.rs` | src | s | 1 fn | — | The voice host as a wake-pass attachment: it serves the owner's admitted stream beside one pass and spends… |
 | `src/voice_host/backend.rs` | src | s | 2 crate-vis | — | The voice call's backend for the host's own model calls (OF-410): partial enrichment and the sentence… |
