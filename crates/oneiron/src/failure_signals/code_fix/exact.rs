@@ -57,12 +57,40 @@ pub enum ReplayFidelity {
     Rebuilt,
 }
 
+/// What the vault kept of the request a failing call sent (FIX 1662).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum ExactReplay {
+    /// The request as kept.
+    Kept(Box<ExactReplayRequest>),
+    /// None was kept, or the copy no longer reads as kept: the replay
+    /// rebuilds the call.
+    NotKept,
+    /// The call's replay capsule was erased with its actor (FIX 6144): no
+    /// replay of the call runs, rebuilt or not.
+    Erased,
+}
+
+impl ExactReplay {
+    fn of(copy: Option<ExactReplayRequest>) -> Self {
+        copy.map_or(Self::NotKept, |copy| Self::Kept(Box::new(copy)))
+    }
+}
+
 /// The request the failure `source` names was sent as, when the vault kept
-/// it; `None` leaves the replay to rebuild the call.
+/// it; `None` leaves the replay to rebuild the call. An erased capsule's
+/// request is `None` here too: [`exact_replay`] tells it apart.
 pub(crate) fn exact_replay_request(
     vault: &Vault,
     source: &CodeFixSource,
 ) -> Result<Option<ExactReplayRequest>> {
+    Ok(match exact_replay(vault, source)? {
+        ExactReplay::Kept(request) => Some(*request),
+        ExactReplay::NotKept | ExactReplay::Erased => None,
+    })
+}
+
+/// What the vault kept of the request the failure `source` names.
+pub(crate) fn exact_replay(vault: &Vault, source: &CodeFixSource) -> Result<ExactReplay> {
     let txn = vault.store.env.read_txn()?;
     // The attempt whose kept calls hold it, and the hash of the one a report
     // names, when it names one.
@@ -72,7 +100,7 @@ pub(crate) fn exact_replay_request(
                 EntityId::from_bytes(*case.failing_attempt_id.as_bytes())?,
                 None,
             ),
-            None => return Ok(None),
+            None => return Ok(ExactReplay::NotKept),
         },
         CodeFixSource::Blocked { receipt, run } => {
             let sent = blocked_source_in(vault, &txn, receipt)?
@@ -86,9 +114,12 @@ pub(crate) fn exact_replay_request(
                         kept: Some(kept),
                     }),
                     _,
-                ) => return Ok(as_kept(kept.request, None, digest, kept.stored)),
+                ) => {
+                    let copy = as_kept(kept.request, None, digest, kept.stored);
+                    return Ok(ExactReplay::of(copy));
+                }
                 (sent, Some(run)) => (*run, sent.map(|sent| sent.digest)),
-                (_, None) => return Ok(None),
+                (_, None) => return Ok(ExactReplay::NotKept),
             }
         }
     };
@@ -121,25 +152,33 @@ fn attempt_request(
     vault: &Vault,
     attempt: EntityId,
     digest: Option<[u8; 32]>,
-) -> Result<Option<ExactReplayRequest>> {
+) -> Result<ExactReplay> {
     let capsule = step_replay_capsules(vault, attempt)?
         .into_iter()
         .rev()
         .find(|capsule| digest.is_none_or(|digest| capsule.request_hash == digest));
-    if let Some(capsule) = capsule
-        && let Some(request) = capsule_request(vault, &capsule)?
-    {
-        return Ok(Some(ExactReplayRequest {
-            request,
-            rung: capsule.binding,
-            as_sent: true,
-        }));
+    if let Some(capsule) = capsule {
+        // An erased capsule's request went with its actor (FIX 6144): no
+        // other copy stands in for it.
+        if capsule.content.actor().is_none() {
+            return Ok(ExactReplay::Erased);
+        }
+        // The copy kept is the request as sent unless the wall masked a
+        // secret in it: its sent identity and its stored hash then differ.
+        let as_sent = capsule.as_sent();
+        if let Some(request) = capsule_request(vault, &capsule)? {
+            return Ok(ExactReplay::of(Some(ExactReplayRequest {
+                request,
+                rung: capsule.binding,
+                as_sent,
+            })));
+        }
     }
     let steps = {
         let txn = vault.store.env.read_txn()?;
         step_sources_in(vault, &txn, AttemptId::from_bytes(attempt.as_bytes())?)?
     };
-    Ok(steps
+    let copy = steps
         .into_iter()
         .rev()
         .find(|(key, _)| digest.is_none_or(|digest| key.step == digest))
@@ -150,5 +189,6 @@ fn attempt_request(
                 key.step,
                 source.request.stored,
             )
-        }))
+        });
+    Ok(ExactReplay::of(copy))
 }

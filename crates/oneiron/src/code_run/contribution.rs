@@ -303,6 +303,11 @@ impl Runner<'_> {
         let Some(capsule) = first_step_capsule(self.vault, &self.candidate.attempt_receipt)? else {
             return Ok(Err(Unavailable::NoCapsule));
         };
+        // An erased capsule's content went with its actor (FIX 6144): none of
+        // its rung, exposures or request is read, and the pair is unreadable.
+        if capsule.content.actor().is_none() {
+            return Ok(Err(Unavailable::Unreadable));
+        }
         let Some(binding) = capsule.binding.clone() else {
             return Ok(Err(Unavailable::CapsuleNotFinalized));
         };
@@ -419,7 +424,11 @@ impl Runner<'_> {
         let capsule = &prepared.capsule;
         let digest = fork_digest(&self.pair, capsule, treatment);
         let path = format!("replay/contribution/{digest}.response.json");
-        let response_ref = store_fork_response(self.vault, capsule.run, path.clone(), &response)?;
+        // A fork answer is kept only while its capsule's actor is (FIX 6144).
+        let stored = store_fork_response(self.vault, capsule, &path, &response)?;
+        let Some(response_ref) = stored else {
+            return Ok(Err(ContributionReplayUnavailable::Unreadable));
+        };
         let fork = ContributionForkReceipt {
             receipt: format!("{FORK_RECEIPT_PREFIX}{digest}"),
             treatment,

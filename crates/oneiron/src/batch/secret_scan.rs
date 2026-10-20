@@ -27,8 +27,8 @@ pub(crate) use self::mask::carrier::{
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::mask_origin_in_txn;
 pub(crate) use self::mask::side_row::{
-    SidePart, admit_side_parts, admit_side_row, admit_typed, admitted_from, from_named_tree,
-    named_tree,
+    SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
+    admit_typed, admitted_from, from_named_tree, named_tree,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
 use self::shapes::Door;
