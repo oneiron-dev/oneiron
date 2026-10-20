@@ -13,6 +13,13 @@ use super::super::{ArtifactKind, CheckpointKey, CheckpointSigner, CustodyRecover
 use crate::VaultConfig;
 use crate::world_keys::EscrowRetirement;
 
+// The plan's recipients are the managed contract's, moved there so the
+// supervisor writes the plan the restore spends: one definition, re-exported
+// here (L04 seam for L14's restore start mode).
+pub use oneiron_vault_contract::restore::{
+    EscrowRole, FreshRecipient, ReleasedRecipient, RestorePlan,
+};
+
 /// What the plan says the artifact is, from a record kept apart from it:
 /// nothing here is read from the artifact being checked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -36,60 +43,6 @@ pub struct SourceExpectation {
     /// against a registry binding the artifact carries; never the DNS slug,
     /// the engine vault id or the custody namespace.
     pub registry_id: String,
-}
-
-/// The escrow role a managed recipient serves; its label is
-/// `<role>.<first 16 hex of BLAKE3(public key)>`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum EscrowRole {
-    Managed,
-    BreakGlass,
-}
-
-impl EscrowRole {
-    /// The label prefix a wrap of this role carries.
-    pub fn label_prefix(self) -> &'static str {
-        match self {
-            Self::Managed => "managed",
-            Self::BreakGlass => "break-glass",
-        }
-    }
-}
-
-/// A recipient whose secret the restore's key release used: its label,
-/// role, full fingerprint and host-recipient epoch, as the plan maps them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReleasedRecipient {
-    pub label: String,
-    pub role: EscrowRole,
-    /// BLAKE3 of the recipient's public key bytes.
-    pub fingerprint: [u8; 32],
-    /// The host recipient's epoch, carried to the receipt; never the custody
-    /// writer epoch or the checkpoint's crypto epoch.
-    pub epoch: u64,
-}
-
-/// A fresh recipient the restored key is wrapped to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FreshRecipient {
-    pub label: String,
-    pub role: EscrowRole,
-    /// The hybrid public key's bytes, as the supervisor names them.
-    pub public_key: Vec<u8>,
-}
-
-/// The plan's restore-specific scope: who asked, and the recipients it
-/// adds and retires.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RestorePlan {
-    pub restore_id: String,
-    pub plan_digest: [u8; 32],
-    pub attempt_id: String,
-    /// The process generation; never an epoch.
-    pub generation: u64,
-    pub released: Vec<ReleasedRecipient>,
-    pub fresh: Vec<FreshRecipient>,
 }
 
 /// One cold managed restore's inputs

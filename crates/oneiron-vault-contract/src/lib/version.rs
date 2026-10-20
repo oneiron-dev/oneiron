@@ -38,7 +38,12 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION)).
 /// A v3 vault built before it answers either request as unknown and ignores
 /// a `wait_id`, shedding unguarded, so a supervisor relies on that guard only
-/// after the vault's `Ping` reports the revision. Supervisor and vault move
+/// after the vault's `Ping` reports the revision. The cold managed restore
+/// start mode ([`restore`](crate::restore): `--restore`, its two pipes, the
+/// commit marker and the `restore_status` ctl request) carries a build
+/// floor too, at the engine revision it merged in: a supervisor starts a
+/// restore only on an installed engine at or after it, since an older one
+/// refuses the flag before it touches anything. Supervisor and vault move
 /// to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
