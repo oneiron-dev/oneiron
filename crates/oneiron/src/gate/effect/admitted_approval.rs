@@ -12,7 +12,8 @@
 //! ([`super::ApprovalTarget::keeps_spent_press`]), beside its ledger row or
 //! its mirror operation, never in this row field, whose native-mail, e-sign
 //! and failure-signal validation stays as it is. Its retry reuses it under
-//! the same retry context.
+//! the same retry context. Part 3 (2b) adds a scoped-MCP call's, by the same
+//! target-typed branch.
 
 use super::{ApprovalContext, ExternalEffectGovernance};
 use crate::failure_signals::{FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB};
@@ -114,8 +115,9 @@ pub(super) fn press_retry_authorized(
     let ApprovalContext::Retry(proof) = context else {
         return false;
     };
-    // FIX 6424 part 2a: or a Linear mutation's or a campaign leg's kept
-    // press, by its pinned target, never by its channel.
+    // FIX 6424 part 2a: or a Linear mutation's, a campaign leg's or (part 3)
+    // a scoped-MCP call's kept press, by its pinned target, never by its
+    // channel.
     (press_send(&effect.channel, &effect.verb)
         || effect
             .provenance

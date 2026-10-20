@@ -1,6 +1,7 @@
 //! Typed owner doors over the existing manifest, route and provider seams.
 use std::sync::Arc;
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::embed::EmbedderLocality;
 use oneiron::llm::manifest::doors::{
     ModelManifestReplace, ModelRoleInput, ModelRoleInvocation, ModelRoleInvoke, ModelRoleOutput,
@@ -16,7 +17,8 @@ use oneiron::{EntityId, ModelId, ModelLocality, ModelTierRef};
 use super::host_doors::{Listed, internal};
 use super::legal_hold_doors::{as_owner, as_owner_naming};
 use crate::auth::CoreAuth;
-use crate::config::{OneironerProvider, models::role_key};
+use crate::config::{OneironerConfig, OneironerProvider};
+use crate::oneironer::endpoint::ModelCard;
 use crate::server::SyncServer;
 
 pub(crate) async fn vault_models_manifest_read(
@@ -69,7 +71,7 @@ pub(crate) async fn vault_models_oneironer_bind(
             let (model, tier) = loaded_oneironer(server, &input)?;
             Ok(server
                 .vault()
-                .bind_oneironer_as_owner(owner, &model, tier.as_ref())?)
+                .bind_oneironer_as_owner(owner, &model, &tier)?)
         },
         |_| Vec::new(),
     )
@@ -78,12 +80,13 @@ pub(crate) async fn vault_models_oneironer_bind(
 
 /// The Oneironer this server has loaded, as `TaggerSlot::selected_by`
 /// compares it: the local tagger's own model, whose revision is the
-/// configured checkpoint, and the named tier it serves, if any. A guard the
-/// caller names must match it.
+/// configured checkpoint, and the tier [`oneironer_tier`] names it by, the
+/// named tier it serves or else its loaded card's stack. A guard the caller
+/// names must match it.
 fn loaded_oneironer(
     server: &SyncServer,
     guards: &OneironerBind,
-) -> MemoryResult<(ModelId, Option<ModelTierRef>)> {
+) -> MemoryResult<(ModelId, ModelTierRef)> {
     let slot = server
         .tagger
         .as_ref()
@@ -124,7 +127,31 @@ fn loaded_oneironer(
             "expected_stack_sha16 does not match the loaded oneironer",
         ));
     }
-    Ok((model.clone(), config.tier.clone().map(ModelTierRef)))
+    let tier = oneironer_tier(config, Some(&card), model);
+    Ok((model.clone(), tier))
+}
+
+/// The tier an Oneironer bind or host receipt names, and the one place its
+/// order lives: the named tier the host is configured to serve; else the
+/// stack of the card its probe accepted, the loaded bundle; else the
+/// configured stack pin; else the loaded tagger's revision, the configured
+/// checkpoint. The last two are configured identity that no loaded card has
+/// attested; they name a slot whose probe has not accepted a card yet. Never
+/// the manifest's current tier nor the role's key: either may describe
+/// another bundle.
+fn oneironer_tier(
+    config: &OneironerConfig,
+    card: Option<&ModelCard>,
+    model: &ModelId,
+) -> ModelTierRef {
+    let attested = card.and_then(|card| card.stack_sha16.as_deref());
+    let tier = config
+        .tier
+        .as_deref()
+        .or(attested)
+        .or(config.stack_sha16.as_deref())
+        .unwrap_or_else(|| model.revision());
+    ModelTierRef(tier.to_owned())
 }
 
 pub(crate) async fn vault_models_routes_read(
@@ -166,7 +193,7 @@ pub(crate) async fn vault_models_roles_read(
         server,
         auth,
         "vault.models.roles.read",
-        move |server, owner| Ok(server.vault().model_role_as_owner(owner, input)?),
+        move |server, owner| role_receipt(server, owner, input.role),
         |_| Vec::new(),
     )
     .await
@@ -204,7 +231,9 @@ fn host_section_serves(role: ModelRole) -> bool {
 
 /// The receipt of the encoder the host's `[oneironer]` section serves a vault
 /// with no manifest: the loaded tagger's own model, whose revision is the
-/// configured checkpoint, at its own route. The host alone attests it.
+/// configured checkpoint, at its own route, named by [`oneironer_tier`]. A
+/// slot whose probe has not accepted a card yet still answers. The host alone
+/// attests it.
 fn host_section_receipt(server: &SyncServer, role: ModelRole) -> MemoryResult<ModelRoleReceipt> {
     let slot = server
         .tagger
@@ -213,16 +242,33 @@ fn host_section_receipt(server: &SyncServer, role: ModelRole) -> MemoryResult<Mo
     let config = slot.config();
     let encoder = slot.tagger().as_ref();
     let model = encoder.model_id().clone();
+    let tier = oneironer_tier(config, slot.card().as_ref(), &model);
     Ok(ModelRoleReceipt {
         role,
         revision: model.revision().to_owned(),
         provider: config.provider.as_str().to_owned(),
         model,
         slot: ModelSlot::Oneironer,
-        tier: ModelTierRef(config.tier.clone().unwrap_or_else(|| role_key(role))),
+        tier,
         route: locality(encoder.locality()),
         catalog_revision: None,
     })
+}
+
+/// The receipt `role` resolves to, the one rule read and invoke share: a
+/// vault with no manifest takes the host's section for a role it serves
+/// ([`host_section_serves`]); every other role, and every vault with a
+/// manifest, its manifest's binding. Both reads revalidate `owner`.
+fn role_receipt(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    role: ModelRole,
+) -> MemoryResult<ModelRoleReceipt> {
+    let vault = server.vault();
+    if host_section_serves(role) && vault.model_manifest_as_owner(owner)?.is_none() {
+        return host_section_receipt(server, role);
+    }
+    Ok(vault.model_role_as_owner(owner, ModelRoleRead { role })?)
 }
 
 async fn invoke(
@@ -233,11 +279,7 @@ async fn invoke(
     const VERB: &str = "vault.models.roles.invoke";
     let role = input.role;
     let mut receipt = as_owner(server, auth, VERB, move |server, owner| {
-        let vault = server.vault();
-        if host_section_serves(role) && vault.model_manifest_as_owner(owner)?.is_none() {
-            return host_section_receipt(server, role);
-        }
-        Ok(vault.model_role_as_owner(owner, ModelRoleRead { role })?)
+        role_receipt(server, owner, role)
     })
     .await?;
     let output = match input.input {

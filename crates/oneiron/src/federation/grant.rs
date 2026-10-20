@@ -14,6 +14,8 @@ use super::codec::invalid_grant;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+mod repo_bounds;
+
 /// Current FederationGrant body schema version.
 ///
 /// Version 3 adds a role-conditional guest payload. The existing schema-1
@@ -32,8 +34,10 @@ pub const MAX_DELEGATE_TTL_SECS: u64 = 7_776_000;
 /// [`FederationGrantRole::Delegate`], forbidden for every other role. `guest`
 /// is required only for [`FederationGrantRole::Guest`]. `owner_agent` marks
 /// the owner's own grant to a named agent (FIX 5628), a Delegate whose
-/// `expires_at` is optional; it is absent on every other body.
-pub const FEDERATION_GRANT_BODY_KEYS: [&str; 10] = [
+/// `expires_at` is optional; it is absent on every other body. `repo_bounds`
+/// rides only such an agent grant, when the owner gave it repo bounds (FIX
+/// 6867).
+pub const FEDERATION_GRANT_BODY_KEYS: [&str; 11] = [
     "schema_version",
     "scope",
     "member_ref",
@@ -44,6 +48,7 @@ pub const FEDERATION_GRANT_BODY_KEYS: [&str; 10] = [
     "authority_scope",
     "guest",
     "owner_agent",
+    "repo_bounds",
 ];
 
 /// Count of unconditionally required keys at the head of
@@ -369,6 +374,10 @@ pub struct FederationGrant {
     /// `vault.agents.grants.mint` from no parent grant (FIX 5628); false on
     /// every other grant.
     pub owner_agent: bool,
+    /// The repo, refs and read and edit globs the owner gave his agent
+    /// besides its Scope (FIX 6867); absent on every other grant and on an
+    /// agent grant without them.
+    pub repo_bounds: Option<crate::federation::RepoAccessBounds>,
 }
 
 impl FederationGrant {
@@ -402,6 +411,7 @@ impl FederationGrant {
             delegated_by: None,
             guest: None,
             owner_agent: false,
+            repo_bounds: None,
         }
     }
 
@@ -427,6 +437,7 @@ impl FederationGrant {
                 disclosed_refs,
             }),
             owner_agent: false,
+            repo_bounds: None,
         };
         grant.validate()?;
         Ok(grant)
@@ -475,6 +486,7 @@ impl FederationGrant {
             delegated_by: Some(parent.member_ref),
             guest: None,
             owner_agent: false,
+            repo_bounds: None,
         })
     }
 
@@ -503,6 +515,7 @@ impl FederationGrant {
         if self.expires_at == Some(0) {
             return Err(invalid_grant());
         }
+        repo_bounds::validate(self)?;
         // Each purpose has its one role class: Ask and Connect are Guest, and
         // only Ask carries the fact payload; a shared vault is never Guest.
         match (self.scope, self.role.is_guest(), self.guest.as_ref()) {
@@ -609,6 +622,7 @@ pub fn encode_federation_grant_body(grant: &FederationGrant) -> Result<Vec<u8>> 
     if grant.owner_agent {
         entries.push((Value::from(KEY_OWNER_AGENT), Value::from(true)));
     }
+    entries.extend(repo_bounds::body_entry(grant));
 
     encode_msgpack_value(
         &Value::Map(entries),
@@ -678,6 +692,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         Some(value) if value.as_bool() == Some(true) => true,
         Some(_) => return Err(invalid_grant()),
     };
+    let repo_bounds = repo_bounds::decode_body_entry(entries)?;
 
     let grant = FederationGrant {
         authority_scope: if legacy {
@@ -698,6 +713,7 @@ fn decode_federation_grant_value(value: &Value) -> Result<FederationGrant> {
         delegated_by,
         guest,
         owner_agent,
+        repo_bounds,
     };
     // Role-conditional presence is enforced here: a five-key Delegate body and
     // a seven-key Owner body both die at `validate`, not at the key allowlist.
