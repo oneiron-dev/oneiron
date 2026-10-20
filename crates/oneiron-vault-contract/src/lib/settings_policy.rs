@@ -6,7 +6,8 @@
 //! alone, before it reads anything the file names; an array's items count
 //! as the array's own field. A supervisor reads the same tables and
 //! [`matches_any`] to keep them out of the file it writes, and passes its
-//! own bindings on argv instead.
+//! own bindings on argv instead. The paths the file may name, and the rule
+//! each must pass, are [`crate::settings_paths`]'s.
 
 /// The leaves the supervisor owns, as dotted fields (`*` is any one key): the
 /// listener, ingress and auth, the tenant's identity, posture and custody,
@@ -14,11 +15,12 @@
 /// the voice loop's socket, the key directory, the publisher training
 /// outbox and the direct Linear mirror's response custody, which the host
 /// derives beside the data directory. The training outbox and the last
-/// five are reserved argv-only bindings the server's schema has no key for:
-/// the guests' container CLIs, the pack organ directory and the mesh
-/// listener's bind and relays, which the supervisor passes as
-/// `--browser-runtime`, `--desktop-runtime`, `--organ-dir`, `--mesh-bind`
-/// and `--mesh-relays`. An owner's `[browser] runtime` and `[desktop]
+/// six are reserved argv-only bindings the server's schema has no key for:
+/// the guests' container CLIs, the pack organ directory, the mesh
+/// listener's bind and relays and the artifact origin's public slug, which
+/// the supervisor passes as `--browser-runtime`, `--desktop-runtime`,
+/// `--organ-dir`, `--mesh-bind`, `--mesh-relays` and
+/// `--artifact-public-slug`. An owner's `[browser] runtime` and `[desktop]
 /// runtime` stay his, inside the vault's own storage.
 pub const SUPERVISOR_OWNED: &[&str] = &[
     "vault_path",
@@ -52,6 +54,7 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "organ_dir",
     "mesh_bind",
     "mesh_relays",
+    "artifact_public_slug",
 ];
 
 /// The leaves that name a key by the environment variable holding it.

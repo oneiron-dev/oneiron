@@ -8,6 +8,11 @@
 //! Versioning: crate SemVer and wire compatibility are separate things. The
 //! wire is governed by [`CONTRACT_VERSION`]; any incompatible wire change
 //! (new required field, new enum variant a peer must understand) bumps it.
+//! An additive extension rides the current version with a build floor
+//! instead: a new ctl request a vault built before it answers as unknown, or
+//! an optional `Ping` field such a vault sends none of, read as unknown and
+//! never as support. A new argv flag goes only to an installed engine at or
+//! after its floor, since an older one refuses a flag it does not parse.
 //! Consumers pin this crate at an exact revision and run cross-repo
 //! conformance before moving the pin.
 
@@ -33,6 +38,8 @@ mod owner_signing_recovery;
 /// Private, lease-bound live process ports.
 pub mod preview;
 mod secrets;
+/// The owner paths a managed vault's settings file names, and their rule.
+pub mod settings_paths;
 /// The leaves a managed vault's settings file may not set.
 pub mod settings_policy;
 /// Account and organization vault bindings with per-vault lifecycle hooks.
