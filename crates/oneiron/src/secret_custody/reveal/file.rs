@@ -19,6 +19,18 @@
 //! grant, or once the owner approves the read, the agent gets the stored
 //! bytes and the read leaves its reveal row. No lease is stamped, as no
 //! custody record holds a key of it.
+//!
+//! A typed body's read (OF-067, FIX 2941) is one read of one projection of
+//! the body, a deck's export or a body's view, whose lifted texts name keys
+//! of any classes ([`Vault::typed_body_sight`]). Its keys are judged in one
+//! group per custody class, each by the same check, and the read opens only
+//! when every group does: no approval once is spent, and no group is
+//! delivered, while another still waits on the owner.
+//!
+//! Every read runs through one core ([`Vault::read_sight_in_txn`]): each of
+//! its groups judged before anything is written, then either every group
+//! delivered with its own receipt, or an ask filed for each group with no
+//! open one.
 
 use super::agent::{file_ask_in_txn, standing};
 use super::{
@@ -26,8 +38,8 @@ use super::{
     RevealAuthority, RevealRow, SecretRevealState, checked_text, covering_grant, reveal_bound,
 };
 use crate::consent::{
-    approve_once_authorization_in_txn, approve_once_decision_in_txn, load_active_standing_grants,
-    spend_approve_once_in_txn,
+    ApproveOnceAuthorization, approve_once_authorization_in_txn, approve_once_decision_in_txn,
+    load_active_standing_grants, spend_approve_once_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -35,10 +47,15 @@ use crate::secret_custody::{
     CustodyClass, SecretCustodyFloor, SecretCustodyStatus, SecretSight, masked_file_in_txn,
     read_secret_custody_admission_in_txn,
 };
+use crate::typed_body::LiftedSources;
 use crate::vault::Vault;
 
 /// Domain of the id of the one ask an agent's read of a file files.
 const FILE_ASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_ask.v1";
+
+/// Domain of a typed body read's fingerprint, the hash its reveal rows name
+/// in place of a stored file's: never a hash of stored bytes.
+const TYPED_BODY_READ_DOMAIN: &[u8] = b"oneiron.secret_reveal.typed_body_read.v1";
 
 /// The class a sealed file's read is granted as: the class the write door
 /// gives each key it lifts from a file (CALLS, open).
@@ -46,6 +63,59 @@ const SEALED_FILE_CLASS: CustodyClass = CustodyClass::CustodyPortable;
 
 /// The handle a sealed file's read names in place of its keys'.
 const SEALED_FILE_HANDLE: &str = "sealed file";
+
+/// One read of keys an agent asks for: who asks and why, the artifact, the
+/// hash of what it reads, and its keys in one group per custody class.
+struct KeyRead<'a> {
+    asker: &'a RevealAsker,
+    artifact: &'a EntityId,
+    /// The asker's why, checked.
+    why: &'a str,
+    /// The stored file's bytes' hash, or a typed body read's fingerprint.
+    hash: [u8; 32],
+    groups: Vec<ReadGroup>,
+    /// Whether each group's ask names its class: a typed body's read, one
+    /// ask per class group. A file's one ask names none.
+    per_class: bool,
+}
+
+/// The keys of one custody class a read opens: one reveal row, one grant
+/// check and one ask.
+struct ReadGroup {
+    class: CustodyClass,
+    /// The key the row names as its secret: the group's first, or the
+    /// artifact for a sealed file.
+    first: EntityId,
+    /// Each key with its handle; none for a sealed file.
+    keys: Vec<(EntityId, String)>,
+    /// What the row and the ask card name: the keys' handles.
+    handle: String,
+}
+
+/// Where one group of a read stands, judged with nothing written.
+enum GroupPlan {
+    /// Its read may go out now.
+    Ready(Ready),
+    /// Its ask waits on the owner, or was denied, in its window.
+    Waiting,
+    /// No ask of it is open: the read files one.
+    Asks,
+}
+
+/// How a ready group's read goes out.
+enum Ready {
+    /// A standing grant covers it: the grant's registry ref.
+    Covered(String),
+    /// The owner approved its ask once: the ask, and its marker, not spent.
+    Once(Box<RevealRow>, ApproveOnceAuthorization),
+}
+
+/// One admitted key: its record, class and handle.
+struct AdmittedKey {
+    class: CustodyClass,
+    secret: EntityId,
+    handle: String,
+}
 
 impl Vault {
     /// How `asker` reads the stored `bytes` of `artifact` when it says `why`:
@@ -101,6 +171,68 @@ impl Vault {
             .map(Some)
     }
 
+    /// How `asker` reads one projection of `artifact`'s typed body when it
+    /// says `why` (OF-067, FIX 2941): `projection_fingerprint` names what the
+    /// read shows (a deck's export key, a body's view), and `lifted_sources`
+    /// the keys its lifted texts hold, read in the projection's own snapshot
+    /// ([`Vault::typed_body_lifted_sources_in_txn`]).
+    /// [`SecretSight::Granted`] once a grant covers every key and this read's
+    /// receipts are written, [`SecretSight::Masked`] otherwise.
+    ///
+    /// The keys are judged in one group per custody class, each by the one
+    /// reveal check: this connection × that class × this project. Every
+    /// group is judged before anything is written. Only when each is covered
+    /// by a standing grant or approved once by the owner is an approval
+    /// spent, and each group then leaves its own reveal row, grant use or
+    /// spent approval, and a T1 lease per key. While any group's ask is open
+    /// or denied in its window, the read is masked, no approval is spent and
+    /// no group is delivered; each group with no open ask files one (by this
+    /// agent, this read, the group's class, this project and this run), and
+    /// the asks stay, as a masked read is no error. A key that is not active
+    /// or not admitted to a model (T1) reads the whole body masked, with no
+    /// ask and nothing spent; `lifted_sources` that name no key read masked
+    /// with nothing written.
+    ///
+    /// The read's fingerprint binds the artifact, `projection_fingerprint`
+    /// and each group's class and keys under its own domain: an answer to
+    /// its ask opens that projection's read alone, and never a stored file.
+    ///
+    /// # Errors
+    /// As [`Self::file_sight`].
+    pub(crate) fn typed_body_sight(
+        &self,
+        asker: &RevealAsker,
+        artifact: &EntityId,
+        projection_fingerprint: &[u8; 32],
+        lifted_sources: &LiftedSources,
+        why: &str,
+    ) -> Result<SecretSight> {
+        if lifted_sources.is_empty() {
+            return Ok(SecretSight::Masked);
+        }
+        let why = checked_text(
+            why,
+            "a read of a typed body with keys in it says why it needs them",
+            "a typed body read's why is one line of at most 512 bytes",
+        )?;
+        self.with_write_txn_grouped(|txn| {
+            let keys = lifted_sources.keys().iter().copied();
+            let Some(admitted) = admitted_keys_in_txn(self, txn, keys)? else {
+                return Ok(SecretSight::Masked);
+            };
+            let groups = class_groups(admitted)?;
+            let read = KeyRead {
+                asker,
+                artifact,
+                why: &why,
+                hash: typed_read_hash(artifact, projection_fingerprint, &groups),
+                groups,
+                per_class: true,
+            };
+            self.read_sight_in_txn(txn, &read)
+        })
+    }
+
     /// The read check of the stored file `hash` of `artifact`, `sealed` when
     /// no mark covers it and it is a sealed file: its receipt, grant use or
     /// ask, and the sight it gives.
@@ -117,168 +249,338 @@ impl Vault {
             "a file read's why is one line of at most 512 bytes",
         )?;
         self.with_write_txn_grouped(|txn| {
-            let (class, first, keys) = if sealed {
-                (SEALED_FILE_CLASS, *artifact, Vec::new())
+            let group = if sealed {
+                ReadGroup {
+                    class: SEALED_FILE_CLASS,
+                    first: *artifact,
+                    keys: Vec::new(),
+                    handle: SEALED_FILE_HANDLE.to_owned(),
+                }
             } else {
-                let Some(found) = marked_keys_in_txn(self, txn, &hash)? else {
+                let Some((class, keys)) = marked_keys_in_txn(self, txn, &hash)? else {
                     return Ok(SecretSight::Masked);
                 };
-                found
+                ReadGroup::of(class, keys)?
             };
-            let handle = if sealed {
-                SEALED_FILE_HANDLE.to_owned()
-            } else {
-                keys.iter()
-                    .map(|(_, handle)| handle.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
+            let read = KeyRead {
+                asker,
+                artifact,
+                why: &why,
+                hash,
+                groups: vec![group],
+                per_class: false,
             };
-            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let row = |state| RevealRow {
-                reader: READER_AGENT.to_owned(),
-                actor: Some(asker.agent),
-                connection: Some(asker.connection()),
-                provider: asker.provider.clone(),
-                secret: first,
-                person: None,
-                handle: handle.clone(),
-                class: class.as_str().to_owned(),
-                why: why.clone(),
-                project: asker.project,
-                run: asker.run.clone(),
-                created_at: now,
-                expires_at: now.saturating_add(REVEAL_ASK_TTL_SECS),
-                state,
-                once_digest: None,
-                asked_decision: None,
-                answered_by: None,
-                decision: None,
-                lease: None,
-                delivered_at: None,
-                file: Some(FileSight {
-                    artifact: *artifact,
-                    hash,
-                    keys: keys.clone(),
-                    leases: Vec::new(),
-                }),
+            self.read_sight_in_txn(txn, &read)
+        })
+    }
+
+    /// The one read check every agent's read of keys runs, in the caller's
+    /// write transaction: each group of `read` judged first, with nothing
+    /// written. When every group is ready (a standing grant covers it, or
+    /// the owner approved its ask once), each goes out: a covered group
+    /// leaves a fresh reveal row and a quiet grant use, an approved one
+    /// spends its approval on its ask's row, and each stamps a T1 lease per
+    /// key; the read is [`SecretSight::Granted`]. Otherwise nothing is spent
+    /// or delivered, each group with no open ask files one, and the read is
+    /// [`SecretSight::Masked`]: an `Ok`, so the asks it filed stay.
+    fn read_sight_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        read: &KeyRead<'_>,
+    ) -> Result<SecretSight> {
+        if read.groups.is_empty() {
+            return Ok(SecretSight::Masked);
+        }
+        let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        let grants = load_active_standing_grants(&self.store, txn)?;
+        let mut ready = Vec::with_capacity(read.groups.len());
+        let mut asks = Vec::new();
+        for group in &read.groups {
+            let ask = read.ask_id(group)?;
+            let bound = reveal_bound(
+                &read.asker.connection(),
+                group.class,
+                read.asker.project.as_ref(),
+            )?;
+            let plan = match covering_grant(&bound, read.asker.project, &grants)? {
+                Some(grant_ref) => GroupPlan::Ready(Ready::Covered(grant_ref)),
+                None => asked_plan_in_txn(self, txn, &ask, now)?,
             };
-            let grants = load_active_standing_grants(&self.store, txn)?;
-            let bound = reveal_bound(&asker.connection(), class, asker.project.as_ref())?;
-            if let Some(grant_ref) = covering_grant(&bound, asker.project, &grants)? {
-                // Each read under a grant is its own receipt.
-                let reveal = self.store.clock.entity_id()?;
-                let mut read = row(SecretRevealState::Covered);
-                let digest = read.ask_digest(&reveal);
-                read.once_digest = Some(*digest.as_bytes());
-                let used = self.record_standing_grant_use_in_txn(txn, &grant_ref, digest)?;
-                read.answered_by = Some(standing(&grant_ref));
-                read.decision = Some(used.decision_id());
-                deliver_file_in_txn(self, txn, &reveal, read)?;
-                return Ok(SecretSight::Granted);
+            match plan {
+                GroupPlan::Ready(plan) => ready.push((group, ask, plan)),
+                GroupPlan::Waiting => {}
+                GroupPlan::Asks => asks.push((group, ask)),
             }
-            let ask = file_ask_id(asker, &hash)?;
-            match REVEALS.get(&self.store, txn, &ask)? {
-                Some(mut asked)
-                    if asked.state == SecretRevealState::ApprovedOnce && now < asked.expires_at =>
-                {
-                    let digest = asked.stored_once_digest()?;
-                    let authorization =
-                        approve_once_authorization_in_txn(&self.store, txn, &digest)?.ok_or(
-                            Error::InvariantViolation(
-                                "an approved file read has no approve-once marker",
-                            ),
-                        )?;
+        }
+        if ready.len() < read.groups.len() {
+            for (group, ask) in asks {
+                let mut asked = read.row(group, now, SecretRevealState::Asked);
+                file_ask_in_txn(self, txn, &ask, &mut asked, now)?;
+                REVEALS.put(&self.store, txn, &ask, &asked)?;
+            }
+            return Ok(SecretSight::Masked);
+        }
+        for (group, ask, plan) in ready {
+            match plan {
+                Ready::Covered(grant_ref) => {
+                    // Each read under a grant is its own receipt.
+                    let reveal = self.store.clock.entity_id()?;
+                    let mut row = read.row(group, now, SecretRevealState::Covered);
+                    let digest = row.ask_digest(&reveal);
+                    row.once_digest = Some(*digest.as_bytes());
+                    let used = self.record_standing_grant_use_in_txn(txn, &grant_ref, digest)?;
+                    row.answered_by = Some(standing(&grant_ref));
+                    row.decision = Some(used.decision_id());
+                    deliver_file_in_txn(self, txn, &reveal, row)?;
+                }
+                Ready::Once(mut asked, authorization) => {
                     spend_approve_once_in_txn(&self.store, txn, &authorization)?;
-                    asked.decision = approve_once_decision_in_txn(&self.store, txn, &digest)?;
-                    deliver_file_in_txn(self, txn, &ask, asked)?;
-                    Ok(SecretSight::Granted)
-                }
-                // Still waiting on the owner, or denied: the masked copy, and
-                // no second ask while the window is open.
-                Some(asked)
-                    if matches!(
-                        asked.state,
-                        SecretRevealState::Asked | SecretRevealState::Denied
-                    ) && now < asked.expires_at =>
-                {
-                    Ok(SecretSight::Masked)
-                }
-                _ => {
-                    let mut asked = row(SecretRevealState::Asked);
-                    file_ask_in_txn(self, txn, &ask, &mut asked, now)?;
-                    REVEALS.put(&self.store, txn, &ask, &asked)?;
-                    Ok(SecretSight::Masked)
+                    asked.decision =
+                        approve_once_decision_in_txn(&self.store, txn, &authorization.digest())?;
+                    deliver_file_in_txn(self, txn, &ask, *asked)?;
                 }
             }
+        }
+        Ok(SecretSight::Granted)
+    }
+}
+
+impl KeyRead<'_> {
+    /// The id of the one ask `group` of this read files.
+    fn ask_id(&self, group: &ReadGroup) -> Result<EntityId> {
+        file_ask_id(
+            self.asker,
+            &self.hash,
+            self.per_class.then_some(group.class),
+        )
+    }
+
+    /// The reveal row `group` of this read writes, in `state`, at `now`.
+    fn row(&self, group: &ReadGroup, now: u64, state: SecretRevealState) -> RevealRow {
+        RevealRow {
+            reader: READER_AGENT.to_owned(),
+            actor: Some(self.asker.agent),
+            connection: Some(self.asker.connection()),
+            provider: self.asker.provider.clone(),
+            secret: group.first,
+            person: None,
+            handle: group.handle.clone(),
+            class: group.class.as_str().to_owned(),
+            why: self.why.to_owned(),
+            project: self.asker.project,
+            run: self.asker.run.clone(),
+            created_at: now,
+            expires_at: now.saturating_add(REVEAL_ASK_TTL_SECS),
+            state,
+            once_digest: None,
+            asked_decision: None,
+            answered_by: None,
+            decision: None,
+            lease: None,
+            delivered_at: None,
+            file: Some(FileSight {
+                artifact: *self.artifact,
+                hash: self.hash,
+                keys: group.keys.clone(),
+                leases: Vec::new(),
+            }),
+        }
+    }
+}
+
+impl ReadGroup {
+    /// The group of `keys`, each of `class`, in their order; its row names
+    /// the first.
+    fn of(class: CustodyClass, keys: Vec<(EntityId, String)>) -> Result<Self> {
+        let first = keys
+            .first()
+            .map(|(secret, _)| *secret)
+            .ok_or(Error::InvariantViolation("a read's key group holds no key"))?;
+        let handle = keys
+            .iter()
+            .map(|(_, handle)| handle.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(Self {
+            class,
+            first,
+            keys,
+            handle,
         })
     }
 }
 
+/// Where the ask `ask` stands now, with nothing written: approved once in
+/// its window (its marker read, not spent), waiting on the owner or denied
+/// in its window, or not open, so the read asks.
+fn asked_plan_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ask: &EntityId,
+    now: u64,
+) -> Result<GroupPlan> {
+    Ok(match REVEALS.get(&vault.store, txn, ask)? {
+        Some(asked) if asked.state == SecretRevealState::ApprovedOnce && now < asked.expires_at => {
+            let digest = asked.stored_once_digest()?;
+            let authorization = approve_once_authorization_in_txn(&vault.store, txn, &digest)?
+                .ok_or(Error::InvariantViolation(
+                    "an approved file read has no approve-once marker",
+                ))?;
+            GroupPlan::Ready(Ready::Once(Box::new(asked), authorization))
+        }
+        // Still waiting on the owner, or denied: the masked copy, and no
+        // second ask while the window is open.
+        Some(asked)
+            if matches!(
+                asked.state,
+                SecretRevealState::Asked | SecretRevealState::Denied
+            ) && now < asked.expires_at =>
+        {
+            GroupPlan::Waiting
+        }
+        _ => GroupPlan::Asks,
+    })
+}
+
+/// Each key `custody` names, once, with its class and handle, in the order
+/// given: `None` when one has no custody record, is not active, or is not
+/// admitted to a model (T1).
+fn admitted_keys_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    custody: impl IntoIterator<Item = EntityId>,
+) -> Result<Option<Vec<AdmittedKey>>> {
+    let floor = SecretCustodyFloor::resolve(&vault.store, txn)?;
+    let mut keys: Vec<AdmittedKey> = Vec::new();
+    for secret in custody {
+        if keys.iter().any(|key| key.secret == secret) {
+            continue;
+        }
+        let Some(rec) = read_secret_custody_admission_in_txn(&vault.store, txn, &secret)? else {
+            return Ok(None);
+        };
+        if rec.status != SecretCustodyStatus::Active
+            || crate::secret_lease::reveal_tier_admission(&rec, &floor).is_err()
+        {
+            return Ok(None);
+        }
+        let class = rec.class;
+        let handle =
+            crate::ports::ShortIdStoreRead::port_short_id_reference(&vault.store, txn, &secret)?
+                .map_or(rec.name, |(short, _)| short);
+        keys.push(AdmittedKey {
+            class,
+            secret,
+            handle,
+        });
+    }
+    Ok(Some(keys))
+}
+
 /// The keys the mark of the file `hash` names, each with its handle, in the
-/// file's order, with their one class and the first key: `None` when no mark
-/// covers the file, or when a key is not active, not admitted to a model
-/// (T1), or of another class than the rest.
+/// file's order, with their one class: `None` when no mark covers the file,
+/// or when a key is not admitted ([`admitted_keys_in_txn`]) or is of
+/// another class than the rest.
 fn marked_keys_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     hash: &[u8; 32],
-) -> Result<Option<(CustodyClass, EntityId, Vec<(EntityId, String)>)>> {
+) -> Result<Option<(CustodyClass, Vec<(EntityId, String)>)>> {
     let Some(mark) = masked_file_in_txn(&vault.store, txn, hash)? else {
         return Ok(None);
     };
-    let floor = SecretCustodyFloor::resolve(&vault.store, txn)?;
-    let mut keys: Vec<(EntityId, String)> = Vec::new();
-    let mut class = None;
     // Every key the mark places: in the stored bytes, and in each member of a
     // container.
     let marked = mark
         .keys
         .iter()
-        .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
-    for key in marked {
-        if keys.iter().any(|(secret, _)| *secret == key.custody) {
-            continue;
-        }
-        let Some(rec) = read_secret_custody_admission_in_txn(&vault.store, txn, &key.custody)?
-        else {
-            return Ok(None);
-        };
-        if rec.status != SecretCustodyStatus::Active
-            || crate::secret_lease::reveal_tier_admission(&rec, &floor).is_err()
-            || class.is_some_and(|class| class != rec.class)
-        {
-            return Ok(None);
-        }
-        class = Some(rec.class);
-        let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
-            &vault.store,
-            txn,
-            &key.custody,
-        )?
-        .map_or(rec.name, |(short, _)| short);
-        keys.push((key.custody, handle));
-    }
-    let (Some(class), Some((first, _))) = (class, keys.first()) else {
+        .chain(mark.members.iter().flat_map(|member| member.keys.iter()))
+        .map(|key| key.custody);
+    let Some(admitted) = admitted_keys_in_txn(vault, txn, marked)? else {
         return Ok(None);
     };
-    let first = *first;
-    Ok(Some((class, first, keys)))
+    let Some(class) = admitted.first().map(|key| key.class) else {
+        return Ok(None);
+    };
+    if admitted.iter().any(|key| key.class != class) {
+        return Ok(None);
+    }
+    let keys = admitted
+        .into_iter()
+        .map(|key| (key.secret, key.handle))
+        .collect();
+    Ok(Some((class, keys)))
 }
 
-/// The one ask an agent's reads of a file file: by the agent, the stored
-/// bytes, the project and the run.
-fn file_ask_id(asker: &RevealAsker, hash: &[u8; 32]) -> Result<EntityId> {
+/// `keys` in one group per custody class: the groups in their class word's
+/// order, each group's keys in the order given.
+fn class_groups(keys: Vec<AdmittedKey>) -> Result<Vec<ReadGroup>> {
+    let mut classes: Vec<(CustodyClass, Vec<(EntityId, String)>)> = Vec::new();
+    for key in keys {
+        match classes.iter_mut().find(|(class, _)| *class == key.class) {
+            Some((_, held)) => held.push((key.secret, key.handle)),
+            None => classes.push((key.class, vec![(key.secret, key.handle)])),
+        }
+    }
+    classes.sort_by_key(|(class, _)| class.as_str());
+    classes
+        .into_iter()
+        .map(|(class, keys)| ReadGroup::of(class, keys))
+        .collect()
+}
+
+/// A typed body read's fingerprint: the artifact, the projection it reads
+/// and each class group's keys, hashed under [`TYPED_BODY_READ_DOMAIN`].
+fn typed_read_hash(
+    artifact: &EntityId,
+    projection_fingerprint: &[u8; 32],
+    groups: &[ReadGroup],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(TYPED_BODY_READ_DOMAIN);
+    let mut part = |field: &[u8]| {
+        hasher.update(&(field.len() as u64).to_be_bytes());
+        hasher.update(field);
+    };
+    part(artifact.as_bytes());
+    part(projection_fingerprint);
+    for group in groups {
+        part(group.class.as_str().as_bytes());
+        part(&(group.keys.len() as u64).to_be_bytes());
+        for (secret, _) in &group.keys {
+            part(secret.as_bytes());
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
+
+/// The one ask an agent's reads of a file file: by the agent, the read's
+/// hash (the stored bytes', or a typed body read's fingerprint), the project
+/// and the run, and the keys' class for a typed body's group. A file's one
+/// ask names no class.
+fn file_ask_id(
+    asker: &RevealAsker,
+    hash: &[u8; 32],
+    class: Option<CustodyClass>,
+) -> Result<EntityId> {
     let project = asker
         .project
         .map(|project| project.to_hex())
         .unwrap_or_default();
-    let parts: [&[u8]; 4] = [
+    let class = class.map_or("", CustodyClass::as_str);
+    let parts: [&[u8]; 5] = [
         asker.agent.as_bytes(),
         hash,
         project.as_bytes(),
         asker.run.as_deref().unwrap_or_default().as_bytes(),
+        class.as_bytes(),
     ];
-    crate::codebase::entity_id_from_hash_material(FILE_ASK_DOMAIN, &parts)
+    let parts = if class.is_empty() {
+        &parts[..4]
+    } else {
+        &parts[..]
+    };
+    crate::codebase::entity_id_from_hash_material(FILE_ASK_DOMAIN, parts)
 }
 
 /// Delivers a granted file read in `txn`: a T1 lease per key, each receipt

@@ -33,7 +33,9 @@ mod lift;
 mod receipts;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
-pub(crate) use self::lift::{TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn};
+pub(crate) use self::lift::{
+    LiftedSources, TypedBodyRows, lift_typed_body_in_txn, typed_body_lift_hit_in_txn,
+};
 pub(crate) use self::receipts::{erase_receipt_actor_in_txn, receipt_actor_in_txn};
 
 const HEADS: SideTable<EntityId, TypedBodyHead, Named> =

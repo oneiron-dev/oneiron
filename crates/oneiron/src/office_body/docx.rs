@@ -36,8 +36,6 @@ const CELLS: &str = "cells";
 pub(super) const SCHEMA: u32 = 1;
 /// One paragraph's or cell's text ceiling.
 const MAX_TEXT_BYTES: usize = 1 << 20;
-/// One call's operation ceiling.
-pub(super) const MAX_OPS: usize = 256;
 
 /// A typed read of the body at one frontier.
 #[derive(Debug, Clone, PartialEq, Eq)]
