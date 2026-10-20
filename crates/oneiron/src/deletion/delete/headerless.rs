@@ -142,7 +142,8 @@ impl Vault {
         // sweep row, no `pt:` marker — only the durable `dt:` marker for
         // hard reasons (hard-once-seen; the CRDT tombstone above is already
         // published), guarded exactly like the receiver-side
-        // `apply_replayed_tombstone` nothing-local branch.
+        // `apply_replayed_tombstone` nothing-local branch, and the actor
+        // sweep, as there.
         if !self.active_delete_scope_exists_in_txn(&wtxn, id)? {
             if reason.active_store_hard_purge_v1() {
                 crate::claim::invalidate_weave_digest_source_in_txn(&self.store, &mut wtxn, id)?;
@@ -157,6 +158,12 @@ impl Vault {
                     &tombstone.encode().to_vec(),
                 )?;
             }
+            // An erased actor with no residue left here may still be named
+            // in the rows that record it, so the purge's actor sweep runs,
+            // marker or not (FIX 5737).
+            if reason.active_store_hard_purge_v1() {
+                crate::deletion::actor_fields::erase_actor_fields_in_txn(self, &mut wtxn, id)?;
+            }
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
                 && !self.store.discard_pending_deletion_gate_decision_in_txn(
@@ -168,8 +175,9 @@ impl Vault {
             {
                 return Err(Error::CorruptedIndex("pending deletion gate decision"));
             }
-            // Nothing was erased and no cfg-off pt: marker was staged.
-            // Retire only this request in the same empty-commit txn.
+            // No residue was erased (a hard reason's actor sweep above may
+            // still have scrubbed rows naming this id) and no cfg-off pt:
+            // marker was staged. Retire only this request in the same txn.
             clear_own_topology_delete_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -189,13 +197,6 @@ impl Vault {
         } else {
             std::collections::BTreeSet::new()
         };
-        // A delete takes its quotes out of the NOTEs that cite it first and
-        // keeps their history (C050), so the purge's eraser finds none.
-        if reason == DeleteReason::UserDelete {
-            affected.extend(crate::note::scrub_deleted_citations_in_txn(
-                self, &mut wtxn, id,
-            )?);
-        }
         let (existed, citing) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,

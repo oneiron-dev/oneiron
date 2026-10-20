@@ -343,6 +343,37 @@ impl OfferLadder {
         }
     }
 
+    /// The rate this ladder's one picked offer supplies for `unit` when that
+    /// offer serves exactly `model` (FIX 3041): `cost` units per `per`
+    /// tokens, which a launch's USD quote reads to price a unit other than
+    /// tokens. `None` for a seat or any other ladder, another model, no rate
+    /// in `unit`, rates in `unit` that disagree, or a zero cost or per.
+    #[must_use]
+    pub(super) fn exact_rate(
+        &self,
+        model: &ModelId,
+        unit: &oneiron::llm::run_admission::LeaseUnit,
+    ) -> Option<&oneiron::llm::run_admission::UnitRate> {
+        let [rung] = self.rungs.as_slice() else {
+            return None;
+        };
+        if !self.picked
+            || self.name != *model
+            || rung.model != *model
+            || rung.offer.binding.model != *model
+        {
+            return None;
+        }
+        let mut rates = rung
+            .offer
+            .binding
+            .rates
+            .iter()
+            .filter(|rate| rate.unit == *unit);
+        let rate = rates.next()?;
+        (rate.cost > 0 && rate.per > 0 && rates.all(|other| other == rate)).then_some(rate)
+    }
+
     /// Bind one traceless turn without retained cooldowns, fallback logs or
     /// receipts. Only the house target keeps the host's configured prompt.
     pub(crate) fn anonymous_call(

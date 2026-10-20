@@ -109,12 +109,18 @@ impl AgentDispatcher<'_> {
     /// The fold is what makes `MemoryProjection::Default` honest: resolving an
     /// ancestor's spec standalone would hand it the widest default, so a
     /// `Default` under an excluding grandparent would silently WIDEN.
+    ///
+    /// Under a member's bound run (FIX 5416) the projection is read on that
+    /// member's own lane, the rows it does not read left out and counted.
+    /// The member comes from the wrapper the fold crosses, which still adds
+    /// no level; every level resolves as it does for any run.
     pub(super) fn resolve_ancestor_projection(
         &self,
         attempt: AttemptId,
     ) -> Result<Option<ResolvedContextProjection>> {
         let queue = AttemptQueue::new(self.vault);
         let mut chain: Vec<(ContextSpec, crate::pipeline::WorldScope)> = Vec::new();
+        let mut member = None;
         let mut cursor = Some(attempt);
         let mut seen = std::collections::HashSet::new();
         while let Some(id) = cursor {
@@ -130,6 +136,9 @@ impl AgentDispatcher<'_> {
                 return Err(super::widen_record::invalid("context ancestor is missing"));
             };
             if super::workflow_record::is_wrapper(&record) {
+                if member.is_none() {
+                    member = self.workflow_member(&record)?;
+                }
                 cursor = self.workflow_authority_parent(Some(id))?;
                 continue;
             }
@@ -169,6 +178,9 @@ impl AgentDispatcher<'_> {
                 },
             )?);
         }
-        Ok(projection)
+        match (projection, member) {
+            (Some(projection), Some(member)) => self.member_context(projection, member).map(Some),
+            (projection, _) => Ok(projection),
+        }
     }
 }
