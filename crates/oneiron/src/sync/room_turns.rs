@@ -27,6 +27,7 @@ use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::workspace_roster::{
     RoomTurn, TurnMerge, merge_replicated_turn_in_txn, replicated_turn_in,
 };
@@ -106,7 +107,11 @@ pub(crate) fn admit_room_turn_map(key: Option<&WindowKey>, map: &LoroMap) -> Res
 /// of it and its conversion. A row the window holds is extended, never
 /// replaced, so another machine's binding is not lost and two machines settle
 /// on one row; a window row keeping another quote for one of its messages is
-/// refused (FIX 2028). Returns whether it wrote; the caller commits.
+/// refused (FIX 2028). A window row still naming the actor this vault's row
+/// names as erased (FIX 6543) is left as it is: the egress scrub rewrites it
+/// in the erased form once the window is pinned history-free
+/// ([`scrub_deleted_room_turns`]), and no mirror files that id again first.
+/// Returns whether it wrote; the caller commits.
 pub(crate) fn mirror_room_turn(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> Result<bool> {
     let held = {
         let rtxn = vault.store.env.read_txn()?;
@@ -119,6 +124,9 @@ pub(crate) fn mirror_room_turn(vault: &Vault, doc: &LoroDoc, id: &EntityId) -> R
     let hex = id.to_hex();
     let row = match map_get_bytes(&map, &hex).and_then(|carried| decode(&carried).ok()) {
         Some(mut carried) => {
+            if turn.actor == ERASED_CALL_IDENTITY && carried.actor != turn.actor {
+                return Ok(false);
+            }
             let mut grew = false;
             for message in turn.message_ids {
                 if !carried.message_ids.contains(&message) {
@@ -196,11 +204,14 @@ pub(crate) fn materialize_room_turns_from_delta(
 }
 
 /// Deletes from `doc`'s room turn map each row whose room this vault deleted,
-/// as the merge refuses one (OF-522). A row whose room this vault holds no
-/// record of stays: a first sync can bring a turn row before its room. A live
-/// doc keeps the old rows in its history, so `pin` names the window pinned
-/// history-free before any row goes; the sweep, whose shallow cut drops that
-/// history, passes `None`. Returns whether a row went, committed.
+/// as the merge refuses one (OF-522), and rewrites in the erased form each
+/// row that names an actor this vault names as no one (FIX 6543): the turn,
+/// its links and its messages ride on, its actor's id does not. A row whose
+/// room this vault holds no record of stays: a first sync can bring a turn
+/// row before its room. A live doc keeps the old rows in its history, so
+/// `pin` names the window pinned history-free before any row goes or
+/// changes; the sweep, whose shallow cut drops that history, passes `None`.
+/// Returns whether a row went or changed, committed.
 pub(crate) fn scrub_deleted_room_turns(
     vault: &Vault,
     doc: &LoroDoc,
@@ -215,19 +226,23 @@ pub(crate) fn scrub_deleted_room_turns(
         if let Ok(turn) = decode(bytes)
             && let Ok(room) = EntityId::from_hex(&turn.room_id)
         {
-            rows.push((map_key.to_owned(), room));
+            rows.push((map_key.to_owned(), room, turn));
         }
     });
     let mut doomed = Vec::new();
+    let mut erased = Vec::new();
     {
         let rtxn = vault.store.env.read_txn()?;
-        for (map_key, room) in rows {
+        for (map_key, room, mut turn) in rows {
             if crate::ports::removed_in_txn(&vault.store, &rtxn, &room)? {
                 doomed.push(map_key);
+            } else if actor_erased_here(vault, &rtxn, &turn)? {
+                turn.actor = ERASED_CALL_IDENTITY.to_owned();
+                erased.push((map_key, encode(&turn)?));
             }
         }
     }
-    if doomed.is_empty() {
+    if doomed.is_empty() && erased.is_empty() {
         return Ok(false);
     }
     // Pin before touching the live map, as the egress scrubs do.
@@ -237,8 +252,27 @@ pub(crate) fn scrub_deleted_room_turns(
     for map_key in &doomed {
         map_delete(&map, map_key)?;
     }
+    for (map_key, row) in &erased {
+        map_insert_bytes(&map, map_key, row)?;
+    }
     doc.commit_with(loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN));
     Ok(true)
+}
+
+/// Whether the window row `turn` names as its actor someone this vault names
+/// as no one (FIX 6543): an actor its own marker erased, as every carrier
+/// reads one ([`crate::deletion::ACTOR_ERASE_CARRIER_SOURCE`]), or the one
+/// its own row for the turn already names in the erased form.
+fn actor_erased_here(vault: &Vault, rtxn: &heed::RoTxn<'_>, turn: &RoomTurn) -> Result<bool> {
+    let (Ok(actor), Ok(id)) = (
+        EntityId::from_hex(&turn.actor),
+        EntityId::from_hex(&turn.turn_id),
+    ) else {
+        return Ok(false);
+    };
+    Ok(vault.carrier_actor_erased_in_txn(rtxn, &actor)?
+        || replicated_turn_in(vault, rtxn, id)?
+            .is_some_and(|held| held.actor == ERASED_CALL_IDENTITY))
 }
 
 /// Whether `doc` holds a room turn map. Looking a root up by name creates
