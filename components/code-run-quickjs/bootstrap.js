@@ -79,6 +79,14 @@
           ? Reflect.get(target, key, receiver) : missing(key),
       });
     };
+    // A row the WIT world already imports at its full path, as the bridge
+    // installed it (`self.report_blocked`), stays that import's: the loop
+    // skips it, and any other collision still refuses the component. Such an
+    // import whose parameters are all strings also takes them as one object
+    // of those names, the row's documented input (`{category, detail}`).
+    const served = new Map();
+    for (const row of schema.imports)
+      if (!row.abi && Object.hasOwn(abi, row.wit)) served.set(row.js, row.params);
     sdk.self.memory ??= Object.create(null);
     for (const name of names()) {
       const parts = name.split(".");
@@ -93,7 +101,14 @@
       // A segment can be a verb and hold verbs at once (`self.memory.diary`
       // and `self.memory.diary.query`): the verb carries its children.
       const leaf = parts.at(-1), held = target[leaf];
-      if (typeof held === "function") throw new TypeError("verb row shadows a host import");
+      if (typeof held === "function") {
+        const params = served.get(name);
+        if (!params) throw new TypeError("verb row shadows a host import");
+        if (params.length && params.every(param => param.type === "string" && !param.json))
+          target[leaf] = (...args) => args.length === 1 && args[0] && typeof args[0] === "object"
+            ? held(...params.map(param => args[0][param.name])) : held(...args);
+        continue;
+      }
       target[leaf] = held ? Object.assign(verb(name), held) : verb(name);
       if (name === "connector.call") connectorCall = target[leaf];
     }
