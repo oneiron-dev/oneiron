@@ -13705,6 +13705,7 @@ class ConnectorCallReplyHeld(TypedDict):
     call_ref: str
     decision_ref: NotRequired[str | None]
     reasons: list[str]
+    approval_digest: NotRequired[str | None]
 class ConnectorCallReplyRefused(TypedDict):
     outcome: Literal["refused"]
     decision_ref: NotRequired[str | None]
@@ -14436,6 +14437,7 @@ class ConnectorCallStatusPending(TypedDict):
     tool: str
     held_at_ms: int
     reasons: NotRequired[list[str]]
+    approval_digest: NotRequired[str | None]
 class ConnectorCallStatusSettled(TypedDict):
     state: Literal["settled"]
     call_ref: str
@@ -17427,6 +17429,7 @@ class ChannelIdentityProvisionRequest(TypedDict):
     shape: SelfHeldShape
     binding: ChannelIdentityBinding
     fulfillment_mode: ChannelIdentityFulfillment
+    request_ref: NotRequired[EntityId | None]
 ChannelIdentityShape = Literal["dedicated_address", "dedicated_handle", "shared_presence", "delegated_grant"]
 ChannelIdentityCustody = Literal["self_held", "delegated"]
 ChannelIdentityState = Literal["requested", "pending_fulfillment", "active", "rotating", "released", "quarantine", "tombstone"]
@@ -17453,6 +17456,8 @@ class ChannelIdentityLifecycleReceipt(TypedDict):
     identity: NotRequired[ChannelIdentityView | None]
     outbound_closed: bool
     identity_retiring: bool
+    approval_digest: NotRequired[str | None]
+    request_ref: NotRequired[EntityId | None]
 DelegatedGrantScope = Literal["mail.read", "mail.metadata", "mail.send"]
 class DelegatedGrant(TypedDict):
     custody_record_ref: str
@@ -17461,6 +17466,7 @@ class ChannelIdentityBindRequestExisting(TypedDict):
     kind: Literal["existing"]
     identity_ref: EntityId
     fulfillment_mode: ChannelIdentityFulfillment
+    request_ref: NotRequired[EntityId | None]
 class ChannelIdentityBindRequestDelegated(TypedDict):
     kind: Literal["delegated"]
     channel: str
@@ -17468,12 +17474,15 @@ class ChannelIdentityBindRequestDelegated(TypedDict):
     binding: ChannelIdentityBinding
     grant: DelegatedGrant
     fulfillment_mode: ChannelIdentityFulfillment
+    request_ref: NotRequired[EntityId | None]
 ChannelIdentityBindRequest = ChannelIdentityBindRequestExisting | ChannelIdentityBindRequestDelegated
 class ChannelIdentityRequest(TypedDict):
     identity_ref: EntityId
+    request_ref: NotRequired[EntityId | None]
 class ChannelIdentityReleaseRequest(TypedDict):
     identity_ref: EntityId
     quarantine_until: int
+    request_ref: NotRequired[EntityId | None]
 RelationshipContext = Literal["work_deal", "scheduling_logistics", "campaign_outreach", "transactional_system", "personal_friends", "group_space"]
 class SelectionRuleScopeVaultDefault(TypedDict):
     kind: Literal["vault_default"]

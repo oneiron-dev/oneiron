@@ -336,6 +336,11 @@ side_tables! {
     CHANNEL_IDENTITY_AUTONOMY: VaultMeta b"channel_identity_autonomy:v1:" Raw;
     /// Channel-identity lifecycle receipt ledger. Key: id16.
     CHANNEL_IDENTITY_LIFECYCLE_RECEIPT: VaultMeta b"channel_identity_lifecycle:v0:" Named;
+    /// One channel-identity lifecycle request, kept by its ref once its Gate decision committed
+    /// (FIX 6424 part 3): the actor, the verb, its input's digest, the identity it was given and
+    /// when that was requested, its hold's approve-once digest and, once applied, the receipt it
+    /// answered. Ids and digests only. Key: id16 (request ref).
+    CHANNEL_IDENTITY_LIFECYCLE_REQUEST: VaultMeta b"channel_identity_lifecycle_request:v1:" Named;
     /// Channel-identity selection rule set. Key: ().
     CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
         => crate::channel_identity_selection::erase_rule_actor_in_txn;

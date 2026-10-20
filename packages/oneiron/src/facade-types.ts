@@ -5497,7 +5497,7 @@ export type ConnectorToolResult = { source: string; foreign: boolean; content: u
 /** `oneiron::outbound_consent::connector_call::ConnectorQuestion` */
 export type ConnectorQuestion = { key: string; message: string; requested_schema: unknown }
 /** `oneiron::task_verb::sdk_connector_call::ConnectorCallReply` */
-export type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[] } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; expires_at_ms: number; reasons?: string[] }
+export type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; expires_at_ms: number; reasons?: string[] }
 /** `oneiron::task_verb::sdk_live_voice::LiveVoiceToolReply` */
 export type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply }
 /** `oneiron::task_verb::sdk_live_voice::LiveVoiceSessionRequest` */
@@ -5785,7 +5785,7 @@ export type ConnectorSchemaReply = { source: string; foreign: boolean; input_sch
 /** `oneiron::task_verb::sdk_connector_call::ConnectorCallStatusRequest` */
 export type ConnectorCallStatusRequest = { call_ref: string }
 /** `oneiron::task_verb::sdk_connector_call::ConnectorCallStatus` */
-export type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[] } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply }
+export type ConnectorCallStatus = { state: "pending"; call_ref: string; name: string; tool: string; held_at_ms: number; reasons?: string[]; approval_digest?: string | null } | { state: "settled"; call_ref: string; name: string; tool: string; reply: ConnectorCallReply }
 /** `oneiron::memory::claim_admission::ScopedCommitRequest` */
 export type ScopedCommitRequest = { claims: ScopedClaimInput[] }
 /** `oneiron::memory::claims::RefusalReason` */
@@ -6821,7 +6821,7 @@ export type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet
 /** `oneiron::channel_identity::binding::ChannelIdentityFulfillment` */
 export type ChannelIdentityFulfillment = "api" | "manual" | "review"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityProvisionRequest` */
-export type ChannelIdentityProvisionRequest = { channel: string; address_or_handle: string; shape: SelfHeldShape; binding: ChannelIdentityBinding; fulfillment_mode: ChannelIdentityFulfillment }
+export type ChannelIdentityProvisionRequest = { channel: string; address_or_handle: string; shape: SelfHeldShape; binding: ChannelIdentityBinding; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null }
 /** `oneiron::channel_identity::shape::ChannelIdentityShape` */
 export type ChannelIdentityShape = "dedicated_address" | "dedicated_handle" | "shared_presence" | "delegated_grant"
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityCustody` */
@@ -6831,17 +6831,17 @@ export type ChannelIdentityState = "requested" | "pending_fulfillment" | "active
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityView` */
 export type ChannelIdentityView = { identity_ref: EntityId; channel: string; address_or_handle: string; shape: ChannelIdentityShape; binding: ChannelIdentityBinding; custody: ChannelIdentityCustody; state: ChannelIdentityState; pending_fulfillment?: string | null; state_changed_at: number; quarantine_until?: number | null; outbound_eligible: boolean; occupies_assignment_key: boolean }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityLifecycleReceipt` */
-export type ChannelIdentityLifecycleReceipt = { identity_ref: EntityId; receipt_ref: string; gate_receipt_ref?: string | null; outcome: string; reason_codes: string[]; owner_visible_state: string; identity?: ChannelIdentityView | null; outbound_closed: boolean; identity_retiring: boolean }
+export type ChannelIdentityLifecycleReceipt = { identity_ref: EntityId; receipt_ref: string; gate_receipt_ref?: string | null; outcome: string; reason_codes: string[]; owner_visible_state: string; identity?: ChannelIdentityView | null; outbound_closed: boolean; identity_retiring: boolean; approval_digest?: string | null; request_ref?: EntityId | null }
 /** `oneiron::channel_identity::custody::DelegatedGrantScope` */
 export type DelegatedGrantScope = "mail.read" | "mail.metadata" | "mail.send"
 /** `oneiron::channel_identity::custody::DelegatedGrant` */
 export type DelegatedGrant = { custody_record_ref: string; scopes: DelegatedGrantScope[] }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityBindRequest` */
-export type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: EntityId; fulfillment_mode: ChannelIdentityFulfillment } | { kind: "delegated"; channel: string; address_or_handle: string; binding: ChannelIdentityBinding; grant: DelegatedGrant; fulfillment_mode: ChannelIdentityFulfillment }
+export type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: EntityId; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null } | { kind: "delegated"; channel: string; address_or_handle: string; binding: ChannelIdentityBinding; grant: DelegatedGrant; fulfillment_mode: ChannelIdentityFulfillment; request_ref?: EntityId | null }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityRequest` */
-export type ChannelIdentityRequest = { identity_ref: EntityId }
+export type ChannelIdentityRequest = { identity_ref: EntityId; request_ref?: EntityId | null }
 /** `oneiron::memory::channel_doors::lifecycle::ChannelIdentityReleaseRequest` */
-export type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number }
+export type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number; request_ref?: EntityId | null }
 /** `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext` */
 export type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space"
 /** `oneiron::channel_identity_selection::selection_resolution::SelectionRuleScope` */
