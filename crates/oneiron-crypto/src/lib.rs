@@ -26,8 +26,8 @@ mod stretch;
 mod suite;
 
 pub use crate::envelope::{
-    Envelope, Header, Kdf, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, WrapParams, WrapType,
-    seal,
+    Envelope, Header, Kdf, ONEV_HEADER_PREFIX_MAX, ONEV_HEADER_PREFIX_MIN, OpenKey, OpenPolicy,
+    Purpose, SealKey, SealParams, WrapParams, WrapType, seal,
 };
 pub use crate::error::{Error, Result};
 pub use crate::keys::{
