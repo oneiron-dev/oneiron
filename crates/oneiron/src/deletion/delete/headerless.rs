@@ -160,11 +160,14 @@ impl Vault {
             }
             // An erased actor with no residue left here may still be named
             // in the rows that record it, so the purge's actor sweep runs,
-            // marker or not (FIX 5737).
+            // marker or not (FIX 5737). Its code runs' replies retire first,
+            // as the provenance door's erase retires them, read before the
+            // sweep releases them (FIX 5718).
             if reason.active_store_hard_purge_v1() {
-                // An erased actor with no row here still owns the responses its
-                // stamps named: the hard erase retires them as the provenance door
-                // does, read before the sweep (KS-2B1, KS-2B2, FIX 6530).
+                #[cfg(unix)]
+                crate::code_run::retire_actor_responses_in_txn(&self.store, &mut wtxn, id)?;
+                // So do the responses its stamps named, as the provenance
+                // door retires them (KS-2B1, KS-2B2, FIX 6530).
                 #[cfg(unix)]
                 {
                     crate::llm::erase_step_state_owner_in_txn(&self.store, &mut wtxn, id)?;

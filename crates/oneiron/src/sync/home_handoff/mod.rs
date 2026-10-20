@@ -16,23 +16,29 @@
 //! Rows travel as each table's own typed DTO, never as raw rows, and land
 //! through the table's own typed writes. The carrier knows no domain.
 //!
-//! Dormant: the election records its move request and L07-A's six tables
-//! register ([`home_tables`]), but nothing freezes or delivers yet. C2a adds
-//! the delivery foundation ([`delivery`]): the target's engine doors on the
-//! residence RPC lane (`sync::residence::home_handoff`) and the source's
-//! connection worker (`sync::connection::home_handoff`), which stays off
-//! until C2b turns delivery on. Target ordering, the old home's drain and
-//! restore integration are C2b's.
+//! The election records its move request and L07-A's six tables register
+//! ([`home_tables`]). C2a's delivery ([`delivery`]) carries the handoff: the
+//! target's engine doors on the residence RPC lane
+//! (`sync::residence::home_handoff`) and the source's connection worker
+//! (`sync::connection::home_handoff`). C2b orders both ends and restore
+//! around it: the new home adopts a staged handoff, or records that none
+//! came, before its first free-time pass ([`arrival`]); the old home drives
+//! its own started free-time tries to their end so it can freeze
+//! ([`drain`]); a restore keeps every registered table's rows live
+//! ([`restore`]).
 #![allow(
     dead_code,
     unused_imports,
-    reason = "FIX 5661 is dormant until C2b turns delivery on"
+    reason = "the carrier's surface is wider than this build's callers"
 )]
 
+mod arrival;
 mod delivery;
+mod drain;
 mod envelope;
 mod lineage;
 mod registry;
+mod restore;
 mod store;
 mod table;
 mod transfer;
@@ -42,20 +48,23 @@ use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 
+pub(crate) use arrival::prepare_arrival;
 pub(crate) use delivery::{
     DeliveryPlan, ElectionMark, FrozenHandoff, cancel_frozen, capture_route, decode_ack,
-    delivery_plan, drop_staged, election_mark, encode_ack, frozen_part, record_ack,
+    delivery_plan, drop_staged, election_mark, encode_ack, fence_handoff, frozen_part, record_ack,
     record_unresolved, stage_part, staged_position, staged_sealed, supersede_export,
     target_receipt,
 };
+pub(crate) use drain::free_time_arming;
 pub(crate) use envelope::{
     HomeAck, SealedHandoff, VerifiedHandoff, VerifiedHomeAck, open_handoff, verify_ack,
 };
 pub(crate) use registry::{
     froze_home_state_in_txn, home_tables, pending_move_in_txn, takes_home_write_in_txn,
 };
+pub(crate) use restore::{HomeManaged, keep_move_through, restore_managed_keys};
 pub(crate) use store::{handoff_status_in_txn, incomplete_in_txn, record_incomplete_in_txn};
-pub(crate) use table::{HomeTable, HomeTableRegistration, TableAdopt};
+pub(crate) use table::{HomeTable, HomeTableRegistration, ImageRows, TableAdopt};
 pub(crate) use transfer::{ack_in_txn, adopt, freeze_export, guard_in_txn, request_move_in_txn};
 
 /// The most sealed bytes one stored or delivered part carries (CALLS:
@@ -165,6 +174,9 @@ pub(crate) enum IncompleteReason {
     /// The target's persisted answer could not be read: out of reach,
     /// refused, or another machine on its socket. Not a proof either way.
     Unresolved,
+    /// The new home opened with no usable handoff for its move staged
+    /// (FIX 6457): what it opens locally is not the lineage's state.
+    NotArrived,
 }
 
 fn refused(reason: &'static str) -> Error {

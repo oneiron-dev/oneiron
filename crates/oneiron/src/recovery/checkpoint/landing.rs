@@ -58,8 +58,12 @@ impl Vault {
         // a row whose key an erase destroyed since is dropped, not restored.
         let (fork, source, home) = match custody {
             Custody::Keep | Custody::NewHost => (false, None, None),
-            Custody::Replace(home) => (false, None, Some(home)),
+            Custody::Replace(home, _) => (false, None, Some(home)),
             Custody::Fork(source) => (true, source, None),
+        };
+        let candidacy = match custody {
+            Custody::Replace(_, candidacy) => candidacy,
+            Custody::Keep | Custody::NewHost | Custody::Fork(_) => None,
         };
         let new_host = matches!(custody, Custody::NewHost);
         let mut gate_custody = if new_host {
@@ -218,6 +222,8 @@ impl Vault {
         room.admit_derived(destination)?;
         rebuild::rebuild_auxiliary(&vault, image.created_at)?;
         room.admit_derived(destination)?;
+        // No caller sees the vault before its home is elected again.
+        rebuild::reelect_home(&vault, candidacy, restored_at);
         let epoch = RestoreEpoch {
             checkpoint_id,
             restored_at,
@@ -246,6 +252,7 @@ impl Vault {
                 .collect(),
             custody_note: None,
             training_note: vault.training_link_restore_notice(),
+            home_table_notes: Vec::new(),
         };
         Ok((made, forked, vault, report))
     }

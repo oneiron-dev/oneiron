@@ -11,6 +11,7 @@ use super::envelope::SignedHeader;
 use super::{
     HOME_HANDOFF_PART_BYTES, HandoffId, HandoffStatus, HomeAck, HomeMove, IncompleteReason, refused,
 };
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
@@ -61,6 +62,18 @@ pub(super) struct HandoffRoute {
     pub(super) endpoint: Option<String>,
 }
 
+/// The handoff a target stages, as its parts named it (FIX 5661 C2b): its
+/// sealed bytes' digest, how many parts hold them, and the machine its
+/// socket proved. Ready once every part is staged, so the new home can adopt
+/// it before its first free-time pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct StagedHandoff {
+    pub(super) id: HandoffId,
+    pub(super) digest: [u8; 32],
+    pub(super) count: u32,
+    pub(super) source: EntityId,
+}
+
 /// This node's place in the home-state lineage.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HandoffHead {
@@ -70,6 +83,12 @@ pub(super) struct HandoffHead {
     pub(super) incomplete: Option<IncompleteReason>,
     /// The route captured for `request`'s target; a new request drops it.
     pub(super) route: Option<HandoffRoute>,
+    /// The handoff this node last staged as a target, until it lands.
+    pub(super) staged: Option<StagedHandoff>,
+    /// FIX 5931: the handoffs whose sources cancelled them here before they
+    /// landed; none of them ever lands here.
+    #[serde(default)]
+    pub(super) fenced: Vec<HandoffId>,
 }
 
 impl HandoffHead {
@@ -78,6 +97,11 @@ impl HandoffHead {
     pub(super) fn holds_state(&self) -> bool {
         self.floor
             .is_none_or(|floor| floor.role == HandoffRole::Target)
+    }
+
+    /// Whether handoff `id`'s source cancelled it here (FIX 5931).
+    pub(super) fn fenced(&self, id: &HandoffId) -> bool {
+        self.fenced.contains(id)
     }
 }
 

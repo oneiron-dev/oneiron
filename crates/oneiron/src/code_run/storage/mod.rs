@@ -16,6 +16,7 @@ mod routing;
 mod session_write;
 mod speech_identity;
 mod wait_delivery;
+mod wait_holders;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
 pub(crate) use self::continuation::{
@@ -34,7 +35,9 @@ pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
     StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
 };
-pub(crate) use self::replay_bodies::{RESPONSE_ERASED, replay_carriage, replay_owners};
+pub(crate) use self::replay_bodies::{
+    RESPONSE_ERASED, replay_carriage, replay_owners, response_erased_error,
+};
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{
     ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
@@ -71,3 +74,6 @@ pub(crate) use self::program_resume::{
     program_resume_calls_in_txn, program_resume_head_in_txn,
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
+pub(crate) use self::wait_holders::{
+    WaitReply, erase_settled_reply_of_erased_run_in_txn, wait_reply_in_txn,
+};

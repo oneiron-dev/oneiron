@@ -79,6 +79,10 @@ pub struct ResolvedContextProjection {
 struct LaneBound {
     memory: Vec<String>,
     chat: Vec<String>,
+    /// The cut that left them out was the private-thread cut of the owner
+    /// or agent who bound the run (FIX 6412), not a member's own lane: what
+    /// the notice names (FIX 6485).
+    binder: bool,
 }
 
 impl std::fmt::Debug for LaneBound {
@@ -99,9 +103,10 @@ impl ResolvedContextProjection {
     }
 
     /// What a member's own read lane left out of this projection (FIX
-    /// 5416), as a gate system notice: how many memory and chat rows, never
-    /// which. `None` when it left nothing out, as for every projection not
-    /// read on a member's lane.
+    /// 5416), or the private-thread cut of the owner or agent who bound its
+    /// run (FIX 6412), as a gate system notice naming which of the two it
+    /// was (FIX 6485): how many memory and chat rows, never which. `None`
+    /// when it left nothing out, as for every projection not read so.
     #[must_use]
     pub fn narrowed_notice(&self) -> Option<GateSystemNoticeRecord> {
         let bound = self.pre_lane.as_ref()?;
@@ -110,6 +115,11 @@ impl ResolvedContextProjection {
             .len()
             .saturating_sub(self.memory_sections.len());
         let chat = bound.chat.len().saturating_sub(self.chat_sections.len());
+        let why = if bound.binder {
+            "they sit in private threads the owner or agent who bound this run does not read"
+        } else {
+            "the member whose run this is does not read them"
+        };
         Some(GateSystemNoticeRecord {
             notice_type: NARROWED_NOTICE_TYPE.to_owned(),
             channel: "workflow.context".to_owned(),
@@ -117,7 +127,7 @@ impl ResolvedContextProjection {
             audience: "agent".to_owned(),
             body: format!(
                 "{memory} memory rows and {chat} chat rows of this step's context are left out: \
-                 the member whose run this is does not read them."
+                 {why}."
             ),
             row_ref: None,
             setting_change_offer: None,
@@ -131,13 +141,26 @@ impl ResolvedContextProjection {
     /// the ones a member's own read lane reads, each in this projection's
     /// order (FIX 5416). What it resolved to stays its bound; when every
     /// section is kept, nothing is left out.
-    pub(crate) fn lane_narrowed(mut self, memory: Vec<String>, chat: Vec<String>) -> Self {
+    pub(crate) fn lane_narrowed(self, memory: Vec<String>, chat: Vec<String>) -> Self {
+        self.narrowed(memory, chat, false)
+    }
+
+    /// [`Self::lane_narrowed`] by the private-thread cut of the owner or
+    /// agent who bound the run (FIX 6412), which the notice names so (FIX
+    /// 6485).
+    pub(crate) fn binder_narrowed(self, memory: Vec<String>, chat: Vec<String>) -> Self {
+        self.narrowed(memory, chat, true)
+    }
+
+    /// [`Self::lane_narrowed`], `binder` naming whose cut it was.
+    fn narrowed(mut self, memory: Vec<String>, chat: Vec<String>, binder: bool) -> Self {
         if memory.len() == self.memory_sections.len() && chat.len() == self.chat_sections.len() {
             return self;
         }
         let bound = LaneBound {
             memory: std::mem::replace(&mut self.memory_sections, memory),
             chat: std::mem::replace(&mut self.chat_sections, chat),
+            binder,
         };
         if self.pre_lane.is_none() {
             self.pre_lane = Some(bound);
@@ -225,11 +248,16 @@ pub fn resolve_context_spec(
     };
     // A child resolves against its parent's bound, so a row a member's lane
     // left out of the parent is left out of the child too (FIX 5416).
-    Ok(match parent.filter(|parent| parent.pre_lane.is_some()) {
-        Some(parent) => {
+    // Whose cut it was stays the parent's (FIX 6485).
+    let inherited = parent.and_then(|parent| {
+        let binder = parent.pre_lane.as_ref()?.binder;
+        Some((binder, parent))
+    });
+    Ok(match inherited {
+        Some((binder, parent)) => {
             let memory = kept_in(&projection.memory_sections, &parent.memory_sections);
             let chat = kept_in(&projection.chat_sections, &parent.chat_sections);
-            projection.lane_narrowed(memory, chat)
+            projection.narrowed(memory, chat, binder)
         }
         None => projection,
     })
