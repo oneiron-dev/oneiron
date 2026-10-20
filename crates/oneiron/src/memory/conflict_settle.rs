@@ -16,9 +16,9 @@ use super::{Memory, MemoryResult};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::dreamer_consolidation::{
-    ConflictRevertReceipt, ConflictReviewScope, ConflictSettleReceipt, ConflictSettlement,
-    OpenConflict, SettledAnswer, apply_settlement_in_txn, open_conflict_in_txn,
-    open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
+    ConflictRevertReceipt, ConflictReviewScope, ConflictSettleOutcome, ConflictSettleReceipt,
+    ConflictSettlement, OpenConflict, SettledAnswer, SettlementApplied, apply_settlement_in_txn,
+    open_conflict_in_txn, open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
@@ -82,14 +82,17 @@ impl Memory<'_> {
     /// Grant it acted under. A person's answer is user-stated and approved; an
     /// agent's is generated and Auto. The Dreamer answers under no Grant; its
     /// receipt names its standing review, and the owner reverts it with
-    /// [`Self::revert_conflict_settlement`].
+    /// [`Self::revert_conflict_settlement`]. A Keep of a retained
+    /// alternative from imported words is staged in its import's review
+    /// instead (FIX 5754): nothing is settled, the conflict stays open, and
+    /// a pending receipt names the responder's Keep.
     pub fn settle_conflict(
         &self,
         reviewer: Option<&AuthenticatedOwner>,
         marker: EntityId,
         settlement: ConflictSettlement,
         now: u64,
-    ) -> MemoryResult<ConflictSettleReceipt> {
+    ) -> MemoryResult<ConflictSettleOutcome> {
         self.with_verified_actor_write_txn(|txn| {
             let owner = self.conflict_responder_is_owner(txn, reviewer)?;
             let dreamer = !owner && self.conflict_responder_is_dreamer()?;
@@ -146,7 +149,7 @@ impl Memory<'_> {
                     ClaimApprovalStatus::Auto
                 },
             );
-            let settled = apply_settlement_in_txn(
+            let settled = match apply_settlement_in_txn(
                 self.vault,
                 txn,
                 &conflict,
@@ -155,7 +158,28 @@ impl Memory<'_> {
                 (!owner).then_some(actor),
                 person,
                 now,
-            )?;
+            )? {
+                SettlementApplied::Settled(settled) => settled,
+                SettlementApplied::ImportReviewPending(staged) => {
+                    let mut receipt = decision(
+                        actor,
+                        KIND,
+                        "pending",
+                        REASON,
+                        Some(marker),
+                        marker.as_bytes().to_vec(),
+                        now,
+                    );
+                    receipt.grant_ref = grant_ref;
+                    self.vault
+                        .store
+                        .append_gate_decision_in_txn(txn, &receipt)?;
+                    return Ok(ConflictSettleOutcome::ImportReviewPending {
+                        staged,
+                        receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
+                    });
+                }
+            };
             let mut receipt = decision(
                 actor,
                 KIND,
@@ -169,13 +193,13 @@ impl Memory<'_> {
             self.vault
                 .store
                 .append_gate_decision_in_txn(txn, &receipt)?;
-            Ok(ConflictSettleReceipt {
+            Ok(ConflictSettleOutcome::Settled(ConflictSettleReceipt {
                 marker,
                 settlement,
                 resolved: settled.resolved,
                 superseded: settled.superseded,
                 receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
-            })
+            }))
         })
     }
 

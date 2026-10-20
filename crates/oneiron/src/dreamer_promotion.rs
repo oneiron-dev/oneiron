@@ -48,6 +48,7 @@ pub(crate) use admission::{
     evidence_ref_refusal_in_txn, public_evidence_refs, public_evidence_value,
 };
 mod corrections;
+mod imported_keep;
 mod scoped;
 mod settlement;
 /// What the live policy lets the vault's Dreamer do (see
@@ -55,7 +56,7 @@ mod settlement;
 pub use crate::gate::DreamerWeaveReach;
 pub use attempt_sink::AttemptPromotionSink;
 pub use scoped::promote_scoped_consolidation;
-pub(crate) use settlement::land_kept_alternative_in_txn;
+pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;

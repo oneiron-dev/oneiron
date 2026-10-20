@@ -24,6 +24,8 @@ use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
 const REQUEST_VERSION: u64 = 2;
+/// The declaration key an explicit source set rides under (FIX 3198).
+pub(super) const SOURCES_KEY: &str = "sources";
 const SUMMARY_ID_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary:v1";
 const MEMO_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary-memo:v2";
 
@@ -37,6 +39,14 @@ pub enum ScopeSummaryTarget {
     },
     Thread {
         trunk: EntityId,
+    },
+    /// The records of `scope` a caller admitted, and only those (FIX 3198):
+    /// a room's summary need not be its whole conversation. Each must be a
+    /// record the scope summarizes, now and at every later read of the
+    /// declaration, and there must be one. Nothing lands on a turn.
+    Sources {
+        scope: ScopeSelector,
+        sources: Vec<EntityId>,
     },
 }
 
@@ -187,12 +197,13 @@ pub(super) fn plan_in_txn(
     let editor_frontier = previous
         .map(|id| crate::entity_doc::summary_frontier_in_txn(vault, txn, &id))
         .transpose()?;
-    let (scope, land_on, as_record) = match request.target {
+    let (scope, land_on, as_record, admitted) = match request.target {
         ScopeSummaryTarget::Scope {
             scope,
             land_on,
             as_record,
-        } => (scope, land_on, as_record),
+        } => (scope, land_on, as_record, None),
+        ScopeSummaryTarget::Sources { scope, sources } => (scope, None, false, Some(sources)),
         ScopeSummaryTarget::Thread { trunk } => {
             let selected = selected_thread_in_txn(vault, txn, trunk)?
                 .ok_or_else(|| invalid("trunk has no thread"))?;
@@ -210,7 +221,7 @@ pub(super) fn plan_in_txn(
             {
                 return Err(invalid("selected thread differs from bounded span"));
             }
-            (scope, Some(trunk), false)
+            (scope, Some(trunk), false, None)
         }
     };
     if as_record && land_on.is_none() {
@@ -220,6 +231,10 @@ pub(super) fn plan_in_txn(
         validate_landing_in_txn(vault, txn, &scope, &turn)?;
     }
     let ScopeSources { members, sources } = scope_sources_in_txn(vault, txn, &scope)?;
+    let sources = match admitted {
+        Some(admitted) => admitted_sources(sources, &admitted)?,
+        None => sources,
+    };
     if sources.is_empty() {
         return Err(invalid("summary scope covers no records"));
     }
@@ -476,6 +491,24 @@ impl Vault {
     }
 }
 
+/// The scope's sources a declaration admitted, in the scope's own order. A
+/// record the scope does not summarize, an earlier summary's reply among
+/// them, refuses: an admitted set never reaches past its scope.
+fn admitted_sources(sources: Vec<EntityId>, admitted: &[EntityId]) -> Result<Vec<EntityId>> {
+    let admitted: std::collections::BTreeSet<EntityId> = admitted.iter().copied().collect();
+    if admitted.is_empty() {
+        return Err(invalid("summary source set is empty"));
+    }
+    let selected: Vec<EntityId> = sources
+        .into_iter()
+        .filter(|source| admitted.contains(source))
+        .collect();
+    if selected.len() != admitted.len() {
+        return Err(invalid("summary source is not one its scope summarizes"));
+    }
+    Ok(selected)
+}
+
 /// One summary id per attempt, so a replayed attempt finds its own body.
 fn composed_summary_id(attempt: AttemptId) -> EntityId {
     let mut hasher = blake3::Hasher::new();
@@ -519,6 +552,18 @@ pub(super) fn encode_request(request: &ScopeSummaryRequest) -> Value {
         ScopeSummaryTarget::Thread { trunk } => {
             entries.push((Value::from("trunk"), hex(trunk)));
         }
+        // The set is declared sorted and once each, so the same set is the
+        // same declaration whatever order a caller named it in.
+        ScopeSummaryTarget::Sources { scope, sources } => {
+            let sources: std::collections::BTreeSet<&EntityId> = sources.iter().collect();
+            entries.extend([
+                (Value::from("scope"), scope_value(scope)),
+                (
+                    Value::from(SOURCES_KEY),
+                    Value::Array(sources.into_iter().map(hex).collect()),
+                ),
+            ]);
+        }
     }
     Value::Map(entries)
 }
@@ -549,8 +594,15 @@ pub(super) fn decode_request(input: &Value) -> Result<ScopeSummaryRequest> {
         _ => return Err(invalid("summary request actor class invalid")),
     };
     let requester = WriteActor::new(id(field("requester"))?, class);
-    let target = match (field("scope"), field("trunk")) {
-        (Some(scope), None) => ScopeSummaryTarget::Scope {
+    let target = match (field("scope"), field("trunk"), field(SOURCES_KEY)) {
+        (Some(scope), None, Some(Value::Array(sources))) => ScopeSummaryTarget::Sources {
+            scope: parse_scope(scope)?,
+            sources: sources
+                .iter()
+                .map(|source| id(Some(source)))
+                .collect::<Result<Vec<_>>>()?,
+        },
+        (Some(scope), None, None) => ScopeSummaryTarget::Scope {
             scope: parse_scope(scope)?,
             land_on: match field("land_on") {
                 None | Some(Value::Nil) => None,
@@ -560,7 +612,7 @@ pub(super) fn decode_request(input: &Value) -> Result<ScopeSummaryRequest> {
                 .and_then(Value::as_bool)
                 .ok_or_else(|| invalid("summary request as_record missing"))?,
         },
-        (None, Some(trunk)) => ScopeSummaryTarget::Thread {
+        (None, Some(trunk), None) => ScopeSummaryTarget::Thread {
             trunk: id(Some(trunk))?,
         },
         _ => return Err(invalid("summary request names no target")),

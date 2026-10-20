@@ -60,6 +60,7 @@ use oneiron::task_verb::verb_hook_boundary;
 use oneiron::{BudgetGuard, EntityId, WriteActor};
 use serde_json::Value;
 
+use super::wave_door::resume_held_wave;
 use super::{SyncServer, wave_plan, wave_receipt};
 use crate::api::{
     RunGuests, VerdictAsker, deliver_run_board_hooks, drop_run_board, execute_run_board_verb,
@@ -629,18 +630,16 @@ fn host_row(
             )
         }
         // The run's own wave: planned for its agent and queued on its own
-        // surface, whose bound lease is the wave's creator (OF-532).
+        // surface, whose bound lease is the wave's creator (OF-532). Asked
+        // again while its plan is held at its spend cap, it resumes that
+        // plan (FIX 1723).
         AgentVerb::TasksWave => {
             let request: TaskWaveRequest = decode(input)?;
             let lane = agent_lane(server, actor)?;
             let (epic, constraints) =
                 wave_plan(server, actor, |id| lane.is_entity_readable(id), &request)?;
-            encode(wave_receipt(memory.enqueue_wave_plan(
-                epic,
-                &request.objective,
-                constraints,
-                now,
-            )?)?)
+            let queued = memory.enqueue_wave_plan(epic, &request.objective, constraints, now)?;
+            encode(wave_receipt(resume_held_wave(server, actor, queued, now)?)?)
         }
         // The agent's own grant and gate, under the step's invocation; the
         // rows its passes picked join the row's (FIX 5455).

@@ -38,6 +38,7 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
 
 pub(super) mod compaction_span;
+pub(super) mod projection;
 
 type SourceRow = (u8, u64, Vec<u8>);
 type BranchRead = (Vec<Option<SourceRow>>, BTreeMap<EntityId, TurnText>);

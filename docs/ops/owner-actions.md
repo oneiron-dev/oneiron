@@ -621,6 +621,12 @@ the observed one never outranks what you said. The marker stays open until you a
   member active, and `"dismiss"` says the marker named no real contradiction; neither takes a
   `keep`. A generated claim still never supersedes what you stated.
 
+A candidate the marker's round dropped is listed under `alternatives`, apart from the members;
+`keep` with its id lands it as the round proposed it. One drawn from imported words is staged in
+that import's review instead: nothing is settled, the marker stays open, and the reply carries
+`pending_review` (`kept`, the alternative; `staged`, the claim waiting in the review; `review`,
+the import's review) in place of `resolved`.
+
 Each answer writes a `conflict.resolved` claim naming the marker, plus one receipt. The marker
 itself stays as the record. A person or agent you delegate `memory.conflict_review` on a subject
 may settle that subject's conflicts too, but an agent never closes a claim you stated.
@@ -638,8 +644,10 @@ You undo any settlement, the Dreamer's above all:
 - `POST /v1/owner/conflicts/revert` with `{"resolved": "<32 hex>"}` retracts that answer, so its
   marker is open again, and stands each member it superseded again. A member the Dreamer itself
   wrote comes back as the Dreamer's fresh copy, born of the old one, since a signed claim's
-  history never reopens. A member some later write closed is left as it is. The reply lists
-  each, and one receipt records the revert. The Dreamer leaves a reverted conflict to you.
+  history never reopens. A member some later write closed is left as it is. An alternative the
+  settlement landed is retracted; keep it again and it lands at a fresh id (one from imported
+  words still refuses a second Keep). The reply lists each, and one receipt records the revert.
+  The Dreamer leaves a reverted conflict to you.
 
 To keep the Dreamer off some conflicts:
 

@@ -95,6 +95,18 @@ pub(super) fn declaration(
     Value::Map(fields)
 }
 
+/// The projection row a declaration's summaries stand in: one per scope,
+/// purpose and requester. An admitted source set is not part of it (FIX
+/// 3198), so a later set for the same room replaces the earlier set's row
+/// and continues its summary, never re-derives beside it.
+fn projection_key(request: &super::ScopeSummaryRequest, purpose: &str) -> Result<[u8; 32]> {
+    let mut normalized = declaration(request, purpose, None);
+    if let Value::Map(fields) = &mut normalized {
+        fields.retain(|(key, _)| key.as_str() != Some(super::request::SOURCES_KEY));
+    }
+    Ok(*blake3::hash(&encode(&normalized)?).as_bytes())
+}
+
 pub(super) fn options(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -146,7 +158,7 @@ pub(super) fn current_in_txn(
     request: &super::ScopeSummaryRequest,
     purpose: &str,
 ) -> Result<Option<EntityId>> {
-    let key = *blake3::hash(&encode(&declaration(request, purpose, None))?).as_bytes();
+    let key = projection_key(request, purpose)?;
     let Some(projection) = PROJECTION.get(&vault.store, txn, &key)? else {
         return Ok(None);
     };
@@ -166,9 +178,9 @@ pub(super) fn register_in_txn(
 ) -> Result<()> {
     let request = decode_request(input)?;
     let (purpose, _, _, _) = options(vault, txn, input)?;
+    let key = projection_key(&request, &purpose.id)?;
     let normalized = declaration(&request, &purpose.id, None);
     let request = encode(&normalized)?;
-    let key = *blake3::hash(&request).as_bytes();
     let current_input = declaration(&decode_request(input)?, &purpose.id, Some(summary));
     let observed = match observation(vault, txn, &current_input) {
         Ok(observed) => observed,
@@ -212,7 +224,7 @@ pub(crate) fn roll_back_summary_in_txn(
         .transpose()?;
     let input = decode(&meta.derivation.request)?;
     let request = decode_request(&input)?;
-    let key = *blake3::hash(&encode(&declaration(&request, &meta.purpose.id, None))?).as_bytes();
+    let key = projection_key(&request, &meta.purpose.id)?;
     let Some(projection) = PROJECTION.get(&vault.store, txn, &key)? else {
         return Ok((None, header));
     };
