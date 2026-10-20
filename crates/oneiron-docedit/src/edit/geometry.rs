@@ -1,9 +1,11 @@
-//! `set_preset` and `set_glue`: a shape's or connector's preset geometry,
-//! and a connector's glue. Adjust values belong to the preset they were
-//! written for, so a preset change writes an empty `a:avLst`. As
+//! `set_preset` and `set_glue`: a shape's, picture's or connector's preset
+//! geometry, and a connector's glue. Adjust values belong to the preset they
+//! were written for, so a preset change writes an empty `a:avLst`. As
 //! PowerPoint's Change Shape does, a preset replaces custom geometry, and a
 //! shape that inherits its geometry from its layout gets its own; the
-//! report names either.
+//! report names either. A picture's preset is its Crop to Shape: only its
+//! shape properties' geometry is written, so its `p:blipFill` (the media,
+//! the crop rectangle and any SVG extension) keeps its bytes.
 use super::check::Declared;
 use super::xml::{self, A, P};
 use super::{ConnectorPreset, EditRefusal, Effect, FitUnverified, Preset, Written};
@@ -36,11 +38,11 @@ pub(super) fn set_preset(
 ) -> Result<Written, EditRefusal> {
     let id = shape.id.ok_or(EditRefusal::Missing("shape id"))?;
     let known = match shape.kind {
-        ShapeKind::Shape => Preset::from_name(preset).is_some(),
+        ShapeKind::Shape | ShapeKind::Picture => Preset::from_name(preset).is_some(),
         ShapeKind::Connector => ConnectorPreset::from_name(preset).is_some(),
         _ => {
             return Err(EditRefusal::Invalid(
-                "only a shape or a connector takes a preset",
+                "only a shape, a picture or a connector takes a preset",
             ));
         }
     };
