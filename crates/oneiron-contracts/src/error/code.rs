@@ -82,6 +82,13 @@ pub enum CodeError {
     /// admitted. Not retryable.
     #[error("code_step_cancelled")]
     CodeStepCancelled,
+    /// The reply content a code run held was taken by an erase of its run's
+    /// actor (FIX 5718): what the run did stays, the reply reads as erased
+    /// wherever the run would read it again (a replayed call, a wait's
+    /// delivery or park, a consent wait's consumption), and nothing is sent
+    /// again. Names the read it refused. Not retryable.
+    #[error("response_erased: {0}")]
+    ResponseErased(&'static str),
     #[error("code emission is missing dreamer run id")]
     CodeEmissionMissingDreamerRunId,
     #[error("code review context is required")]
@@ -249,6 +256,7 @@ impl CodeError {
                 ErrorKind::MicroVmCredentialDestinationDenied
             }
             Self::CodeStepCancelled => ErrorKind::CodeStepCancelled,
+            Self::ResponseErased(_) => ErrorKind::ResponseErased,
             Self::CodeEmissionMissingDreamerRunId => ErrorKind::CodeEmissionMissingDreamerRunId,
             Self::CodeReviewContextRequired => ErrorKind::CodeReviewContextRequired,
             Self::CodeReviewUnsupportedOperation => ErrorKind::CodeReviewUnsupportedOperation,

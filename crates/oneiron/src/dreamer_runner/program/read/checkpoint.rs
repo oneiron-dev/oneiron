@@ -5,11 +5,13 @@
 //! injection position and the wait the last entry parked on, with whether
 //! its reply is delivered. An injection is never inferred from an
 //! acknowledgement: it is the position the entry committed. Nothing here
-//! executes, resumes or leases, and no record is read whole.
+//! executes, resumes or leases, and no record is read whole. A reply an
+//! erase of the program's actor took still reads as delivered, and is
+//! withheld by name (FIX 5718).
 
 use crate::code_run::{
-    ProgramResumeCall, ProgramResumeHead, WaitKey, program_resume_calls_in_txn,
-    program_resume_head_in_txn, wait_delivered_in_txn,
+    ProgramResumeCall, ProgramResumeHead, WaitKey, WaitReply, program_resume_calls_in_txn,
+    program_resume_head_in_txn, wait_reply_in_txn,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -24,6 +26,10 @@ use super::{
     Caller, attempt_hex, attempt_ref, page_limit, program_for, readable_on_lane,
     withhold_definition,
 };
+
+/// The withheld field a checkpoint whose wait's reply an erase took names
+/// (FIX 5718): the wait settled, and its reply is erased for this run.
+const WAIT_REPLY_ERASED: &str = "checkpoint.wait.reply";
 
 /// Reads the resume checkpoint of one program's run, one page of its settled
 /// calls at a time: for the program's waking actor or the verified owner,
@@ -76,8 +82,18 @@ pub fn program_checkpoint(
     let readable = readable_on_lane(memory, program.definition.as_ref().map(|pin| pin.skill))?;
     let mut withheld = Vec::new();
     let definition = withhold_definition(program.definition, &readable, &mut withheld);
+    if page
+        .as_ref()
+        .is_some_and(|page| page.reply == WaitReply::Erased)
+    {
+        withheld.push(WAIT_REPLY_ERASED.to_owned());
+    }
     let (calls, next_cursor, delivered) = page.map_or((Vec::new(), None, false), |page| {
-        (page.calls, page.next_cursor, page.delivered)
+        (
+            page.calls,
+            page.next_cursor,
+            page.reply != WaitReply::Pending,
+        )
     });
     let code_run = program.code_run.to_hex();
     Ok(Some(ProgramCheckpointView {
@@ -102,11 +118,11 @@ pub fn program_checkpoint(
 }
 
 /// One page of a checkpoint's settled calls, each with its index and
-/// whether the last entry answered it, and whether its wait is delivered.
+/// whether the last entry answered it, and where its wait stands.
 struct CheckpointPage {
     calls: Vec<(u64, ProgramResumeCall, bool)>,
     next_cursor: Option<String>,
-    delivered: bool,
+    reply: WaitReply,
 }
 
 fn page_in_txn(
@@ -120,8 +136,8 @@ fn page_in_txn(
     let to = head.applied.min(from.saturating_add(limit));
     let from = from.min(to);
     let listed = program_resume_calls_in_txn(vault, txn, run, from, to)?;
-    let delivered = match head.wait {
-        Some(wait) => wait_delivered_in_txn(
+    let reply = match head.wait {
+        Some(wait) => wait_reply_in_txn(
             vault,
             txn,
             &WaitKey {
@@ -130,7 +146,7 @@ fn page_in_txn(
                 generation: wait.generation,
             },
         )?,
-        None => false,
+        None => WaitReply::Pending,
     };
     Ok(CheckpointPage {
         calls: (from..)
@@ -138,7 +154,7 @@ fn page_in_txn(
             .map(|(index, call)| (index, call, index < head.injected))
             .collect(),
         next_cursor: (to < head.applied).then(|| to.to_string()),
-        delivered,
+        reply,
     })
 }
 
