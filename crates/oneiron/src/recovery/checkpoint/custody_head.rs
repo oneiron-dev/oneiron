@@ -99,6 +99,15 @@ impl<'a> CustodyRecovery<'a> {
             .as_deref()
             .map(|anchor| anchor as &dyn AnchorStore)
     }
+
+    /// Where the head is read, its anchor and what opens it.
+    pub(super) fn source(&self) -> CustodySourceAt<'_> {
+        CustodySourceAt {
+            folder: &self.folder,
+            anchor: self.anchor(),
+            root: self.root,
+        }
+    }
 }
 
 /// The Hypnos outbox a managed vault's hosted custody ships through (FIX
@@ -411,11 +420,7 @@ impl Vault {
         let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
         image.drop_machine_identity();
         let anchor = recovery.and_then(|recovery| recovery.anchor());
-        let source = recovery.map(|recovery| CustodySourceAt {
-            folder: &recovery.folder,
-            anchor,
-            root: recovery.root,
-        });
+        let source = recovery.map(CustodyRecovery::source);
         let route = route_custody(
             image
                 .databases

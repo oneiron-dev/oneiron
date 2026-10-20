@@ -10,10 +10,12 @@
 //! owner answers the offer.
 //!
 //! The check reads the same meter on the offer's check date. A promise is
-//! checked only after a yes, and only once the approved model served the
-//! whole window; until then the check waits, and the next night queues it
-//! again. A window with calls the check cannot price or sum closes as
-//! unverifiable, neither a pass nor a fail (FIX 6265, 6317).
+//! checked only after a yes, on the approved model's calls over a whole
+//! metered window after it; until then the check waits, and the next night
+//! queues it again. A window with no such call to read, with calls the check
+//! cannot price or sum, or with the seat's calls on other models counted out,
+//! closes as unverifiable, neither a pass nor a fail (FIX 6265, 6317, 6406,
+//! 6475, 6477).
 //! The check is fixed code: no model call.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
@@ -45,7 +47,7 @@ mod sources;
 mod unverifiable;
 use cost::{candidate_monthly, monthly, payback};
 use sources::Sources;
-use unverifiable::Unverifiable;
+use unverifiable::{Alone, Unverifiable};
 
 const DAY_SECS: u64 = 24 * 60 * 60;
 /// The workload an offer is priced from, and the window its check reads.
@@ -101,6 +103,7 @@ pub(super) fn draft(
         return Ok(());
     };
     let runtime = server.ai.model_runtime();
+    let (owner, vault_id) = (meter.owner(), meter.vault_id());
     let from = now.saturating_sub(WINDOW_SECS);
     let mut seats = Vec::new();
     for role in MODEL_ROLES {
@@ -112,7 +115,7 @@ pub(super) fn draft(
         };
         let usage = server
             .usage_ledger
-            .seat_usage(meter.owner(), meter.vault_id(), &role_key(role), from, now)
+            .seat_usage(owner, vault_id, &role_key(role), None, from, now)
             .map_err(|_| Error::InvalidConfig("the seat's usage could not be read".into()))?;
         // A seat with no metered call has no receipts to ground an offer.
         if usage.calls == 0 || usage.refs.is_empty() {
@@ -284,7 +287,9 @@ impl Brief {
             calls: Some(usage.calls),
             input_tokens: Some(usage.input_tokens),
             output_tokens: Some(usage.output_tokens),
-            complete: usage.metered_since.is_some_and(|since| since <= from),
+            // A record that does not decode leaves its tokens unread.
+            complete: usage.undecodable == 0
+                && usage.metered_since.is_some_and(|since| since <= from),
             receipt_refs: usage.refs.clone(),
         };
         // The seat's metered calls are named by receipt key and the catalog's
@@ -684,51 +689,47 @@ pub(super) fn check(
     else {
         return Ok(());
     };
-    let (Some(intent), Some(role)) = (answer.intent.as_ref(), seat_model_role(&offer.seat)) else {
+    let Some(intent) = answer.intent.as_ref() else {
         return Ok(());
+    };
+    // A whole window after the yes; until then the check waits.
+    let from = now.saturating_sub(WINDOW_SECS);
+    if from < answer.at {
+        return Ok(());
+    }
+    let Some(role) = seat_model_role(&offer.seat) else {
+        return Unverifiable::unread(Alone::NoModelRole, vault, admitted, &offer, now);
     };
     // The model the yes asked for: the stock model, or the custom one bound
     // from the exact run the yes handed off.
     let approved = match intent {
         OfferIntent::Switch { to, .. } => to.model.clone(),
         OfferIntent::Train { .. } => {
-            let Some(handoff) = offer_training_handoff(vault, &id)? else {
-                return Ok(());
+            let run = match offer_training_handoff(vault, &id)? {
+                Some(handoff) => vault.training_run(&handoff.run)?,
+                None => None,
             };
-            let Some(run) = vault
-                .training_run(&handoff.run)?
-                .filter(|run| run.state == TrainingState::Bound)
-            else {
-                return Ok(());
+            let Some(run) = run.filter(|run| run.state == TrainingState::Bound) else {
+                return Unverifiable::unread(Alone::NotBound, vault, admitted, &offer, now);
             };
             run.plan.output_binding.model.as_str().to_owned()
         }
     };
-    // A whole window after the yes.
-    let from = now.saturating_sub(WINDOW_SECS);
-    if from < answer.at {
-        return Ok(());
-    }
     let Some(meter) = server.vault_usage() else {
-        return Ok(());
+        return Unverifiable::unread(Alone::NoMeter, vault, admitted, &offer, now);
     };
+    let (owner, vault_id) = (meter.owner(), meter.vault_id());
     let usage = server
         .usage_ledger
-        .seat_usage(meter.owner(), meter.vault_id(), &role_key(role), from, now)
+        .seat_usage(owner, vault_id, &role_key(role), Some(&approved), from, now)
         .map_err(|_| Error::InvalidConfig("the seat's usage could not be read".into()))?;
-    // Applied and metered throughout: every call in the window ran on the
-    // approved model. Anything less waits for a later night; calls the check
-    // cannot price or sum close it unverifiable.
-    if usage.calls == 0
-        || usage.models.get(&approved) != Some(&usage.calls)
-        || usage.metered_since.is_none_or(|since| since > from)
-    {
+    // Metered throughout, or a later night reads it. With the seat's calls on
+    // another model counted out, none of the approved model's left, or some
+    // the check cannot price or sum, it closes unverifiable.
+    if usage.metered_since.is_some_and(|since| since > from) {
         return Ok(());
     }
-    if !usage.complete {
-        let Some(outcome) = Unverifiable::of(&usage) else {
-            return Ok(());
-        };
+    if let Some(outcome) = Unverifiable::of(&usage) {
         return outcome.record(vault, admitted, &offer, &approved, usage.refs, now);
     }
     let comparable = usage.currency.as_deref() == Some(offer.cost.currency.as_str());

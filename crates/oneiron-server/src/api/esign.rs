@@ -10,6 +10,7 @@ mod editor_auth;
 mod editor_budget;
 pub(crate) mod hold_worker;
 mod ingress;
+pub(crate) mod notice_worker;
 mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;

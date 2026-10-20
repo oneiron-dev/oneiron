@@ -230,6 +230,16 @@ fn check_intent_attempt_format(vault: &Vault, txn: &heed::RoTxn<'_>) -> IntentLe
     Ok(())
 }
 
+/// [`check_intent_attempt_format`] for a caller that keeps the ledger-wide
+/// attempt index's failure apart from one row's (the e-sign delivery mint,
+/// FIX 6455): every attempt read runs it first.
+pub(crate) fn check_intent_attempt_format_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> IntentLedgerResult<()> {
+    check_intent_attempt_format(vault, txn)
+}
+
 /// Exact logical-call lookup. Admission repeats this read under its write lock.
 /// A corrupt pointer or target fails closed, without inspecting unrelated calls.
 pub(crate) fn read_intent_for_attempt_in_txn(

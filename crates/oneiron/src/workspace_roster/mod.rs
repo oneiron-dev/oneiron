@@ -192,12 +192,14 @@ pub(crate) use rooms::{
 };
 pub use rooms::{
     RoomClaimOutcome, RoomClaimReceipt, RoomHosting, RoomMessagesRequest, RoomPage,
-    RoomSpeakingRole, RoomStanding, RoomThread, RoomThreadList, RoomThreadPage, RoomThreadPolicy,
-    RoomThreadWait, RoomThreads, RoomTrunk, RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
+    RoomSpeakingRole, RoomStanding, RoomThread, RoomThreadAudienceEvent, RoomThreadAudienceOp,
+    RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk,
+    RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
 };
+pub(crate) use rooms::{THREAD_NOTICE_PRODUCER, notify_thread_members_in_txn};
 pub use rooms::{
-    ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceReceipt,
-    ThreadAudienceRemoveRequest,
+    ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceOpenFullHistoryRequest,
+    ThreadAudienceReceipt, ThreadAudienceRemoveRequest, ThreadNotice,
 };
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{
@@ -229,7 +231,7 @@ pub(crate) use rooms::{
     replicated_turn_in,
 };
 pub(crate) use rooms::{erase_host_pin_actor_in_txn, erase_offer_actor_in_txn};
-pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
+pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
