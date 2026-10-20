@@ -175,8 +175,8 @@ impl Memory<'_> {
         let caller = self.actor().to_hex();
         // Admission runs in its own snapshot, before the write opens: only a
         // row this actor reads and is delivered to may be marked.
-        let admitted = self
-            .read_lane(ClaimReadStatus::Recorded)?
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let admitted = lane
             .get_entities_parts_with_receipt(&[id], None)?
             .value
             .into_iter()
@@ -191,6 +191,18 @@ impl Memory<'_> {
             return Ok(current);
         }
         self.with_verified_actor_write_txn(|wtxn| {
+            // The same lane judges the row again in the snapshot that writes
+            // (FIX 6498): a row it no longer reads answers as one never
+            // delivered.
+            if lane
+                .get_entities_parts_in_txn(wtxn, &[id])?
+                .into_iter()
+                .next()
+                .flatten()
+                .is_none()
+            {
+                return Err(notification_not_found());
+            }
             let mut body = match live_entity_row_in_txn(&self.vault().store, &*wtxn, &id)? {
                 LiveEntityRow::Live { entity_type, body }
                     if entity_type == ENTITY_TYPE_NOTIFICATION =>
