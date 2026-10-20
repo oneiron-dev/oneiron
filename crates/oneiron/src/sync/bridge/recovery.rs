@@ -155,13 +155,14 @@ pub(crate) fn preflight_canonical_recovery(
         crate::batch::validate_replayed_facet_of_edge(&vault.store, &txn, source, kind, target)?;
         // A stored pair, or the canonical artifact's own link onto an erased
         // shell, is restored as it is held; a new pair its MESSAGEs refute
-        // refuses, and one still missing an axis waits for the forward pass.
+        // is left out, as the forward pass quarantines it, and one still
+        // missing an axis waits for the forward pass.
         if kind == crate::edge::EdgeKind::Regenerates
             && !crate::edge::regeneration_stored(&vault.store, &txn, &source, &target)?
             && crate::edge::regeneration_pair(&vault.store, &txn, &source, &target)?
                 == crate::edge::Regeneration::Refuses
         {
-            return Err(crate::edge::reserved_regenerates());
+            continue;
         }
         vault
             .batch_in()
