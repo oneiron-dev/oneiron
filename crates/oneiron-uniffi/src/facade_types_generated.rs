@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1082 facade rows, 3681 generated types.
+// UniFFI census: 1082 facade rows, 3683 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1034.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -41323,6 +41323,8 @@ pub enum FatalLlmError {
     Unsupported(UnsupportedCapability),
     #[serde(rename = "LabelRead")]
     LabelRead(LabelReadFailure),
+    #[serde(rename = "ResponseErased")]
+    ResponseErased,
 }
 
 /// `oneiron::llm::step::public::ModelStepFailureClass`.
@@ -48707,7 +48709,7 @@ pub struct TableBody {
     pub merges: Option<Vec<TableMerge>>,
 }
 
-/// `oneiron_docedit::live::pptx::ChartKind`.
+/// `oneiron_docedit::live::pptx::chart::ChartKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChartKind {
     #[serde(rename = "bar")]
@@ -48726,9 +48728,11 @@ pub enum ChartKind {
     Radar,
 }
 
-/// `oneiron_docedit::live::pptx::ChartSeries`.
+/// `oneiron_docedit::live::pptx::chart::ChartSeries`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ChartSeries {
+    #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     #[serde(rename = "name")]
     pub name: String,
     #[serde(rename = "values")]
@@ -48739,7 +48743,7 @@ pub struct ChartSeries {
     pub x: Option<Vec<Option<f64>>>,
 }
 
-/// `oneiron_docedit::live::pptx::ChartSource`.
+/// `oneiron_docedit::live::pptx::chart::ChartSource`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChartSource {
     #[serde(rename = "workbook")]
@@ -49342,6 +49346,81 @@ pub enum TableEdit {
     Unmerge(TableMerge),
 }
 
+/// `oneiron_docedit::live::pptx::chart::ChartEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ChartEdit {
+    #[serde(rename = "insert_series")]
+    InsertSeries {
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+        #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(rename = "values", default, skip_serializing_if = "Option::is_none")]
+        values: Option<Vec<Option<f64>>>,
+        #[serde(rename = "family", default, skip_serializing_if = "Option::is_none")]
+        family: Option<ChartKind>,
+        #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
+        x: Option<Vec<Option<f64>>>,
+    },
+    #[serde(rename = "delete_series")]
+    DeleteSeries {
+        #[serde(rename = "series")]
+        series: u64,
+    },
+    #[serde(rename = "move_series")]
+    MoveSeries {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "set_series_name")]
+    SetSeriesName {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "set_series_values")]
+    SetSeriesValues {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "values")]
+        values: Vec<Option<f64>>,
+    },
+    #[serde(rename = "set_series_family")]
+    SetSeriesFamily {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "family", default, skip_serializing_if = "Option::is_none")]
+        family: Option<ChartKind>,
+    },
+    #[serde(rename = "set_series_x")]
+    SetSeriesX {
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
+        x: Option<Vec<Option<f64>>>,
+    },
+    #[serde(rename = "set_family")]
+    SetFamily {
+        #[serde(rename = "family")]
+        family: ChartKind,
+    },
+    #[serde(rename = "set_categories")]
+    SetCategories {
+        #[serde(rename = "categories")]
+        categories: Vec<String>,
+    },
+    #[serde(rename = "set_source")]
+    SetSource {
+        #[serde(rename = "source")]
+        source: ChartSource,
+    },
+}
+
 /// `oneiron_docedit::live::pptx::DeckOp`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeckOp {
@@ -49424,6 +49503,13 @@ pub enum DeckOp {
         node: u64,
         #[serde(rename = "edits")]
         edits: Vec<TableEdit>,
+    },
+    #[serde(rename = "edit_chart")]
+    EditChart {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "edits")]
+        edits: Vec<ChartEdit>,
     },
     #[serde(rename = "replace_opaque")]
     ReplaceOpaque {
@@ -50046,6 +50132,23 @@ pub struct OpaqueChange {
     pub proposal: Option<Vec<u8>>,
 }
 
+/// `oneiron_docedit::live::pptx::chart::SeriesField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SeriesField {
+    #[serde(rename = "name")]
+    Name,
+    #[serde(rename = "values")]
+    Values,
+    #[serde(rename = "family")]
+    Family,
+    #[serde(rename = "x")]
+    X,
+    #[serde(rename = "order")]
+    Order,
+    #[serde(rename = "existence")]
+    Existence,
+}
+
 /// `oneiron_docedit::live::pptx::Conflict`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum Conflict {
@@ -50089,6 +50192,15 @@ pub enum Conflict {
         row: u64,
         #[serde(rename = "column")]
         column: u64,
+    },
+    #[serde(rename = "series_vs_series")]
+    SeriesVsSeries {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "series")]
+        series: u64,
+        #[serde(rename = "field")]
+        field: SeriesField,
     },
 }
 

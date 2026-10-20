@@ -31,12 +31,12 @@ pub use deck_export::{
 };
 pub use points::{Coord, GeomPath, PathCommand, PathFill, PathPoint};
 pub use pptx::{
-    ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict,
-    ConnectorEnd, DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps, HeldMedia, Landing,
-    LandingReceipt, LiveDeck, MergeFault, NodeBinding, NodeId, NodeKind, NodePayload, Paragraph,
-    PreflightReport, RelationshipChange, RenderPair, RenderSide, Run, SlideRender, SmartArtNode,
-    StampedOp, TableBinding, TableBody, TableEdit, TableMerge, TextBody, diff, land, preflight,
-    preflight_merged,
+    ApproveScope, AttributionIndex, ChangeKind, ChartEdit, ChartKind, ChartSeries, ChartSource,
+    Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps, HeldMedia,
+    Landing, LandingReceipt, LiveDeck, MergeFault, NodeBinding, NodeId, NodeKind, NodePayload,
+    Paragraph, PreflightReport, RelationshipChange, RenderPair, RenderSide, Run, SeriesBinding,
+    SeriesField, SlideRender, SmartArtNode, StampedOp, TableBinding, TableBody, TableEdit,
+    TableMerge, TextBody, diff, land, preflight, preflight_merged,
 };
 
 use crate::deck::DeckError;

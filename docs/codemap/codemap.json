@@ -7398,7 +7398,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BlobBytes"
@@ -7407,7 +7407,7 @@
      "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -15339,7 +15339,7 @@
      "path": "src/codebase/ingest.rs",
      "purpose": "Local-git ingest helpers: blob walk, hosted-media gate, custody scan, and validators",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 1,
       "struct": 4,
@@ -39060,6 +39060,26 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/office_body/pptx/doc/chart.rs",
+     "purpose": "A chart frame's chart in the body's `charts` root, keyed by the frame's identity (ARCH-0077: \"Ordered…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/node.rs",
+     "purpose": "One tree node's meta map: its model identity, kind, name, binding, placeholder, preset, payload (a table's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/office_body/pptx/doc/order.rs",
      "purpose": "A movable list of identities (a body's paragraphs, a table's rows or columns): read in order, and made equal…",
      "surface": {
@@ -44553,7 +44573,7 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 8,
       "re-export": 1,
@@ -44632,7 +44652,7 @@
      "path": "src/recovery/checkpoint/admission/reason.rs",
      "purpose": "Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 3,
       "struct": 1
@@ -52192,7 +52212,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -52429,7 +52449,7 @@
      "path": "src/store/key_custody/fork.rs",
      "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -60556,7 +60576,7 @@
      "path": "src/vault/entity_revision/pending_index/checkpoint.rs",
      "purpose": "The checkpoint rows of the staged index inputs (KS7-2): the caller's fields, vector and token waiting for…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60576,7 +60596,7 @@
      "path": "src/vault/entity_revision/phonetic/checkpoint.rs",
      "purpose": "The checkpoint rows of the staged phonetic codes (KS7-2): the codes waiting to publish with the indexed text…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60598,6 +60618,16 @@
      "purpose": "The checkpoint getter of the revision ledger (KS7-2): each entity's revision state, retained frontiers…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/checkpoint/document.rs",
+     "purpose": "A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -65733,7 +65763,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 19,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66293,7 +66323,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66379,7 +66409,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4149,
+   "source_files": 4152,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71937,6 +71967,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/live/deck_export/chart.rs",
+     "purpose": "A chart at export, by series identity: a bound chart's changed data written over its retained chart part…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/live/deck_export/table.rs",
      "purpose": "A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or…",
      "surface": {
@@ -71960,7 +72000,17 @@
      "path": "src/live/held.rs",
      "purpose": "What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/held/chart.rs",
+     "purpose": "A chart frame's data as the live model holds it: its chart part, its plots in document order, and each…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -72156,9 +72206,6 @@
       "ApproveScope",
       "AttributionIndex",
       "ChangeKind",
-      "ChartKind",
-      "ChartSeries",
-      "ChartSource",
       "Conflict",
       "ConnectorEnd",
       "DeckDiff",
@@ -72191,10 +72238,40 @@
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
       "crate-vis": 7,
-      "enum": 9,
-      "fn": 29,
-      "re-export": 2,
-      "struct": 24
+      "enum": 7,
+      "fn": 27,
+      "re-export": 3,
+      "struct": 23
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ChartEdit",
+      "ChartKind",
+      "ChartSeries",
+      "ChartSource",
+      "SeriesBinding",
+      "SeriesField"
+     ],
+     "path": "src/live/pptx/chart.rs",
+     "purpose": "A live chart's model (ARCH-0077, \"One deck, one document\": \"Ordered category and series ids over one…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 4,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/pptx/chart_ops.rs",
+     "purpose": "Chart edits applied by series identity; a whole chart written over the chart a node holds lowered to the…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -72231,9 +72308,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/live/pptx/table_ops.rs",
-     "purpose": "Table edits applied by identity; a whole table written over the table a node holds lowered to the edits that…",
+     "purpose": "Table edits applied by identity; a whole table written over the table a node holds (or a whole chart over a…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -72244,7 +72321,17 @@
      "path": "src/live/reshape.rs",
      "purpose": "Shape changes to a written table or chart at export (OF-510)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/layout.rs",
+     "purpose": "How a rewritten chart's live series take its held ones (OF-510, FIX 3492): the plots Change Chart Type lays…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -72332,7 +72419,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/native_patch/table.rs",
-     "purpose": "Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a…",
+     "purpose": "Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes; a cell a merge…",
      "surface": {
       "crate-vis": 6
      }
@@ -72735,7 +72822,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 33,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72800,7 +72887,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 106,
+   "source_files": 111,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -76344,14 +76431,15 @@
       "OrganCall",
       "OrganInput",
       "OrganSpec",
-      "OrganTier"
+      "OrganTier",
+      "SightedInput"
      ],
      "path": "src/spec.rs",
      "purpose": "What the engine installs and what a caller asks",
      "surface": {
       "enum": 2,
       "fn": 3,
-      "struct": 8
+      "struct": 9
      }
     },
     {
@@ -91040,6 +91128,7 @@
       "ChannelSubscriptionRow",
       "ChannelSubscriptions",
       "ChannelSubscriptionsRequest",
+      "ChartEdit",
       "ChartKind",
       "ChartSeries",
       "ChartSource",
@@ -93569,6 +93658,7 @@
       "SensitivityBand",
       "SensitivityCeiling",
       "SensitivityName",
+      "SeriesField",
       "ServedAssetForm",
       "SetNoteOverridesRequest",
       "SettleVerb",
@@ -94250,7 +94340,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 885,
+      "enum": 887,
       "struct": 2796
      }
     },

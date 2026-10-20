@@ -9,10 +9,10 @@
 //! A live author's erase changes the core's raw bytes, and so every binding
 //! derived from them: the revision refs hashed over raw entity bytes, the
 //! short id's content byte and the citation views that render them. No
-//! restore derives those again until the revision projection supplies that
-//! closure, so the entity-row getter keeps a core with a live author under
-//! the vault-wide seal ([`CORE_RAW_REFS`]). A core that names no one, and an
-//! erased NOTE's empty shell, stay their tree's as they stand.
+//! public revision ref changes and no restore rewrites a short id (FIX 6072,
+//! lead pick (b)), so the entity-row getter keeps a core with a live author
+//! under the vault-wide seal ([`CORE_RAW_REFS`]). A core that names no one,
+//! and an erased NOTE's empty shell, stay their tree's as they stand.
 
 use super::super::{NoteActor, NoteBody, NoteKind, decode_note_body_using, encode_note_body};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -28,7 +28,8 @@ pub(crate) const CORE_UNREAD: &str = "a NOTE core that does not spell back";
 
 /// A NOTE core whose live author's erase would change the raw bytes its
 /// revision refs, short id and citation views are derived from, which no
-/// restore derives again yet (FIX 6072: the revision projection closes it).
+/// restore derives again: no public revision ref changes (FIX 6072, lead
+/// pick (b)).
 pub(crate) const CORE_RAW_REFS: &str = "a NOTE core author whose erase changes raw-derived refs";
 
 /// A NOTE core body, read strictly, when it spells its own bytes back.

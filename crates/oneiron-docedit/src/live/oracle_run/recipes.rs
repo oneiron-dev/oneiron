@@ -197,6 +197,7 @@ fn carried(
                         family: ChartKind::Bar,
                         categories: vec!["Q1".to_owned(), "Q2".to_owned(), "Q3".to_owned()],
                         series: vec![ChartSeries {
+                            id: None,
                             name: "Units".to_owned(),
                             values: vec![
                                 Some(serde_json::Number::from(12_u32)),
