@@ -4,11 +4,13 @@
 //! ride `LlmRequest::params`, which `oneiron-llm-openai` copies into the body
 //! verbatim; thinking rides the envelope's `seat_effort`, which the wire turns
 //! into `chat_template_kwargs` for an own server; the schema rides
-//! `response_format`, which the provider's config may drop on the wire.
+//! `response_format`, which the provider's config may drop on the wire; solo
+//! admission rides the host's provider options (`oneiron::llm::mark_solo`),
+//! which the wire sends a `local-openai-compat` provider as `oneiron_solo`.
 
 use std::collections::BTreeMap;
 
-use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort};
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, mark_solo};
 use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, LlmMessage, LlmMessageRole, LlmRequest,
     ModelId, ModelLocality, ModelTierRef, ResponseFormat, TierPrecedence,
@@ -39,6 +41,8 @@ pub(super) struct Shape {
     /// Whether the served catalog row takes a reasoning level, which decides
     /// the Dreamer's binding for a thinking call.
     pub(super) reasoning: bool,
+    /// Whether each measured call asks to run alone (`--solo`).
+    pub(super) solo: bool,
 }
 
 /// What one request carried, as the row records it.
@@ -50,6 +54,8 @@ pub(super) struct Sent {
     pub(super) thinking_knob: &'static str,
     pub(super) schema_sent: bool,
     pub(super) max_tokens: u64,
+    /// Whether the call carried the solo marker.
+    pub(super) solo: bool,
 }
 
 fn sampling_params(sampling: Sampling) -> BTreeMap<String, JsonValue> {
@@ -128,6 +134,7 @@ impl Shape {
         max_tokens: u64,
         thinking: bool,
         schema: Option<JsonValue>,
+        solo: bool,
     ) -> (LlmRequest, Sent) {
         let mut params = sampling_params(self.sampling);
         let (effort, knob) = thinking_knob(thinking, self.reasoning, &mut params);
@@ -142,8 +149,9 @@ impl Shape {
             thinking_knob: knob,
             schema_sent: schema.is_some(),
             max_tokens,
+            solo,
         };
-        let request = LlmRequest {
+        let mut request = LlmRequest {
             model: self.model.clone(),
             envelope: CallEnvelope {
                 seat_effort: Some(effort),
@@ -164,6 +172,9 @@ impl Shape {
             params,
             provider_options: BTreeMap::new(),
         };
+        if solo {
+            mark_solo(&mut request);
+        }
         (request, sent)
     }
 
@@ -174,13 +185,14 @@ impl Shape {
             case.max_tokens,
             case.thinking,
             self.schema.then(|| response_schema(case.scorer)),
+            self.solo,
         )
     }
 
     /// One unrecorded warmup call: a fixed trivial prompt, no thinking, no
-    /// schema.
+    /// schema, never solo, so a warmup round warms the batched path.
     pub(super) fn warmup(&self) -> LlmRequest {
         let messages = vec![text(LlmMessageRole::User, WARMUP_PROMPT.to_owned())];
-        self.request(messages, WARMUP_MAX_TOKENS, false, None).0
+        self.request(messages, WARMUP_MAX_TOKENS, false, None, false).0
     }
 }
