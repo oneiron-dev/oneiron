@@ -4,16 +4,21 @@ The live deck body exports through the projector, but its exports stay
 proposals, and blob versions stay authoritative, until the export gate opens
 (ARCH-0077, "The eight-step import-then-export check"). The gate
 (`Gate::is_open`, `crates/oneiron-docedit/src/live/deck_export.rs`) opens only
-on an `OracleReceipt` for `pptx-live-v1` with `clean: true` and all eight steps
-`passed`. The vault records the receipt through `vault.artifacts.body.deck.oracle`
-and stamps it with the server's projector version. A receipt from another
-projector does not count, so rerun the whole set after every projector bump.
+on an `OracleReceipt` for `pptx-live-v1` with `clean: true`, all eight steps
+`passed`, and a `projector` equal to the server's. The receipt names the run it
+came from, as the run manifest pins it: `projector`, `source_sha` (the full
+commit the engine half was built from) and `case_manifest_sha256`. The vault
+records it through `vault.artifacts.body.deck.oracle`, checks those pins for
+form, and keeps them as given; it never stamps a receipt with its own projector.
+A receipt that names no run is refused. A receipt from another projector's run
+records as that run's evidence and opens nothing, so rerun the whole set after
+every projector bump.
 
 Nothing in the run names a projector version by hand. `deck-gate-cases` reads
 `PROJECTOR_VERSION` from the live crate it was built from, so a run binds
 whatever projector main carries at the run's `$sha`. The run manifest records
-it (`projector` in `manifest.json`), and `plan`, the `## DECK-GATE` line and
-`gate-evidence.json` repeat it.
+it (`projector` in `manifest.json`), and `plan`, the `## DECK-GATE` line,
+`gate-evidence.json` and the receipt repeat it.
 
 The run has two halves, because the Mac mini (`vel`, the only host with
 PowerPoint) cannot build the workspace:
@@ -196,11 +201,14 @@ oneiron api call vault.artifacts.body.deck.oracle --data @/Users/olety/Desktop/t
 ```
 
 Use `--base-url` (or `ONEIRON_URL`) for a server that is not the local
-default. The reply is the gate view: `open`, `projector` and the stored
-receipt. Its `projector` must equal the run's (`projector` in
-`/Users/olety/Desktop/temp/deck-gate/$run/manifest.json`). If they differ, the
-server moved past the evidence: record a fresh run. Recording replaces the
-profile's earlier receipt, so a failing receipt closes a gate a pass opened. Read
+default. The reply is the gate view: `open`, the server's `projector` and the
+stored receipt, which carries its run's `projector`, `source_sha` and
+`case_manifest_sha256`. The gate opens only when the receipt's `projector` is the
+server's; nobody compares them by hand. When `open` is false on an all-pass clean
+receipt, the server moved past the run's projector: record a fresh run. A
+receipt from a run made before receipts named their run (no pins) is refused;
+run the set again. Recording replaces the profile's earlier receipt, so a failing
+receipt, or one from another projector's run, closes a gate a pass opened. Read
 the gate back with:
 
 ```sh
