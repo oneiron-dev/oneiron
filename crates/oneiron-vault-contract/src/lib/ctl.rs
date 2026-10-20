@@ -56,6 +56,14 @@ pub enum CtlRequest {
     RecoverOwnerSigning {
         challenge: String,
     },
+    /// Appended last (FIX 6277): how many legal holds stand on the vault,
+    /// which a hosted erase asks before it sends a destroy order, removes a
+    /// key or deletes a backup ([`CtlResponse::LegalHolds`]). It writes
+    /// nothing, so a vault frozen for reap answers it too and stays frozen.
+    /// Build floor: it rides v3 with no version move, and a v3 vault built
+    /// before it answers it as an unknown request (`Ok { ok: false }`), which
+    /// a supervisor reads as not proven: the erase waits.
+    LegalHolds,
 }
 
 impl CtlRequest {
@@ -77,7 +85,8 @@ impl CtlRequest {
             CtlRequest::PrepareReap
             | CtlRequest::ReapAbort
             | CtlRequest::Ping
-            | CtlRequest::TrainingPurge => {}
+            | CtlRequest::TrainingPurge
+            | CtlRequest::LegalHolds => {}
         }
         Ok(())
     }
@@ -252,6 +261,30 @@ pub struct TrainingPurgeStateWire {
     /// [`TRAINING_PURGE_RECEIPT_PENDING`] or [`TRAINING_PURGE_REJECTED`];
     /// `None` otherwise.
     pub reason: Option<String>,
+}
+
+/// The answer to [`CtlRequest::LegalHolds`]: how many legal holds stand on
+/// the vault, customer and host order alike, or that the vault could not
+/// count them. It names nothing of any hold: no id, matter, scope or reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum LegalHoldsWire {
+    /// Counted: `standing` holds stand, and while any does an erase is
+    /// blocked `legal_hold`. 0 means none stands.
+    Proven { standing: u64 },
+    /// Not counted: a supervisor reads it as it reads an unknown request,
+    /// and the erase waits. Never a count of none.
+    NotProven { reason: LegalHoldsNotProven },
+}
+
+/// Why a vault could not count its standing legal holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LegalHoldsNotProven {
+    /// The process has no open vault to read: it answers ctl before boot.
+    VaultNotOpen,
+    /// The vault's hold read failed.
+    ReadFailed,
 }
 
 /// How a managed vault came up (contract v3), on every `Ping`: a boot
@@ -432,6 +465,12 @@ pub enum CtlResponse {
     /// carries no `ok` for the reason `Slim` carries none.
     OwnerSigningRecovered {
         owner_signing_recovered: bool,
+    },
+    /// Appended last (FIX 6277): the answer to [`CtlRequest::LegalHolds`].
+    /// Its one required field {legal_holds} is disjoint from every variant
+    /// above, and it carries no `ok` for the reason `Slim` carries none.
+    LegalHolds {
+        legal_holds: LegalHoldsWire,
     },
 }
 

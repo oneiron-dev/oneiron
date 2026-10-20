@@ -14,11 +14,13 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// report, required on `LedgerUpdate` and `PrepareReap` alike, and how the
 /// vault came up ([`ManagedReadiness`](crate::ManagedReadiness)) on every
 /// `Ping`. v3 also carries the training purge ctl request
-/// ([`CtlRequest::TrainingPurge`](crate::CtlRequest::TrainingPurge)) and the
+/// ([`CtlRequest::TrainingPurge`](crate::CtlRequest::TrainingPurge)), the
 /// owner-signing recovery ctl request
-/// ([`CtlRequest::RecoverOwnerSigning`](crate::CtlRequest::RecoverOwnerSigning)),
-/// each with a build floor: a supervisor sends one only to vaults built at or
-/// after it, and a v3 vault built before it answers it as an unknown request.
+/// ([`CtlRequest::RecoverOwnerSigning`](crate::CtlRequest::RecoverOwnerSigning))
+/// and the legal holds ctl request
+/// ([`CtlRequest::LegalHolds`](crate::CtlRequest::LegalHolds)), each with a
+/// build floor: a supervisor sends one only to vaults built at or after it,
+/// and a v3 vault built before it answers it as an unknown request.
 /// Supervisor and vault move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
