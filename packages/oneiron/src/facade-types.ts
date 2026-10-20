@@ -4567,7 +4567,7 @@ export type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: 
 /** `oneiron::team::doors::CriticAssociation` */
 export type CriticAssociation = "branch_attempt" | "canonical_run_ref" | "declared_spawn_attempt"
 /** `oneiron::team::doors::CriticObservation` */
-export type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string }
+export type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; declared_attempt_ref?: EntityId | null; review_verdict_ref?: EntityId | null; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string }
 /** `oneiron::team::doors::LearningCellView` */
 export type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string }
 /** `oneiron::team::doors::BorrowedCellView` */

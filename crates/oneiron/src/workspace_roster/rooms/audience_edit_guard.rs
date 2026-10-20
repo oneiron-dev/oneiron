@@ -14,12 +14,15 @@
 //! ([`tear_root_edits_in_txn`]): an edit of a root that is gone folds into
 //! no one's read. That tear passes the guards on an explicit pass it holds
 //! for each edit it tears, never on what the root's liveness says, since
-//! the root still stands while its derived rows go.
+//! the root still stands while its derived rows go. Each torn edit's id is
+//! fenced as deleted (FIX 5905), so a copy a peer still carries never lands
+//! live again as an orphan edit of the dead root.
 
 use super::audience_events::{AudienceEvent, audience_event};
 use super::*;
 use crate::edge::EdgeKind;
 use crate::registry::ENTITY_TYPE_TURN;
+use crate::side_table::HexId;
 use crate::store::Store;
 use crate::vault::live_entity_row_in_txn;
 use std::cell::RefCell;
@@ -136,7 +139,9 @@ pub(crate) fn reject_audience_edit_unlink(
 /// runs, before the root's edges go, each on its pass through the guards
 /// above. Reached through the derived-row eraser of both delete doors, soft
 /// and hard, local and replayed. Only a TURN whose edit names this root
-/// goes; any other `About` source stays.
+/// goes; any other `About` source stays. Each one that goes keeps a
+/// presence-only row fence, which replicated ingest refuses a carried copy
+/// under (FIX 5905).
 pub(super) fn tear_root_edits_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -170,6 +175,7 @@ pub(super) fn tear_root_edits_in_txn(
         if vector {
             crate::hnsw::increment_vector_version(store, txn)?;
         }
+        crate::deletion::ROW_DELETION_FENCE.put(store, txn, &HexId(edit), &Vec::new())?;
     }
     Ok(())
 }

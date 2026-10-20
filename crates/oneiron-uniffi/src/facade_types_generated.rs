@@ -34326,6 +34326,12 @@ pub struct CriticObservation {
         skip_serializing_if = "Option::is_none"
     )]
     pub declared_attempt_ref: Option<String>,
+    #[serde(
+        rename = "review_verdict_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub review_verdict_ref: Option<String>,
     #[serde(rename = "artifact_id")]
     pub artifact_id: String,
     #[serde(rename = "target_ref")]
