@@ -159,11 +159,13 @@ fn run_pipeline<S: EditSession>(
 
     // Stage 0: decompose the input. A bad input is a hard error (the caller
     // handed us a broken blob), distinct from a session producing bad output.
-    let before = opc::read(input_bytes)?;
-    let doc_before = OfficeDoc::new(format, input_bytes.to_vec(), before.clone());
+    // The decomposed package moves into the session's document and is
+    // borrowed back for inspection, the diff and the gate.
+    let doc_before = OfficeDoc::new(format, input_bytes.to_vec(), opc::read(input_bytes)?);
+    let before = doc_before.package();
 
     // Stage 1: inspect-first.
-    let inspection = inspect(&before, format);
+    let inspection = inspect(before, format);
     let (mutation_mode, mut warnings) = mutation_mode_for(&inspection);
 
     // Minimal-mutation mode preserves pivot/chart/macro parts byte-for-byte,
@@ -228,7 +230,7 @@ fn run_pipeline<S: EditSession>(
         schema_version: EDIT_MANIFEST_SCHEMA_VERSION,
         format,
         ops: applied.applied_ops,
-        touched_parts: diff_parts(&before, &after),
+        touched_parts: diff_parts(before, &after),
         mutation_mode,
         warnings,
         pptx_holder_limits: None,
@@ -238,7 +240,7 @@ fn run_pipeline<S: EditSession>(
         slide_question: None,
     };
 
-    let report = validate(&before, &after, format);
+    let report = validate(before, &after, format);
     if !report.ok {
         return Ok(EditOutcome::Rejected { inspection, report });
     }
