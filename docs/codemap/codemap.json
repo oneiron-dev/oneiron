@@ -44377,6 +44377,77 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/admission.rs",
+     "purpose": "The engine's half of a cold managed restore (LC FIX 5384/5385; the contract is…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AddedRecipient",
+      "AdmittedRestore",
+      "AnchorDisposition",
+      "CustodyAdmissionFacts",
+      "CustodyPositionFact",
+      "CustodyRouteFact",
+      "EscrowRole",
+      "FreshRecipient",
+      "RecipientAdmissionFacts",
+      "RecipientRetirementDisposition",
+      "ReleasedRecipient",
+      "RestoreAdmission",
+      "RestoreCommitFacts",
+      "RestorePlan",
+      "RetiredBy",
+      "RetiredRecipient",
+      "SourceExpectation",
+      "VerifiedSource"
+     ],
+     "path": "src/recovery/checkpoint/admission/facts.rs",
+     "purpose": "What a cold managed restore is asked to do and what it verified (LC FIX 5384/5385): the plan's expected…",
+     "surface": {
+      "enum": 5,
+      "fn": 1,
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RestoreAdmissionError",
+      "RestoreAdmissionReason",
+      "RestoreDestinationState",
+      "RestorePhase"
+     ],
+     "path": "src/recovery/checkpoint/admission/reason.rs",
+     "purpose": "Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/admission/source.rs",
+     "purpose": "A cold managed restore's source checks, in the contract's order (LC FIX 5384/5385): the artifact read once…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -44386,8 +44457,8 @@
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
-      "crate-vis": 14,
-      "fn": 7,
+      "crate-vis": 17,
+      "fn": 8,
       "re-export": 1,
       "struct": 2
      }
@@ -44464,7 +44535,7 @@
      "purpose": "Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685): publishing a vault's exterior key custody to…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 17,
       "re-export": 1,
       "struct": 3
@@ -44730,7 +44801,7 @@
      "path": "src/recovery/checkpoint/image.rs",
      "purpose": "A checkpoint image and its structural read (moved out of the checkpoint module whole)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -44755,9 +44826,10 @@
      "path": "src/recovery/checkpoint/mod.rs",
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 19,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 3
      }
     },
@@ -52155,7 +52227,7 @@
      "path": "src/store/key_custody/mod.rs",
      "purpose": "Typed key custody (KS-1): one storage and lifecycle service for the independent, erasable secrets a vault…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 1
      }
     },
@@ -52247,13 +52319,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/recipients.rs",
+     "purpose": "Released escrow recipients a cold managed restore retired (LC FIX 5384/5385), kept in the lineage's exterior…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/recovery.rs",
      "purpose": "Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 22
      }
     },
     {
@@ -52273,7 +52355,7 @@
      "path": "src/store/key_custody/targets.rs",
      "purpose": "The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 25
      }
     },
     {
@@ -63169,7 +63251,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3,
       "re-export": 21,
       "struct": 2
@@ -63285,7 +63367,7 @@
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 15,
+      "crate-vis": 18,
       "fn": 15,
       "struct": 2
      }
@@ -63471,7 +63553,7 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "enum": 3,
       "fn": 27,
       "re-export": 1,
@@ -63490,6 +63572,16 @@
       "crate-vis": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/vault_key/restore.rs",
+     "purpose": "A cold managed restore's escrow recipients (LC FIX 5384/5385; the contract is…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -65431,7 +65523,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 74,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -65676,7 +65768,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 118,
+     "files": 119,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65886,7 +65978,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65902,7 +65994,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4108,
+   "source_files": 4114,
    "test_files": 902
   },
   "oneiron-android": {
