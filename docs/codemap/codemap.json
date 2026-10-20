@@ -3454,7 +3454,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "re-export": 56
      }
     },
@@ -3596,6 +3596,16 @@
      "purpose": "This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1)",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/principal_standing.rs",
+     "purpose": "FIX 6219 (L02 seam): whether a recorded principal still stands, for work a host does later in that…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -6739,9 +6749,9 @@
      "path": "src/blob_artifact/esign/mod.rs",
      "purpose": "Native signing requests on versioned blob artifacts; claims are the state machine",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 2,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -6802,6 +6812,7 @@
      "path": "src/blob_artifact/esign/notice_door.rs",
      "purpose": "`vault.esign.notices.dispatch` (FIX 5239): a signing document's staged transition notices (pending…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 3
      }
@@ -6814,6 +6825,32 @@
      "purpose": "FIX 6220: a world-, facet- or record-scoped credential sends its own e-sign notices…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/blob_artifact/esign/notice_send_act.rs",
+     "purpose": "The send act a signing document's staged notices go out under while no caller is present (FIX 6219, Engine…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignNoticeGroup",
+      "EsignUnattendedNotices"
+     ],
+     "path": "src/blob_artifact/esign/notice_unattended.rs",
+     "purpose": "FIX 6219 (Engine design B): a signing document's staged notices (pending, completed, rejection, expiry) go…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -64536,7 +64573,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 187,
+     "files": 188,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64557,7 +64594,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 67,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65994,7 +66031,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4114,
+   "source_files": 4117,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79480,7 +79517,7 @@
      "path": "src/api/esign.rs",
      "purpose": "Session-less signing ceremony",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -79571,6 +79608,16 @@
      "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/notice_worker.rs",
+     "purpose": "The e-sign notice worker (FIX 6219, Engine design B): staged transition notices (pending, completed…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81600,7 +81647,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 46
+      "crate-vis": 47
      }
     },
     {
@@ -89345,7 +89392,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 476,
+     "files": 477,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89795,7 +89842,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 902,
+   "source_files": 903,
    "test_files": 182
   },
   "oneiron-spawn": {
