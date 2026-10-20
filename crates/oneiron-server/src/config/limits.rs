@@ -354,6 +354,8 @@ impl LimitsConfig {
             organ_loss_code_bytes,
             organ_memory_bytes,
             deadline_jobs_per_caller,
+            backup_handoff_pending_backups,
+            backup_handoff_pending_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -552,6 +554,14 @@ impl LimitsConfig {
             (EngineLimit::OrganLossCodeBytes, organ_loss_code_bytes),
             (EngineLimit::OrganMemoryBytes, organ_memory_bytes),
             (EngineLimit::DeadlineJobsPerCaller, deadline_jobs_per_caller),
+            (
+                EngineLimit::BackupHandoffPendingBackups,
+                backup_handoff_pending_backups,
+            ),
+            (
+                EngineLimit::BackupHandoffPendingBytes,
+                backup_handoff_pending_bytes,
+            ),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -775,4 +785,6 @@ pub(super) struct LimitsConfigOverride {
     pub(super) organ_loss_code_bytes: Option<u64>,
     pub(super) organ_memory_bytes: Option<u64>,
     pub(super) deadline_jobs_per_caller: Option<u64>,
+    pub(super) backup_handoff_pending_backups: Option<u64>,
+    pub(super) backup_handoff_pending_bytes: Option<u64>,
 }

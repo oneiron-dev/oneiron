@@ -121,6 +121,8 @@ impl EngineLimit {
         Self::OrganLossCodeBytes,
         Self::OrganMemoryBytes,
         Self::DeadlineJobsPerCaller,
+        Self::BackupHandoffPendingBackups,
+        Self::BackupHandoffPendingBytes,
     ];
 
     /// The config key that sets the row.
@@ -241,6 +243,8 @@ impl EngineLimit {
             Self::OrganLossCodeBytes => "limits.organ_loss_code_bytes",
             Self::OrganMemoryBytes => "limits.organ_memory_bytes",
             Self::DeadlineJobsPerCaller => "limits.deadline_jobs_per_caller",
+            Self::BackupHandoffPendingBackups => "limits.backup_handoff_pending_backups",
+            Self::BackupHandoffPendingBytes => "limits.backup_handoff_pending_bytes",
         }
     }
 
@@ -409,6 +413,9 @@ impl EngineLimit {
             Self::OrganMemoryBytes => 2 << 30,
             // Ten times the fleet's 200 agents, as `limits.task_work` sits.
             Self::DeadlineJobsPerCaller => 2_048,
+            // Two days of hourly backups no stage ack has released.
+            Self::BackupHandoffPendingBackups => 48,
+            Self::BackupHandoffPendingBytes => 16 << 30,
         }
     }
 }

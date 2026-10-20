@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4071 | 902 | 190 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 4073 | 902 | 190 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 3 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 42 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -23,7 +23,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-code-check](codemap/oneiron-code-check.md) | An optional type check of code-mode programs before they run | 6 | 1 | 0 |
 | [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 13 | 0 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 58 | 1 | 1 |
-| [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 15 | 8 | 0 |
+| [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 20 | 8 | 0 |
 | [oneiron-docedit](codemap/oneiron-docedit.md) | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… | 98 | 14 | 10 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 19 | 10 | 0 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 11 | 1 | 0 |
@@ -49,10 +49,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 18 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 47 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 891 | 182 | 53 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 892 | 182 | 53 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 11 | 0 | 4 |
-| [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 25 | 1 | 0 |
+| [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 26 | 1 | 0 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 16 | 1 | 2 |
 
 ## oneiron
@@ -154,7 +154,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `fusion` | file | 1 | s | — | Score fusion kernels, defined in `oneiron-retrieval` |
 | `gate` | dir | 142 | L | yes | DEC-0005 Gate policy manifest resolver |
 | `genui` | dir | 13 | m | yes | OF-336 generated-UI component contract |
-| `git_wire` | dir | 26 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
+| `git_wire` | dir | 27 | m | — | Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068) |
 | `graph_fs` | dir | 14 | m | — | Graph-FS read projection over the vault graph |
 | `habit` | file | 1 | m | yes | Productivity-pack task-role vocabulary + task/habit checkin validators, plus the derived Habit streak… |
 | `hnsw` | dir | 13 | m | — | HNSW graph index over the persisted neighbor graph |
@@ -211,7 +211,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `query_expansion` | file+dir | 2 | s | — | Host-injected HyDE query-expansion seam |
 | `reaction` | dir | 18 | m | yes | Message reactions as `conversation.reaction` claims (OF-372) |
 | `receipt` | dir | 34 | m | yes | Unified receipt-family query surface over existing receipt emitters |
-| `recovery` | file+dir | 69 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
+| `recovery` | file+dir | 70 | L | yes | Canonical Layer-1 recovery, validated rebuilds and bounded repair |
 | `registry` | dir | 8 | m | yes | Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators |
 | `repo_mutation` | dir | 24 | L | yes | — |
 | `rerank` | file+dir | 4 | m | — | RET-010 host-injected top-N rerank seam (1186-D1/D2) |
@@ -404,6 +404,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
+| `backup` | dir | 5 | m | The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact… |
 | `codec` | file | 1 | s | Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings… |
 | `envelope` | dir | 5 | m | The sealed envelope: its typed header, the canonical encoding and the strict parser |
 | `error` | file | 1 | s | The one error type |
@@ -715,7 +716,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `models` | dir | 47 | XL | The one provider abstraction: `[models]` in, one backend per seat out |
 | `oauth_relay` | file | 1 | L | ARCH-0028 host-trusted OAuth token-client verification half (ONE-1382 leg 1) |
 | `oneironer` | dir | 12 | m | The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled |
-| `owner` | dir | 32 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
+| `owner` | dir | 33 | m | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
 | `projection` | file+dir | 2 | m | — |
 | `protocol` | file | 1 | m | Custom Oneiron sync protocol — server-side extensions |
 | `replay_judge` | file+dir | 3 | m | The serve host's skill judge (OF-495) |
@@ -757,7 +758,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `lib` | dir | 26 | m | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
+| `lib` | dir | 27 | m | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits |
 
 ## oneiron-xlsx-formula
 

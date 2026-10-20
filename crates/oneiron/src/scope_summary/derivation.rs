@@ -12,6 +12,9 @@ use serde::{Deserialize, Serialize};
 
 const PROJECTION: SideTable<[u8; 32], Projection, Named> =
     SideTable::new(&side_table::SCOPE_SUMMARY_PROJECTION);
+/// The identity key's field for a NOTE set's digest.
+const NOTE_SET_KEY: &str = "note_set";
+const NOTE_SET_DOMAIN: &[u8] = b"oneiron:scope-summary-note-set:v1";
 
 /// An exact input version, including the document frontier and the full
 /// witnessed-text pin (child set, authors, revisions and stream finality).
@@ -98,13 +101,40 @@ pub(super) fn declaration(
 /// The projection row a declaration's summaries stand in: one per scope,
 /// purpose and requester. An admitted source set is not part of it (FIX
 /// 3198), so a later set for the same room replaces the earlier set's row
-/// and continues its summary, never re-derives beside it.
+/// and continues its summary, never re-derives beside it. A NOTE set has no
+/// scope: its digest stands in the scope's place ([`note_set_identity`]).
 fn projection_key(request: &super::ScopeSummaryRequest, purpose: &str) -> Result<[u8; 32]> {
     let mut normalized = declaration(request, purpose, None);
     if let Value::Map(fields) = &mut normalized {
         fields.retain(|(key, _)| key.as_str() != Some(super::request::SOURCES_KEY));
+        if let Some(digest) = note_set_identity(request) {
+            fields.push((
+                Value::from(NOTE_SET_KEY),
+                Value::from(digest.to_hex().as_str()),
+            ));
+        }
     }
     Ok(*blake3::hash(&encode(&normalized)?).as_bytes())
+}
+
+/// A NOTE set's part in its summary's identity (FIX 5757): a digest of its
+/// sorted, distinct NOTE ids, so a NOTE summary is one per requester,
+/// purpose and set. Another set is another summary, and editing the ids
+/// declares a new one. A conversation's admitted set has none (FIX 3198).
+fn note_set_identity(request: &super::ScopeSummaryRequest) -> Option<blake3::Hash> {
+    let super::ScopeSummaryTarget::Sources {
+        scope: None,
+        sources,
+    } = &request.target
+    else {
+        return None;
+    };
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(NOTE_SET_DOMAIN);
+    for note in sources.iter().collect::<std::collections::BTreeSet<_>>() {
+        hasher.update(note.as_bytes());
+    }
+    Some(hasher.finalize())
 }
 
 pub(super) fn options(

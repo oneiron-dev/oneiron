@@ -437,6 +437,15 @@ pub enum EngineLimit {
     /// count, once per caller per window; nothing is refused, queued or
     /// dropped.
     DeadlineJobsPerCaller,
+    /// Backups a managed label's handoff pin keeps past its retention while
+    /// they wait for the node supervisor's stage ack. Past it the row asks, as
+    /// the typed `backup_handoff_backlog` check naming the kind, count and
+    /// bytes, once an hour for the label; every backup is kept, none is
+    /// refused, unpinned or dropped (CALLS BACKUP_PRUNE_PIN_PENDING).
+    BackupHandoffPendingBackups,
+    /// Bytes of those backups together. Past it the row asks as the pending
+    /// count does, and every backup is kept.
+    BackupHandoffPendingBytes,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

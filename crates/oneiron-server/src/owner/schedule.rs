@@ -74,6 +74,13 @@ impl OwnerHost {
         self
     }
 
+    /// Binds each backup's vault id to `registry`, the registry's id for this
+    /// vault (FIX 5826): a managed vault's name.
+    pub(crate) fn registered_as(mut self, registry: String) -> Self {
+        self.backups.registry = Some(registry);
+        self
+    }
+
     fn one_at_a_time(&self) -> std::sync::MutexGuard<'_, ()> {
         self.backup_lock
             .lock()
