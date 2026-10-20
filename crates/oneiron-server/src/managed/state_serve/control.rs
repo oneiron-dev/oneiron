@@ -1,6 +1,8 @@
 //! The ctl dispatcher: every parsed ctl request a managed vault answers.
 
-use oneiron_vault_contract::{CONTRACT_VERSION, CtlRequest, CtlResponse};
+use oneiron_vault_contract::{
+    CONTRACT_VERSION, CtlRequest, CtlResponse, LegalHoldsNotProven, LegalHoldsWire,
+};
 
 use super::ManagedState;
 use crate::managed::ManagedError;
@@ -25,6 +27,7 @@ impl ManagedState {
                 pid: std::process::id(),
                 contract_version: CONTRACT_VERSION,
                 readiness: self.readiness.clone(),
+                managed_backup: self.backup_facts.clone(),
             }),
             CtlRequest::Shed { cause, waited_secs } => {
                 self.guard_write()?;
@@ -68,6 +71,25 @@ impl ManagedState {
                 Ok(CtlResponse::OwnerSigningRecovered {
                     owner_signing_recovered,
                 })
+            }
+            // A read: a vault frozen for reap answers it and stays frozen. A
+            // read that fails answers not proven, never a count of none, so
+            // the erase that asked waits.
+            CtlRequest::LegalHolds => {
+                let legal_holds = match self.server.vault().standing_legal_holds() {
+                    Ok(standing) => LegalHoldsWire::Proven { standing },
+                    Err(error) => {
+                        tracing::warn!(
+                            kind = ?error.kind(),
+                            reason = "legal_hold_read_failed",
+                            "the standing legal holds did not read; answered not proven"
+                        );
+                        LegalHoldsWire::NotProven {
+                            reason: LegalHoldsNotProven::ReadFailed,
+                        }
+                    }
+                };
+                Ok(CtlResponse::LegalHolds { legal_holds })
             }
         }
     }

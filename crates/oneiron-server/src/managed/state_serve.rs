@@ -15,8 +15,8 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use oneiron_vault_contract::ManagedWidenAction;
 use oneiron_vault_contract::{
-    CONTRACT_VERSION, CtlResponse, ManagedReadiness, REAP_PAUSE_REFUSAL, UnixTs, now_ts,
-    validate_wake_entries,
+    CONTRACT_VERSION, CtlResponse, ManagedBackupFacts, ManagedReadiness, REAP_PAUSE_REFUSAL,
+    UnixTs, now_ts, validate_wake_entries,
 };
 // The test module below names the ctl request through `use super::*`; the
 // dispatcher that names it lives in `control`.
@@ -158,6 +158,10 @@ pub struct ManagedState {
     /// How the vault came up, as every `Ping` reports it (WILL-PLAN L14 row
     /// 17): set once at boot, before ctl serves.
     readiness: ManagedReadiness,
+    /// What the vault reports of its backups on every `Ping` (Engine 10-20
+    /// row (b)): set once at boot, before ctl serves. `None` until set, which
+    /// a supervisor reads as unknown.
+    backup_facts: Option<ManagedBackupFacts>,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -394,6 +398,7 @@ impl ManagedState {
             background_waiting: AtomicBool::new(false),
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
+            backup_facts: None,
         }
     }
 
@@ -402,6 +407,14 @@ impl ManagedState {
     #[must_use]
     pub fn with_readiness(mut self, readiness: ManagedReadiness) -> Self {
         self.readiness = readiness;
+        self
+    }
+
+    /// This state with `facts`, what the vault reports of its backups, for
+    /// every `Ping` to carry; none until set.
+    #[must_use]
+    pub fn with_backup_facts(mut self, facts: ManagedBackupFacts) -> Self {
+        self.backup_facts = Some(facts);
         self
     }
 
@@ -1116,6 +1129,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         settled.keystore_unbound,
         &managed.data_dir,
     )?;
+    // This install's checkpoint signer, read once now that the keystore is
+    // in: its first read may make the seed, so never on a `Ping` or under a
+    // reap freeze. A signer that does not read leaves the vault serving.
+    let backup_facts = super::backup_facts::observe(&vault);
     // The delivered DEK is the vault's data key (CROSS-ARCH-0022
     // #ov-custody): its sealed artifacts derive from it, and each escrow
     // recipient the node's operator installed keeps a copy of it.
@@ -1239,7 +1256,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     host.clear_secrets();
     let state = Arc::new(
         ManagedState::new(managed.vault_name.clone(), Arc::clone(&sync_server), ledger)
-            .with_readiness(readiness.clone()),
+            .with_readiness(readiness.clone())
+            .with_backup_facts(backup_facts),
     );
     let _ = reap_gate.set(Arc::clone(&state));
     // A public live voice session (`ai.voice.start`) holds an admission like
