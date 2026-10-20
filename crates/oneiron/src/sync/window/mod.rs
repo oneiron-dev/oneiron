@@ -57,8 +57,8 @@ pub(in crate::sync) use self::egress::{
 pub use self::egress::{
     history_free_window_required, replay_pending_mirrors, require_history_free_window,
 };
-pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
+pub(crate) use self::forward::{FORWARD_PASS_VERSION, forward_recovery};
 pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,

@@ -3090,7 +3090,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.claims.admit": { description: "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides.", scope: "Write", proposes: true, hostDoor: false, section: false },
   "vault.artifacts.create": { description: "Creates an artifact with its first version, as the caller: a person's upload, or an agent's version naming its run.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.esign.create": { description: "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.esign.get": { description: "Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.esign.get": { description: "Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail, with its delivery receipts. A trail that does not read answers trail unreadable with its error, its receipts still listed.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.esign.links.issue": { description: "The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.esign.send_for_signature": { description: "Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.esign.notices.dispatch": { description: "Dispatches the due transition notices of one signing document recorded for the caller through the email send gate, as the caller.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -5450,7 +5450,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       esign: {
         /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
         create: (input: Facade.EsignCreateRequest, options?: O): FacadeReturns<"vault.esign.create">[K] => invoke("vault.esign.create", input, options, newInvocation()),
-        /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail. */
+        /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail, with its delivery receipts. A trail that does not read answers trail unreadable with its error, its receipts still listed. */
         get: (input: Facade.EsignGetRequest, options?: O): FacadeReturns<"vault.esign.get">[K] => invoke("vault.esign.get", input, options, newInvocation()),
         links: {
           /** The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient. */

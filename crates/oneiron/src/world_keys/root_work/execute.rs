@@ -5,10 +5,11 @@
 //!
 //! The door finds the counted request still pending here and checks the
 //! material against its change. Then one writer transaction rechecks the
-//! request (a stale one is answered refused, and returned), makes the change
-//! through its root door's own transaction body and appends the enacted
-//! result beside it. No writer nests in another, and every check the root
-//! door makes before its transaction runs here too.
+//! request (a stale one is answered refused, and returned; one whose basis
+//! this install has not folded yet signs nothing and stays pending, FIX
+//! 5551), makes the change through its root door's own transaction body and
+//! appends the enacted result beside it. No writer nests in another, and
+//! every check the root door makes before its transaction runs here too.
 //!
 //! The target decides at execution (FIX 4739): a request its fold holds
 //! cancelled by the owner, or superseded by a newer request on this install,
@@ -21,7 +22,9 @@ use std::collections::BTreeSet;
 
 use super::super::kit::KitSeed;
 use super::super::{ConfirmedWorldKit, RecoveryRootSeed, WorldKitRestore, refused};
-use super::{RootMaterial, RootSecret, RootWorkDone, material_refused, request_confirmation};
+use super::{
+    RootMaterial, RootRecheck, RootSecret, RootWorkDone, material_refused, request_confirmation,
+};
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody, OwnerWorkOutcome,
     OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId, RequestCode, RootChange,
@@ -39,6 +42,29 @@ struct Asked {
     change: RootChange,
     /// The vault the request's roots and enrolments are bound to.
     vault_id: [u8; 32],
+}
+
+/// What one writer transaction for a root request did.
+enum Answered<T> {
+    /// The change committed.
+    Done(T),
+    /// The recheck refused it; the refused result committed.
+    Refused(OwnerWorkRefusal),
+    /// This install has not folded every root or mark the owner saw: the
+    /// change never ran, no result was signed, and the request stays
+    /// pending (CALLS ROOT_WORK_BASIS).
+    AwaitsBasis,
+}
+
+impl<T> Answered<T> {
+    /// The change, or the report for anything but a committed change.
+    fn done(self) -> std::result::Result<T, RootWorkDone> {
+        match self {
+            Self::Done(done) => Ok(done),
+            Self::Refused(reason) => Err(RootWorkDone::Refused { reason }),
+            Self::AwaitsBasis => Err(RootWorkDone::AwaitingBasis),
+        }
+    }
 }
 
 /// Whether the change's commit answers its request.
@@ -113,7 +139,9 @@ fn pending_root(
 ) -> Option<(OwnerWorkRequest, RootChange)> {
     fold.pending_owner_work_for(me)
         .find_map(|(pending, request)| match request.work {
-            OwnerWorkBody::Root { change } if pending == hash => Some((request.clone(), change)),
+            OwnerWorkBody::Root { change, .. } if pending == hash => {
+                Some((request.clone(), change))
+            }
             _ => None,
         })
 }
@@ -219,30 +247,36 @@ impl Vault {
     /// One writer transaction for `asked`: its recheck, then `effect` and,
     /// for [`Answer::Enacted`], the enacted result beside it. A request that
     /// fails the recheck is answered refused in this commit and `effect`
-    /// never runs: `Ok(Err(reason))`. One this fold holds cancelled or
-    /// superseded is pending no longer: `effect` never runs, no result is
-    /// signed, and the call is refused ([`not_pending`]).
+    /// never runs: [`Answered::Refused`]. One whose basis this install has
+    /// not folded yet (FIX 5551) signs nothing, `effect` never runs, and it
+    /// stays pending: [`Answered::AwaitsBasis`]. One this fold holds
+    /// cancelled or superseded is pending no longer: `effect` never runs, no
+    /// result is signed, and the call is refused ([`not_pending`]).
     fn answer_root_request<T>(
         &self,
         asked: Asked,
         answer: Answer,
         effect: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
-    ) -> Result<std::result::Result<T, OwnerWorkRefusal>> {
+    ) -> Result<Answered<T>> {
         self.with_write_txn(|txn| {
             let fold = self.authority_view_readonly_in_txn(txn)?;
-            let (request, change) = pending_root(&fold, asked.me, asked.hash)
+            let (request, _) = pending_root(&fold, asked.me, asked.hash)
                 .ok_or_else(|| not_pending(&fold, asked.me, asked.hash))?;
-            if let Some(reason) = self.root_work_refusal(txn, &fold, &request, change)? {
-                let outcome = OwnerWorkOutcome::Refused { reason };
-                self.append_owner_work_result_in_txn(txn, asked.hash, asked.me, outcome)?;
-                return Ok(Err(reason));
+            match self.root_work_recheck(txn, &fold, &request)? {
+                RootRecheck::Runs => {}
+                RootRecheck::Refused(reason) => {
+                    let outcome = OwnerWorkOutcome::Refused { reason };
+                    self.append_owner_work_result_in_txn(txn, asked.hash, asked.me, outcome)?;
+                    return Ok(Answered::Refused(reason));
+                }
+                RootRecheck::AwaitsBasis => return Ok(Answered::AwaitsBasis),
             }
             let done = effect(txn)?;
             if answer == Answer::Enacted {
                 let outcome = OwnerWorkOutcome::enacted();
                 self.append_owner_work_result_in_txn(txn, asked.hash, asked.me, outcome)?;
             }
-            Ok(Ok(done))
+            Ok(Answered::Done(done))
         })
     }
 
@@ -260,9 +294,9 @@ impl Vault {
         let listed = self.answer_root_request(asked, Answer::Pending, |txn| {
             self.list_issued_kit_in_txn(txn, owner, &kit, Some(asked.hash))
         })?;
-        Ok(match listed {
+        Ok(match listed.done() {
             Ok(()) => RootWorkDone::KitIssued(Box::new(kit)),
-            Err(reason) => RootWorkDone::Refused { reason },
+            Err(report) => report,
         })
     }
 
@@ -304,12 +338,12 @@ impl Vault {
                 true
             }
         };
-        Ok(match confirmed {
+        Ok(match confirmed.done() {
             Ok(kit) => RootWorkDone::KitConfirmed {
                 kit: Box::new(kit),
                 mirror_pending,
             },
-            Err(reason) => RootWorkDone::Refused { reason },
+            Err(report) => report,
         })
     }
 
@@ -332,9 +366,9 @@ impl Vault {
         let restored = self.answer_root_request(asked, Answer::Enacted, |txn| {
             self.restore_world_keys_in_txn(txn, owner, &machine, &request, seed, confirm)
         })?;
-        let (keys, usable) = match restored {
+        let (keys, usable) = match restored.done() {
             Ok(done) => done,
-            Err(reason) => return Ok(RootWorkDone::Refused { reason }),
+            Err(report) => return Ok(report),
         };
         for key in usable {
             self.ring_world_key(key);
@@ -385,9 +419,9 @@ impl Vault {
                 "the request code is not the one the new machine shows",
             ));
         };
-        Ok(match anchored {
+        Ok(match anchored.done() {
             Ok(machine) => RootWorkDone::Anchored(Box::new(machine)),
-            Err(reason) => RootWorkDone::Refused { reason },
+            Err(report) => report,
         })
     }
 
