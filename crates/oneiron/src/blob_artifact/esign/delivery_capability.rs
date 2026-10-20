@@ -72,7 +72,7 @@ impl Vault {
             let Some(raw) = self.store.attempt_records.get(txn, attempt.as_bytes())? else {
                 return Ok(EsignDeliveryMint::Held("the delivery is no longer queued"));
             };
-            let row = crate::attempt_queue::decode_record(raw, attempt)?;
+            let row = crate::attempt_queue::decode_record(&raw, attempt)?;
             if row.kind != DELIVERY_KIND
                 || row.state != AttemptState::Leased
                 || row.lease_owner.as_deref() != Some(lease_owner)

@@ -75,7 +75,7 @@ impl AttemptQueue<'_> {
         let Some(raw) = self.store.attempt_records.get(wtxn, input.id.as_bytes())? else {
             return Err(invalid_transition("requeue", "missing"));
         };
-        let mut row = decode_record(raw, input.id)?;
+        let mut row = decode_record(&raw, input.id)?;
         if row.state != AttemptState::Leased {
             return Err(invalid_transition("requeue", row.state.as_str()));
         }
