@@ -24,7 +24,10 @@ impl Vault {
     /// assemblies. The check and the spend share one write
     /// transaction, so no two assemblies deliver the same answer. An assembly
     /// that fails after the spend loses the answer and the owner asks again:
-    /// that fails closed.
+    /// that fails closed. Once the spend commits, each delivery gets its Gate
+    /// receipt naming its offer (`ContactClearanceAct::Used`, FIX 1413) in a
+    /// write of its own: a receipt that fails is logged, and the spend
+    /// stands.
     pub fn spend_once_contact_disclosures(
         &self,
         set: &InterlocutorSet,
@@ -60,8 +63,9 @@ impl Vault {
                 return Ok(BTreeMap::new());
             }
         }
-        self.with_write_txn_grouped(|wtxn| {
+        let (spent, delivered) = self.with_write_txn_grouped(|wtxn| {
             let mut spent = BTreeMap::new();
+            let mut delivered = Vec::new();
             for once in self.once_contact_disclosures_in_txn(&*wtxn, &contacts)? {
                 let offer = &once.proposal.offer;
                 if !delivers(offer) || spent.contains_key(&offer.contact_ref) {
@@ -74,8 +78,19 @@ impl Vault {
                     "approve-once contact disclosure delivered"
                 );
                 spent.insert(offer.contact_ref, offer.scope.clone());
+                delivered.push((offer.contact_ref, once.proposal_ref));
             }
-            Ok(spent)
-        })
+            Ok((spent, delivered))
+        })?;
+        for (contact, proposal_ref) in delivered {
+            if let Err(error) = self.record_once_contact_disclosure_use(&contact, &proposal_ref) {
+                tracing::warn!(
+                    %proposal_ref,
+                    %error,
+                    "approve-once contact disclosure delivered with no Gate receipt"
+                );
+            }
+        }
+        Ok(spent)
     }
 }

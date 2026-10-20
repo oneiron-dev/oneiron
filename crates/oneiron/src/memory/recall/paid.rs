@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use super::selection::RecallPin;
 use super::{Effort, MemoryPack, RecallScope};
 use crate::batch::export::write_door_refuses_body;
 use crate::claim::{ClaimBody, ClaimReadStatus};
@@ -335,6 +336,9 @@ impl Memory<'_> {
     ) -> MemoryResult<MemoryPack> {
         let as_of = input.as_of.unwrap_or_else(crate::unix_seconds_now);
         let format = input.format.as_deref();
+        // Every pass, retry and text read of this recall narrows by the one
+        // selection its first pass resolves (FIX 5006).
+        let pin = RecallPin::default();
         let answered = |deadline: Option<&RetrievalDeadline>| {
             fallback.filter(|_| deadline.is_some_and(RetrievalDeadline::answer_due))
         };
@@ -356,13 +360,15 @@ impl Memory<'_> {
         });
         // The paid expansion without its rerank stage.
         let by_fusion = |deadline: Option<&RetrievalDeadline>| {
-            self.recall_with_execution(
+            self.recall_routed(
+                None,
                 &input.query,
                 effort,
                 scope,
                 limit,
                 format,
                 Some(host.lease()),
+                None,
                 &RecallExecution {
                     hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
@@ -378,18 +384,21 @@ impl Memory<'_> {
                     rerank_unavailable: true,
                     ..Default::default()
                 },
+                Some(&pin),
             )
         };
         for call in 1..=RERANK_CALLS {
             let deadline = budget.map(|budget| RetrievalDeadline::hard(door.arrived, budget));
             let capture = BlockCapture::default();
-            let first = self.recall_with_execution(
+            let first = self.recall_routed(
+                None,
                 &input.query,
                 effort,
                 scope,
                 limit,
                 format,
                 Some(host.lease()),
+                None,
                 &RecallExecution {
                     hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
@@ -405,6 +414,7 @@ impl Memory<'_> {
                     door_fallback: fallback,
                     ..Default::default()
                 },
+                Some(&pin),
             );
             let block = match (first, capture.take()) {
                 (_, Some(block)) => block,
@@ -416,7 +426,8 @@ impl Memory<'_> {
                 }
                 (Err(error), None) => return Err(error),
             };
-            let (texts, egress) = self.rerank_documents(scope, &block, host.runs_on_device())?;
+            let (texts, egress) =
+                self.rerank_documents(scope, &pin, &block, host.runs_on_device())?;
             if texts.iter().all(String::is_empty) {
                 let mut pack = by_fusion(deadline.as_ref())?;
                 pack.retrieval_meta.rerank = Some(unreranked(&pack));
@@ -513,13 +524,15 @@ impl Memory<'_> {
                 }
             });
             let deadline = budget.map(|budget| RetrievalDeadline::hard(door.arrived, budget));
-            let second = self.recall_with_execution(
+            let second = self.recall_routed(
+                None,
                 &input.query,
                 effort,
                 scope,
                 limit,
                 format,
                 Some(host.lease()),
+                None,
                 &RecallExecution {
                     hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
@@ -535,6 +548,7 @@ impl Memory<'_> {
                     door_fallback: fallback,
                     ..Default::default()
                 },
+                Some(&pin),
             );
             match second {
                 Ok(mut pack) => {
@@ -564,14 +578,16 @@ impl Memory<'_> {
     /// is a text the write door refuses whole; nothing it holds leaves. So is
     /// a row a device-only world keeps (the vault's own flag, whoever reads),
     /// unless the host's model runs on this device (`on_device`). With the
-    /// texts come the rows that leave with words, to be judged again.
+    /// texts come the rows that leave with words, to be judged again. It
+    /// reads the worlds of the recall's pinned selection (`pin`).
     fn rerank_documents(
         &self,
         scope: &RecallScope,
+        pin: &RecallPin,
         block: &[BlockCandidate],
         on_device: bool,
     ) -> MemoryResult<(Vec<String>, RerankEgress<'_>)> {
-        let worlds = self.recall_worlds(scope)?;
+        let worlds = self.pinned_recall_worlds(scope, pin)?;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let lane = match worlds {
             Some(worlds) => lane.within_worlds(worlds),

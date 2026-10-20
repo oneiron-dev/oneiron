@@ -1083,6 +1083,46 @@ impl Vault {
         kind_slot_bindings_in_txn(&self.store, &rtxn)
     }
 
+    /// Whether `space_id`'s EMBEDDING_SETUP row reads retired: the last act on that space here
+    /// retired it ([`Self::retire_embedding_space`], or a move's end). A host that seeds spaces
+    /// from its config reads it, so a listed space stays retired until a declaration through a
+    /// door names it again (FIX 1960).
+    pub fn embedding_space_retired(&self, space_id: &str) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let row = EmbeddingSetup::Retired {
+            id: space_id.to_owned(),
+        };
+        Ok(matches!(
+            self.embedding_setup_row_in_txn(&rtxn, &row)?,
+            Some(EmbeddingSetup::Retired { .. })
+        ))
+    }
+
+    /// Whether `kind`'s EMBEDDING_SETUP row reads its slot's default: the slot was bound and
+    /// the last act on it here returned it to its default ([`Self::unbind_kind_slot`], or a
+    /// move's undo). A host that seeds slots from its config reads it, so a listed slot stays
+    /// unbound until a binding through a door names it again (FIX 1960). A slot never bound
+    /// has no row, and reads `false`.
+    pub fn kind_slot_unbound(&self, kind: InputKind) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        let row = EmbeddingSetup::Slot { kind, space: None };
+        Ok(self.embedding_setup_row_in_txn(&rtxn, &row)? == Some(row))
+    }
+
+    /// The EMBEDDING_SETUP row stored under `setup`'s id, when one decodes there.
+    fn embedding_setup_row_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        setup: &EmbeddingSetup,
+    ) -> Result<Option<EmbeddingSetup>> {
+        let Some(raw) = self.store.port_entity_raw(txn, &setup.id()?)? else {
+            return Ok(None);
+        };
+        Ok(raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .and_then(|data| EmbeddingSetup::decode(data).ok()))
+    }
+
     /// Binds a kind slot to a declared space that accepts that input. Binding text moves text
     /// documents and text queries off the vault's own index onto that space, so the space also
     /// needs a text query tower ([`Self::bind_one_space_for_all`] binds every slot at once).

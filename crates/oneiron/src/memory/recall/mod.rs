@@ -36,6 +36,7 @@ pub(crate) use self::selection::RecallKinds;
 
 use self::presentation::{hedge_bucket_for, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
+use self::selection::RecallPin;
 
 use std::collections::BTreeSet;
 
@@ -480,6 +481,7 @@ impl Memory<'_> {
             None,
             Some(&filter),
             &RecallExecution::default(),
+            None,
         )?;
         let world_hex = world.map(|id| id.to_hex());
         pack.items.retain(|item| {
@@ -515,6 +517,7 @@ impl Memory<'_> {
             lease,
             None,
             &RecallExecution::default(),
+            None,
         )
     }
 
@@ -534,7 +537,7 @@ impl Memory<'_> {
         execution: &RecallExecution<'_>,
     ) -> MemoryResult<MemoryPack> {
         self.recall_routed(
-            None, query, effort, scope, limit, format, lease, None, execution,
+            None, query, effort, scope, limit, format, lease, None, execution, None,
         )
     }
 
@@ -568,6 +571,7 @@ impl Memory<'_> {
             lease,
             None,
             &RecallExecution::default(),
+            None,
         )
     }
 
@@ -597,11 +601,13 @@ impl Memory<'_> {
             lease,
             None,
             execution,
+            None,
         )
     }
 
     /// The one recall body. `session` is `None` for every canonical caller,
-    /// which therefore takes byte-identical base paths.
+    /// which therefore takes byte-identical base paths. `pin` is a paid
+    /// recall's one selection, shared by its passes (FIX 5006).
     #[expect(
         clippy::too_many_arguments,
         reason = "carries recall's public parameter list plus the session route; splitting it \
@@ -618,6 +624,7 @@ impl Memory<'_> {
         lease: Option<&BudgetLease>,
         candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
+        pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
         check_recall_request(effort, scope, limit, format, lease, execution)?;
         if let Some(session) = session {
@@ -662,6 +669,7 @@ impl Memory<'_> {
             format,
             candidate_filter,
             execution,
+            pin,
         )?;
         if let Some(session) = session {
             session.admit_participant()?;
@@ -685,6 +693,7 @@ impl Memory<'_> {
         format: Option<&str>,
         candidate_filter: Option<&crate::pipeline::CandidateFilter<'_>>,
         execution: &RecallExecution<'_>,
+        pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
         // ONE route and ONE registration door for the whole assembly. The
         // context pack registers a PROVISIONAL run and finalizes it in a
@@ -699,9 +708,9 @@ impl Memory<'_> {
             _ => None,
         };
         // Worlds, projects, facet and kinds, resolved once: an opened
-        // device's home narrows by these same values (FIX 2905).
-        let selection = self.recall_selection(scope)?;
-        let worlds = &selection.worlds;
+        // device's home narrows by these same values (FIX 2905), and each
+        // pass of a paid recall by its first pass's (FIX 5006).
+        let unfaceted = self.recall_selection(scope, pin)?;
         let canonical_lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let session_view = session
             .map(crate::off_record::OffRecordSession::read_view)
@@ -721,16 +730,14 @@ impl Memory<'_> {
                 .scoped_read_in_session(canonical_lane.actor_key().clone(), view),
             None => canonical_lane,
         };
-        let lane = match &worlds {
+        let lane = match unfaceted.worlds() {
             Some(worlds) => lane.within_worlds(worlds.clone()),
             None => lane,
         };
-        let projects = &selection.projects;
         let mut receipt = lane.read_receipt(None, 0)?;
         let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
-        let world_scope = selection.world_scope();
         let pack_format = format.map(parse_pack_format).transpose()?;
         if receipt.applied.deny_all {
             let mut pack = MemoryPack {
@@ -750,6 +757,12 @@ impl Memory<'_> {
             pack.stamp_residence(home::local_residence(self.vault, None));
             return Ok(pack);
         }
+        // Only a reader past that check has its facet ref looked up: one
+        // denied everything answers empty whatever the ref names (FIX 5008).
+        let selection = self.recall_faceted(unfaceted, scope, pin)?;
+        let worlds = &selection.worlds;
+        let projects = &selection.projects;
+        let world_scope = selection.world_scope();
         let kinds = &selection.kinds;
         // A scope that names TURN but not MESSAGE still finds a turn by its
         // messages' words: each message comes back as its turn or not at all.
@@ -1226,7 +1239,15 @@ impl Memory<'_> {
         &self,
         scope: &RecallScope,
     ) -> MemoryResult<Option<crate::pipeline::WorldAuthoritySet>> {
-        let requested = self.selected_worlds(scope)?;
+        self.room_met(self.selected_worlds(scope)?)
+    }
+
+    /// The worlds `requested` names met with a bound room turn's worlds as
+    /// they are now.
+    fn room_met(
+        &self,
+        requested: Option<crate::pipeline::WorldAuthoritySet>,
+    ) -> MemoryResult<Option<crate::pipeline::WorldAuthoritySet>> {
         let room = match self.room_turn_now()? {
             Some(turn) => crate::context_board::scope_worlds(&turn.terms.get().worlds)?,
             None => None,

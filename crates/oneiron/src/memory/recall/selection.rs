@@ -4,6 +4,8 @@
 //! candidates by the same kinds rule ([`RecallKinds`]). Nothing here grants:
 //! these are relevance filters inside the reader's own authority.
 
+use std::sync::OnceLock;
+
 use super::{CONTAINER_KINDS, RecallScope, recall_kinds};
 use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
@@ -68,6 +70,10 @@ pub(crate) struct RecallSelection {
     /// The worlds read (a bound room turn's met in); `None` reads every
     /// world, and an empty set reads none.
     pub(crate) worlds: Option<WorldAuthoritySet>,
+    /// The worlds the scope names, or the actor's default, before a bound
+    /// room turn's are met in: what a paid recall's later passes keep
+    /// (FIX 5006).
+    asked: Option<WorldAuthoritySet>,
     /// The project audiences read.
     pub(crate) projects: CorpusScope,
     /// The facet a strict facet narrowing keeps.
@@ -111,20 +117,97 @@ impl RecallSelection {
     }
 }
 
+/// What one recall narrows by but its facet, which is looked up only once
+/// the reader is past its deny-all check ([`Memory::recall_faceted`]): a
+/// reader its policy denies everything answers empty whatever its facet ref
+/// names (FIX 5008).
+pub(super) struct UnfacetedSelection(RecallSelection);
+
+impl UnfacetedSelection {
+    /// The worlds read; see [`RecallSelection::worlds`].
+    pub(super) fn worlds(&self) -> Option<&WorldAuthoritySet> {
+        self.0.worlds.as_ref()
+    }
+}
+
+/// A paid recall's one selection (FIX 5006). Its first pass resolves it,
+/// and its later passes, its retries and its rerank text read reuse it,
+/// never the scope again, so a default that changes mid-recall cannot read
+/// differently between them. Only relevance is pinned: each pass still
+/// reads under a fresh read of its credential, and meets the worlds the
+/// scope asked for with a bound room turn's as they are then.
+#[derive(Default)]
+pub(super) struct RecallPin(OnceLock<RecallSelection>);
+
+impl RecallPin {
+    fn get(&self) -> Option<&RecallSelection> {
+        self.0.get()
+    }
+}
+
 impl Memory<'_> {
     /// The one resolution of what `scope` narrows by: worlds (the actor's
-    /// default when unset, met with a bound room turn's), projects, facet
-    /// and kinds. Recall reads these values, and only these.
-    pub(super) fn recall_selection(&self, scope: &RecallScope) -> MemoryResult<RecallSelection> {
-        Ok(RecallSelection {
-            worlds: self.recall_worlds(scope)?,
+    /// default when unset, met with a bound room turn's), projects and
+    /// kinds, then the facet by [`Self::recall_faceted`]. Recall reads these
+    /// values, and only these. A pass of a paid recall whose `pin` holds a
+    /// selection reads that one, its asked worlds met with the room turn's
+    /// worlds now.
+    pub(super) fn recall_selection(
+        &self,
+        scope: &RecallScope,
+        pin: Option<&RecallPin>,
+    ) -> MemoryResult<UnfacetedSelection> {
+        if let Some(pinned) = pin.and_then(RecallPin::get) {
+            return Ok(UnfacetedSelection(RecallSelection {
+                worlds: self.room_met(pinned.asked.clone())?,
+                ..pinned.clone()
+            }));
+        }
+        let asked = self.selected_worlds(scope)?;
+        Ok(UnfacetedSelection(RecallSelection {
+            worlds: self.room_met(asked.clone())?,
+            asked,
             projects: self.selected_projects(scope)?,
-            facet: scope
-                .facet
-                .as_deref()
-                .map(|facet| self.resolve_ref(facet))
-                .transpose()?,
+            facet: None,
             kinds: RecallKinds::new(recall_kinds(scope)?),
-        })
+        }))
+    }
+
+    /// `selection` with its facet: `pin`'s when it holds a selection, or
+    /// else `scope`'s ref looked up now, the result then pinned for the
+    /// recall's later passes.
+    pub(super) fn recall_faceted(
+        &self,
+        selection: UnfacetedSelection,
+        scope: &RecallScope,
+        pin: Option<&RecallPin>,
+    ) -> MemoryResult<RecallSelection> {
+        let UnfacetedSelection(mut selection) = selection;
+        if pin.and_then(RecallPin::get).is_some() {
+            return Ok(selection);
+        }
+        selection.facet = scope
+            .facet
+            .as_deref()
+            .map(|facet| self.resolve_ref(facet))
+            .transpose()?;
+        if let Some(pin) = pin {
+            let _ = pin.0.set(selection.clone());
+        }
+        Ok(selection)
+    }
+
+    /// The worlds a read beside a paid recall's passes reads: its pinned
+    /// selection's asked worlds met with a bound room turn's now, or
+    /// `scope`'s resolved now when no pass pinned one.
+    pub(super) fn pinned_recall_worlds(
+        &self,
+        scope: &RecallScope,
+        pin: &RecallPin,
+    ) -> MemoryResult<Option<WorldAuthoritySet>> {
+        match pin.get() {
+            Some(pinned) => self.room_met(pinned.asked.clone()),
+            None => self.recall_worlds(scope),
+        }
     }
 }
