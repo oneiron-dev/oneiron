@@ -56,8 +56,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
     // SCAN C049: the tombstones replay FORWARD_TOMBSTONE_CHUNK at a time
     // under one parent transaction, each in a child of its own, so a chunk's
     // unknown hard ids share one decision-ledger scan. Nothing of a chunk is
-    // recorded before its parent commits; a chunk whose parent fails replays
-    // one by one, each in its own transaction.
+    // recorded before its parent commits. A chunk whose parent fails replays
+    // one by one, each in its own transaction, and so does the rest of a
+    // chunk from a child that ran out of room in its parent.
     let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
     map_for_each_tombstone_value(ctx.tombstones.map(), |key, value| {
         entries.push((key.to_owned(), value.to_vec()));
@@ -77,19 +78,20 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> TombstonePass
         if pass.outcome.deferred_error.is_some() {
             break;
         }
-        if let Err(error) = pass.replay_chunk(chunk) {
+        let done = pass.replay_chunk(chunk).unwrap_or_else(|error| {
             tracing::warn!(
                 window = %ctx.window_key,
                 tombstones = chunk.len(),
                 kind = ?error.kind(),
                 "forward remat: tombstone chunk transaction failed; replaying its tombstones one by one"
             );
-            for (key, value) in chunk {
-                if pass.outcome.deferred_error.is_some() {
-                    break;
-                }
-                pass.replay_one(key, value);
+            0
+        });
+        for (key, value) in &chunk[done..] {
+            if pass.outcome.deferred_error.is_some() {
+                break;
             }
+            pass.replay_one(key, value);
         }
     }
     pass.outcome
@@ -141,9 +143,11 @@ impl Pass<'_> {
     /// so a failure rolls back only that item, and the chunk's hard ids share
     /// one decision-ledger scan while the parent is held. Once the parent
     /// commits, each replay gets the cleanup and bookkeeping the one-by-one
-    /// path gives it, in order. An `Err` means nothing of the chunk
-    /// committed and nothing was recorded: the caller replays it one by one.
-    fn replay_chunk(&mut self, chunk: &[(String, Vec<u8>)]) -> Result<()> {
+    /// path gives it, in order. Returns how many tombstones the chunk took:
+    /// a child out of room ends it early, so that tombstone and the rest get
+    /// a transaction each. An `Err` means nothing of the chunk committed and
+    /// nothing was recorded: the caller replays it one by one.
+    fn replay_chunk(&mut self, chunk: &[(String, Vec<u8>)]) -> Result<usize> {
         let vault = self.ctx.vault;
         let hard_ids = chunk.iter().filter_map(|(key, value)| {
             EntityId::from_hex(key)
@@ -155,11 +159,16 @@ impl Pass<'_> {
         let _ = vault.prepare_install_signing();
         let mut staged = Vec::new();
         let mut stopped = None;
+        let mut done = chunk.len();
         let committed = vault.store.env.write_txn().and_then(|mut parent| {
             let probes = vault.batch_tombstone_scope_probes_in_txn(&parent, hard_ids)?;
-            for (key, value) in chunk {
+            for (index, (key, value)) in chunk.iter().enumerate() {
                 if let Err(error) = self.stage(&mut parent, key, value, &mut staged) {
-                    stopped = Some(error);
+                    if out_of_room(&error) {
+                        done = index;
+                    } else {
+                        stopped = Some(error);
+                    }
                     break;
                 }
             }
@@ -171,6 +180,13 @@ impl Pass<'_> {
         // committed or dropped.
         vault.store.flush_legal_hold_refusals_settled();
         committed?;
+        if done < chunk.len() {
+            tracing::warn!(
+                window = %self.ctx.window_key,
+                tombstones = chunk.len() - done,
+                "forward remat: tombstone chunk ran out of transaction room; replaying the rest one by one"
+            );
+        }
         for step in staged {
             match step {
                 Staged::Terminal(id) => self.ledger.terminal_quarantines.extend(id),
@@ -190,13 +206,14 @@ impl Pass<'_> {
         if let Some(error) = stopped {
             self.defer(error);
         }
-        Ok(())
+        Ok(done)
     }
 
     /// Applies one tombstone of a chunk in `parent`, each write in a child of
     /// its own, and stages what the pass records once `parent` commits. An
-    /// `Err` (a quarantine write or a residence read failed) stops the chunk
-    /// there, as it stops the pass.
+    /// `Err` stops the chunk there: a child out of room hands this tombstone
+    /// on to the one-by-one path, and any other error (a quarantine write or
+    /// a residence read failed) stops the pass.
     fn stage<'e>(
         &self,
         parent: &mut heed::RwTxn<'_>,
@@ -223,6 +240,7 @@ impl Pass<'_> {
                 .map(|(outcome, _changed)| outcome)
         });
         match replayed {
+            Err(err) if out_of_room(&err) => return Err(err),
             Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                 self.quarantine_in(parent, key, value, &err)?;
                 staged.push(Staged::Terminal(Some(id)));
@@ -423,6 +441,16 @@ fn residence_in(
         return Ok(TombstoneResidence::Match);
     }
     Ok(state)
+}
+
+/// Whether a child failed for want of room in its parent. A tombstone that
+/// fits no transaction fails this way on every pass; in one of its own it
+/// fails alone, so it cannot starve the tombstones after it.
+fn out_of_room(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::MapFull | Error::Storage(heed::Error::Mdb(heed::MdbError::TxnFull))
+    )
 }
 
 /// Runs `apply` in a child of `parent`, committed into it only on success: a
