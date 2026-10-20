@@ -1,12 +1,13 @@
 //! The owner host a managed vault serves with: its backups and restore
 //! rehearsals on the tenant's own disk, in private directories beside its
 //! data directory, as plain serve keeps backups beside its vault. In the
-//! vault VM they are `/vault/data.backups` and `/vault/data.rehearsals`:
+//! vault VM they are `/vault/storage/data.backups` and
+//! `/vault/storage/data.rehearsals`, inside the vault's fscrypt storage:
 //! never the system temp directory, `/run`, the read-only `/config` or the
 //! key directory `/vault/keys`. A direct Linear mirror's response custody
-//! lies beside them, in `/vault/data.linear-responses`, and pack organ builds
-//! under the data directory, in `/vault/data/organs`, unless the supervisor
-//! names their directory.
+//! lies beside them, in `/vault/storage/data.linear-responses`, and pack
+//! organ builds under the data directory, in `/vault/storage/data/organs`,
+//! unless the supervisor names their directory.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
