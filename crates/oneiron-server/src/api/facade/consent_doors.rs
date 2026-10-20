@@ -12,7 +12,9 @@ use oneiron::consent::lifecycle::{
     RevokeGrantRequest,
 };
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistry, ConsentRegistryQuery};
+use oneiron::failure_signals::HeldFailureSignalBatchView;
 use oneiron::memory::MemoryResult;
+use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::host_doors::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
@@ -87,6 +89,31 @@ pub(crate) async fn vault_consent_registry(
         move |vault, owner| lifecycle::registry(vault, owner, input),
     )
     .await
+}
+
+/// `vault.consent.failure_signals_held` (FIX 6740): the failure-signal batch
+/// the vault carries, its exact content and the approve-once digest the
+/// press beside it takes, under the owner's proof. Its answer lists the
+/// worlds the batch's code-fix records touched, so every served door
+/// releases it by them as it releases any owner read.
+pub(crate) async fn vault_consent_failure_signals_held(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: EmptyRequest,
+) -> Listed<Option<HeldFailureSignalBatchView>> {
+    const VERB: &str = "vault.consent.failure_signals_held";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let server = Arc::clone(server);
+    let read =
+        tokio::task::spawn_blocking(move || server.vault().held_failure_signal_batch(&owner)).await;
+    match read {
+        Ok(Ok((view, worlds))) => (Ok(view), worlds),
+        Ok(Err(error)) => (Err(error), Vec::new()),
+        Err(_) => (Err(internal(VERB)), Vec::new()),
+    }
 }
 
 pub(crate) async fn vault_consent_revoke(

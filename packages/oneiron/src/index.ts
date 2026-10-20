@@ -1617,6 +1617,8 @@ export class Oneiron {
       create_standing_grant: (input: Facade.CreateStandingGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateStandingGrant(input) as Facade.ConsentActReceipt),
       /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
       registry: (input: Facade.ConsentRegistryQuery): Facade.ConsentRegistry => this.#call(() => this.#client.vaultConsentRegistry(input) as Facade.ConsentRegistry),
+      /** Read the carried failure-signal batch's exact content and approval digest as the owner. */
+      failure_signals_held: (input: Facade.EmptyRequest = {}): Facade.HeldFailureSignalBatchView | null => this.#call(() => this.#client.vaultConsentFailureSignalsHeld(input) as Facade.HeldFailureSignalBatchView | null),
       /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
       revoke: (input: Facade.RevokeGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentRevoke(input) as Facade.ConsentActReceipt),
       /** The owner previews the exact actor, classes, envelope and project or thread of a scoped bypass; this warning grants nothing. */

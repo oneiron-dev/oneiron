@@ -36,6 +36,7 @@ pub use delivery::{
     FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport,
     FailureSignalTransportRequest,
 };
+pub use held::HeldFailureSignalBatchView;
 pub(crate) use held::erase_held_batch_actor_in_txn;
 pub use live::DispatchFailure;
 pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};

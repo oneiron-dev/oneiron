@@ -2346,6 +2346,11 @@ export_facade! {
     let output = client.vault_consent_registry(&input)?;
     crate::codec::lift_record("vault.consent.registry", &output)
 };
+"vault.consent.failure_signals_held" => fn vault_consent_failure_signals_held(&self) -> Option<HeldFailureSignalBatchView> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.consent.failure_signals_held")?;
+    let output = client.vault_consent_failure_signals_held(&input)?;
+    crate::codec::lift_record("vault.consent.failure_signals_held", &output)
+};
 "vault.consent.revoke" => fn vault_consent_revoke(&self, input: RevokeGrantRequest) -> ConsentActReceipt = |client| {
     let input: oneiron::consent::lifecycle::RevokeGrantRequest = crate::codec::lower_record("vault.consent.revoke", input)?;
     let output = client.vault_consent_revoke(&input)?;

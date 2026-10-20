@@ -2518,6 +2518,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.consent.failure_signals_held",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.consent.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::consent::lifecycle::RevokeGrantRequest,
@@ -6426,6 +6430,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consent.deny",
     "vault.consent.create_standing_grant",
     "vault.consent.registry",
+    "vault.consent.failure_signals_held",
     "vault.consent.revoke",
     "vault.consent.bypass_grant_warning",
     "vault.consent.create_bypass_grant",
@@ -7819,6 +7824,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consent.registry" => {
             crate::code_run::vault_read::request_schema::<crate::consent::ConsentRegistry>()
         }
+        "vault.consent.failure_signals_held" => crate::code_run::vault_read::request_schema::<
+            Option<crate::failure_signals::HeldFailureSignalBatchView>,
+        >(),
         "vault.consent.revoke" => crate::code_run::vault_read::request_schema::<
             crate::consent::lifecycle::ConsentActReceipt,
         >(),
@@ -12380,6 +12388,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.consent.registry" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consent.failure_signals_held" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18242,6 +18257,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consent.registry" => {
             let _input: crate::consent::ConsentRegistryQuery = decode(value.clone())?;
         }
+        "vault.consent.failure_signals_held" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "vault.consent.revoke" => {
             let _input: crate::consent::lifecycle::RevokeGrantRequest = decode(value.clone())?;
         }
@@ -21401,6 +21419,9 @@ pub fn invoke(
             encode(vault_consent_create_standing_grant(memory, decode(value)?)?)
         }
         "vault.consent.registry" => encode(vault_consent_registry(memory, decode(value)?)?),
+        "vault.consent.failure_signals_held" => {
+            encode(vault_consent_failure_signals_held(memory, decode(value)?)?)
+        }
         "vault.consent.revoke" => encode(vault_consent_revoke(memory, decode(value)?)?),
         "vault.consent.bypass_grant_warning" => {
             encode(vault_consent_bypass_grant_warning(memory, decode(value)?)?)
@@ -26671,6 +26692,15 @@ pub fn vault_consent_registry(
         &memory.embedded_owner("vault.consent.registry")?,
         input,
     )
+}
+pub fn vault_consent_failure_signals_held(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::failure_signals::HeldFailureSignalBatchView>> {
+    Ok(memory
+        .vault()
+        .held_failure_signal_batch(&memory.embedded_owner("vault.consent.failure_signals_held")?)?
+        .0)
 }
 pub fn vault_consent_revoke(
     memory: &Memory<'_>,

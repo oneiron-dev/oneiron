@@ -7225,6 +7225,21 @@
       "openapi": true
     },
     {
+      "name": "vault.consent.failure_signals_held",
+      "description": "Read the carried failure-signal batch's exact content and approval digest as the owner.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::failure_signals::HeldFailureSignalBatchView>",
+      "call": "memory.vault().held_failure_signal_batch(&memory.embedded_owner(\"vault.consent.failure_signals_held\")?)?.0",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.consent.revoke",
       "description": "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted.",
       "input": "crate::consent::lifecycle::RevokeGrantRequest",

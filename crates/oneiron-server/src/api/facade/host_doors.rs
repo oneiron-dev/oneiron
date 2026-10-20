@@ -1585,6 +1585,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.row.change"
         | "vault.consent.approve_once"
         | "vault.consent.deny"
+        | "vault.consent.failure_signals_held"
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"

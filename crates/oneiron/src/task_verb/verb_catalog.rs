@@ -473,6 +473,7 @@ pub enum AgentVerb {
     VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
+    VaultConsentFailureSignalsHeld,
     VaultConsentRevoke,
     VaultConsentBypassGrantWarning,
     VaultConsentCreateBypassGrant,
@@ -1578,6 +1579,7 @@ impl AgentVerb {
         Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
+        Self::VaultConsentFailureSignalsHeld,
         Self::VaultConsentRevoke,
         Self::VaultConsentBypassGrantWarning,
         Self::VaultConsentCreateBypassGrant,
@@ -2698,6 +2700,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
+            Self::VaultConsentFailureSignalsHeld => "vault.consent.failure_signals_held",
             Self::VaultConsentRevoke => "vault.consent.revoke",
             Self::VaultConsentBypassGrantWarning => "vault.consent.bypass_grant_warning",
             Self::VaultConsentCreateBypassGrant => "vault.consent.create_bypass_grant",
@@ -3821,6 +3824,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
+                | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
                 | Self::VaultConsentBypassGrantWarning
                 | Self::VaultConsentCreateBypassGrant
@@ -4953,6 +4957,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
+                | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
                 | Self::VaultConsentBypassGrantWarning
                 | Self::VaultConsentCreateBypassGrant
@@ -6192,6 +6197,7 @@ impl AgentVerb {
                 | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
+                | Self::VaultConsentFailureSignalsHeld
                 | Self::VaultConsentRevoke
                 | Self::VaultConsentBypassGrantWarning
                 | Self::VaultConsentCreateBypassGrant
@@ -7945,6 +7951,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
             Self::VaultConsentBypassGrantWarning => &["spec"],
             Self::VaultConsentCreateBypassGrant => &["spec"],
@@ -9051,6 +9058,7 @@ impl AgentVerb {
             Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentFailureSignalsHeld => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
             Self::VaultConsentBypassGrantWarning => &["spec"],
             Self::VaultConsentCreateBypassGrant => &["spec"],
@@ -11067,6 +11075,9 @@ impl AgentVerb {
             }
             Self::VaultConsentRegistry => {
                 "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."
+            }
+            Self::VaultConsentFailureSignalsHeld => {
+                "Read the carried failure-signal batch's exact content and approval digest as the owner."
             }
             Self::VaultConsentRevoke => {
                 "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1082 facade rows, 3714 declarations.
-Inputs: 1017 of 1082 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 969 of 1082 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1083 facade rows, 3715 declarations.
+Inputs: 1018 of 1083 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 970 of 1083 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -8564,6 +8564,20 @@ class ConsentRegistryAgentGrant(TypedDict):
 ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
     rows: list[ConsentRegistryRow]
+class HeldFailureSignalBatchView(TypedDict):
+    batch_id: str
+    endpoint: str
+    send_ref: str
+    content_ref: str
+    content: str
+    content_digest: str
+    approval_digest: str
+    count_rows: int
+    signal_count: int
+    code_fix_records: int
+    training_permitted: bool
+    created_at: int
+    custody_stage: str
 class RevokeGrantRequest(TypedDict):
     grant: str
 CatastropheClass = Literal["WidenOwnAuthority", "KeyRecovery", "VaultWideDestruction", "SecurityControlDisable", "MassSecretExport", "WorldPrivacyWiden"]
