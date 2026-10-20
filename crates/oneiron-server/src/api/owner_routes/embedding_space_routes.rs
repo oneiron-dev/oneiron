@@ -402,12 +402,23 @@ async fn approve_move(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
+    // FIX 6907: a third-party candidate's withheld documents do not keep it
+    // filling.
+    let gates = Arc::clone(&server);
     move_step(
         auth,
         server,
         payload,
         "vault.embedding_spaces.move_approve",
-        |vault, candidate| vault.approve_space_move(candidate),
+        move |vault, candidate| {
+            let egress = gates.candidate_media_egress(candidate);
+            vault.approve_space_move_admitted(
+                candidate,
+                egress
+                    .as_ref()
+                    .map(|gate| gate as &dyn oneiron::embed::EgressPredicate),
+            )
+        },
     )
     .await
 }

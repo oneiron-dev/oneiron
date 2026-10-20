@@ -174,7 +174,19 @@ pub(crate) async fn vault_embedding_spaces_move_approve(
         server,
         auth,
         "vault.embedding_spaces.move_approve",
-        move |server, owner| sdk::approve_embedding_space_move_as(server.vault(), owner, input),
+        move |server, owner| {
+            // FIX 6907: a third-party candidate's withheld documents do not
+            // keep it filling.
+            let egress = server.candidate_media_egress(&input.candidate);
+            sdk::approve_embedding_space_move_admitted_as(
+                server.vault(),
+                owner,
+                input,
+                egress
+                    .as_ref()
+                    .map(|gate| gate as &dyn oneiron::embed::EgressPredicate),
+            )
+        },
         |_| Vec::new(),
     )
     .await

@@ -305,8 +305,20 @@ pub fn approve_embedding_space_move_as(
     _owner: &AuthenticatedOwner,
     input: EmbeddingSpaceCandidateRequest,
 ) -> MemoryResult<EmbeddingSpacesView> {
+    approve_embedding_space_move_admitted_as(vault, _owner, input, None)
+}
+
+/// [`approve_embedding_space_move_as`] behind the host's media egress gate
+/// on the candidate's third-party model (FIX 6907): what the gate withholds
+/// never fills the candidate, so it does not keep the move filling.
+pub fn approve_embedding_space_move_admitted_as(
+    vault: &Vault,
+    _owner: &AuthenticatedOwner,
+    input: EmbeddingSpaceCandidateRequest,
+    egress: Option<&dyn crate::embed::EgressPredicate>,
+) -> MemoryResult<EmbeddingSpacesView> {
     vault
-        .approve_space_move(&input.candidate)
+        .approve_space_move_admitted(&input.candidate, egress)
         .map_err(refused)?;
     view(vault)
 }
