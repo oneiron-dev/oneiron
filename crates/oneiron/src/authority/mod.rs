@@ -177,6 +177,8 @@ pub use oneiron_authority::authority::{
 pub use oneiron_authority::authority::{CustodyChange, CustodyRecipientPermit};
 // The settings edit a holder's key work follows (FIX 4704).
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
+// The heads a root request's revision is over, its witness (FIX 5551).
+pub use oneiron_authority::authority::RootRevisionBasis;
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 
@@ -317,6 +319,7 @@ pub(crate) use log_budget::with_authority_doors_open_for_test;
 pub(crate) use log_budget::{
     AuthorityDoor, AuthorityDoorView, authority_door, authority_signer_label, signer_has_standing,
 };
+pub(crate) use owner_work::{RootBasisCheck, check_root_basis_in_txn};
 pub(crate) use pinned_root::{drop_pinned_root_in_txn, is_pinned_root_row};
 pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,

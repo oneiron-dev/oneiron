@@ -73,6 +73,44 @@ impl Vault {
         if sealed && !crate::batch::secret_scan::is_sealed(bytes) {
             return Ok(SecretSight::Masked);
         }
+        self.stored_file_sight(asker, artifact, (hash, sealed), why)
+    }
+
+    /// [`Self::file_sight`] for a file a mark covers, judged by its stored
+    /// digest `hash` alone (FIX 6507): the stored bytes need not be held to
+    /// decide. `None` when no mark covers the file, and the caller judges its
+    /// stored bytes with [`Self::file_sight`].
+    ///
+    /// # Errors
+    /// As [`Self::file_sight`].
+    pub(crate) fn marked_file_sight(
+        &self,
+        asker: &RevealAsker,
+        artifact: &EntityId,
+        hash: &[u8; 32],
+        why: &str,
+    ) -> Result<Option<SecretSight>> {
+        let marked = {
+            let txn = self.store.env.read_txn()?;
+            masked_file_in_txn(&self.store, &txn, hash)?.is_some()
+        };
+        if !marked {
+            return Ok(None);
+        }
+        self.stored_file_sight(asker, artifact, (*hash, false), why)
+            .map(Some)
+    }
+
+    /// The read check of the stored file `hash` of `artifact`, `sealed` when
+    /// no mark covers it and it is a sealed file: its receipt, grant use or
+    /// ask, and the sight it gives.
+    fn stored_file_sight(
+        &self,
+        asker: &RevealAsker,
+        artifact: &EntityId,
+        (hash, sealed): ([u8; 32], bool),
+        why: &str,
+    ) -> Result<SecretSight> {
         let why = checked_text(
             why,
             "a read of a file with keys in it says why it needs them",

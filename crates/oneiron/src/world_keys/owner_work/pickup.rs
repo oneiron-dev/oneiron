@@ -194,7 +194,7 @@ impl Vault {
             (OwnerWorkBody::WorldKey { mode }, Some(secret)) => {
                 self.world_key_work_in_txn(txn, &fold, hash, request, *mode, secret)?
             }
-            (OwnerWorkBody::Root { change }, Some(secret)) => {
+            (OwnerWorkBody::Root { change, .. }, Some(secret)) => {
                 self.root_work_in_txn(txn, &fold, hash, request, *change, secret)?
             }
             (OwnerWorkBody::PublishBundle { home }, Some(_)) => {

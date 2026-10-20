@@ -8,11 +8,15 @@
 //! request carries ids only ([`RootChange`]); no seed, piece, passphrase,
 //! enrolment code, prepared root or carry list enters it, a receipt or the
 //! log. Its `seen` is the revision of the owner roots and of the target's
-//! standing ([`AuthorityFold::root_work_revision`], CALLS ROOT_WORK_REVISION),
-//! which the target computes again in its own writer transaction: another
-//! revision refuses the request as a root revision mismatch, which says the
-//! target may need to sync before the owner asks again (FIX 4738), and a
-//! removed owner as not live.
+//! standing ([`AuthorityFold::root_work_basis`], CALLS ROOT_WORK_REVISION),
+//! and the request carries the heads it is over as its witness
+//! ([`crate::authority::RootRevisionBasis`], FIX 5551). The target computes
+//! the revision again in its own writer transaction. Another revision whose
+//! every difference is a witnessed root or anchor's mark the target has not
+//! folded yet is a lag: the request stays pending, signs nothing, keeps its
+//! wait and is checked again on the next pickup or run (CALLS
+//! ROOT_WORK_BASIS). Any other revision refuses the request as a root
+//! revision mismatch (FIX 4738), and a removed owner as not live.
 //!
 //! A pin needs nothing the target lacks, so the target's pickup makes it
 //! (`super::owner_work`). Every other change needs the root's seed or kit,
@@ -66,8 +70,8 @@ use super::{
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, MachineEnrolmentRequest, OwnerWorkBody,
     OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal, OwnerWorkRequest, RecoveryRootId,
-    RequestCode, RootChange, end_request_wait_in_txn, ended_request_wait, invalid_authority,
-    read_pin_row_in_txn,
+    RequestCode, RootBasisCheck, RootChange, RootRevisionBasis, check_root_basis_in_txn,
+    end_request_wait_in_txn, ended_request_wait, invalid_authority, read_pin_row_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -126,12 +130,37 @@ enum RootCompletion {
 const ROOT_WORK_COMPLETION: RootCompletion = RootCompletion::ExactTargetCommit;
 
 /// The refusal a root request gets when its target computes another revision
-/// than the act's `seen` (CALLS ROOT_WORK_REVISION, FIX 4738). Typed apart
-/// from a stale settings act: the inequality does not say whether the target
-/// has not yet folded a root record or mark the recorder held, or the roots
-/// moved since. The refusal stands and nothing is replayed; the owner reviews
-/// where the target stands and asks again.
+/// than the act's `seen` and its basis does not prove a lag (CALLS
+/// ROOT_WORK_REVISION, FIX 4738): the roots or the target's standing moved
+/// since the owner decided. Typed apart from a stale settings act. The
+/// refusal stands and nothing is replayed; the owner reviews where the
+/// target stands and asks again.
 const ROOT_REVISION_REFUSAL: OwnerWorkRefusal = OwnerWorkRefusal::RootRevisionMismatch;
+
+/// What a proven lag does to a root request (CALLS ROOT_WORK_BASIS, FIX
+/// 5551).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BasisLag {
+    /// Every head that differs from the request's witness is a root or an
+    /// anchor's mark the target has not folded yet: the request stays
+    /// pending, signs no result, keeps its wait, and runs on the pickup or
+    /// call that finds the target caught up. Nothing expires.
+    Pending,
+}
+
+const ROOT_WORK_BASIS: BasisLag = BasisLag::Pending;
+
+/// What the target's recheck of a root request found in its transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RootRecheck {
+    /// The request may run here now.
+    Runs,
+    /// Final: the refused result it signs closes the request.
+    Refused(OwnerWorkRefusal),
+    /// The target has not folded every root or mark the owner saw: no
+    /// result, the request stays pending (CALLS ROOT_WORK_BASIS).
+    AwaitsBasis,
+}
 
 /// The cancel door's refusal for a request this install folds as no root
 /// request: nothing is written.
@@ -249,6 +278,11 @@ impl std::fmt::Debug for RootMaterial<'_> {
 pub enum RootWorkDone {
     /// Answered refused, for the reason given: the request is closed.
     Refused { reason: OwnerWorkRefusal },
+    /// Not run: this install has not folded every root or mark the owner
+    /// saw when he decided (FIX 5551, CALLS ROOT_WORK_BASIS). Nothing was
+    /// written or signed, the request stays pending, and the same call runs
+    /// it once the target has synced.
+    AwaitingBasis,
     /// The activation's kit, issued: its pieces for this caller to place.
     /// Nothing is published, the inventory lists the kit pending, and the
     /// request stays pending until the kit's confirm.
@@ -276,6 +310,10 @@ impl RootWorkDone {
     pub fn text(&self) -> &'static str {
         match self {
             Self::Refused { .. } => "refused by the target",
+            Self::AwaitingBasis => {
+                "pending: the target has not synced the roots the owner saw; sync it and run the \
+                 request again"
+            }
             Self::KitIssued(_) => "kit issued; confirm it on the target to finish",
             Self::KitConfirmed {
                 mirror_pending: true,
@@ -307,10 +345,11 @@ impl Vault {
         change: RootChange,
     ) -> Result<OwnerWorkReceipt> {
         self.with_write_txn(|txn| {
-            let seen = self
+            let basis: RootRevisionBasis = self
                 .authority_view_readonly_in_txn(txn)?
-                .root_work_revision(target, change);
-            let work = OwnerWorkBody::Root { change };
+                .root_work_basis(target, change);
+            let seen = basis.revision();
+            let work = OwnerWorkBody::Root { change, basis };
             self.record_owner_work_in_txn(txn, owner, surface, target, seen, work)
         })
     }
@@ -368,7 +407,7 @@ impl Vault {
         Ok(fold
             .pending_owner_work_for(me)
             .filter_map(|(hash, request)| match request.work {
-                OwnerWorkBody::Root { change } => {
+                OwnerWorkBody::Root { change, .. } => {
                     OwnerWorkReceipt::of(&fold, hash).map(|receipt| (hash, change, receipt))
                 }
                 _ => None,
@@ -393,8 +432,16 @@ impl Vault {
         change: RootChange,
         secret: &MachineSecret,
     ) -> Result<Option<OwnerWorkOutcome>> {
-        if let Some(reason) = self.root_work_refusal(txn, fold, request, change)? {
-            return Ok(Some(OwnerWorkOutcome::Refused { reason }));
+        match self.root_work_recheck(txn, fold, request)? {
+            RootRecheck::Runs => {}
+            RootRecheck::Refused(reason) => return Ok(Some(OwnerWorkOutcome::Refused { reason })),
+            RootRecheck::AwaitsBasis => {
+                tracing::info!(
+                    "a root request waits for this install to fold the roots or marks its owner \
+                     saw; it stays pending"
+                );
+                return Ok(None);
+            }
         }
         match change {
             RootChange::Pin { root } => {
@@ -444,27 +491,34 @@ impl Vault {
         Ok(ended_request_wait(&row, &fold))
     }
 
-    /// The first recheck a root request fails in this transaction: its owner
-    /// is no longer a live vault owner, or the roots' and the target's
-    /// revision here differs from the act's `seen` (CALLS ROOT_WORK_REVISION,
-    /// [`ROOT_REVISION_REFUSAL`]). Each is final: the refused result it signs
-    /// closes the request, and with it a wait its pickup committed (FIX
-    /// 5696). Work that may still run here signs no refusal.
-    fn root_work_refusal(
+    /// The recheck of a root request in this transaction. Its owner no
+    /// longer a live vault owner, or the roots' and the target's revision
+    /// here moved from the act's `seen` ([`ROOT_REVISION_REFUSAL`]), is final:
+    /// the refused result it signs closes the request, and with it a wait its
+    /// pickup committed (FIX 5696). A revision whose every difference is a
+    /// witnessed root or mark not folded here yet is a lag
+    /// ([`RootBasisCheck::Lagging`], CALLS ROOT_WORK_BASIS): no result, and
+    /// the request stays pending. Work that may still run here signs no
+    /// refusal.
+    pub(super) fn root_work_recheck(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
         request: &OwnerWorkRequest,
-        change: RootChange,
-    ) -> Result<Option<OwnerWorkRefusal>> {
-        let owner = &request.act.owner;
+    ) -> Result<RootRecheck> {
+        let OwnerWorkBody::Root { change, basis } = &request.work else {
+            return Err(invalid_authority());
+        };
+        if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &request.act.owner)? {
+            return Ok(RootRecheck::Refused(OwnerWorkRefusal::OwnerNotLive));
+        }
         Ok(
-            if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, owner)? {
-                Some(OwnerWorkRefusal::OwnerNotLive)
-            } else if fold.root_work_revision(request.act.target, change) != request.act.seen {
-                Some(ROOT_REVISION_REFUSAL)
-            } else {
-                None
+            match check_root_basis_in_txn(&self.store, txn, fold, request, *change, basis)? {
+                RootBasisCheck::Same => RootRecheck::Runs,
+                RootBasisCheck::Lagging => match ROOT_WORK_BASIS {
+                    BasisLag::Pending => RootRecheck::AwaitsBasis,
+                },
+                RootBasisCheck::Moved => RootRecheck::Refused(ROOT_REVISION_REFUSAL),
             },
         )
     }

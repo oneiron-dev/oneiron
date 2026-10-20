@@ -530,8 +530,9 @@ fn staged_whole(
 /// `request` is the owner's bundle publication request the commit is for,
 /// when the machine publishes on his ask: once it counts here naming this
 /// home and that machine as its executor, the home records the commit in the
-/// same transaction ([`sealed_bundle_commit_receipt`], FIX 4787). A request
-/// that does not check refuses nothing.
+/// same transaction ([`sealed_bundle_commit_receipt`], FIX 4787), and while
+/// this home's fold has not seen it, the commit's claim, checked when read
+/// (FIX 5554). A request that does not check refuses nothing.
 ///
 /// # Errors
 ///

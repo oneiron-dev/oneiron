@@ -5,15 +5,22 @@
 //! here, names this home and names the committing machine as its executor,
 //! the home records the commit (the machine, the generation and the bundle's
 //! ciphertext digest) in the commit's own transaction, so the commit and its
-//! record land together or not at all. The first commit recorded for a
-//! request stands. A record outlives its generation's retirement, with no
-//! expiry and no count bound, and goes once the request has its result here.
-//! A commit whose request does not check is taken exactly as one naming
+//! record land together or not at all. When this home's fold has not seen
+//! the request yet (an owner machine may commit before the home folds the
+//! ask), the home keeps the commit's claim the same way (FIX 5554, CALLS
+//! BUNDLE_COMMIT_CLAIM), to be checked once the request folds. Each record
+//! is keyed by the request and the committing machine, so another machine's
+//! commit never takes the executor's slot; the first one per pair stands. A
+//! record outlives its generation's retirement, with no expiry and no count
+//! bound, and goes once the request has its result here. A commit whose
+//! request folded here and does not check is taken exactly as one naming
 //! none: nothing is refused that was taken before.
 //!
 //! The executor reads the record back before it assembles another upload for
 //! the request (`sync::client`'s bundle publication), so an acknowledgement
-//! lost on the way does not make it publish twice.
+//! lost on the way does not make it publish twice. A claim whose request this
+//! home has not folded yet answers that it cannot tell, never that there is
+//! none: the executor holds its upload as uncertain and asks again later.
 
 use super::super::bundle_turn::{hold_turn_in, published_in};
 use super::{
@@ -24,18 +31,66 @@ use super::{
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, AuthorityFold, OwnerWorkBody, PeerMachine};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::side_table::{self, Raw, SideTable};
 use crate::world_keys::{
     RecoveryRootId, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle, sealed_bundle_slot,
 };
 
-/// Each asked commit the home recorded, by its request.
+/// Each asked commit the home recorded, by its request and its committer.
 const RECEIPTS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT);
 
-/// The machine (16) ‖ the generation (24) ‖ the bundle's digest (32).
-const RECEIPT_LEN: usize = 16 + 24 + 32;
+/// Whether a record's request checked when its commit landed (1), or this
+/// home's fold had not seen it yet, a claim (0) ‖ the machine (16) ‖ the
+/// generation (24) ‖ the bundle's digest (32).
+const RECEIPT_LEN: usize = 1 + 16 + 24 + 32;
+
+/// What a record is for an early commit (CALLS BUNDLE_COMMIT_CLAIM, FIX
+/// 5554).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EarlyCommit {
+    /// A commit naming a request this home's fold has not seen keeps its
+    /// claim, keyed by the request and the committer. Read back, it is the
+    /// receipt once the request folds counted naming this home and that
+    /// committer; nothing once the request folded otherwise; and, until the
+    /// request folds here, an answer that the home cannot tell yet, so the
+    /// executor holds its upload. No expiry, no count bound.
+    ClaimCheckedOnRead,
+}
+
+const BUNDLE_COMMIT_CLAIM: EarlyCommit = EarlyCommit::ClaimCheckedOnRead;
+
+/// A record's kind byte.
+const CHECKED: u8 = 1;
+const CLAIM: u8 = 0;
+
+/// The record key: the request's entry hash, then the committing machine.
+fn receipt_key(request: &AuthorityEntryHash, machine: EntityId) -> String {
+    format!("{}:{}", sealed_digest_hex(request), machine.to_hex())
+}
+
+/// The request a record key names.
+fn receipt_request(key: &[u8]) -> Option<AuthorityEntryHash> {
+    let key = std::str::from_utf8(key).ok()?;
+    let (request, _) = key.split_once(':')?;
+    super::sealed_digest_from_hex(request)
+}
+
+/// Whether `fold` has seen the request signed as entry `request`, with
+/// effect or without.
+fn folded_here(fold: &AuthorityFold, request: &AuthorityEntryHash) -> bool {
+    fold.owner_work_request(request).is_some()
+        || fold.refused_owner_work().contains(request)
+        || fold.valid_entries.contains(request)
+}
+
+/// A claim whose request this home has not folded yet: the home cannot tell
+/// whether the commit is the request's (FIX 5554). The status read answers
+/// it as a refused call, which the executor holds on as uncertain.
+fn claim_unsettled() -> Error {
+    Error::sync_protocol(SyncProtocolValidation::DocumentPendingUpdate)
+}
 
 /// The commit the home recorded for one bundle publication request: the
 /// executor that made it, the generation and the sealed bundle's digest.
@@ -49,24 +104,32 @@ pub struct SealedBundleCommitReceipt {
 }
 
 impl SealedBundleCommitReceipt {
-    fn encode(&self) -> Vec<u8> {
+    fn encode(&self, kind: u8) -> Vec<u8> {
         let mut out = Vec::with_capacity(RECEIPT_LEN);
+        out.push(kind);
         out.extend_from_slice(self.executor.as_bytes());
         out.extend_from_slice(&self.generation.to_bytes());
         out.extend_from_slice(&self.bundle_digest);
         out
     }
 
-    fn decode(raw: &[u8]) -> Result<Self> {
-        if raw.len() != RECEIPT_LEN {
+    /// The record's kind byte and its receipt.
+    fn decode(raw: &[u8]) -> Result<(u8, Self)> {
+        let Some((&kind, raw)) = raw.split_first() else {
+            return Err(Error::InvalidKey);
+        };
+        if raw.len() != RECEIPT_LEN - 1 || (kind != CHECKED && kind != CLAIM) {
             return Err(Error::InvalidKey);
         }
         let executor: [u8; 16] = raw[..16].try_into().map_err(|_| Error::InvalidKey)?;
-        Ok(Self {
-            executor: EntityId::from_bytes(executor).map_err(|_| Error::InvalidKey)?,
-            generation: SealedBundleGeneration::from_bytes(&raw[16..40])?,
-            bundle_digest: raw[40..].try_into().map_err(|_| Error::InvalidKey)?,
-        })
+        Ok((
+            kind,
+            Self {
+                executor: EntityId::from_bytes(executor).map_err(|_| Error::InvalidKey)?,
+                generation: SealedBundleGeneration::from_bytes(&raw[16..40])?,
+                bundle_digest: raw[40..].try_into().map_err(|_| Error::InvalidKey)?,
+            },
+        ))
     }
 }
 
@@ -90,7 +153,8 @@ fn asks_here(
 }
 
 /// Records `machine`'s commit of `entry` for `request` in the commit's own
-/// transaction, when the request checks (FIX 4787), unless a commit is
+/// transaction, when the request checks (FIX 4787) or this home's fold has
+/// not seen it yet, its claim (FIX 5554), unless a commit of `machine` is
 /// recorded for it already; then forgets every record whose request has its
 /// result here.
 fn record_in(
@@ -102,8 +166,15 @@ fn record_in(
 ) -> Result<()> {
     let fold = vault.authority_fold_readonly_in_txn(wtxn)?;
     let home = crate::identity::read_machine_id_in_txn(vault, wtxn)?;
-    let key = sealed_digest_hex(&request);
-    if asks_here(&fold, &request, machine, home)
+    let key = receipt_key(&request, machine);
+    let kind = if asks_here(&fold, &request, machine, home) {
+        Some(CHECKED)
+    } else {
+        match BUNDLE_COMMIT_CLAIM {
+            EarlyCommit::ClaimCheckedOnRead => (!folded_here(&fold, &request)).then_some(CLAIM),
+        }
+    };
+    if let Some(kind) = kind
         && RECEIPTS.get_bytes(&vault.store, wtxn, &key)?.is_none()
     {
         let receipt = SealedBundleCommitReceipt {
@@ -111,15 +182,13 @@ fn record_in(
             generation: entry.generation,
             bundle_digest: entry.bundle_digest,
         };
-        RECEIPTS.put(&vault.store, wtxn, &key, &receipt.encode())?;
+        RECEIPTS.put(&vault.store, wtxn, &key, &receipt.encode(kind))?;
     }
     let mut resolved = Vec::new();
     for row in RECEIPTS.iter_raw_from(&vault.store, wtxn, &[])? {
         let (row_key, _) = row?;
-        let answered = std::str::from_utf8(&row_key)
-            .ok()
-            .and_then(super::sealed_digest_from_hex)
-            .is_some_and(|asked| fold.owner_work_result(&asked).is_some());
+        let answered =
+            receipt_request(&row_key).is_some_and(|asked| fold.owner_work_result(&asked).is_some());
         if answered {
             resolved.push(String::from_utf8(row_key).map_err(|_| Error::InvalidKey)?);
         }
@@ -236,12 +305,17 @@ pub(super) fn commit(
 /// The commit the home recorded for the owner's bundle publication
 /// `request` (FIX 4787), for the machine `peer` proved when it made that
 /// commit: a machine of the owner's whose proof stands here, or the one the
-/// request asked to publish here. `None` when the home recorded none for
-/// that machine. Reads only.
+/// request asked to publish here. A record made while the request checked
+/// is the receipt. A claim (FIX 5554) is checked now: the receipt once the
+/// request counts here naming this home and that machine, `None` once it
+/// folded here otherwise. `None` when the home recorded none for that
+/// machine. Reads only.
 ///
 /// # Errors
 ///
-/// A refused peer; storage errors.
+/// A refused peer; a claim whose request this home has not folded yet,
+/// which the home cannot tell about (CALLS BUNDLE_COMMIT_CLAIM); storage
+/// errors.
 pub fn sealed_bundle_commit_receipt(
     vault: &Vault,
     peer: PeerMachine,
@@ -249,9 +323,23 @@ pub fn sealed_bundle_commit_receipt(
 ) -> Result<Option<SealedBundleCommitReceipt>> {
     let machine = owner_machine(vault, peer, false, Asked::named(Some(request)))?;
     let txn = vault.store.env.read_txn()?;
-    Ok(RECEIPTS
-        .get_bytes(&vault.store, &txn, &sealed_digest_hex(&request))?
-        .map(|raw| SealedBundleCommitReceipt::decode(&raw))
-        .transpose()?
-        .filter(|receipt| receipt.executor == machine))
+    let Some(raw) = RECEIPTS.get_bytes(&vault.store, &txn, &receipt_key(&request, machine))? else {
+        return Ok(None);
+    };
+    let (kind, receipt) = SealedBundleCommitReceipt::decode(&raw)?;
+    if receipt.executor != machine {
+        return Ok(None);
+    }
+    if kind == CHECKED {
+        return Ok(Some(receipt));
+    }
+    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
+    let home = crate::identity::read_machine_id_in_txn(vault, &txn)?;
+    if asks_here(&fold, &request, machine, home) {
+        Ok(Some(receipt))
+    } else if folded_here(&fold, &request) {
+        Ok(None)
+    } else {
+        Err(claim_unsettled())
+    }
 }

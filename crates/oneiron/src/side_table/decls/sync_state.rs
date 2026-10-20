@@ -312,9 +312,11 @@ side_tables! {
     SYNC_RESIDENCE_BUNDLE_PART: SyncState b"rb:p:" Raw;
     /// The commit the home recorded for one owner's bundle publication request (FIX 4787), in the
     /// commit's own transaction, once the request counted here naming this home and the committing
-    /// machine as its executor: that machine (16) ‖ the generation (24) ‖ the bundle's digest
-    /// (32), a ciphertext digest. It outlives the generation's retirement and goes once the
-    /// request has its result here. Key: hex64 (the request's entry hash).
+    /// machine as its executor, or, while this home's fold had not seen the request, the commit's
+    /// claim, checked when read (FIX 5554): 1 (checked) or 0 (claim) ‖ that machine (16) ‖ the
+    /// generation (24) ‖ the bundle's digest (32), a ciphertext digest. It outlives the
+    /// generation's retirement and goes once the request has its result here. Key: hex64 (the
+    /// request's entry hash) ":" hex32 (the committing machine).
     SYNC_RESIDENCE_BUNDLE_COMMIT_RECEIPT: SyncState b"rb:r:" Raw;
     /// An upload of a bundle ("b") or pad object ("k") the home stages from parts until its
     /// commit: u64be vault second of its latest part ‖ generation (24) ‖ u64be total ‖ digest

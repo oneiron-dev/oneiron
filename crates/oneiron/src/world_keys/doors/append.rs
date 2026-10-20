@@ -1,6 +1,7 @@
 //! A key record's appends: one machine's wraps of one key, as side entries
-//! of the key's world, split across records within the codec's bounds, and
-//! the sequence and chain each record of one door transaction takes.
+//! of the key's world, split across records within the codec's bounds as
+//! their read-only plan says (`frontier`, FIX 5552), and the sequence and
+//! chain each record of one door transaction takes.
 //!
 //! A record names this install's main heads and its world's side leaves in
 //! place of the rows its evidence rests on whenever those carry every such
@@ -15,11 +16,11 @@ use oneiron_crypto::HybridPublicKey;
 
 use super::super::pads::require_pad_in_txn;
 use super::super::{PolicyRevision, WorldKey, WorldKeyBinding, WrapRecipient, seal_world_key};
+use super::frontier::{ChainHead, Parents, WrapPlanInput};
 use super::{FrontierWide, RootRecipient, provenance};
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, KeyFrontier, MAX_PARENTS,
-    WORLD_KEY_WRAPS_MAX, invalid_authority, next_sequence, scope_head, sign_side_entry,
-    standing_rows,
+    AuthorityEntryHash, AuthorityFold, AuthorityLogEntry, AuthorityOp, MAX_PARENTS,
+    invalid_authority, next_sequence, scope_head, sign_side_entry, standing_rows,
 };
 use crate::error::Result;
 use crate::{EntityId, TimeRange, Vault};
@@ -33,18 +34,6 @@ type WrapChunk<'a> = (
 /// The parents one key record names beside its signer's previous row of the
 /// world.
 const RECORD_PARENTS: usize = MAX_PARENTS - 1;
-
-/// Which parents an append's records may name.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Parents {
-    /// The frontier candidate when it carries every row the records would
-    /// name, else those rows.
-    Frontier,
-    /// The rows the records' evidence rests on alone: a view the store has
-    /// moved past (repin's old-pin pre-wrap, CALLS "FIX 5464 partial
-    /// evidence").
-    Explicit,
-}
 
 /// One machine's next sequences inside one door transaction, and the last
 /// row it wrote there for each world.
@@ -188,12 +177,12 @@ impl Vault {
         }
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let world = key.id().world;
-        let frontier = fold.worlds.get(&world);
-        let live: BTreeSet<AuthorityEntryHash> = frontier
-            .into_iter()
-            .flat_map(|folded| folded.live.keys().copied())
-            .collect();
-        let policy = PolicyRevision::of(live.iter().copied());
+        let policy = PolicyRevision::of(
+            fold.worlds
+                .get(&world)
+                .into_iter()
+                .flat_map(|folded| folded.live.keys().copied()),
+        );
         let binding = WorldKeyBinding {
             vault_id,
             key: *key.id(),
@@ -201,75 +190,42 @@ impl Vault {
             policy,
             commitment: key.commitment(),
         };
-        let mut base = live;
-        base.extend(standing_rows(fold, machine));
-        if let Some(root) = self.pinned_root_recipient_in_txn(txn, fold)? {
-            base.insert(root.entry);
-        }
-        base.extend(request);
-        // Whether a live edit counts may rest on a later revision of its
-        // machine, so name those too while they stay few (as the settings
-        // door does).
-        let authors: BTreeSet<_> = frontier
-            .into_iter()
-            .flat_map(|folded| folded.live.values())
-            .flat_map(|author| standing_rows(fold, *author))
-            .collect();
-        if base.union(&authors).count() <= MAX_PARENTS / 2 {
-            base.extend(authors);
-        }
-        // Each record names its signer's previous row of the world beside
-        // these: the first names the scope head, which counts once when it is
-        // already a live edit here, and each later one the record before it
-        // (Astra #1422d F1).
-        let chain = seq.chain(fold, signing, world);
-        let named = |parents: &BTreeSet<AuthorityEntryHash>,
-                     rows: &BTreeSet<AuthorityEntryHash>,
-                     first: bool| {
-            let chained = !first
-                || chain.is_some_and(|chain| !parents.contains(&chain) && !rows.contains(&chain));
-            parents.union(rows).count() + usize::from(chained)
+        let to: Vec<WrapRecipient> = recipients.iter().map(|(recipient, _)| *recipient).collect();
+        let input = WrapPlanInput {
+            fold,
+            machine,
+            world,
+            recipients: &to,
+            chain: ChainHead::Row(seq.chain(fold, signing, world)),
+            request,
+            parents: mode,
         };
-        let base_named = named(&base, &BTreeSet::new(), true);
-        if base_named > MAX_PARENTS {
-            self.world_keys.frontier_wide(world, base_named);
-            return Ok(Err(FrontierWide(
-                "the world's key rests on more rows than one record names: merge this world's \
-                 settings from one machine that sees every edit, then retry",
-            )));
-        }
-        let mut chunks: Vec<(BTreeSet<AuthorityEntryHash>, Vec<_>)> = Vec::new();
-        let mut parents = base.clone();
-        let mut wraps = Vec::new();
-        for (recipient, public) in recipients {
-            let rows = match recipient {
-                WrapRecipient::Machine(id) => standing_rows(fold, *id),
-                WrapRecipient::RecoveryRoot(_) => BTreeSet::new(),
-            };
-            let full = |parents: &BTreeSet<_>, wraps: &Vec<_>, first: bool| {
-                named(parents, &rows, first) > MAX_PARENTS || wraps.len() == WORLD_KEY_WRAPS_MAX
-            };
-            if full(&parents, &wraps, chunks.is_empty()) && !wraps.is_empty() {
-                chunks.push((
-                    std::mem::replace(&mut parents, base.clone()),
-                    std::mem::take(&mut wraps),
-                ));
-            }
-            if full(&parents, &wraps, chunks.is_empty()) {
-                self.world_keys
-                    .frontier_wide(world, named(&parents, &rows, chunks.is_empty()));
-                return Ok(Err(FrontierWide(
+        let plan = match self.plan_world_key_wraps_in_txn(txn, &input)? {
+            Ok(plan) => plan,
+            Err(wide) => {
+                self.world_keys.frontier_wide(world, wide.rows);
+                return Ok(Err(FrontierWide(if wide.base {
+                    "the world's key rests on more rows than one record names: merge this world's \
+                     settings from one machine that sees every edit, then retry"
+                } else {
                     "a recipient's standing and the world's edits are more rows than one record \
                      names: merge this world's settings from one machine that sees every edit, \
-                     then retry",
-                )));
+                     then retry"
+                })));
             }
-            parents.extend(rows);
-            wraps.push((*recipient, public));
-        }
-        chunks.push((parents, wraps));
-        let on_frontier = mode == Parents::Frontier
-            && self.frontier_chunks_in_txn(txn, fold, signing, world, &mut chunks, seq)?;
+        };
+        let chunks: Vec<WrapChunk<'_>> = plan
+            .records
+            .into_iter()
+            .map(|record| {
+                let wraps = record
+                    .recipients
+                    .into_iter()
+                    .map(|index| (recipients[index].0, &recipients[index].1))
+                    .collect();
+                (record.parents, wraps)
+            })
+            .collect();
         self.put_wrap_records_in_txn(
             txn,
             fold,
@@ -280,46 +236,9 @@ impl Vault {
             chunks,
             seq,
             request,
-            on_frontier,
+            plan.on_frontier,
         )
         .map(Ok)
-    }
-
-    /// Whether `chunks` go on frontier parents (FIX 5464, CALLS "FIX 5464
-    /// side parents"), decided before any record is signed: when the frontier
-    /// candidate carries every row the chunks name, the first chunk names the
-    /// candidate, which holds its signer's previous row of the world beneath
-    /// it, and each later one only the record before it. Otherwise the chunks
-    /// keep the rows they name, and nothing changes.
-    fn frontier_chunks_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
-        signing: &SigningKey,
-        world: EntityId,
-        chunks: &mut [WrapChunk<'_>],
-        seq: &SequenceCounter,
-    ) -> Result<bool> {
-        let chain = seq.chain(fold, signing, world);
-        let Some(mut frontier) = KeyFrontier::of_in_txn(&self.store, txn, fold, world, chain)?
-        else {
-            return Ok(false);
-        };
-        let named: BTreeSet<_> = chunks
-            .iter()
-            .flat_map(|(parents, _)| parents.iter().copied())
-            .collect();
-        if !frontier.carries_in_txn(&self.store, txn, fold, &named)? {
-            return Ok(false);
-        }
-        for (index, (parents, _)) in chunks.iter_mut().enumerate() {
-            *parents = if index == 0 {
-                frontier.parents().clone()
-            } else {
-                BTreeSet::new()
-            };
-        }
-        Ok(true)
     }
 
     /// This machine's own record of `key` when no record names the world's

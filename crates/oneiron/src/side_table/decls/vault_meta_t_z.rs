@@ -314,8 +314,9 @@ side_tables! {
     /// bundle's world section carries whole (FIX 922). Purged with an erased world. Key: hex32
     /// (world) ":" string (window label).
     WORLD_KEY_SEALED_MIRROR: VaultMeta b"world_keys:mirror:v1:" Raw;
-    /// Which version of one sealed window's mirror last landed here in full, or that the
-    /// window's rows here were removed since (FIX 5506): a take of that version skips its
-    /// forward pass. Purged with an erased world. Key: hex32 (world) ":" string (window label).
+    /// Which version of one sealed window's mirror last landed here in full, and under which
+    /// forward pass (FIX 6509), or that the window's rows here were removed since (FIX 5506): a
+    /// take of that version under that pass skips its forward pass. Purged with an erased world.
+    /// Key: hex32 (world) ":" string (window label).
     WORLD_KEY_SEALED_MIRROR_LANDED: VaultMeta b"world_keys:mirror_landed:v1:" Raw;
 }

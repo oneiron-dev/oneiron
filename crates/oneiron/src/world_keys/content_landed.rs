@@ -4,8 +4,12 @@
 //! mirror and materializes the mirror's rows here (FIX 4788). On a full
 //! machine most windows are unchanged from the last take, so their forward
 //! pass would land again exactly what it landed before. Each window keeps a
-//! mark of the mirror version whose rows last landed in full: a take whose
-//! merge gains nothing, of a mirror at that version, skips the pass.
+//! mark of the mirror version whose rows last landed in full, and of the
+//! forward pass that landed them ([`FORWARD_PASS_VERSION`], FIX 6509): a take
+//! whose merge gains nothing, of a mirror at that version, under that pass,
+//! skips the pass. After an engine upgrade whose pass lands rows an older
+//! one dropped, every window lands again once, though its mirror has not
+//! moved; a mark this pass cannot read names nothing, and lands again too.
 //!
 //! A mark is written only after the forward pass, in the transaction that
 //! stores the mirror, and only when the window has no rematerialization
@@ -26,6 +30,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::sync::types::WindowKey;
+use crate::sync::window::FORWARD_PASS_VERSION;
 
 /// A mark's first byte.
 const LANDED_VERSION: u8 = 1;
@@ -34,7 +39,8 @@ const REMOVED: u8 = 0;
 /// What one window's mark holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Landed {
-    /// The encoded version vector of the mirror whose rows landed in full.
+    /// The forward pass that landed the mirror's rows in full (big-endian
+    /// u64), then the encoded version vector of that mirror.
     Version(Vec<u8>),
     /// The window's rows here were removed, the count-th time since a
     /// version landed.
@@ -69,11 +75,25 @@ impl Landed {
         }
     }
 
-    /// Whether this mark names `mirror`'s version.
+    /// The mark of `mirror`'s version landed by this engine's forward pass.
+    fn of(mirror: &LoroDoc) -> Self {
+        let mut mark = FORWARD_PASS_VERSION.to_be_bytes().to_vec();
+        mark.extend_from_slice(&mirror.oplog_vv().encode());
+        Self::Version(mark)
+    }
+
+    /// Whether this mark names `mirror`'s version, landed by this engine's
+    /// forward pass. Another pass, or a mark that names none, does not.
     fn names(&self, mirror: &LoroDoc) -> bool {
-        let Self::Version(version) = self else {
+        let Self::Version(mark) = self else {
             return false;
         };
+        let Some((pass, version)) = mark.split_first_chunk::<8>() else {
+            return false;
+        };
+        if u64::from_be_bytes(*pass) != FORWARD_PASS_VERSION {
+            return false;
+        }
         let Ok(landed) = VersionVector::decode(version) else {
             return false;
         };
@@ -122,10 +142,11 @@ pub(super) fn landed_already(
     Ok(!repair_pending(vault, window)?)
 }
 
-/// Marks `window` of `world` landed at `mirror`'s version in `wtxn`, the
-/// transaction that stores the mirror, when its mark is still `before`, the
-/// one read before the forward pass: a removal since then keeps its own
-/// mark. The caller marks only a pass that left no repair pending.
+/// Marks `window` of `world` landed at `mirror`'s version, by this engine's
+/// forward pass, in `wtxn`, the transaction that stores the mirror, when its
+/// mark is still `before`, the one read before the forward pass: a removal
+/// since then keeps its own mark. The caller marks only a pass that left no
+/// repair pending.
 pub(super) fn mark_landed_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -142,8 +163,7 @@ pub(super) fn mark_landed_in_txn(
     if now.as_ref() != before {
         return Ok(());
     }
-    let mark = Landed::Version(mirror.oplog_vv().encode());
-    LANDED.put(store, wtxn, &key, &mark.encode())
+    LANDED.put(store, wtxn, &key, &Landed::of(mirror).encode())
 }
 
 /// Marks `window`'s rows removed here, in the removal's write transaction:

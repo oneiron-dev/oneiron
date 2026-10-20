@@ -25,8 +25,10 @@
 //! Either keeps it from running and signs no result; a result signed first
 //! stands.
 //!
-//! A root request's `seen` is [`AuthorityFold::root_work_revision`]: the
-//! owner roots and the target's standing, as the deciding surface saw them.
+//! A root request's `seen` is the revision of
+//! [`AuthorityFold::root_work_basis`]: the owner roots and the target's
+//! standing, as the deciding surface saw them, which the request carries as
+//! its witness (FIX 5551).
 //! A custody request's is its secret's live custody requests, compared here
 //! before it joins them, and an admitted revoke is terminal for its secret
 //! (`custody`).
@@ -44,6 +46,7 @@
 mod cancel;
 mod custody;
 mod privacy_basis;
+mod root_basis;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -52,6 +55,8 @@ use crate::entity_id::EntityId;
 
 use super::machine_standing::{InstallCounted, Mark, Standing, StandingView};
 use super::*;
+
+pub(crate) use self::root_basis::{RootBasisCheck, check_root_basis_in_txn};
 
 /// One admitted request, as its entry carried it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -210,14 +215,23 @@ impl AuthorityFold {
         &self.owner_work.refused
     }
 
-    /// The revision a root request's `change` on `target` is for (CALLS
-    /// ROOT_WORK_REVISION): [`act_revision`] under
-    /// [`ROOT_WORK_REVISION_CONTEXT`] over the fold's live entries the change
-    /// depends on. The recorder states it as the act's `seen`, and the target
-    /// computes it again in its own writer transaction: a different value is
-    /// a change the owner did not see. The request itself is never a head,
-    /// so no request makes itself stale.
-    pub(crate) fn root_work_revision(&self, target: EntityId, change: RootChange) -> [u8; 32] {
+    /// The heads a root request's `change` on `target` is over (CALLS
+    /// ROOT_WORK_REVISION), by kind: every valid owner root by its id, and
+    /// the target's roster revision, its accepted roster revision and the
+    /// head of each anchor's chain of it, leaving out the root the change
+    /// binds and its anchor's chain. Their revision
+    /// ([`RootRevisionBasis::revision`], [`act_revision`] under
+    /// [`ROOT_WORK_REVISION_CONTEXT`]) is the act's `seen`; the recorder signs
+    /// the heads with the request as its witness (FIX 5551), and the target
+    /// builds them again in its own writer transaction (`root_basis`): a
+    /// different revision is a change the owner did not see, or heads the
+    /// target has not folded yet. The request itself is never a head, so no
+    /// request makes itself stale.
+    pub(crate) fn root_work_basis(
+        &self,
+        target: EntityId,
+        change: RootChange,
+    ) -> RootRevisionBasis {
         match ROOT_WORK_REVISION {
             RootRevisionHeads::RootsAndTargetStanding => {
                 let bound = change.root().and_then(|root| {
@@ -230,22 +244,24 @@ impl AuthorityFold {
                     .root_anchors
                     .iter()
                     .filter(|(anchor, _)| Some(**anchor) != bound)
-                    .flat_map(|(_, roots)| roots.iter().map(|root| root.0));
-                let standing = self.machine(target).into_iter().flat_map(move |machine| {
-                    machine
-                        .roster
-                        .iter()
-                        .chain(&machine.roster_trusted)
-                        .chain(
-                            machine
-                                .anchored
-                                .iter()
-                                .filter(move |(anchor, _)| Some(**anchor) != bound)
-                                .map(|(_, revision)| revision),
-                        )
-                        .map(|revision| revision.entry)
-                });
-                act_revision(ROOT_WORK_REVISION_CONTEXT, roots.chain(standing))
+                    .flat_map(|(_, roots)| roots.iter().copied())
+                    .collect();
+                let machine = self.machine(target);
+                RootRevisionBasis {
+                    roots,
+                    roster: machine
+                        .and_then(|machine| machine.roster.as_ref())
+                        .map(|revision| revision.entry),
+                    roster_trusted: machine
+                        .and_then(|machine| machine.roster_trusted.as_ref())
+                        .map(|revision| revision.entry),
+                    anchored: machine
+                        .into_iter()
+                        .flat_map(|machine| machine.anchored.iter())
+                        .filter(|(anchor, _)| Some(**anchor) != bound)
+                        .map(|(anchor, revision)| (*anchor, revision.entry))
+                        .collect(),
+                }
             }
         }
     }
