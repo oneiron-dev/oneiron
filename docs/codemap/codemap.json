@@ -13453,7 +13453,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
       "crate-vis": 22,
-      "mod": 6,
+      "mod": 7,
       "re-export": 20
      }
     },
@@ -13562,15 +13562,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/replay/position.rs",
+     "purpose": "A replay cursor that starts part way into its record (PR-S1): a shadow arm replays one captured step from…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "CapsuleContent",
       "CapsuleHost",
+      "CapsuleRequest",
       "CapsuleRungBinding",
       "ExecutorStepStart",
       "ExposureKind",
       "ExposureSlot",
+      "ReplayRoutePin",
       "StepReplayCapsule",
       "StoredSpan",
       "TaskExposure"
@@ -13579,9 +13591,19 @@
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
       "crate-vis": 7,
-      "enum": 3,
-      "fn": 6,
-      "struct": 6
+      "enum": 4,
+      "fn": 7,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/result_read/arm.rs",
+     "purpose": "A shadow arm's reads of its own results (PR-S1, FIX 1661/2144): the card, the verdict and the facets a run's…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -13716,6 +13738,119 @@
       "enum": 9,
       "fn": 1,
       "struct": 25
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/shadow_runner/bridge.rs",
+     "purpose": "The bridge an arm's program calls (PR-S1): every `self.*` call the program makes joins the arm's…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShadowFrame",
+      "ShadowFrameBody",
+      "ShadowModelAnswer",
+      "ShadowReceiptFrame"
+     ],
+     "path": "src/code_run/shadow_runner/frames.rs",
+     "purpose": "The frames an arm and its host speak (PR-S1 defines them; the candidate process runner speaks them, PR-S2)",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShadowRunner"
+     ],
+     "path": "src/code_run/shadow_runner/mod.rs",
+     "purpose": "The shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): one captured step of a canonical…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "re-export": 4,
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PreparedShadowStep"
+     ],
+     "path": "src/code_run/shadow_runner/source.rs",
+     "purpose": "The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 12,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShadowBodyStore"
+     ],
+     "path": "src/code_run/shadow_runner/store.rs",
+     "purpose": "A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ArtifactDigest",
+      "ArtifactDigestAlgorithm",
+      "EngineArtifactPin",
+      "ShadowArmLease",
+      "ShadowBodyRef",
+      "ShadowBridgeWindow",
+      "ShadowDeterminism",
+      "ShadowIsolation",
+      "ShadowIsolationRequired",
+      "ShadowMeterContext",
+      "ShadowModelPin",
+      "ShadowModelReceipt",
+      "ShadowRequestDigest",
+      "ShadowRunRequest",
+      "ShadowRunResult",
+      "ShadowSandboxBinding",
+      "ShadowScope",
+      "ShadowSource",
+      "ShadowStatus",
+      "ShadowStepIdentity",
+      "ShadowStepRun",
+      "ShadowTarget",
+      "ShadowTraceEntry",
+      "ShadowTraceKind",
+      "ShadowUnavailable",
+      "ShadowUnavailableReason",
+      "ShadowUsage",
+      "ShadowWindowFullReason"
+     ],
+     "path": "src/code_run/shadow_runner/types.rs",
+     "purpose": "The shadow runner's request, result and their parts (PR-S1): what a caller asks an arm to run, by immutable…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 12,
+      "fn": 10,
+      "struct": 16
      }
     },
     {
@@ -25561,9 +25696,9 @@
      "path": "src/engine_executor/mod.rs",
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "mod": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -25595,6 +25730,17 @@
      "surface": {
       "crate-vis": 4,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/shadow_step.rs",
+     "purpose": "One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -51976,7 +52122,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 37
+      "crate-vis": 38
      }
     },
     {
@@ -61335,6 +61481,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/join_door/publish.rs",
+     "purpose": "A join's receipt reaching the live windows of its room or thread once the write that filed or answered it…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -62149,7 +62305,7 @@
      "path": "src/workspace_roster/rooms/audience_find.rs",
      "purpose": "What the vault's Owner or an Admin learns of a room's private threads (FIX 5545): that they exist, by root…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -64163,7 +64319,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 108,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64485,7 +64641,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65423,7 +65579,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 104,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65446,7 +65602,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4073,
+   "source_files": 4083,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77609,6 +77765,7 @@
      "surface": {
       "crate-vis": 34,
       "fn": 22,
+      "mod": 1,
       "re-export": 1,
       "struct": 2
      }
@@ -77661,6 +77818,40 @@
      "purpose": "The host's scheduled T2/T3 detector pass (ARCH-0066 #tiers, OF-418)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/shadow_runner/arm_store.rs",
+     "purpose": "A shadow arm's bodies at its host (PR-S1), kept for the caller under an opaque lease: one directory per arm…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ServerShadowRunner"
+     ],
+     "path": "src/ai_host/shadow_runner/mod.rs",
+     "purpose": "The host's shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): [`ServerShadowRunner`] runs…",
+     "surface": {
+      "fn": 4,
+      "struct": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/shadow_runner/model.rs",
+     "purpose": "The arm's model gateway (PR-S1): one strict call of a captured step's request, by the pattern of the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -86314,6 +86505,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/ladder/shadow_capture.rs",
+     "purpose": "The route a step replay capsule's answering rung went out on (PR-S1): noted beside the rung itself when a…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/ladder/step_attempt.rs",
      "purpose": "The durable step executor owns retries; this door sends one gated attempt",
      "surface": {
@@ -88664,7 +88865,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 59,
+     "files": 62,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88979,7 +89180,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89121,7 +89322,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 892,
+   "source_files": 896,
    "test_files": 182
   },
   "oneiron-spawn": {

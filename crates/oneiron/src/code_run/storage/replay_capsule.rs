@@ -18,7 +18,9 @@ use super::super::contribution::{
     ContributionForkReceipt, ContributionReplayUnavailable, ForkTreatment,
 };
 use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
-use super::super::replay_capsule::{CapsuleRungBinding, StepReplayCapsule};
+use super::super::replay_capsule::{
+    CapsuleRequest, CapsuleRungBinding, ReplayRoutePin, StepReplayCapsule,
+};
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::owned_body_in_txn;
 use crate::side_table::{self, Named, SideTable};
@@ -123,14 +125,16 @@ fn held_body(
     held_body_in_txn(vault, &rtxn, owner, path, body)
 }
 
-/// Records the rung that answered the capsule at `key`, once: a capsule
-/// already finalized keeps its rung. An erased capsule, or one whose actor
-/// is gone by now, takes none: its route prompt is content an erase clears
-/// (FIX 6144).
+/// Records the rung that answered the capsule at `key`, and the route it
+/// went out on when it pinned one (PR-S1), once and in one write: a capsule
+/// already finalized keeps its rung and its pin. An erased capsule, or one
+/// whose actor is gone by now, takes neither: its route prompt is content an
+/// erase clears (FIX 6144).
 pub(crate) fn finalize_capsule(
     vault: &Vault,
     key: &(EntityId, u64, u64),
     binding: CapsuleRungBinding,
+    route_pin: Option<ReplayRoutePin>,
 ) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         let Some(mut capsule) = CAPSULES.get(&vault.store, txn, key)? else {
@@ -143,6 +147,7 @@ pub(crate) fn finalize_capsule(
             return Ok(());
         }
         capsule.binding = Some(binding);
+        capsule.route_pin = route_pin;
         CAPSULES.put(vault, txn, key, &capsule)
     })
 }
@@ -207,22 +212,30 @@ pub(crate) fn capsule_start_body(
 
 /// The capsule's request as stored: the request it captured, each secret in
 /// it its custody handle. `None` when the capsule holds its content no
-/// longer (its actor was erased), or its body is released, gone, withheld,
-/// not its stored hash or not a request; never an empty or rebuilt one.
+/// longer (its actor was erased), when the wall withheld the request at its
+/// capture (FIX 6254), or its body is released, gone, withheld, not its
+/// stored hash or not a request; never an empty or rebuilt one.
 pub(crate) fn capsule_request(
     vault: &Vault,
     capsule: &StepReplayCapsule,
 ) -> Result<Option<LlmRequest>> {
+    let CapsuleRequest::Kept {
+        body,
+        path,
+        stored_hash,
+    } = &capsule.request
+    else {
+        return Ok(None);
+    };
     let key = capsule_key(capsule);
     let still = |rtxn: &heed::RoTxn<'_>| -> Result<bool> {
         let row = kept_in_txn(vault, rtxn, &key)?;
         Ok(row.is_some_and(|row| row.request == capsule.request))
     };
-    let (run, path) = (capsule.run, capsule.request_path.as_str());
-    let Some(bytes) = held_body(vault, run, path, capsule.request, still)? else {
+    let Some(bytes) = held_body(vault, capsule.run, path, *body, still)? else {
         return Ok(None);
     };
-    if *blake3::hash(&bytes).as_bytes() != capsule.stored_request_hash {
+    if blake3::hash(&bytes).as_bytes() != stored_hash {
         return Ok(None);
     }
     Ok(serde_json::from_slice(&bytes).ok())

@@ -13,7 +13,7 @@
 //! nothing for an actor that is gone.
 
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
-use super::super::super::replay_capsule::{CapsuleContent, StepReplayCapsule};
+use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
 use super::super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::{CAPSULES, FORKS, ForkRow};
 use crate::compaction::output::OutputRef;
@@ -58,7 +58,11 @@ pub(crate) fn erase_capsule_actor_in_txn(
     }
     let answers = fork_answers_in_txn(vault, wtxn)?;
     for (key, capsule) in owned {
-        let mut bodies = vec![(capsule.request, capsule.request_path.clone())];
+        // A withheld request kept no body (FIX 6254): only its start is.
+        let mut bodies = Vec::new();
+        if let CapsuleRequest::Kept { body, path, .. } = &capsule.request {
+            bodies.push((*body, path.clone()));
+        }
         if let Some(start) = &capsule.start {
             bodies.push((start.body, start.path.clone()));
         }
@@ -77,9 +81,10 @@ pub(crate) fn erase_capsule_actor_in_txn(
 /// What an erase leaves of a capsule (FIX 6144): what the step was (its
 /// attempt, run, step and lease generation, its host, the model and
 /// locality that answered it, both request hashes and its messages digest,
-/// its exposures' skills, revisions and spans, its seed, its time, and its
-/// start's ref, digest and bridge count), its content Erased, naming no
-/// actor, with its route prompt cleared. Its bodies are released beside it;
+/// its exposures' skills, revisions and spans, its seed, its time, its
+/// start's ref, digest and bridge count, and the route its rung went out on,
+/// which holds the route prompt's digest only), its content Erased, naming
+/// no actor, with its route prompt cleared. Its bodies are released beside it;
 /// its fork receipts and scores stay in their own rows.
 fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
     capsule.content = CapsuleContent::Erased;
