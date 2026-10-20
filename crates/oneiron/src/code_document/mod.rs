@@ -13,6 +13,7 @@ mod storage;
 mod types;
 mod verbs;
 pub(crate) use storage::archive_document_tables;
+pub(crate) use storage::checkpoint;
 
 pub use blame::CodeRangePair;
 pub use review_views::{
