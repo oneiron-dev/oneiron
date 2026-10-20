@@ -575,7 +575,7 @@ fn recover(dir: &OwnedFd) {
     for claim in &claims {
         match claim
             .as_deref()
-            .and_then(|claim| Some((claim, claimed_object(claim)?)))
+            .and_then(|claim| claimed_object(claim).map(|object| (claim, object)))
         {
             Some((claim, object)) => put_back(dir, claim, object),
             None => tracing::warn!("a relay locker claim name did not parse; it stays as it is"),

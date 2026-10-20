@@ -303,7 +303,7 @@ impl HeldDeletes {
                 );
             }
             Ok(current) if current != target.ciphertext_blake3 => self.clear(object),
-            Err(_) | Ok(_) => {
+            _ => {
                 if let Err(RelayDeleteHoldError::StorageIo(error)) = self.settle(&target)
                     && error.kind() != io::ErrorKind::NotFound
                 {
