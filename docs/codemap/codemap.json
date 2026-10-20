@@ -38369,9 +38369,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/note/title_index/checkpoint.rs",
-     "purpose": "The NOTE title rows (KS7-2), under the NOTE each names",
+     "purpose": "The NOTE title rows (KS7-2, FIX 6075), under the NOTE each names",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -51708,7 +51708,7 @@
      "path": "src/store/checkpoint_payload/rows/restore.rs",
      "purpose": "Putting an opened compartment's rows back, through the one restore-only raw-row sink",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
