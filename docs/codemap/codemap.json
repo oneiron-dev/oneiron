@@ -1383,13 +1383,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/workflow/member_context.rs",
+     "purpose": "A member's bound run reads its context on that member's own lane (FIX 5416): the memory and chat a step…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/workflow/workflow_task.rs",
      "purpose": "A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 7,
       "fn": 4
      }
     },
@@ -14356,7 +14366,7 @@
      "path": "src/code_sandbox/egress/mod.rs",
      "purpose": "The engine's open egress proxy",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -18428,8 +18438,8 @@
      "purpose": "Dispatch-time resolution of a `ContextSpec` against live vault state",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
-      "fn": 2,
+      "crate-vis": 5,
+      "fn": 3,
       "struct": 3
      }
     },
@@ -56309,7 +56319,7 @@
      "path": "src/task_verb/highway_runner/workflow_try/binder.rs",
      "purpose": "Who binds a saved workflow's run to a TASK, as the door that took the request proved them (FIX 5316): the…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -63890,7 +63900,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65397,7 +65407,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4069,
+   "source_files": 4070,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68367,6 +68377,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostNetFloor",
+      "HostNetPermit",
+      "UnmeteredFloor"
+     ],
+     "path": "src/host_net_floor.rs",
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)",
+     "surface": {
+      "const": 2,
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -68396,7 +68423,7 @@
      "surface": {
       "enum": 2,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 8,
       "type": 1
      }
@@ -68457,7 +68484,17 @@
      "path": "src/supervisor/lifetime.rs",
      "purpose": "A guest socket's host entry lives as long as the guest holds the socket (FIX 5978)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/relay_workers.rs",
+     "purpose": "Bounded relay workers for a guest's datagrams (FIX 5979)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -68494,6 +68531,13 @@
      "layout": "file",
      "purpose": "Host-owned transport"
     },
+    "host_net_floor": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
+    },
     "launcher": {
      "files": 1,
      "impl_vault": false,
@@ -68523,7 +68567,7 @@
      "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
     },
     "supervisor": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -68546,7 +68590,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 11,
+   "source_files": 13,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -70308,7 +70352,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit/geometry.rs",
-     "purpose": "`set_preset` and `set_glue`: a shape's or connector's preset geometry, and a connector's glue",
+     "purpose": "`set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue",
      "surface": {
       "crate-vis": 6
      }
@@ -71077,7 +71121,7 @@
      "path": "src/live/svg_fallback.rs",
      "purpose": "A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -84810,7 +84854,7 @@
      "path": "src/http_listener.rs",
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
