@@ -35,6 +35,8 @@ use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
 use read_only::is_read_only;
 
+/// The reap freeze's write admission, held until a write's last write.
+mod admission;
 /// The vault data key's boot steps: its page seal, escrow wraps and spool.
 mod boot_keys;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
@@ -387,16 +389,6 @@ fn action_or_frame_attestable(method: &Method, path: &str) -> bool {
     }
 }
 
-struct HttpMutation(Arc<ManagedState>);
-
-impl Drop for HttpMutation {
-    fn drop(&mut self) {
-        self.0
-            .http_mutating_in_flight
-            .fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
 impl std::fmt::Debug for ManagedState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ManagedState")
@@ -491,42 +483,6 @@ impl ManagedState {
             .insert(action.mac.clone(), issued_at.saturating_add(skew))
             .is_none()
             .then_some(holder)
-    }
-
-    fn admit_http_mutation(self: &Arc<Self>) -> Result<HttpMutation, ManagedError> {
-        // Increment BEFORE checking freeze. A concurrent freeze must either see
-        // this writer or make this admission fail; check-then-increment races.
-        self.http_mutating_in_flight.fetch_add(1, Ordering::SeqCst);
-        let admission = HttpMutation(Arc::clone(self));
-        self.guard_write()?;
-        Ok(admission)
-    }
-
-    /// A background pass's admission, taken as a served write's and held on
-    /// the pass's own thread until its last write. A refused pass logs the
-    /// pause's typed reason, once per freeze, and asks again later.
-    fn admit_background(self: &Arc<Self>) -> Option<Box<dyn Send>> {
-        match self.admit_http_mutation() {
-            Ok(admission) => Some(Box::new(admission)),
-            Err(_) => {
-                if !self.background_waiting.swap(true, Ordering::SeqCst) {
-                    tracing::info!(
-                        reason = WRITES_FROZEN_TAG,
-                        bound_kind = REAP_PAUSE_REFUSAL.bound.kind.as_str(),
-                        bound_resource = REAP_PAUSE_REFUSAL.bound.resource.as_str(),
-                        bound_phase = REAP_PAUSE_REFUSAL.bound.phase.as_str(),
-                        "background passes wait: the vault is paused for reap preparation until the reap is aborted or the vault wakes again"
-                    );
-                }
-                None
-            }
-        }
-    }
-
-    /// [`Self::admit_background`] as the admission a background worker takes.
-    fn background_admission(self: &Arc<Self>) -> crate::server::HousekeepingAdmission {
-        let state = Arc::clone(self);
-        Arc::new(move || state.admit_background())
     }
 
     pub fn vault_name(&self) -> &str {
