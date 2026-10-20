@@ -19,14 +19,18 @@
 //! event awaiting its owner's answer, or whose trail no longer reads, waits
 //! on its own with its typed reason (FIX 6423), and so does one whose own
 //! queued notice, or whose send's admitted call on the outbound ledger, does
-//! not read (FIX 6455). No other delivery waits on it. A storage failure is
-//! the only error: nothing in one delivery's own data is.
+//! not read (FIX 6455), or whose send's dispatch marker or recipient's
+//! signing links do not read (FIX 6482). No other delivery waits on it. A
+//! storage failure is the only error: nothing in one delivery's own data is.
 //!
 //! [`delivery_read_in`] is the one classifier: the mint acts on what it
 //! reads, and the owner's document view lists the waits it reads now beside
 //! the ended receipts (`delivery_receipts`).
 
-use super::capability::{EsignCapability, delivered_digest_in, mint_delivery_capability_in_txn};
+use super::capability::{
+    EsignCapability, delivered_digest_in, mint_delivery_capability_in_txn,
+    recipient_bindings_read_in,
+};
 use super::delivery_settlement::{EsignDeliveryEndReason, ended_reason, fail_ended_in_txn};
 use super::ledger::delivery_chain_in;
 use super::model::*;
@@ -58,13 +62,13 @@ pub enum EsignDeliveryMint {
     /// it settled unsent with this reason (FIX 6363).
     Settled(EsignDeliveryEndReason),
     /// Nothing was minted: this one delivery waits, its lease kept, for its
-    /// document or its own data (FIX 6423, 6455).
+    /// document or its own data (FIX 6423, 6455, 6482).
     Waits(EsignDeliveryWait),
 }
 
-/// Why one delivery stays unexported for now (FIX 6423, 6455). It waits on
-/// its own; no other delivery waits on it. The exporter logs its code, and
-/// the owner reads it on `vault.esign.get`.
+/// Why one delivery stays unexported for now (FIX 6423, 6455, 6482). It
+/// waits on its own; no other delivery waits on it. The exporter logs its
+/// code, and the owner reads it on `vault.esign.get`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EsignDeliveryWait {
@@ -76,9 +80,14 @@ pub enum EsignDeliveryWait {
     /// reminder of one document: its schema, the document it names, or a
     /// notice that carries no signing link.
     NoticeUnreadable,
-    /// The send's admitted call does not read off the outbound ledger: its
-    /// dispatch ref, its ledger row or its frozen payload.
+    /// The send's admitted call does not read: its dispatch marker, or off
+    /// the outbound ledger its dispatch ref, its ledger row or its frozen
+    /// payload.
     SendUnreadable,
+    /// The recipient's signing links on the document do not read: their
+    /// index or a link's binding does not decode, an indexed link has no
+    /// binding, or a binding names another document or recipient (FIX 6482).
+    LinksUnreadable,
 }
 
 impl EsignDeliveryWait {
@@ -90,6 +99,7 @@ impl EsignDeliveryWait {
             Self::DocumentUnreadable => "document_unreadable",
             Self::NoticeUnreadable => "notice_unreadable",
             Self::SendUnreadable => "send_unreadable",
+            Self::LinksUnreadable => "links_unreadable",
         }
     }
 }
@@ -203,9 +213,11 @@ impl Vault {
     /// The delivered-content digest the exporter recorded with the link
     /// minted for `row`'s current lease; `None` when no link names it, as for
     /// a row whose notice does not read as one (its mint waits it, FIX 6455).
+    /// The inner error: the recipient's signing links do not read, so no
+    /// link is known to name the lease (its mint waits it, FIX 6482).
     /// # Errors
     /// A storage failure.
-    pub fn esign_delivery_digest(&self, row: &AttemptRecord) -> Result<Option<String>> {
+    pub fn esign_delivery_digest(&self, row: &AttemptRecord) -> Result<Result<Option<String>>> {
         let txn = self.store.env.read_txn()?;
         lease_digest_in(self, &txn, row)
     }
@@ -240,8 +252,9 @@ impl Vault {
 /// or what the mint goes on with. The mint acts on it and the owner's
 /// document view lists its waits, so the two never part (FIX 6455).
 /// # Errors
-/// A storage failure only. A notice, a document trail or a send's admitted
-/// call that does not read waits this one delivery.
+/// A storage failure only. A notice, a document trail, a send's dispatch
+/// marker or admitted call, or a recipient's signing links that do not read
+/// wait this one delivery.
 pub(super) fn delivery_read_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -277,10 +290,14 @@ pub(super) fn delivery_read_in(
     if let Some(reason) = unsignable(&state, &notice, now) {
         return Ok(DeliveryRead::Held(reason));
     }
-    let Some(marker) = dispatch_marker_in(vault, txn, dispatch_ref)? else {
-        return Ok(DeliveryRead::Held(
-            "no admitted send act covers the delivery",
-        ));
+    let marker = match dispatch_marker_in(vault, txn, dispatch_ref)? {
+        Ok(Some(marker)) => marker,
+        Ok(None) => {
+            return Ok(DeliveryRead::Held(
+                "no admitted send act covers the delivery",
+            ));
+        }
+        Err(_) => return Ok(DeliveryRead::Waits(EsignDeliveryWait::SendUnreadable)),
     };
     let call = match crate::outbound::esign_delivery_call_in_txn(vault, txn, dispatch_ref)? {
         Ok(Some(call)) => call,
@@ -322,6 +339,11 @@ pub(super) fn delivery_read_in(
         }),
         None => false,
     };
+    // The mint reads the recipient's links again under its writer: links
+    // that do not read wait this one delivery here (FIX 6482).
+    if recipient_bindings_read_in(vault, txn, document, &notice.recipient)?.is_err() {
+        return Ok(DeliveryRead::Waits(EsignDeliveryWait::LinksUnreadable));
+    }
     Ok(DeliveryRead::Mintable(Box::new(Mintable {
         document,
         notice,
@@ -332,17 +354,18 @@ pub(super) fn delivery_read_in(
 
 /// The digest recorded with the link minted for `row`'s current lease, or
 /// `None` when no link names it, as for a row whose notice does not read as
-/// one.
+/// one: the store's own failure (the outer error) apart from the recipient's
+/// signing links that do not read (the inner one).
 pub(super) fn lease_digest_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     row: &AttemptRecord,
-) -> Result<Option<String>> {
+) -> Result<Result<Option<String>>> {
     let Ok(notice) = notice_of(row) else {
-        return Ok(None);
+        return Ok(Ok(None));
     };
     let Ok(document) = EntityId::from_hex(&notice.document) else {
-        return Ok(None);
+        return Ok(Ok(None));
     };
     let lease = crate::entity_id::bytes_to_hex_lower(row.id.as_bytes());
     delivered_digest_in(

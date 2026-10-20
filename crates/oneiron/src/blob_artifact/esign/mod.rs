@@ -36,10 +36,12 @@ pub use delivery_settlement::{
 };
 mod ingress;
 pub use ingress::EsignIngress;
+mod document_view;
+pub use document_view::{EsignDocumentTrail, EsignDocumentView};
 mod door;
 pub use door::{
-    EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDocumentView, EsignDraftView,
-    EsignGetRequest, EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
+    EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView, EsignGetRequest,
+    EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView, EsignSealAttemptView,
     EsignSealGetRequest, EsignSealView, EsignSealedItemView, EsignSealedView,
     EsignSigningImageRequest, EsignSigningImageView, EsignSigningPdfRequest, EsignSigningPdfView,
     EsignSigningRequest, EsignSigningSignatureRequest, EsignSigningSignatureView, EsignVoidRequest,

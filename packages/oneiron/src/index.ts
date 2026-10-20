@@ -2495,7 +2495,7 @@ export class Oneiron {
     esign: {
       /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
       create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
-      /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail. */
+      /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail, with its delivery receipts. A trail that does not read answers trail unreadable with its error, its receipts still listed. */
       get: (input: Facade.EsignGetRequest): Facade.EsignDocumentView => this.#call(() => this.#client.vaultEsignGet(input) as Facade.EsignDocumentView),
       links: {
         /** The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient. */

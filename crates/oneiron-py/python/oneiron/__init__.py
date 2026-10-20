@@ -4432,7 +4432,7 @@ class Oneiron:
             """Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."""
             return json.loads(_translate(lambda: self._client.vault_esign_create(json.dumps(spec))))
         def get(self, spec):
-            """Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."""
+            """Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail, with its delivery receipts. A trail that does not read answers trail unreadable with its error, its receipts still listed."""
             return json.loads(_translate(lambda: self._client.vault_esign_get(json.dumps(spec))))
         @property
         def links(self) -> "Oneiron._VaultEsignLinksVerbs":

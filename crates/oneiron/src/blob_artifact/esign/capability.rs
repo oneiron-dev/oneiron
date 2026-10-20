@@ -6,6 +6,7 @@
 //! draft rotation revokes every indexed link, and `revoke` revokes one.
 use super::{ledger::state_in, model::*, principals::verify_owner};
 use crate::consent::AuthenticatedOwner;
+use crate::side_table::classified::SideGet;
 use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideTable};
 use crate::{EntityId, Result, Vault};
 use rand_core::{OsRng, RngCore};
@@ -134,22 +135,40 @@ fn recipient_bindings(
     document: EntityId,
     recipient: &str,
 ) -> Result<Vec<([u8; 32], CapabilityBinding)>> {
-    let Some(RecipientDigests(digests)) =
-        RECIPIENT.get(&vault.store, txn, &(document, recipient.to_owned()))?
-    else {
-        return Ok(Vec::new());
-    };
+    recipient_bindings_read_in(vault, txn, document, recipient)?
+}
+/// [`recipient_bindings`], the store's own failure (the outer error) apart
+/// from this recipient's links that do not read (the inner one): an index or
+/// a binding that does not decode, an indexed link with no binding, or a
+/// binding that names another document or recipient. A delivery that reads
+/// them waits alone (FIX 6482).
+pub(super) fn recipient_bindings_read_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    document: EntityId,
+    recipient: &str,
+) -> Result<Result<Vec<([u8; 32], CapabilityBinding)>>> {
+    let digests =
+        match RECIPIENT.get_classified(&vault.store, txn, &(document, recipient.to_owned())) {
+            SideGet::Missing => return Ok(Ok(Vec::new())),
+            SideGet::Decoded(RecipientDigests(digests)) => digests,
+            SideGet::DecodeError(unreadable) => return Ok(Err(unreadable)),
+            SideGet::StoreError(error) => return Err(error),
+        };
     let mut bindings = Vec::with_capacity(digests.len());
     for digest in digests {
-        let cap = TOKENS
-            .get(&vault.store, txn, &digest)?
-            .ok_or_else(|| invalid("missing recipient capability"))?;
+        let cap = match TOKENS.get_classified(&vault.store, txn, &digest) {
+            SideGet::Decoded(cap) => cap,
+            SideGet::Missing => return Ok(Err(invalid("missing recipient capability"))),
+            SideGet::DecodeError(unreadable) => return Ok(Err(unreadable)),
+            SideGet::StoreError(error) => return Err(error),
+        };
         if cap.document != document.to_hex() || cap.recipient != recipient {
-            return Err(invalid("recipient capability binding"));
+            return Ok(Err(invalid("recipient capability binding")));
         }
         bindings.push((digest, cap));
     }
-    Ok(bindings)
+    Ok(Ok(bindings))
 }
 /// Records `token`'s binding and adds its digest to its recipient's index.
 fn put_capability(
@@ -189,7 +208,10 @@ pub(crate) fn recipient_capability_unrevoked_in(
 /// exporter's digest of the content delivered with it, kept beside the
 /// lease as the only trace of the link's delivery. An earlier link minted
 /// for the same lease, one an export never finished, keeps working but no
-/// longer names the lease. No link is revoked.
+/// longer names the lease. No link is revoked. The mint's own read
+/// ([`super::delivery_capability::delivery_read_in`]) waited a delivery whose
+/// recipient's links do not read, under this same writer, so only the
+/// store fails this read.
 pub(super) fn mint_delivery_capability_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -225,20 +247,28 @@ pub(super) fn mint_delivery_capability_in_txn(
     Ok(token)
 }
 /// The delivered-content digest of the link minted for one delivery lease,
-/// or `None` when no link names that lease.
+/// or `None` when no link names that lease: the store's own failure (the
+/// outer error) apart from the recipient's links that do not read (the inner
+/// one, [`recipient_bindings_read_in`]).
 pub(super) fn delivered_digest_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     document: EntityId,
     recipient: &str,
     lease: (&str, u32),
-) -> Result<Option<String>> {
+) -> Result<Result<Option<String>>> {
     let (attempt_id, attempt_count) = lease;
-    Ok(recipient_bindings(vault, txn, document, recipient)?
-        .into_iter()
-        .filter_map(|(_, cap)| cap.delivery)
-        .find(|export| export.attempt_id == attempt_id && export.attempt_count == attempt_count)
-        .map(|export| export.delivered_sha256))
+    Ok(
+        recipient_bindings_read_in(vault, txn, document, recipient)?.map(|bindings| {
+            bindings
+                .into_iter()
+                .filter_map(|(_, cap)| cap.delivery)
+                .find(|export| {
+                    export.attempt_id == attempt_id && export.attempt_count == attempt_count
+                })
+                .map(|export| export.delivered_sha256)
+        }),
+    )
 }
 
 impl Vault {
