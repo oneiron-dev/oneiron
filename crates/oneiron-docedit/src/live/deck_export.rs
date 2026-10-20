@@ -24,17 +24,19 @@
 //! what it carries: a shape from its preset or its points, a picture over a
 //! new media part from the asset its payload names (the caller's [`Assets`]
 //! supply the bytes, which must hash to the reference) or over an image the
-//! deck holds, a table through the native writer, a chart of any family
-//! through the native writer and the chart rewrite, a SmartArt as the
-//! engine's outline list, and a connector glued to the nodes its ends name
-//! once they are bound on its slide. A bound node whose preset or payload
-//! the live model changed is written over its retained element: its preset
-//! or points, its glue, new media or held media shown again, a table's
-//! changed cells or grid (its frame fitted to the grid), a chart's changed
-//! series sequences or its rewritten plots, axes and workbook (a new one
-//! when its data lived elsewhere), and a SmartArt's node text or its nodes
-//! added, removed and moved. What it did PowerPoint's way where the deck
-//! once refused rides in the outcome's effects.
+//! deck holds, cropped to its preset's shape, a table through the native
+//! writer, a chart of any family through the native writer and the chart
+//! rewrite, a SmartArt as the engine's outline list, and a connector glued
+//! to the nodes its ends name once they are bound on its slide. A bound
+//! node whose preset or payload the live model changed is written over its
+//! retained element: its preset (a picture's Crop to Shape) or points, its
+//! glue, new media or held media shown again (dropping an SVG extension the
+//! new media does not carry), a table's changed cells or grid (its frame
+//! fitted to the grid), a chart's changed series sequences or its rewritten
+//! plots, axes and workbook (a new one when its data lived elsewhere), and a
+//! SmartArt's node text or its nodes added, removed and moved. What it did
+//! PowerPoint's way where the deck once refused rides in the outcome's
+//! effects.
 //! Until [`Gate::is_open`], blob versions remain authoritative and exports
 //! are proposal artifacts. An export that changes anything recounts the app
 //! properties' words and paragraphs over the text it wrote last.
@@ -48,7 +50,7 @@ use super::pptx::{
     WRITTEN_FRAME, geometry_of, slide_of, text_body,
 };
 use super::reshape;
-use super::{diagram, held, points};
+use super::{diagram, held, points, svg_fallback};
 use crate::deck::{DeckView, ShapeView};
 use crate::design_plan::{AssetKind, Cell, Column, ColumnKind, Dataset, Rect};
 use crate::edit::geometry::{glue_of, preset_of};
@@ -69,7 +71,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/9";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/10";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -885,6 +887,7 @@ fn born(
             let name = named("Picture");
             convert::born_held_picture(work.next_mut(), part, (id, &name), offset, extent, media)?;
             work.changed.insert(part.to_owned());
+            crop_born(work, node, part, id)?;
             return Ok(id);
         }
         (NodeKind::GraphicFrame, Some(payload)) => {
@@ -953,6 +956,7 @@ fn born(
             _ => None,
         })
         .ok_or(LiveError::Invalid("the shape verb added no shape"))?;
+    crop_born(work, node, part, added)?;
     // A live-born freeform: the preset the shape verb drew, then its points.
     if let (NodeKind::Shape, Some(NodePayload::CustomGeometry { paths })) =
         (node.kind, &node.payload)
@@ -962,6 +966,28 @@ fn born(
         work.changed.insert(part.to_owned());
     }
     Ok(added)
+}
+
+/// A live-born picture cropped to a shape (FIX 3696): its preset over the
+/// rectangle the picture was written with, through the checked preset
+/// verb, which keeps its media and crop. Nothing for any other node.
+fn crop_born(work: &mut Work, node: &DeckNode, part: &str, native: u32) -> Result<(), LiveError> {
+    let Some(preset) = node.preset.filter(|preset| *preset != Preset::Rect) else {
+        return Ok(());
+    };
+    if node.kind != NodeKind::Picture {
+        return Ok(());
+    }
+    let view = work.view()?;
+    let expected = fingerprint_of(&view, part, native).ok_or(LiveError::UnknownNode)?;
+    work.value(&ValueEdit::SetPreset {
+        target: Target {
+            slide: part,
+            shape: native,
+            expected,
+        },
+        preset: preset.name(),
+    })
 }
 
 /// The extent of a bound picture showing the held media part `part`, the
@@ -1033,7 +1059,9 @@ fn project_payload(
     let tree = work.slide_tree(part)?;
     let preset = match (&node.payload, node.preset) {
         (Some(NodePayload::Connector { preset, .. }), _) => preset.map(ConnectorPreset::name),
-        (_, Some(preset)) if node.kind == NodeKind::Shape => Some(preset.name()),
+        (_, Some(preset)) if matches!(node.kind, NodeKind::Shape | NodeKind::Picture) => {
+            Some(preset.name())
+        }
         _ => None,
     };
     if let Some(preset) = preset
@@ -1091,6 +1119,11 @@ fn project_payload(
                         limits: GraphicLimits::default(),
                     },
                 })?;
+                // The raster is what the picture shows now: an SVG its blip's
+                // extension still names would be what PowerPoint draws.
+                if svg_fallback::drop_svg(work.next_mut(), part, native)? {
+                    work.changed.insert(part.to_owned());
+                }
             }
         }
         Some(NodePayload::Table { header, rows }) => {
@@ -1692,7 +1725,11 @@ pub enum StepOutcome {
 }
 
 /// The hashed oracle evidence one profile passed under. PowerPoint, macOS
-/// and font versions are recorded on every receipt.
+/// and font versions are recorded on every receipt, with the run it came
+/// from (FIX 3772): the projector its candidates were exported through, the
+/// source revision its engine half was built from and its case manifest's
+/// hash, as the run's manifest pins them. A receipt is its run's evidence:
+/// it opens the gate only for the projector it names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OracleReceipt {
     pub profile: String,
@@ -1703,10 +1740,20 @@ pub struct OracleReceipt {
     pub steps: Vec<StepOutcome>,
     /// Opened without repair.
     pub clean: bool,
+    /// The projector the run exported its candidates through (the run
+    /// manifest's `projector`).
+    pub projector: String,
+    /// The full commit id the run's engine half was built from (the run
+    /// manifest's `source`).
+    pub source_sha: String,
+    /// The SHA-256 of the case manifest the run read, as hex (the run
+    /// manifest's `case_manifest.sha256`).
+    pub case_manifest_sha256: String,
 }
 
-/// The activation gate. Closed until a receipt for this exact profile
-/// shows all eight steps passed on a clean oracle opening.
+/// The activation gate. Closed until a receipt for this exact profile,
+/// from a run of the current projector, shows all eight steps passed on a
+/// clean oracle opening.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Gate {
     pub profile: String,
@@ -1724,6 +1771,7 @@ impl Gate {
     pub fn is_open(&self) -> bool {
         self.receipt.as_ref().is_some_and(|receipt| {
             receipt.profile == self.profile
+                && receipt.projector == PROJECTOR_VERSION
                 && receipt.clean
                 && receipt.steps.len() == 8
                 && receipt

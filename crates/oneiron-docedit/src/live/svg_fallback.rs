@@ -6,6 +6,8 @@
 //! both through the slide's image relationships. An SVG part no picture
 //! shows over a raster is written as before, the blip naming the SVG alone:
 //! drawing a raster for it needs an SVG renderer the deck does not carry.
+//! A picture shown with other media drops the extension ([`drop_svg`]), so
+//! PowerPoint draws what it now shows (FIX 5728).
 
 use super::LiveError;
 use super::convert::{HELD_MEDIA, element_of};
@@ -97,6 +99,61 @@ fn extension(svg: &str) -> String {
     )
 }
 
+/// The `asvg:svgBlip` of the blip `blip`'s Office SVG extension, if any.
+pub(super) fn svg_blip(tree: &XmlTree, blip: usize) -> Option<usize> {
+    xml::child(tree, blip, A, "extLst")
+        .into_iter()
+        .flat_map(|list| children(tree, list, A, "ext"))
+        .find_map(|ext| xml::child(tree, ext, ASVG, "svgBlip"))
+}
+
+/// Drop Office's SVG extension from the blip of the picture `native` on
+/// `slide`, which now shows other media: the `a:ext` holding `asvg:svgBlip`
+/// goes (its `a:extLst` with it when it held nothing else; any other
+/// extension stays), and the slide's relationship to the SVG once nothing
+/// on the slide names it. The SVG part stays, for a picture that shows it
+/// again. Whether anything changed.
+pub(super) fn drop_svg(package: &mut Package, slide: &str, native: u32) -> Result<bool, LiveError> {
+    let (bytes, tree) = xml::read(package, slide)?;
+    let picture = element_of(&tree, native, "pic").ok_or(LiveError::UnknownNode)?;
+    let Some(at) = xml::path(&tree, picture, &[(P, "blipFill"), (A, "blip")])
+        .and_then(|blip| svg_blip(&tree, blip))
+    else {
+        return Ok(false);
+    };
+    // asvg:svgBlip in a:ext in a:extLst.
+    let ext = tree.nodes[at]
+        .parent
+        .ok_or(LiveError::Invalid(HELD_MEDIA))?;
+    let list = tree.nodes[ext]
+        .parent
+        .ok_or(LiveError::Invalid(HELD_MEDIA))?;
+    let gone = if tree.nodes[list].children.len() == 1 {
+        list
+    } else {
+        ext
+    };
+    let svg = tree.nodes[at].attr_ns(R, "embed").map(str::to_owned);
+    let edit = (tree.nodes[gone].span.clone(), Vec::new());
+    package.replace_xml_part(slide, xml::splice(&bytes, vec![edit])?)?;
+    if let Some(svg) = svg {
+        let (_, tree) = xml::read(package, slide)?;
+        let named = tree
+            .nodes
+            .iter()
+            .any(|node| node.attrs.values().any(|value| *value == svg));
+        if !named
+            && package
+                .relationships(slide)?
+                .iter()
+                .any(|rel| rel.id == svg)
+        {
+            package.unrelate(slide, &svg)?;
+        }
+    }
+    Ok(true)
+}
+
 /// The qualified name of an element's `r:embed` attribute, as it is written.
 fn embed_name(node: &Node) -> String {
     node.attr_spans
@@ -152,22 +209,19 @@ pub(super) fn show(
     let (bytes, tree) = xml::read(package, slide)?;
     let blip = blip_of(&tree)?;
     let rels = package.relationships(slide)?;
-    let svg_blip = xml::child(&tree, blip, A, "extLst")
-        .into_iter()
-        .flat_map(|list| children(&tree, list, A, "ext"))
-        .find_map(|ext| xml::child(&tree, ext, ASVG, "svgBlip"));
+    let svg_at = svg_blip(&tree, blip);
     let names_media = |at: usize| {
         let id = tree.nodes[at].attr_ns(R, "embed");
         rels.iter()
             .any(|rel| !rel.external && Some(rel.id.as_str()) == id && rel.target == media)
     };
-    if svg_blip.is_some_and(names_media) {
+    if svg_at.is_some_and(names_media) {
         return Ok(Some(false));
     }
     let svg = image_rel(package, slide, media)?;
     let raster = image_rel(package, slide, &raster)?;
     // The SVG into the blip's extension, then the raster into its embed.
-    let edit = match (svg_blip, xml::child(&tree, blip, A, "extLst")) {
+    let edit = match (svg_at, xml::child(&tree, blip, A, "extLst")) {
         (Some(at), _) => {
             xml::set_attribute(&bytes, &tree.nodes[at], &embed_name(&tree.nodes[at]), &svg)
         }
