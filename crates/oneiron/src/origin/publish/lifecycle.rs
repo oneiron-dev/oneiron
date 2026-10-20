@@ -11,8 +11,8 @@
 use super::PublishScope;
 use super::authority::{OriginPublishCaller, PublishAnswer, PublishMember, PublishTarget};
 use super::inputs::{
-    OriginPublishApproveRequest, OriginPublishIdRequest, OriginPublishReviewRequest,
-    OriginPublishReviewView,
+    OriginPublishApproveRequest, OriginPublishIdRequest, OriginPublishRequestInput,
+    OriginPublishReviewRequest, OriginPublishReviewView,
 };
 use super::types::{OriginPublishAct, OriginPublishRequestView, OriginPublishState};
 use crate::Vault;
@@ -144,7 +144,7 @@ impl Vault {
         caller: &OriginPublishCaller<'_>,
         input: OriginPublishIdRequest,
     ) -> Result<PublishAnswer<OriginPublishRequestView>> {
-        let (_, _, view) = match self.admitted_publish_request(
+        let (_, member, view) = match self.admitted_publish_request(
             caller,
             &input.repo,
             input.request_id,
@@ -162,8 +162,54 @@ impl Vault {
         if view.state.is_terminal() {
             return Ok(Ok(view));
         }
-        let cancelled = self.settle_publish(&view, &OPEN, OriginPublishState::Cancelled, None)?;
+        // The caller and the reviewed paths are admitted again in the write
+        // that cancels: a Grant revoked since the read cancels nothing.
+        let mut txn = self.store.env.write_txn()?;
+        if let Err(denial) =
+            self.admit_publish_act_in_txn(&txn, caller, &member, PublishTarget::of(&view), || {
+                self.publish_review_paths_in_txn(&txn, &view)
+            })?
+        {
+            return Ok(Err(denial));
+        }
+        let (cancelled, moved) = self.transition_publish_in_txn(
+            &mut txn,
+            &view,
+            &OPEN,
+            OriginPublishState::Cancelled,
+            |row| row.refusal = None,
+        )?;
+        txn.commit()?;
+        if moved {
+            self.release_publish_pin(&cancelled);
+        }
         Ok(Ok(cancelled))
+    }
+
+    /// A request already under the caller's idempotency key, asked for
+    /// again (a replay, or a writer that lost the race to record it): the
+    /// same tuple answers it once its act is admitted in `txn`; any other
+    /// tuple is `request_changed`.
+    pub(super) fn replay_publish_request(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        caller: &OriginPublishCaller<'_>,
+        member: &PublishMember,
+        target: PublishTarget<'_>,
+        input: &OriginPublishRequestInput,
+        existing: OriginPublishRequestView,
+    ) -> Result<PublishAnswer<OriginPublishRequestView>> {
+        if !super::same_request(&existing, input, caller.actor) {
+            return Err(Error::Refused(
+                "request_changed: this idempotency key names another request; use a new key \
+                 for another tuple"
+                    .to_owned(),
+            ));
+        }
+        let admitted = self.admit_publish_act_in_txn(txn, caller, member, target, || {
+            self.publish_review_paths_in_txn(txn, &existing)
+        })?;
+        Ok(admitted.map(|_| existing))
     }
 
     /// Admits `caller` to the repo, reads the request, then admits the act

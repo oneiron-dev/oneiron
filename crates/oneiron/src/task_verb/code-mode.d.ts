@@ -2173,14 +2173,14 @@ declare namespace Sdk {
   type OriginMirrorReadiness = { state: "ready" } | { state: "not_ready"; reason: OriginMirrorNotReadyReason; objects: OriginMirrorLfsObject[]; omitted_objects: number };
   type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null; readiness?: OriginMirrorReadiness | null };
   type OriginMirrorSyncStrategy = "ask_me" | "schedule";
-  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[]; sync_strategy?: OriginMirrorSyncStrategy; strategy_revision?: number; target_generation?: number };
+  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[]; sync_strategy?: OriginMirrorSyncStrategy; strategy_revision?: number; target_generation?: EntityId | null };
   type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null };
   type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number; sync_strategy?: OriginMirrorSyncStrategy | null };
   type OriginMirrorStrategyRequest = { repo: string; sync_strategy: OriginMirrorSyncStrategy };
   type OriginMirrorCleared = { repo: string; cleared: boolean };
   type OriginPublishForce = "fast_forward" | "rewrite";
   type OriginPublishRequestInput = { repo: string; ref_name: string; commit: string; force?: OriginPublishForce; idempotency_key?: string | null; expires_at?: number | null; code_repo?: EntityId | null };
-  type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation: number };
+  type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation?: EntityId | null };
   type OriginPublishRemote = { state: "absent" } | { state: "at"; commit: string };
   type OriginPublishLfsBytes = "not_sent";
   type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes };

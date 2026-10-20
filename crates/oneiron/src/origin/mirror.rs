@@ -96,10 +96,12 @@ pub struct OriginMirrorTarget {
     /// Moves by one each time the strategy changes.
     #[serde(default)]
     pub strategy_revision: u64,
-    /// Moves each time the URL, user, custody record or served name
-    /// changes; an exact publish request is bound to the one it was made at.
+    /// A fresh id each time the URL, user, custody record or served name
+    /// changes, so no incarnation, across a clear and a new setup, ever
+    /// repeats one; an exact publish request is bound to the one it was made
+    /// at. `None` only on a row stored before generations.
     #[serde(default)]
-    pub target_generation: u64,
+    pub target_generation: Option<EntityId>,
 }
 
 /// One push to a mirror.
@@ -236,7 +238,6 @@ impl Vault {
             repo_name,
             (&input.url, &user, &input.secret_ref),
             input.sync_strategy,
-            self.now_recorded_at(),
         );
         let (last, pushed) = match previous {
             Some(row) if row.url == input.url => (row.last, row.pushed),

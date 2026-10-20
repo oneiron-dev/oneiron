@@ -125,7 +125,9 @@ pub struct OriginPublishDestination {
     pub user: String,
     /// The custody record of the push token; never its value.
     pub secret_ref: String,
-    pub target_generation: u64,
+    /// The mirror's generation id; `None` only for a mirror row stored
+    /// before generations.
+    pub target_generation: Option<EntityId>,
 }
 
 /// Git-LFS bytes the push carries.

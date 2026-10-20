@@ -4311,7 +4311,7 @@ export type OriginMirrorRun = { at: number; refs: number; deleted: number; failu
 /** `oneiron::origin::mirror_strategy::OriginMirrorSyncStrategy` */
 export type OriginMirrorSyncStrategy = "ask_me" | "schedule"
 /** `oneiron::origin::mirror::OriginMirrorTarget` */
-export type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[]; sync_strategy?: OriginMirrorSyncStrategy; strategy_revision?: number; target_generation?: number }
+export type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[]; sync_strategy?: OriginMirrorSyncStrategy; strategy_revision?: number; target_generation?: EntityId | null }
 /** `oneiron::memory::origin_doors::types::OriginMirrorView` */
 export type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null }
 /** `oneiron::memory::origin_doors::types::OriginMirrorSetRequest` */
@@ -4325,7 +4325,7 @@ export type OriginPublishForce = "fast_forward" | "rewrite"
 /** `oneiron::origin::publish::inputs::OriginPublishRequestInput` */
 export type OriginPublishRequestInput = { repo: string; ref_name: string; commit: string; force?: OriginPublishForce; idempotency_key?: string | null; expires_at?: number | null; code_repo?: EntityId | null }
 /** `oneiron::origin::publish::types::OriginPublishDestination` */
-export type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation: number }
+export type OriginPublishDestination = { url: string; user: string; secret_ref: string; target_generation?: EntityId | null }
 /** `oneiron::origin::publish::types::OriginPublishRemote` */
 export type OriginPublishRemote = { state: "absent" } | { state: "at"; commit: string }
 /** `oneiron::origin::publish::types::OriginPublishLfsBytes` */

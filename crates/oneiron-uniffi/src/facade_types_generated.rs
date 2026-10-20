@@ -32511,7 +32511,7 @@ pub struct OriginMirrorTarget {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub target_generation: Option<u64>,
+    pub target_generation: Option<String>,
 }
 
 /// `oneiron::memory::origin_doors::types::OriginMirrorView`.
@@ -32610,8 +32610,12 @@ pub struct OriginPublishDestination {
     pub user: String,
     #[serde(rename = "secret_ref")]
     pub secret_ref: String,
-    #[serde(rename = "target_generation")]
-    pub target_generation: u64,
+    #[serde(
+        rename = "target_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub target_generation: Option<String>,
 }
 
 /// `oneiron::origin::publish::types::OriginPublishRemote`.

@@ -2,7 +2,9 @@
 //! each request's row and, beside it, the pages of its review. A request
 //! changes only by a compare-and-set on its state in one write transaction,
 //! so two callers can never both take its one dispatch. An actor's erase
-//! scrubs every act that names it and keeps the rest of the record.
+//! scrubs every act that names it and keeps the rest of the record; a
+//! request row that does not decode is dropped there instead, never an
+//! abort of the erase or restore.
 
 use std::collections::BTreeSet;
 
@@ -22,6 +24,11 @@ const ORIGIN_PUBLISH_REQUEST_ID_DOMAIN: &[u8] = b"oneiron:origin-publish-request
 
 /// The longest idempotency key, in bytes.
 pub(super) const ORIGIN_PUBLISH_MAX_KEY_BYTES: usize = 128;
+
+/// The WARN code of a request row an actor scrub dropped because it does
+/// not decode (CALLS "FIX 6866 undecodable request on scrub").
+const ORIGIN_PUBLISH_REQUEST_UNDECODABLE_DROPPED: &str =
+    "origin_publish_request_undecodable_dropped";
 
 /// Repo id, request id, then nothing for the request or a u64be page.
 type PublishKey = (EntityId, EntityId, Vec<u8>);
@@ -201,21 +208,30 @@ impl Vault {
 }
 
 /// Scrubs an erased actor from every request act that names it (the
-/// side-table erase callback). The tuple, review and outcome stay: the
-/// record of what left the vault outlives who asked.
+/// side-table erase callback, which a restore runs again). The tuple, review
+/// and outcome stay: the record of what left the vault outlives who asked.
+/// A request row that does not decode is dropped with its review pages (its
+/// actor bytes go with it; it could never dispatch) under a typed WARN
+/// naming its key, and the scrub goes on; a store error still ends it.
 pub(crate) fn erase_publish_request_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
     let mut rows = Vec::new();
+    let mut undecodable = Vec::new();
     for row in REQUESTS.iter_raw_from(&vault.store, wtxn, &[])? {
         let (key, bytes) = row?;
         if key.len() != 32 {
             continue;
         }
-        let PublishRow::Request(mut view) = REQUESTS.decode_value(&bytes)? else {
-            continue;
+        let mut view = match REQUESTS.decode_value(&bytes) {
+            Ok(PublishRow::Request(view)) => view,
+            Ok(PublishRow::ReviewPage(_)) => continue,
+            Err(error) => {
+                undecodable.push((key, error.kind()));
+                continue;
+            }
         };
         let mut scrubbed = false;
         let row = &mut *view;
@@ -234,6 +250,16 @@ pub(crate) fn erase_publish_request_actor_in_txn(
     }
     for view in rows {
         vault.write_publish_request_in_txn(wtxn, &view)?;
+    }
+    for (key, kind) in undecodable {
+        REQUESTS.delete_from(&vault.store, wtxn, &key)?;
+        tracing::warn!(
+            code = ORIGIN_PUBLISH_REQUEST_UNDECODABLE_DROPPED,
+            repo_id = %crate::entity_id::bytes_to_hex_lower(&key[..16]),
+            request_id = %crate::entity_id::bytes_to_hex_lower(&key[16..]),
+            kind = ?kind,
+            "an exact publish request that does not decode was dropped; it can never dispatch"
+        );
     }
     Ok(())
 }

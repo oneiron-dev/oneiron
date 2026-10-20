@@ -4,10 +4,12 @@
 //! The vault's live owner, from any linked surface, acts on every request.
 //! Anyone else acts only under ONE live agent Grant, judged in the snapshot
 //! the act commits in by [`Vault::admit_origin_publish_grant_in_txn`]: G1's
-//! read admission (`admit_repo_read_in_txn`, FIX 6867) must admit the
-//! request's branch over EVERY path its review names under that Grant's repo
-//! bounds, and the same Grant's Scope must list `publish` (`publish_rewrite`
-//! too, for a rewrite). The destination is the repository's one
+//! read admission (FIX 6867), over the same live candidate Grants
+//! (`admit_repo_read_passing_in_txn`), must admit the request's branch over
+//! EVERY path its review names under that Grant's repo bounds, and the same
+//! Grant's Scope must list `publish` (`publish_rewrite` too, for a rewrite).
+//! The first Grant meeting both stands, so a read-only Grant never masks a
+//! publishing one. The destination is the repository's one
 //! owner-configured mirror; the repo bounds gain no field. Grants are never
 //! combined, the outer `Result` is a store error and never "no membership",
 //! and the Grant's id is bound on the act and checked again at dispatch. A
@@ -25,7 +27,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{RepoAccessRefusal, RepoTarget, ScopeAxis};
+use crate::federation::{AgentGrantStanding, RepoAccessRefusal, RepoTarget, ScopeAxis};
 
 /// The verb class a Grant's Scope lists to publish within its repo bounds.
 pub const ORIGIN_PUBLISH_GRANT_VERB: &str = "publish";
@@ -100,12 +102,22 @@ fn repo_denial(refused: RepoAccessRefusal) -> OriginPublishDenial {
     denial(refused.public_code(), refused.message())
 }
 
+/// Whether the Grant's Scope lists `verb` explicitly.
+fn lists(standing: &AgentGrantStanding, verb: &str) -> bool {
+    matches!(
+        &standing.grant.authority_scope.verbs,
+        ScopeAxis::Some(verbs) if verbs.contains(verb)
+    )
+}
+
 impl Vault {
     /// The Grant half of publish admission: `actor`, of `class`, publishes
-    /// `ref_name` of the repo handle `code_repo` when G1's read admission
-    /// admits it over every one of `paths` under one Grant whose Scope also
-    /// lists [`ORIGIN_PUBLISH_GRANT_VERB`] (and, for a rewrite,
-    /// [`ORIGIN_PUBLISH_REWRITE_GRANT_VERB`]).
+    /// `target`'s ref of its repo handle when G1's read admission admits it
+    /// over every one of its paths under one Grant whose Scope also lists
+    /// [`ORIGIN_PUBLISH_GRANT_VERB`] (and, for a rewrite,
+    /// [`ORIGIN_PUBLISH_REWRITE_GRANT_VERB`]), judged in one walk of the
+    /// live candidate Grants. With `bound` (an approval's recheck at
+    /// dispatch), only that very Grant stands.
     ///
     /// # Errors
     /// A store, fold or clock failure; never a refusal.
@@ -114,44 +126,53 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         actor: EntityId,
         class: EdgeActorClass,
-        code_repo: EntityId,
-        ref_name: &str,
-        paths: BTreeSet<String>,
+        target: &RepoTarget,
         rewrite: bool,
+        bound: Option<EntityId>,
     ) -> Result<PublishAnswer<OriginPublishGrant>> {
-        let target = RepoTarget {
-            repo: code_repo,
-            git_ref: ref_name.to_owned(),
-            paths,
+        let publishes = |standing: &AgentGrantStanding| {
+            lists(standing, ORIGIN_PUBLISH_GRANT_VERB) && bound.is_none_or(|id| id == standing.id)
         };
-        let membership = match self.admit_repo_read_in_txn(txn, actor, class, code_repo, &target)? {
+        let admitted = self.admit_repo_read_passing_in_txn(
+            txn,
+            actor,
+            class,
+            target.repo,
+            target,
+            |standing: &AgentGrantStanding| {
+                publishes(standing)
+                    && (!rewrite || lists(standing, ORIGIN_PUBLISH_REWRITE_GRANT_VERB))
+            },
+        )?;
+        let membership = match admitted {
             Ok(membership) => membership,
-            Err(refused) => return Ok(Err(repo_denial(refused))),
+            Err(Some(refused)) => return Ok(Err(repo_denial(refused))),
+            Err(None) => {
+                let publishing = rewrite
+                    && self
+                        .admit_repo_read_passing_in_txn(
+                            txn,
+                            actor,
+                            class,
+                            target.repo,
+                            target,
+                            &publishes,
+                        )?
+                        .is_ok();
+                return Ok(Err(if publishing {
+                    denial(
+                        "publish_rewrite_not_granted",
+                        "a history rewrite needs the owner, or a Grant that also lists \
+                         publish_rewrite",
+                    )
+                } else {
+                    denial(
+                        "publish_not_granted",
+                        "no single Grant that admits this read lists publish",
+                    )
+                }));
+            }
         };
-        let standing = self
-            .agent_grants_in_txn(txn)?
-            .into_iter()
-            .find(|standing| standing.id == membership.grant);
-        let lists = |verb: &str| {
-            standing.as_ref().is_some_and(|standing| {
-                matches!(
-                    &standing.grant.authority_scope.verbs,
-                    ScopeAxis::Some(verbs) if verbs.contains(verb)
-                )
-            })
-        };
-        if !lists(ORIGIN_PUBLISH_GRANT_VERB) {
-            return Ok(Err(denial(
-                "publish_not_granted",
-                "the Grant that admits this read does not list publish",
-            )));
-        }
-        if rewrite && !lists(ORIGIN_PUBLISH_REWRITE_GRANT_VERB) {
-            return Ok(Err(denial(
-                "publish_rewrite_not_granted",
-                "a history rewrite needs the owner, or a Grant that also lists publish_rewrite",
-            )));
-        }
         Ok(Ok(OriginPublishGrant {
             grant: membership.grant,
             repo_ref: membership.repo_ref,
@@ -210,14 +231,18 @@ impl Vault {
         let code_repo = target.code_repo.ok_or(Error::InvariantViolation(
             "a Grant member names its repo handle",
         ))?;
+        let asked = RepoTarget {
+            repo: code_repo,
+            git_ref: target.ref_name.to_owned(),
+            paths: paths()?,
+        };
         let admitted = self.admit_origin_publish_grant_in_txn(
             txn,
             caller.actor,
             caller.class,
-            code_repo,
-            target.ref_name,
-            paths()?,
+            &asked,
             target.rewrite,
+            None,
         )?;
         Ok(match admitted {
             Err(refused) => Err(refused),

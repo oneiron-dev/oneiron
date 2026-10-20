@@ -563,8 +563,9 @@ pushed back to the mirror.
 Leaving out `sync_strategy` keeps the strategy of a mirror whose URL is unchanged; a new mirror,
 or a new URL, starts at `ask_me`. The strategy route (and `vault.code.origin.mirror.strategy`)
 changes the strategy and its `strategy_revision` and nothing else: never the URL, the token, the
-cadence or what was pushed. A change of URL, user, custody record or served name moves the
-mirror's `target_generation` instead. Only the live owner sets either; `every_secs` is still
+cadence or what was pushed. A change of URL, user, custody record or served name gives the
+mirror a fresh `target_generation` id instead, one no earlier mirror of the repo held, cleared or
+not. Only the live owner sets either; `every_secs` is still
 stored and checked on an `ask_me` mirror, and only `schedule` reads it.
 
 ### Publish one exact commit

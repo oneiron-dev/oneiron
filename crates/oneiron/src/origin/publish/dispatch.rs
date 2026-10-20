@@ -2,13 +2,16 @@
 //!
 //! Before anything goes out it checks, in order: the request is approved and
 //! not expired; this host is the repository's origin; the commit is still
-//! held here; the branch at the mirror, read with the mirror's credential,
-//! still holds the leased tip (or already holds the commit). Then one write
-//! transaction admits the caller again, finds the approval's owner or Grant
-//! still standing and the mirror's URL, user, custody record and generation
-//! unchanged, and claims the request `dispatching`. Only then does its one
-//! push run, and its outcome settles the request (`reconcile`). The strategy
-//! is never read: an approved request executes once on a mirror of either.
+//! held here; the mirror's URL, user, custody record and generation are the
+//! request's (before any credential or remote IO); the branch at the mirror,
+//! read with the mirror's credential, still holds the leased tip (or already
+//! holds the commit). Then one write transaction, under the coordinator a
+//! cutover takes, admits the caller again, finds the request unexpired at
+//! the vault's time, the mirror unchanged, this host still the origin and
+//! the approval's owner or Grant still standing, and claims the request
+//! `dispatching`. Only then does its one push run, and its outcome settles
+//! the request (`reconcile`). The strategy is never read: an approved
+//! request executes once on a mirror of either.
 
 use super::authority::{OriginPublishCaller, PublishAnswer, PublishTarget};
 use super::inputs::OriginPublishIdRequest;
@@ -19,8 +22,9 @@ use super::types::{
 };
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitRefName};
+use crate::git_wire::{GitOid, GitRefName, lock_repository};
 use crate::origin::mirror::{OriginMirrorTarget, TARGETS};
+use crate::origin::smart_http::push_queue_key;
 
 const APPROVED: [OriginPublishState; 1] = [OriginPublishState::Approved];
 
@@ -79,11 +83,24 @@ impl Vault {
             super::authority::PublishMember::Grant { anchor } => Some(anchor.clone()),
             super::authority::PublishMember::Owner => self.approval_anchor(&scope, &view)?,
         };
+        let current = {
+            let txn = self.store.env.read_txn()?;
+            TARGETS.get(&self.store, &txn, &view.repo_id)?
+        };
+        let changed = changed_fields(&view.destination, current.as_ref());
+        if !changed.is_empty() {
+            let reason = OriginPublishRefusalReason::DestinationChanged;
+            let moved = refusal(reason, None, changed, None);
+            let refused =
+                self.settle_publish(&view, &APPROVED, OriginPublishState::Refused, Some(moved))?;
+            return Ok(Ok(refused));
+        }
         let observed = self
             .read_publish_remote(&scope.wire, &handle, &view.destination, &name)
             .map_err(|error| super::remote_tip_unknown(&view.ref_name, &error))?;
         let expected = expected_oid(&view.expected_remote)?;
 
+        let coordinator = lock_repository(&push_queue_key(self, &view.repo)?)?;
         let mut txn = self.store.env.write_txn()?;
         let paths = self.publish_review_paths_in_txn(&txn, &view)?;
         let authority = match self.admit_publish_act_in_txn(
@@ -100,13 +117,17 @@ impl Vault {
             &view.destination,
             TARGETS.get(&self.store, &txn, &view.repo_id)?.as_ref(),
         );
-        let (to, refused) = if !changed.is_empty() {
+        let (to, refused) = if super::expired(&view, self.now_recorded_at()) {
+            (OriginPublishState::Expired, None)
+        } else if !changed.is_empty() {
             let reason = OriginPublishRefusalReason::DestinationChanged;
             (
                 OriginPublishState::Refused,
                 Some(refusal(reason, None, changed, None)),
             )
-        } else if !self.approval_stands_in_txn(&txn, &view, anchor.as_ref(), &paths)? {
+        } else if !self.origin_pusher_stands_in_txn(&txn, scope.repo_id)?
+            || !self.approval_stands_in_txn(&txn, &view, anchor.as_ref(), &paths)?
+        {
             let reason = OriginPublishRefusalReason::AuthorityChanged;
             (
                 OriginPublishState::Refused,
@@ -138,6 +159,7 @@ impl Vault {
                 row.refusal = refused;
             })?;
         txn.commit()?;
+        drop(coordinator);
         if !moved {
             return Ok(Ok(claimed));
         }

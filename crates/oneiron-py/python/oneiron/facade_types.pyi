@@ -10417,7 +10417,7 @@ class OriginMirrorTarget(TypedDict):
     pushed: list[str]
     sync_strategy: NotRequired[OriginMirrorSyncStrategy]
     strategy_revision: NotRequired[int]
-    target_generation: NotRequired[int]
+    target_generation: NotRequired[EntityId | None]
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
@@ -10447,7 +10447,7 @@ class OriginPublishDestination(TypedDict):
     url: str
     user: str
     secret_ref: str
-    target_generation: int
+    target_generation: NotRequired[EntityId | None]
 class OriginPublishRemoteAbsent(TypedDict):
     state: Literal["absent"]
 class OriginPublishRemoteAt(TypedDict):

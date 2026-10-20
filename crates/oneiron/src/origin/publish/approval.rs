@@ -13,6 +13,7 @@ use super::types::{OriginPublishAuthority, OriginPublishForce, OriginPublishRequ
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::error::Result;
+use crate::federation::RepoTarget;
 
 impl Vault {
     /// The anchor the approver's Grant reads, verified against this served
@@ -65,14 +66,18 @@ impl Vault {
                 let (Some(code_repo), Some(anchor)) = (view.code_repo, anchor) else {
                     return Ok(false);
                 };
+                let target = RepoTarget {
+                    repo: code_repo,
+                    git_ref: view.ref_name.clone(),
+                    paths: paths.clone(),
+                };
                 let admitted = self.admit_origin_publish_grant_in_txn(
                     txn,
                     actor,
                     approved.class.into(),
-                    code_repo,
-                    &view.ref_name,
-                    paths.clone(),
+                    &target,
                     view.force == OriginPublishForce::Rewrite,
+                    Some(*grant),
                 )?;
                 Ok(matches!(admitted, Ok(standing)
                     if standing.grant == *grant && &standing.repo_ref == anchor))

@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use super::mirror::{OriginMirrorTarget, TARGETS};
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 /// How one mirror sends what this vault publishes.
@@ -100,29 +101,28 @@ impl From<PublishRequestRequired> for Error {
 pub(super) struct ConfiguredStrategy {
     pub(super) strategy: OriginMirrorSyncStrategy,
     pub(super) revision: u64,
-    pub(super) generation: u64,
+    pub(super) generation: Option<EntityId>,
 }
 
 /// What a setup of `repo` at `url`, `user` and `secret_ref` writes beside
 /// the row it replaces. A named strategy wins. With none, the same URL keeps
 /// its strategy, as it keeps its push history; a new mirror or a new URL
 /// starts at the default. The revision moves only when the strategy does.
-/// The generation moves when the URL, user, custody record or served name
-/// does, never below the vault clock, so a mirror cleared and set again
-/// starts past every generation an earlier request could name.
+/// The generation is a fresh id for a new mirror and whenever the URL,
+/// user, custody record or served name moves, so a mirror cleared and set
+/// again never takes a generation an earlier request could name.
 pub(super) fn configured_strategy(
     previous: Option<&OriginMirrorTarget>,
     repo: &str,
     destination: (&str, &str, &str),
     asked: Option<OriginMirrorSyncStrategy>,
-    now: u64,
 ) -> ConfiguredStrategy {
     let (url, user, secret_ref) = destination;
     let Some(previous) = previous else {
         return ConfiguredStrategy {
             strategy: asked.unwrap_or_default(),
             revision: 1,
-            generation: now.max(1),
+            generation: Some(EntityId::now()),
         };
     };
     let strategy = match asked {
@@ -140,7 +140,7 @@ pub(super) fn configured_strategy(
         || previous.user != user
         || previous.secret_ref != secret_ref;
     let generation = if moved {
-        previous.target_generation.saturating_add(1).max(now)
+        Some(EntityId::now())
     } else {
         previous.target_generation
     };

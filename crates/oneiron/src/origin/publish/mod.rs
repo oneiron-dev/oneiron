@@ -128,19 +128,8 @@ impl Vault {
             rewrite: input.force == OriginPublishForce::Rewrite,
         };
         if let Some(existing) = self.publish_request(scope.repo_id, request_id)? {
-            if !same_request(&existing, &input, caller.actor) {
-                return Err(Error::Refused(
-                    "request_changed: this idempotency key names another request; use a new key \
-                     for another tuple"
-                        .to_owned(),
-                ));
-            }
             let txn = self.store.env.read_txn()?;
-            let admitted = self.admit_publish_act_in_txn(&txn, caller, &member, target, || {
-                self.publish_review_paths_in_txn(&txn, &existing)
-            })?;
-            drop(txn);
-            return Ok(admitted.map(|_| existing));
+            return self.replay_publish_request(&txn, caller, &member, target, &input, existing);
         }
         let mirror = self.served_origin_mirror(&input.repo)?.ok_or_else(|| {
             Error::Refused("the repository has no mirror; the owner sets one first".to_owned())
@@ -191,7 +180,15 @@ impl Vault {
         let now = self.now_recorded_at();
         let mut txn = self.store.env.write_txn()?;
         if let Some(raced) = self.publish_request_in_txn(&txn, scope.repo_id, request_id)? {
-            return Ok(Ok(raced));
+            // Another writer took the key first: its row answers as a replay
+            // does, and this call's pin goes only when it is not that row's.
+            let distinct = raced.commit != input.commit;
+            let answer = self.replay_publish_request(&txn, caller, &member, target, &input, raced);
+            drop(txn);
+            if distinct {
+                self.release_pin_of(&scope, &handle, request_id, &commit);
+            }
+            return answer;
         }
         let authority =
             match self.admit_publish_act_in_txn(&txn, caller, &member, target, || {
