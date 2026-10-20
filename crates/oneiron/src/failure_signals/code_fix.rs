@@ -55,7 +55,6 @@ pub const CODE_FIX_RECORD_VERSION: u16 = 1;
 pub const CODE_FIX_MAX_NOTE_BYTES: usize = 1024;
 pub const CODE_FIX_MAX_MESSAGES: usize = 32;
 pub const CODE_FIX_MAX_MESSAGE_BYTES: usize = 4096;
-pub const CODE_FIX_MAX_CANDIDATE_ID_BYTES: usize = 128;
 
 /// Sealed records waiting for the host to deliver them, with the worlds each
 /// failure touched (local only). A record stays until the host acks its
@@ -449,6 +448,12 @@ impl Vault {
         if !self.config.failure_signals.exports() {
             return withheld(W::NotEligible);
         }
+        // Rule 5: the candidate's token names its pin whole (an engine
+        // patch's two digests), measured, never cut.
+        let _ = self.measure_limit(
+            crate::limit_ask::EngineLimit::MaintenanceTextBytes,
+            candidate.candidate_id.len() as u64,
+        );
         if !candidate_in_shape(&candidate) {
             return withheld(W::Malformed);
         }
@@ -671,11 +676,11 @@ fn draft_in_shape(draft: &InventedExampleDraft) -> bool {
 }
 
 /// A candidate id is a host token, never prose: printable ASCII with no
-/// space, and no credential shape.
+/// space, and no credential shape. Its length is its pin's: whole, with no
+/// cap.
 fn candidate_in_shape(candidate: &CandidateFix) -> bool {
     let id = &candidate.candidate_id;
     let token = !id.is_empty()
-        && id.len() <= CODE_FIX_MAX_CANDIDATE_ID_BYTES
         && id.bytes().all(|b| b.is_ascii_graphic())
         && scan_joined_text(id).is_none();
     let example = candidate.example_id.as_deref().is_none_or(|example| {

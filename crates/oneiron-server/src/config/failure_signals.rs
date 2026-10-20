@@ -11,15 +11,22 @@
 //!
 //! `[failure_signals.candidates.<id>]` names the publisher's candidate fixes
 //! the Coach replays in the vault against each real failure: an instruction
-//! file the publisher ships and the operator installs, pinned by its SHA-256.
-//! Nothing fetches it and nothing installs it; only the fixed or not-fixed
-//! result leaves, and only when the deployment participates.
+//! file the publisher ships and the operator installs, pinned by its SHA-256,
+//! or a candidate engine (FIX 1661, 2144), a build or a patch over its base
+//! build, pinned by digest, which the Coach's shadow runner runs in a
+//! sandboxed arm of its own once it can. Nothing fetches either and nothing
+//! installs it; only the fixed or not-fixed result leaves, under a token
+//! naming the whole pin, and only when the deployment participates. Every
+//! candidate pinned is replayed, each whole: the vault measures them, and
+//! nothing here caps their count or size.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use oneiron::dreamer_runner::maintenance::code_fix::PublisherCandidate;
+use oneiron::dreamer_runner::maintenance::code_fix::{
+    PublisherCandidate, PublisherCandidateKind, artifact_digest_text, parse_artifact_digest_text,
+};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -32,24 +39,36 @@ pub const CLOUD_FAILURE_SIGNALS_ENDPOINT: &str = "https://oneiron.dev/failure-si
 
 const DEFAULT_EVERY_SECS: u64 = 3_600;
 const DEFAULT_BATCH: usize = 64;
-/// Most publisher candidates one deployment replays: each costs every
-/// failure case a replay and a judgment.
-const MAX_PUBLISHER_CANDIDATES: usize = 8;
-/// Most bytes of one candidate's instruction.
-const MAX_PUBLISHER_INSTRUCTION_BYTES: usize = 16 * 1024;
-/// Most bytes of a candidate's id.
-const MAX_CANDIDATE_ID_BYTES: usize = 40;
-/// Hex digits of the pin an exported result names.
-const EXPORTED_PIN_HEX: usize = 16;
+/// The `kind` of a candidate engine build.
+const ENGINE_BUILD_KIND: &str = "engine_build";
+/// The `kind` of a candidate patch over its base build.
+const ENGINE_PATCH_KIND: &str = "engine_patch";
 
-/// One publisher candidate: its instruction file and that file's pin.
+/// One publisher candidate: an instruction file and that file's pin, as it
+/// has always been written, or a candidate engine by its `kind`.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct PublisherCandidateConfig {
-    /// Absolute path of the instruction text, UTF-8.
-    pub instructions_file: PathBuf,
-    /// The file's SHA-256, lowercase hex. A file that differs is refused.
-    pub sha256: String,
+#[serde(untagged, deny_unknown_fields)]
+pub enum PublisherCandidateConfig {
+    /// An instruction the publisher ships and the operator installs.
+    Instruction {
+        /// Absolute path of the instruction text, UTF-8.
+        instructions_file: PathBuf,
+        /// The file's SHA-256, lowercase hex. A file that differs is refused.
+        sha256: String,
+    },
+    /// A candidate engine, by digest (FIX 1661, 2144). Nothing fetches or
+    /// installs it.
+    Engine {
+        /// `engine_build`, or `engine_patch` for a patch over its base build.
+        kind: String,
+        /// The build, or a patch's base build: `blake3:` or `sha256:` and
+        /// its 64 lowercase hex digits.
+        build: String,
+        /// An `engine_patch`'s patch, spelled as `build` is; none for an
+        /// `engine_build`.
+        #[serde(default)]
+        patch: Option<String>,
+    },
 }
 
 /// Resolved failure-signal destination.
@@ -103,12 +122,10 @@ impl FailureSignalsConfig {
     }
 
     /// Each publisher candidate read and checked against its pin, in id
-    /// order. Its result exports as `publisher.<id>@<pin prefix>`.
+    /// order. Its result exports as `publisher.<id>@<pin>`, the pin whole:
+    /// an instruction file's SHA-256 in hex, or an engine's build digest and,
+    /// for a patch, `+` and the patch's.
     pub fn publisher_candidates(&self) -> anyhow::Result<Arc<[PublisherCandidate]>> {
-        anyhow::ensure!(
-            self.candidates.len() <= MAX_PUBLISHER_CANDIDATES,
-            "failure_signals.candidates holds at most {MAX_PUBLISHER_CANDIDATES} candidates"
-        );
         self.candidates
             .iter()
             .map(|(id, candidate)| load_candidate(id, candidate))
@@ -139,45 +156,99 @@ fn load_candidate(
 ) -> anyhow::Result<PublisherCandidate> {
     anyhow::ensure!(
         !id.is_empty()
-            && id.len() <= MAX_CANDIDATE_ID_BYTES
             && id
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'_' | b'-')),
-        "failure_signals.candidates: an id is 1 to {MAX_CANDIDATE_ID_BYTES} of a-z, 0-9, _ and -"
+        "failure_signals.candidates: an id is one or more of a-z, 0-9, _ and -"
     );
     let field = format!("failure_signals.candidates.{id}");
+    match candidate {
+        PublisherCandidateConfig::Instruction {
+            instructions_file,
+            sha256,
+        } => load_instruction(id, &field, instructions_file, sha256),
+        PublisherCandidateConfig::Engine { kind, build, patch } => {
+            engine_candidate(id, &field, kind, build, patch.as_deref())
+        }
+    }
+}
+
+/// An instruction candidate, its file read and checked against its pin.
+fn load_instruction(
+    id: &str,
+    field: &str,
+    instructions_file: &Path,
+    sha256: &str,
+) -> anyhow::Result<PublisherCandidate> {
     anyhow::ensure!(
-        candidate.sha256.len() == 64
-            && candidate
-                .sha256
+        sha256.len() == 64
+            && sha256
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
         "{field}.sha256 must be 64 lowercase hex digits"
     );
     anyhow::ensure!(
-        candidate.instructions_file.is_absolute(),
+        instructions_file.is_absolute(),
         "{field}.instructions_file must be an absolute path"
     );
-    let bytes = std::fs::read(&candidate.instructions_file).map_err(|error| {
-        anyhow::anyhow!(
-            "{field}: read {}: {error}",
-            candidate.instructions_file.display()
-        )
+    let bytes = std::fs::read(instructions_file).map_err(|error| {
+        anyhow::anyhow!("{field}: read {}: {error}", instructions_file.display())
     })?;
     anyhow::ensure!(
-        format!("{:x}", Sha256::digest(&bytes)) == candidate.sha256,
+        format!("{:x}", Sha256::digest(&bytes)) == sha256,
         "{field}: {} does not match its sha256",
-        candidate.instructions_file.display()
+        instructions_file.display()
     );
     let instruction = String::from_utf8(bytes)
         .map_err(|_| anyhow::anyhow!("{field}: the instructions are not UTF-8"))?;
     anyhow::ensure!(
-        !instruction.trim().is_empty() && instruction.len() <= MAX_PUBLISHER_INSTRUCTION_BYTES,
-        "{field}: the instructions hold 1 to {MAX_PUBLISHER_INSTRUCTION_BYTES} bytes"
+        !instruction.trim().is_empty(),
+        "{field}: the instructions are empty"
     );
     Ok(PublisherCandidate {
-        id: format!("publisher.{id}@{}", &candidate.sha256[..EXPORTED_PIN_HEX]),
-        instruction,
+        id: format!("publisher.{id}@{sha256}"),
+        kind: PublisherCandidateKind::Instruction { instruction },
+    })
+}
+
+/// An engine candidate, by its `kind` and digests (FIX 1661, 2144).
+fn engine_candidate(
+    id: &str,
+    field: &str,
+    kind: &str,
+    build: &str,
+    patch: Option<&str>,
+) -> anyhow::Result<PublisherCandidate> {
+    let digest = |name: &str, text: &str| {
+        parse_artifact_digest_text(text).ok_or_else(|| {
+            anyhow::anyhow!("{field}.{name} must be blake3: or sha256: and 64 lowercase hex digits")
+        })
+    };
+    let build = digest("build", build)?;
+    let (kind, pin) = match (kind, patch) {
+        (ENGINE_BUILD_KIND, None) => (
+            PublisherCandidateKind::EngineBuild { build },
+            artifact_digest_text(&build),
+        ),
+        (ENGINE_PATCH_KIND, Some(patch)) => {
+            let patch = digest("patch", patch)?;
+            (
+                PublisherCandidateKind::EnginePatch { build, patch },
+                format!(
+                    "{}+{}",
+                    artifact_digest_text(&build),
+                    artifact_digest_text(&patch)
+                ),
+            )
+        }
+        _ => anyhow::bail!(
+            "{field}: an engine candidate is kind = \"{ENGINE_BUILD_KIND}\" with its build, or \
+             kind = \"{ENGINE_PATCH_KIND}\" with its base build and its patch"
+        ),
+    };
+    Ok(PublisherCandidate {
+        id: format!("publisher.{id}@{pin}"),
+        kind,
     })
 }
 

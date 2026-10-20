@@ -1113,15 +1113,23 @@ batch = 64                 # ONEIRON_FAILURE_SIGNALS_BATCH: code-fix records per
 [failure_signals.candidates.tone-fix]    # a publisher candidate; file layers only
 instructions_file = "/etc/oneiron/candidates/tone-fix.txt"
 sha256 = "…"               # the file's SHA-256, lowercase hex
+
+[failure_signals.candidates.fast-path]   # a candidate engine build
+kind = "engine_build"      # or "engine_patch", with patch = "…" over this base build
+build = "blake3:…"         # blake3: or sha256:, then all 64 lowercase hex digits
 ```
 
 A candidate is an instruction your publisher ships and you install and pin. The Coach replays
 each failure in the vault with the candidate added to the failing agent's instructions, and only
-the fixed or not-fixed result leaves, as `publisher.<id>@<first 16 hex of the pin>`. Nothing
-fetches or installs it. A file that no longer matches its pin stops the server at start. At most
-8 candidates, 16 KiB each. A newly pinned candidate is also tried once on each past failure that
-still stands: after the server starts, the Coach works through its earlier code-fix work a few
-failures at a time.
+the fixed or not-fixed result leaves, as `publisher.<id>@<pin>`, the pin whole: the file's 64-hex
+SHA-256, or an engine's build digest, then `+` and a patch's. Nothing fetches or installs it. A
+file that no longer matches its pin stops the server at start. Every candidate you pin is
+replayed, whole, with no cap on how many or how long. A candidate engine is replayed against the
+failing call's captured step, beside the engine you run, only while a Grant you gave the Coach
+reads every world the failing run touched; until the server can run a candidate engine, its
+result says it did not run, and nothing leaves for it. A newly pinned candidate is also tried
+once on each past failure that still stands: after the server starts, the Coach works through
+its earlier code-fix work a few failures at a time.
 `GET /v1/owner/coach/code-fixes?limit=<n>` lists the Coach's code-fix work, newest first: each
 failure case's heal route (`case`), or a blocked report's when the agent's run has no failed case
 (`blocked_report`), its class, the invented example's verdict and each candidate's fixed or
