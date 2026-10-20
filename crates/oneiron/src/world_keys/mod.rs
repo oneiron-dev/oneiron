@@ -91,6 +91,7 @@ pub(crate) use self::session::{CountersignStage, WorldKeySession};
 pub use self::state::{WorldRecoveryState, recovery_state};
 pub(crate) use self::vault_key::CarriedVaultKey;
 pub use self::vault_key::kit::IssuedVaultKeyKit;
+pub(crate) use self::vault_key::restore::{RecipientCustody, RestoreAdmissionCapability};
 pub use self::vault_key::{
     EscrowRetirement, NewVaultKeyWrap, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
     VaultKeyStatus, VaultKeyUnlock, VaultKeyWrapInfo, VaultKeyWrapKind, escrow_recipient,

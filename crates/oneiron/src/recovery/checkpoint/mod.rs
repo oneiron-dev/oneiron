@@ -16,6 +16,7 @@
 //! and checked whole before anything is decoded or made. Each one is
 //! dual-signed by the install that took it and chained to the vault's last
 //! (`commitment`); a restore refuses a signer its key does not trust.
+mod admission;
 mod artifact;
 mod authority_plane;
 mod body_bind;
@@ -39,6 +40,14 @@ use crate::side_table::{self, Named, SideTable};
 pub use crate::store::custody_protocol;
 use crate::store::{ForkedCustodyDir, LiveCustody};
 use crate::{EntityId, Error, Result, Vault, VaultConfig};
+pub use admission::{
+    AddedRecipient, AdmittedRestore, AnchorDisposition, CustodyAdmissionFacts, CustodyPositionFact,
+    CustodyRouteFact, EscrowRole, FreshRecipient, RecipientAdmissionFacts,
+    RecipientRetirementDisposition, ReleasedRecipient, RestoreAdmission, RestoreAdmissionError,
+    RestoreAdmissionReason, RestoreCommitFacts, RestoreDestinationState, RestorePhase, RestorePlan,
+    RetiredBy, RetiredRecipient, SourceExpectation, VerifiedSource,
+};
+pub(crate) use admission::{Rejected, because};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
 pub use commitment::CheckpointSigner;
 pub use custody_head::*;

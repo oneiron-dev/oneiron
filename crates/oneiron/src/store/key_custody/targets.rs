@@ -10,6 +10,8 @@
 //!   `acks/l.<target hex>`: its publish lock (FIX 6394).
 //! - `obligations/r.<tag>.<item>.<through>.<cause>`: one per retirement
 //!   handed off by the finisher, naming its Retire frame's position;
+//!   `obligations/r.rcpt.<fingerprint>`: one per released escrow recipient
+//!   a cold managed restore retired (`recipients`);
 //!   `obligations/t.<epoch>`: the retirements a disaster recovery's landing
 //!   carries; `obligations/reconciled`: how far the log was walked for a
 //!   Retire frame without one. A completed one moves to `obligations/done/`.
@@ -231,7 +233,7 @@ fn target_file(prefix: &str, id: &TargetId) -> String {
 }
 
 impl Journal {
-    fn sub(&self, name: &str) -> Result<PathBuf> {
+    pub(super) fn sub(&self, name: &str) -> Result<PathBuf> {
         open_dir(self.dir(), true, None)?;
         let dir = self.dir().join(name);
         open_dir(&dir, true, None)?;
@@ -411,9 +413,18 @@ impl Journal {
     /// The log position of the obligation `intent` was handed off as, if
     /// it was: outstanding or done.
     pub(crate) fn obligation(&self, intent: &RetirementIntent) -> Result<Option<u64>> {
-        let name = obligation_name(&intent.subject, intent.through, intent.cause);
+        self.obligation_named(&obligation_name(
+            &intent.subject,
+            intent.through,
+            intent.cause,
+        ))
+    }
+
+    /// The log position of the obligation named `name`, outstanding or
+    /// done, if it was recorded.
+    pub(super) fn obligation_named(&self, name: &str) -> Result<Option<u64>> {
         let dir = self.dir().join(OBLIGATIONS);
-        for path in [dir.join(&name), dir.join(DONE).join(&name)] {
+        for path in [dir.join(name), dir.join(DONE).join(name)] {
             if let Some(bytes) = read_whole(&path)? {
                 return Ok(Some(decode::<MarkWire>(&bytes)?.seq));
             }
@@ -428,9 +439,15 @@ impl Journal {
         intent: &RetirementIntent,
         at: &CustodyPosition,
     ) -> Result<()> {
-        let dir = self.sub(OBLIGATIONS)?;
         let name = obligation_name(&intent.subject, intent.through, intent.cause);
-        write_once(&dir, &name, &encode(&MarkWire::of(at))?).map(drop)
+        self.record_obligation_named(&name, at)
+    }
+
+    /// Records the obligation `name` at `at`, its frame's position: once,
+    /// synced.
+    pub(super) fn record_obligation_named(&self, name: &str, at: &CustodyPosition) -> Result<()> {
+        let dir = self.sub(OBLIGATIONS)?;
+        write_once(&dir, name, &encode(&MarkWire::of(at))?).map(drop)
     }
 
     /// The obligation a disaster recovery's landing carries: every
@@ -469,23 +486,26 @@ impl Journal {
                 continue;
             };
             let (header, entry) = open_frame(&control, &frame)?;
-            if let LogEntry::Retire {
-                subject,
-                through,
-                cause,
-            } = entry
-            {
-                let at = CustodyPosition {
-                    vault: header.vault,
-                    namespace: header.namespace,
-                    epoch: header.epoch,
-                    seq,
-                    tip: frame_hash(&frame),
-                };
-                let name = obligation_name(&subject, through, cause);
-                if !dir.join(DONE).join(&name).exists() {
-                    write_once(&dir, &name, &encode(&MarkWire::of(&at))?)?;
-                }
+            // A released recipient's retirement is owed as a key's is (LC
+            // FIX 5384/5385).
+            let name = match entry {
+                LogEntry::Retire {
+                    subject,
+                    through,
+                    cause,
+                } => obligation_name(&subject, through, cause),
+                LogEntry::RetireRecipient(fact) => fact.obligation_name(),
+                LogEntry::Mint(_) => continue,
+            };
+            let at = CustodyPosition {
+                vault: header.vault,
+                namespace: header.namespace,
+                epoch: header.epoch,
+                seq,
+                tip: frame_hash(&frame),
+            };
+            if !dir.join(DONE).join(&name).exists() {
+                write_once(&dir, &name, &encode(&MarkWire::of(&at))?)?;
             }
         }
         replace_file(&dir, RECONCILED, &position.seq.to_be_bytes())

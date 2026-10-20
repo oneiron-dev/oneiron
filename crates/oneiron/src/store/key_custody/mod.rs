@@ -23,6 +23,7 @@ mod outbox;
 mod platform;
 pub mod protocol;
 mod publish;
+mod recipients;
 mod recovery;
 mod retirement;
 mod targets;
@@ -49,8 +50,10 @@ pub(crate) use self::identity::{
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
 pub(crate) use self::outbox::OutboxTarget;
 pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, PublicationState};
+pub(crate) use self::recipients::RecipientRetirement;
 pub(crate) use self::recovery::{
-    CustodyRequirement, CustodyRoute, CustodySourceAt, ROLLBACK_NOT_PROVEN, route_custody,
+    CustodyRequirement, CustodyRoute, CustodySourceAt, ROLLBACK_NOT_PROVEN, refuse_foreign_binding,
+    route_custody,
 };
 #[cfg(test)]
 pub(crate) use self::retirement::arm_before_retire_lock;

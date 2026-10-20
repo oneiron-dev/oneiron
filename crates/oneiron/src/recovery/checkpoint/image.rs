@@ -68,7 +68,19 @@ pub(super) fn read_image_required<'k>(
     artifact::SealedBodies<'k>,
     Option<crate::store::CustodyRequirement>,
 )> {
-    let opened = artifact::open_artifact(path, key)?;
+    decode_image(artifact::open_artifact(path, key)?)
+}
+
+/// The image's structural read once its artifact opened: its checkpoint id,
+/// the bodies it carries and what it needs of its custody.
+pub(super) fn decode_image(
+    opened: artifact::OpenedArtifact<'_>,
+) -> Result<(
+    CheckpointImage,
+    String,
+    artifact::SealedBodies<'_>,
+    Option<crate::store::CustodyRequirement>,
+)> {
     let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
     if image.version != IMAGE_VERSION
         || image.created_at != opened.created_at

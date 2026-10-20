@@ -264,8 +264,9 @@ impl Store {
                 EntryState::Missing => {}
             }
         }
+        let released = journal.recipient_facts()?;
         Ok(
-            match seal_head(&position, &control, entries, retired, recipients) {
+            match seal_head(&position, &control, entries, retired, released, recipients) {
                 Ok(head) => Sealed::Batch(CustodyBatch {
                     position,
                     head,

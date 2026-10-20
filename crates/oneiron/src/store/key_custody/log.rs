@@ -7,9 +7,11 @@
 //! clears. A frame binds the vault, the namespace, the writer epoch, its
 //! sequence number and the hash of the frame before it; its body names the
 //! id it mints or the subject it retires through a generation, with the
-//! cause, sealed under the lineage's log key. No frame, error or receipt
-//! holds a key, a key's fingerprint, a value or a wrap; the frame hashes are
-//! public structure, never a fingerprint of a secret.
+//! cause, or the released escrow recipient a cold managed restore retired
+//! (its label and the BLAKE3 of its public key), sealed under the lineage's
+//! log key. No frame, error or receipt holds a key, a key's fingerprint, a
+//! value or a wrap; the frame hashes are public structure, never a
+//! fingerprint of a secret.
 //!
 //! `<compartment>/.journal/` holds `control` (the lineage's control secret,
 //! its writer epoch and the position its local log starts after), `tip` (a
@@ -28,6 +30,7 @@ use crate::error::{Error, Result};
 
 use super::files::{LocalCustody, open_dir, read_whole, replace_file, write_once};
 use super::identity::{CustodyId, CustodyKind, CustodyNamespace, CustodySubject, CustodyVaultId};
+use super::recipients::RecipientRetirement;
 use super::retirement::RetireCause;
 
 const JOURNAL: &str = ".journal";
@@ -47,6 +50,9 @@ const ANCHOR_KEY_CONTEXT: &str = "oneiron/custody-anchor/v1";
 const LOG_KEY_ID: &[u8] = b"oneiron/custody-log-frame/v1";
 const OP_MINT: u8 = 1;
 const OP_RETIRE: u8 = 2;
+/// A released escrow recipient retired (LC FIX 5384/5385): an op of its
+/// own, never a custody kind's tag.
+const OP_RETIRE_RECIPIENT: u8 = 3;
 
 pub(super) fn log_corrupt() -> Error {
     Error::CorruptedIndex("key custody log")
@@ -222,11 +228,20 @@ pub(crate) enum LogEntry {
         through: u64,
         cause: RetireCause,
     },
+    /// A released escrow recipient was retired here by a cold managed
+    /// restore, at its takeover writer epoch: its label, public-key
+    /// fingerprint and receipt id, never a key.
+    RetireRecipient(RecipientRetirement),
 }
 
 impl LogEntry {
     fn encode(&self) -> Vec<u8> {
         let (op, subject, generation, cause) = match self {
+            Self::RetireRecipient(fact) => {
+                let mut out = vec![OP_RETIRE_RECIPIENT];
+                out.extend_from_slice(&fact.encode());
+                return out;
+            }
             Self::Mint(id) => (OP_MINT, id.subject(), id.generation(), None),
             Self::Retire {
                 subject,
@@ -249,6 +264,11 @@ impl LogEntry {
     }
 
     fn decode(vault: CustodyVaultId, bytes: &[u8]) -> Result<Self> {
+        if let Some((&OP_RETIRE_RECIPIENT, fact)) = bytes.split_first() {
+            return RecipientRetirement::decode(fact)
+                .map(Self::RetireRecipient)
+                .ok_or_else(log_corrupt);
+        }
         let decoded = (|| {
             let (&op, rest) = bytes.split_first()?;
             let (&tag, rest) = rest.split_first()?;

@@ -47,6 +47,7 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
 pub(super) mod kit;
+pub(super) mod restore;
 
 const PAYLOAD_LABEL: &[u8] = b"oneiron/vault-dek/v1\0";
 const PAYLOAD_LEN: usize = PAYLOAD_LABEL.len() + 32;
