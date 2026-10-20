@@ -228,7 +228,32 @@ def fonts(approve: Path | None) -> int:
     return 0
 
 
+def console_session_status() -> str | None:
+    """The running account must hold a console (Aqua) session on vel: own
+    /dev/console, or show a console login in `who` (fast user switching keeps
+    one per logged-in account). Without one nothing can drive PowerPoint, and
+    the osascript probe fails with -10810, which reads as missing
+    Accessibility access; this refuses plainly first (FIX 6332)."""
+    user = font_account()
+    try:
+        if command(['stat', '-f', '%Su', '/dev/console'], 5) == user:
+            return None
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        pass
+    try:
+        for line in command(['who'], 5).splitlines():
+            fields = line.split()
+            if len(fields) >= 2 and fields[0] == user and fields[1] == 'console':
+                return None
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        pass
+    return f"log {user} into vel's desktop (use fast user switching for decktest)"
+
+
 def observer_status(observer: str) -> str | None:
+    session = console_session_status()
+    if session:
+        return session
     if observer == 'cua':
         if not shutil.which('cua-driver'):
             return 'cua-driver is not installed'

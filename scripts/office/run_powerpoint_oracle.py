@@ -8,11 +8,15 @@ import subprocess
 import sys
 import time
 from run_word_oracle import preflight, digest, app_stage
+from deck_oracle import console_session_status
 
 
 def run(args):
     if sys.platform != "darwin":
         raise RuntimeError("PowerPoint oracle needs the Office Mac")
+    session = console_session_status()
+    if session:
+        raise RuntimeError(session)
     checksum = preflight(args.input, "ppt")
     args.output.mkdir(parents=True, exist_ok=False)
     receipt = {"status": "running", "input_sha256": checksum, "script_sha256": digest(args.script), "started_at": time.time()}
