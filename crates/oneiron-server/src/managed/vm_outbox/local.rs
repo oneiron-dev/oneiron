@@ -275,7 +275,9 @@ pub(super) fn lock_training(root: &File) -> std::io::Result<Option<File>> {
     Ok(Some(lock))
 }
 
-/// A member's incoming bytes, in a temporary sibling of its final name.
+/// A member's incoming bytes, in a temporary sibling of its final name. One
+/// dropped before it is published, a set abandoned midway among them, takes
+/// its temporary with it.
 pub(super) struct Staged {
     dir: File,
     leaf: String,
@@ -283,6 +285,7 @@ pub(super) struct Staged {
     file: File,
     hasher: blake3::Hasher,
     length: u64,
+    published: bool,
 }
 
 impl Staged {
@@ -316,6 +319,7 @@ impl Staged {
             file,
             hasher: blake3::Hasher::new(),
             length: 0,
+            published: false,
         })
     }
 
@@ -336,30 +340,26 @@ impl Staged {
 
     /// Gives the file its owner and mode, syncs it, renames it over the
     /// member's name and syncs the directory; returns the published stamp.
-    pub(super) fn publish(self, owner: Owner, protected: bool) -> std::io::Result<FileStamp> {
-        let published = owner
-            .own_file(&self.file, protected)
-            .and_then(|()| self.file.sync_all())
-            .and_then(|()| {
-                rustix::fs::renameat(
-                    &self.dir,
-                    self.temporary.as_str(),
-                    &self.dir,
-                    self.leaf.as_str(),
-                )
-                .map_err(Into::into)
-            });
-        if let Err(error) = published {
-            self.discard();
-            return Err(error);
-        }
+    pub(super) fn publish(mut self, owner: Owner, protected: bool) -> std::io::Result<FileStamp> {
+        owner.own_file(&self.file, protected)?;
+        self.file.sync_all()?;
+        rustix::fs::renameat(
+            &self.dir,
+            self.temporary.as_str(),
+            &self.dir,
+            self.leaf.as_str(),
+        )?;
+        self.published = true;
         self.dir.sync_all()?;
         Ok(FileStamp::of(&self.file.metadata()?))
     }
+}
 
-    /// Removes the temporary.
-    pub(super) fn discard(self) {
-        let _ = rustix::fs::unlinkat(&self.dir, self.temporary.as_str(), AtFlags::empty());
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if !self.published {
+            let _ = rustix::fs::unlinkat(&self.dir, self.temporary.as_str(), AtFlags::empty());
+        }
     }
 }
 

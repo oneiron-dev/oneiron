@@ -118,7 +118,8 @@ struct Taken {
 enum Plan {
     /// Answered without a change here: refused, deferred, or already held.
     Answer(VmOutboxOutcome),
-    Put(Staged),
+    /// Boxed: a staged put holds its running hasher.
+    Put(Box<Staged>),
     Remove,
 }
 
@@ -454,12 +455,12 @@ impl Carrier {
                 }
             };
         if let Some(error) = link.read_data(descriptor.length, Some(&mut staged))? {
-            staged.discard();
+            drop(staged);
             let outcome = self.io_outcome(descriptor.kind, &error);
             return Ok(answer(descriptor, member, outcome));
         }
         if staged.version().blake3 != descriptor.blake3 {
-            staged.discard();
+            drop(staged);
             let outcome = VmOutboxOutcome::refused(
                 VmOutboxRefusal::DigestMismatch,
                 "the bytes do not hash to the transfer's digest",
@@ -469,7 +470,7 @@ impl Carrier {
         Ok(Taken {
             descriptor,
             member: Some(member),
-            plan: Plan::Put(staged),
+            plan: Plan::Put(Box::new(staged)),
         })
     }
 
@@ -585,7 +586,7 @@ impl Carrier {
                 Plan::Answer(outcome) => outcome,
                 plan if blocked.is_some() || mismatch => {
                     if let Plan::Put(staged) = plan {
-                        staged.discard();
+                        drop(staged);
                     }
                     checked
                         .get(index)
@@ -658,7 +659,7 @@ impl Carrier {
     ) -> VmOutboxOutcome {
         let protected = member.is_some_and(|member| member.protected);
         let published = match plan {
-            Plan::Put(staged) => staged.publish(self.owner, protected).map(Some),
+            Plan::Put(staged) => (*staged).publish(self.owner, protected).map(Some),
             Plan::Remove => local::remove(root, transfer.kind, &transfer.member).map(|()| None),
             Plan::Answer(outcome) => return outcome,
         };
