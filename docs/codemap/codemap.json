@@ -85743,7 +85743,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ManagedArgs",
@@ -85758,6 +85758,16 @@
       "enum": 2,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/args/policy.rs",
+     "purpose": "The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -89307,7 +89317,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89461,9 +89471,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 53,
+   "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 899,
+   "source_files": 900,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -93447,14 +93457,15 @@
      "kind": "src",
      "notable": [
       "ArtifactHost",
-      "ArtifactHostRead"
+      "ArtifactHostRead",
+      "ArtifactLabelRefusal"
      ],
      "path": "src/lib/artifact_origin.rs",
      "purpose": "The artifact origin's naming and forwarding contract (OF-356, ARCH-0078)",
      "surface": {
-      "const": 1,
-      "enum": 1,
-      "fn": 5,
+      "const": 3,
+      "enum": 2,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -93757,7 +93768,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 13,
+      "mod": 14,
       "re-export": 9
      }
     },
@@ -93805,6 +93816,22 @@
      "surface": {
       "fn": 8,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SettingsPathReason",
+      "SettingsPathRefused"
+     ],
+     "path": "src/lib/settings_paths.rs",
+     "purpose": "The owner paths of a managed vault's settings file (`--settings-file`): the leaves that name a file or…",
+     "surface": {
+      "const": 4,
+      "enum": 1,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -93863,9 +93890,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/lib/version.rs",
-     "purpose": "Wire version constants and SLIM gating",
+     "purpose": "Wire version constants, SLIM gating and the revisions of the additive extensions a v3 vault reports on `Ping`",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -93879,7 +93907,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 10,
+      "const": 12,
       "enum": 2,
       "fn": 4
      }
@@ -93904,7 +93932,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93913,7 +93941,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 27,
+   "source_files": 28,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
