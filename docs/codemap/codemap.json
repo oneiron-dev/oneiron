@@ -13520,7 +13520,7 @@
      "path": "src/code_run/dispatcher/verb_hooks/session.rs",
      "purpose": "The run's own `vault.search` in an off-record room takes its verb hooks in the room (WILL L11-01 S01-2c)…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
