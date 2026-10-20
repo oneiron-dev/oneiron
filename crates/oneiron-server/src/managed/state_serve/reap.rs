@@ -1,5 +1,5 @@
-//! The reap freeze: the write gate a frozen vault refuses at, and
-//! `prepare_reap`'s freeze, drain and export.
+//! The reap freeze: the write gate a frozen vault refuses at, and the
+//! freeze, drain and export `prepare_reap` and `prepare_idle_reap` share.
 
 use std::sync::atomic::Ordering;
 
@@ -7,6 +7,23 @@ use oneiron_vault_contract::{CtlResponse, validate_wake_entries};
 
 use super::ManagedState;
 use crate::managed::ManagedError;
+use crate::managed::ledger::LedgerSnapshot;
+
+/// What a reap's freeze, drain and export found
+/// ([`ManagedState::freeze_drain_export`]).
+pub(super) struct Prepared {
+    /// The admitted writes in flight once frozen, read before the drain and
+    /// the export.
+    pub(super) in_flight: u64,
+    /// The owner host's backup jobs in flight, read just after: some of
+    /// those writes.
+    pub(super) backup_jobs: u64,
+    /// Whether the lease table drained.
+    pub(super) drained: bool,
+    pub(super) ledger_rev: u64,
+    /// The exported entries and training setting at `ledger_rev`.
+    pub(super) report: LedgerSnapshot,
+}
 
 impl ManagedState {
     pub fn is_frozen(&self) -> bool {
@@ -45,13 +62,6 @@ impl ManagedState {
         Ok(())
     }
 
-    /// Freeze, drain, export — in that order.
-    ///
-    /// The freeze goes first so nothing new enters the lease table while it is
-    /// being drained, and the export runs last so the entries the supervisor
-    /// gets describe the quiesced state rather than the one before it. The
-    /// training setting rides the same report, read under the same revision.
-    ///
     /// `quiescent` needs a third answer beyond "frozen" and "drained": the
     /// freeze refuses new requests and new upgrades, but a sync session
     /// upgraded before it rides past every per-request gate and can still
@@ -59,10 +69,34 @@ impl ManagedState {
     /// of those may be live this reports `false` and the supervisor reaps
     /// later rather than over a live writer.
     pub(super) async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
+        let prepared = self.freeze_drain_export().await?;
+        Ok(CtlResponse::PrepareReap {
+            quiescent: prepared.in_flight == 0
+                && prepared.drained
+                && self.is_frozen()
+                && !self.live_sync_writer(),
+            ledger_rev: prepared.ledger_rev,
+            next_wake: prepared.report.entries,
+            training: prepared.report.training,
+        })
+    }
+
+    /// Freeze, drain, export — in that order.
+    ///
+    /// The freeze goes first so nothing new enters the lease table while it is
+    /// being drained, and the export runs last so the entries the supervisor
+    /// gets describe the quiesced state rather than the one before it. The
+    /// training setting rides the same report, read under the same revision.
+    pub(super) async fn freeze_drain_export(&self) -> Result<Prepared, ManagedError> {
         self.freeze()?;
         // Check BEFORE drain/export. A writer finishing after export must not
         // turn a stale exported ledger into a quiescent reply.
-        let http_drained = self.http_mutating_in_flight.load(Ordering::SeqCst) == 0;
+        let in_flight = self.http_mutating_in_flight.load(Ordering::SeqCst);
+        let backup_jobs = self
+            .server
+            .owner_host
+            .as_ref()
+            .map_or(0, |host| host.backup_jobs());
         let drained = self.drain_lease_table().await;
         let (ledger_rev, report) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
@@ -73,11 +107,12 @@ impl ManagedState {
             .map_err(|error| ManagedError::LedgerRefused {
                 reason: error.to_string(),
             })?;
-        Ok(CtlResponse::PrepareReap {
-            quiescent: http_drained && drained && self.is_frozen() && !self.live_sync_writer(),
+        Ok(Prepared {
+            in_flight,
+            backup_jobs,
+            drained,
             ledger_rev,
-            next_wake: report.entries,
-            training: report.training,
+            report,
         })
     }
 

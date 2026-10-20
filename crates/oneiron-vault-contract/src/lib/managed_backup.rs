@@ -10,6 +10,14 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+/// The answer to an idle reap's preparation and its backup (B2).
+mod idle_reap;
+
+pub use self::idle_reap::{
+    BackupCoverageWire, IDLE_REAP_PREPARATION_SECS, IDLE_REAP_SCHEMA_VERSION, IdleBackupFailure,
+    IdleBackupState, IdleBackupWire, IdleReapWire,
+};
+
 /// The one [`ManagedBackupFacts`] schema this crate reads.
 pub const MANAGED_BACKUP_SCHEMA_VERSION: u32 = 1;
 

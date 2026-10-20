@@ -38,6 +38,8 @@ use oneiron_vault_contract::host::{Host, HostLimits};
 mod boot_keys;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
 mod control;
+/// The backup before an idle reap (`prepare_idle_reap`).
+mod idle_backup;
 /// The reap freeze and `prepare_reap`'s freeze, drain and export.
 mod reap;
 
@@ -146,7 +148,8 @@ pub struct ManagedState {
     vault_name: String,
     server: Arc<SyncServer>,
     frozen: AtomicBool,
-    http_mutating_in_flight: AtomicU64,
+    /// Shared with a backup before an idle reap, which counts among them.
+    http_mutating_in_flight: Arc<AtomicU64>,
     /// Unix seconds of the most recent sync upgrade the freeze gate admitted,
     /// or 0 if none. The handshake is the last thing that gate ever sees of a
     /// sync session, so this stamp is the only record that one exists.
@@ -172,6 +175,8 @@ pub struct ManagedState {
     /// The cold restore this process kept, which `restore_status` answers
     /// for: set once at boot, before ctl serves; `None` for an open.
     restore: Option<Arc<super::restore::RestoreOutcome>>,
+    /// The backup before an idle reap, one attempt at a time.
+    idle_backup: Arc<idle_backup::IdleBackup>,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -401,7 +406,7 @@ impl ManagedState {
             vault_name,
             server,
             frozen: AtomicBool::new(false),
-            http_mutating_in_flight: AtomicU64::new(0),
+            http_mutating_in_flight: Arc::default(),
             last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
@@ -411,6 +416,7 @@ impl ManagedState {
             backup_facts: None,
             vm_outbox_revision: None,
             restore: None,
+            idle_backup: Arc::default(),
         }
     }
 
@@ -1446,6 +1452,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         worker.abort();
         let _ = worker.await;
     }
+    // A backup before an idle reap ends before exit; none starts after.
+    state.idle_backup.stopped().await;
     // A hook pass in flight commits or fails whole before the runner stops.
     let _ = hooks_stop.send(true);
     if let Some(fact_hooks) = fact_hooks {
