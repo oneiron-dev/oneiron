@@ -395,8 +395,9 @@ fn maybe_inject_purge_failure() -> Result<()> {
 /// marker round-trip.
 ///
 /// This is the ONE-TRANSACTION entry point, for callers that own no write
-/// transaction of their own (forward rematerialization's tombstone pass).
-/// The batched Observer B path uses
+/// transaction of their own: forward rematerialization's tombstone pass takes
+/// it only as its per-id fallback, when a chunk's parent transaction fails.
+/// That pass's chunks and the batched Observer B path use
 /// [`apply_replayed_tombstone_for_sync_in_txn`] instead.
 pub(crate) fn apply_replayed_tombstone_for_sync(
     vault: &Vault,

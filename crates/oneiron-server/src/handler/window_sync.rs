@@ -20,8 +20,8 @@ use crate::server::SyncServer;
 
 /// Handles a WindowSync message: routes to the correct window LoroDoc.
 /// `Break` when `session_gone` finds the socket's caller gone once the
-/// window has loaded (FIX 5438): nothing of the frame is applied, and the
-/// connection ends as the gate before dispatch ends it.
+/// window has loaded (FIX 5438, FIX 6313): nothing past the load is applied,
+/// and the connection ends as the gate before dispatch ends it.
 #[expect(
     clippy::too_many_arguments,
     reason = "the frame, its socket's state and its session consult"
@@ -83,6 +83,15 @@ pub(super) async fn handle_window_sync(
             .serve_window(&key)
             .await
             .map_err(|e| ProtocolError::Persistence(e.to_string()))?;
+        // FIX 6313: this load may wait too. A session gone meanwhile is
+        // granted nothing, and no baseline or promotion is recorded for it.
+        if session_gone() {
+            tracing::warn!(
+                conn_id,
+                "credential revoked — refusing sync message and closing"
+            );
+            return Ok(ControlFlow::Break(()));
+        }
         let doc = window.doc.clone();
         let authorized = require_bound_app_auth(server, conn_state).and_then(|auth| {
             authorize_promoted_window(
@@ -122,10 +131,15 @@ pub(super) async fn handle_window_sync(
         window_sub_tags::SELECTOR_VV_REQUEST | window_sub_tags::SELECTOR_RETRY
     ) {
         return super::federation::handle_selector_fetch(
-            server, &key, sub_tag, payload, direct_tx, conn_state,
+            server,
+            &key,
+            sub_tag,
+            payload,
+            direct_tx,
+            conn_state,
+            session_gone,
         )
-        .await
-        .map(ControlFlow::Continue);
+        .await;
     }
     if sub_tag == window_sub_tags::RESIDENCE_UPDATE {
         conn_state.bind_window_sync_mode(WindowSyncMode::Residence)?;
