@@ -6,6 +6,7 @@
 
 pub mod codec;
 pub mod pact_scope;
+pub mod repo_scope;
 pub mod scope;
 pub mod scope_codec;
 pub mod selector_kind;
@@ -15,5 +16,9 @@ pub use self::pact_scope::{
     Position, SelectorRange, decode_federation_direction_scope_value, decode_federation_pact_scope,
     decode_federation_pact_scope_value, encode_federation_pact_scope,
     federation_direction_scope_value, federation_pact_scope_value, selector_range_of,
+};
+pub use self::repo_scope::{
+    REPO_EDIT_VERB, REPO_READ_VERB, RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal,
+    RepoTarget,
 };
 pub use self::scope::{Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling};

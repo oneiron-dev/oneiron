@@ -18,7 +18,7 @@
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::Scope;
+use crate::federation::{RepoAccessBounds, Scope};
 use crate::{TimeRange, Vault};
 
 use super::machine_standing::{InstallCounted, Standing};
@@ -43,12 +43,14 @@ const NOT_COUNTED: &str = "the authority fold did not count the owner's agent Gr
 pub(crate) enum AgentGrantAct {
     /// The owner grants `member`, a live agent principal, the explicit
     /// `scope` he gave, until `expires_at`, or until revoked when `None`.
-    /// `grant` is the new FEDERATION_GRANT row's id.
+    /// `grant` is the new FEDERATION_GRANT row's id; `repo_bounds` the repo
+    /// bounds he gave besides, signed with the rest (FIX 6867).
     Mint {
         grant: EntityId,
         member: EntityId,
         scope: Scope,
         expires_at: Option<u64>,
+        repo_bounds: Option<RepoAccessBounds>,
     },
     /// The owner revokes the Grant `grant`.
     Revoke { grant: EntityId },
@@ -63,12 +65,14 @@ impl AgentGrantAct {
                 member,
                 scope,
                 expires_at,
+                repo_bounds,
             } => (
                 grant,
                 AgentGrantChange::Mint {
                     member,
                     scope,
                     expires_at,
+                    repo_bounds,
                 },
             ),
             Self::Revoke { grant } => (grant, AgentGrantChange::Revoke),

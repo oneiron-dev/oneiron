@@ -8,7 +8,10 @@
 //! ([`OwnerAct`], kind `grant_mint` or `grant_revoke`, target the Grant) and
 //! the exact change: the member, scope and expiry of a mint, the Grant alone
 //! for a revoke. The scope rides the six-axis codec a slip's claims ride
-//! (`slip_wire`), one codec in the log. The FEDERATION_GRANT row is
+//! (`slip_wire`), one codec in the log. A mint that gives the agent repo
+//! bounds (FIX 6867) carries them under one more key, `repo_bounds`, in the
+//! codec the Grant body uses; a mint without them and every revoke keep the
+//! seven-key form. The FEDERATION_GRANT row is
 //! the state; this record is the signed account of his will, a main-log
 //! entry every machine the owner admits folds.
 //!
@@ -21,7 +24,8 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::Scope;
+use crate::federation::repo_scope::{decode_repo_bounds_value, repo_bounds_value};
+use crate::federation::{RepoAccessBounds, Scope};
 
 use super::*;
 
@@ -35,6 +39,18 @@ const AGENT_GRANT_ACT_KEYS: [&str; 7] = [
     "scope",
     "expires_at",
 ];
+/// The mint form that carries repo bounds: the seven keys and `repo_bounds`.
+const AGENT_GRANT_ACT_REPO_KEYS: [&str; 8] = [
+    OP_KEY_KIND,
+    OP_KEY_ACT,
+    "machine",
+    "grant",
+    "member",
+    "scope",
+    "expires_at",
+    KEY_REPO_BOUNDS,
+];
+const KEY_REPO_BOUNDS: &str = "repo_bounds";
 
 /// The policy hook of CALLS "FIX 5628 grant act revision": the `seen` of
 /// every agent Grant act. No per-Grant revision exists: a mint names a fresh
@@ -46,11 +62,13 @@ pub const AGENT_GRANT_ACT_SEEN: [u8; 32] = [0; 32];
 pub enum AgentGrantChange {
     /// The owner grants `member`, a live agent principal of the vault, the
     /// six-axis `scope` exactly as he gave it, until `expires_at`, or until
-    /// he revokes it when `None`.
+    /// he revokes it when `None`; with `repo_bounds`, the one repo, refs and
+    /// read and edit globs he gave it besides (FIX 6867).
     Mint {
         member: EntityId,
         scope: Scope,
         expires_at: Option<u64>,
+        repo_bounds: Option<RepoAccessBounds>,
     },
     /// The owner revokes the Grant.
     Revoke,
@@ -100,19 +118,21 @@ impl AgentGrantActRecord {
 }
 
 pub(super) fn agent_grant_act_value(record: &AgentGrantActRecord) -> Value {
-    let (member, scope, expires_at) = match &record.change {
+    let (member, scope, expires_at, repo_bounds) = match &record.change {
         AgentGrantChange::Mint {
             member,
             scope,
             expires_at,
+            repo_bounds,
         } => (
             Value::from(member.to_hex()),
             super::slip_wire::scope_value(scope),
             expires_at.map_or(Value::Nil, Value::from),
+            repo_bounds.as_ref(),
         ),
-        AgentGrantChange::Revoke => (Value::Nil, Value::Nil, Value::Nil),
+        AgentGrantChange::Revoke => (Value::Nil, Value::Nil, Value::Nil, None),
     };
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(OP_KEY_KIND),
             Value::from(OP_KIND_AGENT_GRANT_ACT),
@@ -126,14 +146,26 @@ pub(super) fn agent_grant_act_value(record: &AgentGrantActRecord) -> Value {
         (Value::from("member"), member),
         (Value::from("scope"), scope),
         (Value::from("expires_at"), expires_at),
-    ])
+    ];
+    if let Some(bounds) = repo_bounds {
+        entries.push((Value::from(KEY_REPO_BOUNDS), repo_bounds_value(bounds)));
+    }
+    Value::Map(entries)
 }
 
 /// The act's kind names the change: a mint carries its member and scope (its
 /// expiry nil for a Grant durable until revoked), a revoke none of the three.
+/// Repo bounds ride a mint only, under their own key, and only when given.
 /// The envelope's canonical re-encode then pins every value's form.
 pub(super) fn decode_agent_grant_act(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    validate_keys(entries, &AGENT_GRANT_ACT_KEYS)?;
+    let repo_bounds = entries
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(KEY_REPO_BOUNDS)).then_some(value));
+    if repo_bounds.is_some() {
+        validate_keys(entries, &AGENT_GRANT_ACT_REPO_KEYS)?;
+    } else {
+        validate_keys(entries, &AGENT_GRANT_ACT_KEYS)?;
+    }
     let act = super::owner_act::decode_owner_act(required(entries, OP_KEY_ACT)?)?;
     let member = required(entries, "member")?;
     let scope = required(entries, "scope")?;
@@ -146,8 +178,16 @@ pub(super) fn decode_agent_grant_act(entries: &[(Value, Value)]) -> Result<Autho
                 Value::Nil => None,
                 value => Some(value.as_u64().ok_or_else(invalid_authority)?),
             },
+            repo_bounds: repo_bounds
+                .map(|value| decode_repo_bounds_value(value).ok_or_else(invalid_authority))
+                .transpose()?,
         },
-        OwnerActKind::GrantRevoke if member.is_nil() && scope.is_nil() && expires_at.is_nil() => {
+        OwnerActKind::GrantRevoke
+            if member.is_nil()
+                && scope.is_nil()
+                && expires_at.is_nil()
+                && repo_bounds.is_none() =>
+        {
             AgentGrantChange::Revoke
         }
         _ => return Err(invalid_authority()),

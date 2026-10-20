@@ -87,6 +87,7 @@ impl FederationGrant {
             delegated_by: None,
             guest: None,
             owner_agent: false,
+            repo_bounds: None,
         };
         grant.validate()?;
         Ok(grant)

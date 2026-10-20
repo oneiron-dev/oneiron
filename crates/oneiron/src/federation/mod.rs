@@ -78,6 +78,9 @@ mod guest;
 mod peer_authority;
 pub mod record_scope;
 mod relationships;
+// The repo admission seams (FIX 6867): callers name
+// `federation::repo_access::{RepoMembership, RepoAdmission}`.
+pub(crate) mod repo_access;
 pub(crate) use relationships::resolve_member_relationship_filtered;
 mod stale;
 pub(crate) use stale::world_registered_to_pact_in;
@@ -190,7 +193,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;
 
 pub use oneiron_authority::federation::{
-    Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
+    REPO_EDIT_VERB, REPO_READ_VERB, RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal,
+    RepoTarget, Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling,
 };
 
 mod org_admin;

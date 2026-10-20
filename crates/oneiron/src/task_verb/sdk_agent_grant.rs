@@ -12,13 +12,20 @@
 //! the base agents' principal ids (the Coach's among them) for the owner. It stands until revoked,
 //! or until the expiry the owner set. Each grant shows in
 //! `vault.consent.registry` with its own one-tap revoke.
+//!
+//! A mint may also give the agent repo bounds (FIX 6867): one CODE anchor
+//! (a CODE_ARTIFACT) in the PROJECT it belongs to, full Git ref names, and
+//! separate readable and editable globs (`*` and `?` inside one path
+//! component, `**` across components). Omitted, the grant delegates no repo
+//! access of its own and behaves exactly as before; with no editable globs
+//! it edits nothing, and reading a path never lets the agent edit it.
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::federation::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, Scope};
+use crate::federation::{AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, RepoAccessBounds, Scope};
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 
 /// `vault.agents.grants.mint`'s input: the agent, the owner's exact scope
@@ -38,6 +45,12 @@ pub struct AgentGrantMintRequest {
     /// Omitted: it stands until revoked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+    /// The one repo the agent may reach, its refs and its read and edit
+    /// globs. The scope must list `read` and name the bounds' PROJECT in its
+    /// audience; edits also need `write`. Omitted: no repo-specific
+    /// delegation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_bounds: Option<RepoAccessBounds>,
 }
 
 /// One owner's agent grant.
@@ -55,6 +68,9 @@ pub struct AgentGrantView {
     /// When it stops conferring (Unix seconds); absent: until revoked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+    /// The repo bounds the owner gave; absent on a general grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_bounds: Option<RepoAccessBounds>,
     /// Whether it confers now: unexpired, with `read` among its verbs and no
     /// empty world, band, audience or sensitivity axis.
     pub confers: bool,
@@ -149,6 +165,7 @@ pub fn mint_agent_grant_as(
         input.agent,
         input.authority_scope,
         input.expires_at,
+        input.repo_bounds,
     )?;
     Ok(AgentGrantMinted {
         grant: agent_grant_view(&minted.standing, minted.standing.created_at),
@@ -184,6 +201,7 @@ fn agent_grant_view(standing: &AgentGrantStanding, now: u64) -> AgentGrantView {
         authority_scope: standing.grant.authority_scope.clone(),
         delegated_by: standing.delegated_by,
         expires_at: standing.grant.expires_at,
+        repo_bounds: standing.grant.repo_bounds.clone(),
         confers: standing.grant.confers_at(now),
         revoke_command: AGENT_GRANT_REVOKE_COMMAND.to_owned(),
     }
