@@ -48,6 +48,27 @@ impl ManagedState {
                 })?;
                 Ok(CtlResponse::TrainingPurge { training_purge })
             }
+            // Recovery reads the token the process already holds and writes
+            // nothing, so a vault frozen for reap answers it and stays frozen.
+            // Past the challenge's shape, every failure answers `false`, never
+            // a generic refusal, so the supervisor asks again.
+            CtlRequest::RecoverOwnerSigning { challenge } => {
+                let owner_signing_recovered =
+                    match self.ledger.prove_owner_signing(&challenge).await {
+                        Ok(recovered) => recovered,
+                        Err(error) => {
+                            tracing::warn!(
+                                error = %format!("{error:#}"),
+                                reason = "owner_signing_proof_failed",
+                                "owner-signing recovery proof failed; the supervisor asks again"
+                            );
+                            false
+                        }
+                    };
+                Ok(CtlResponse::OwnerSigningRecovered {
+                    owner_signing_recovered,
+                })
+            }
         }
     }
 }
