@@ -10949,10 +10949,22 @@
      "path": "src/channel_identity_lifecycle.rs",
      "purpose": "ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 3,
-      "fn": 8,
+      "fn": 10,
+      "re-export": 1,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_lifecycle/approval.rs",
+     "purpose": "FIX 6424 part 3 (2b, Engine 10-20 21:0x rulings 1 and 5, CALLS `FIX 6424 channel-identity request nonce` and…",
+     "surface": {
+      "crate-vis": 14,
+      "fn": 1
      }
     },
     {
@@ -17331,7 +17343,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 12
+      "re-export": 14
      }
     },
     {
@@ -28451,7 +28463,7 @@
      "path": "src/gate/effect/approval_target.rs",
      "purpose": "FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -40872,7 +40884,18 @@
      "path": "src/outbound_chokepoint/types.rs",
      "purpose": "Frozen admission model: error alias, result/command/auth/prepared types, transport trait, hygiene helper…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/approval.rs",
+     "purpose": "FIX 6424 part 3 (2b, Engine 10-20 21:0x rulings 1, 7 and 8): an owner's approve-once press on one scoped-MCP…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1
      }
     },
     {
@@ -40894,7 +40917,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [
       "ConnectorAwaitingInput",
@@ -40987,9 +41010,9 @@
      "path": "src/outbound_consent/execution.rs",
      "purpose": "Scoped-call execution, post-effect decision, and result transport",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -41002,7 +41025,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 1,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -65426,7 +65449,7 @@
      "purpose": "Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation"
     },
     "channel_identity_lifecycle": {
-     "files": 2,
+     "files": 3,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -66168,9 +66191,9 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
@@ -66786,7 +66809,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4184,
+   "source_files": 4186,
    "test_files": 902
   },
   "oneiron-android": {
