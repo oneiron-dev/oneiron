@@ -14,9 +14,10 @@
 //! Only the one-shot digest moves. The action requirement every Grant is
 //! matched on, the grant echo, budgets, connector settings and the consent
 //! precedence never read the target, and an effect that carries none (mail,
-//! code waits, artifact publish, brief share, task cancel, and the families
-//! FIX 6424's second part pins) composes exactly the digest it composed
-//! before. No target names a provider id the send has not been given yet.
+//! code waits, artifact publish, brief share, task cancel, failure-signal
+//! batches until FIX 6679, and the families FIX 6424's second part pins)
+//! composes exactly the digest it composed before. No target names a
+//! provider id the send has not been given yet.
 
 use crate::calendar::CalendarInvitePayload;
 use crate::entity_id::EntityId;
@@ -26,6 +27,14 @@ const APPROVE_ONCE_TARGET_DOMAIN: &[u8] = b"oneiron.external_effect.approve_once
 /// The connector whose admitted press is recomposed from its frozen ledger
 /// bytes, so its press pins its send's stable logical identity.
 const ESIGN_CONNECTOR: &str = "esign";
+/// The failure-signal connector: each delivery pass mints a fresh batch and
+/// send ref, so a press pinned to a held batch would never be spent.
+const FAILURE_SIGNALS_CONNECTOR: &str = "failure_signals";
+/// Whether a failure-signal batch pins its target (CALLS `FIX 6424
+/// failure-signal batches keep the unpinned digest`). Off until the next
+/// pass carries the held batch's ref and content (FIX 6679), so the press
+/// the owner made today is still spent by the next batch.
+const FAILURE_SIGNAL_BATCHES_PIN: bool = false;
 
 /// The facts one non-mail send's approve-once press pins, per family. Every
 /// `send_ref` is the family's existing logical ref: the dispatch's intent
@@ -105,18 +114,20 @@ impl ApprovalTarget {
         let content_ref = facts.content_ref.map(str::to_owned);
         let target = match facts.connector {
             "email" | "email_resend" | "email_ses" | "email_postmark" | "linear" => return None,
+            FAILURE_SIGNALS_CONNECTOR if !FAILURE_SIGNAL_BATCHES_PIN => return None,
             ESIGN_CONNECTOR => Self::Esign {
                 document: facts.target.to_owned(),
                 content_ref,
                 send_ref,
             },
-            "feedback_cloud" | "feedback_collector" | "feedback_github" | "failure_signals" => {
-                Self::HttpBundle {
-                    endpoint: facts.target.to_owned(),
-                    content_ref,
-                    send_ref,
-                }
-            }
+            "feedback_cloud"
+            | "feedback_collector"
+            | "feedback_github"
+            | FAILURE_SIGNALS_CONNECTOR => Self::HttpBundle {
+                endpoint: facts.target.to_owned(),
+                content_ref,
+                send_ref,
+            },
             "calendar" if facts.calendar_invite.is_some() => {
                 let invite = facts.calendar_invite?;
                 Self::Calendar {
