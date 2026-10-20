@@ -1415,7 +1415,9 @@ commitment. No wrap is needed, and a sealed vault's pages open on it too. `--vau
 
 `status` lists every kit, pending ones too, with its homes, coverage and confirmation, and each
 private world's state. `covered` means only that the world's current key has a wrap to the pinned
-root. A running server shows the same at `GET /v1/owner/recovery-kit`. The commands above run on
+root. `checkpoint_pin` is the 64-hex pin digest of the checkpoint image this install adopted, or
+null when it adopted none; it is neither the root nor a bundle generation. A running server shows
+the same at `GET /v1/owner/recovery-kit`. The commands above run on
 a stopped vault. On a running server, a root change goes through your request and its target
 install:
 
@@ -1475,6 +1477,41 @@ oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt -
 
 With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
 with any other unlock, it refuses `--piece` and `--vault-id`.
+
+### Restore a sealed cloud bundle with the world kit
+
+On an install that holds no copy of the vault yet, the world kit alone restores it from its sealed
+cloud bundle. Run it on a stopped install, with the world kit's pieces, not the vault-key kit's:
+two `--piece` files, or one and the passphrase from stdin or `--secret-file`. `--vault-id` is the
+64-hex id the kit is bound to, as `status` prints it on one of your machines. Name one source:
+
+```sh
+oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt --vault-id <hex> --sealed-bundle bundle --sealed-pads pads
+oneiron recovery-kit restore --piece piece-1.txt --piece piece-2.txt --vault-id <hex> --sealed-home <url>
+```
+
+`--sealed-bundle` reads the bundle from a file, with `--sealed-pads`, the file of the pad object of
+the same generation. `--sealed-home` fetches both with the kit alone from the home at that
+address: the newest generation it keeps for the kit's root, or the one `--sealed-generation`
+names, 48 lower-case hex digits. The fetch is `POST /v1/recovery/sealed-bundle/part`, signed by
+the owner anchor of the kit's root with no token; it carries ciphertext only, and no piece leaves
+this machine. The root rule of `restore` above goes first: a kit opened with one piece and the
+passphrase needs `--fingerprint <root>` or `--confirm-root <root>`, and until it has one the home
+is not asked.
+
+The root's go-ahead never vouches for a checkpoint image the bundle carries. The restore prints
+that image's pin digest as UNTRUSTED, the bundle's own word, and adopts the image only under one
+of two flags, never both:
+
+- `--checkpoint-pin <hex>`: the `checkpoint_pin` that `status` or `GET /v1/owner/recovery-kit`
+  shows on one of your machines that adopted the image, 64 hex digits.
+- `--confirm-checkpoint <hex>`: the digest the restore printed, given back to go ahead.
+
+A bundle that names another pin is refused. With neither flag the image is not adopted: a tail
+that imports whole without it still restores, and one that stands on it is refused with the
+rerun flags that adopt it. A bundle that carries no image adopts none, and either flag then only
+prints a warning. This restore is not `oneiron restore BACKUP --unlock kit`, which opens a backup
+through the `world-kit` wrap and takes `--trust` signer pins.
 
 ## Contact disclosure
 
