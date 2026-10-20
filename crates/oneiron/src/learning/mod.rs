@@ -54,7 +54,7 @@ pub use judge::{
 };
 pub use prior::put_cell_prior;
 pub use project::{SettingFit, reproject_all_cells};
-pub use read::{LearningRead, learning_estimate, read_learning};
+pub use read::{LearningRead, learning_estimate, learning_estimate_with_sources, read_learning};
 pub use retest::{Retest, RetestScore, record_retest};
 
 pub(crate) use evidence::record_evidence_in_txn;

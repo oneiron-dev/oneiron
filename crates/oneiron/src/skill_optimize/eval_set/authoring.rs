@@ -37,8 +37,8 @@ use sha2::{Digest, Sha256};
 use super::cohort::{cohorts_in_txn, exposure_in_txn};
 use super::{
     CASE_PREFIX, DerivationKind, EvalCase, EvalExposureCounts, EvalLabelKind, EvalSeat,
-    FAMILY_PREFIX, FamilyPurpose, MAX_ROOTS, SourceFamily, family_in_txn, invalid,
-    root_family_in_txn, rows_in_txn,
+    FAMILY_PREFIX, FamilyPurpose, SourceFamily, family_in_txn, invalid, root_family_in_txn,
+    rows_in_txn,
 };
 use crate::Vault;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -72,6 +72,10 @@ pub struct CandidateLabel {
     pub at: u64,
     /// The candidate's case already holds it.
     pub held: bool,
+    /// The rows the label's value was read from, as fixed code found them
+    /// (FIX 5761); kept from the skill, which never asserts them.
+    #[serde(skip)]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// One recent attempt receipt that records a seat: a candidate case.
@@ -86,6 +90,10 @@ pub struct EvalCandidate {
     pub labels: Vec<CandidateLabel>,
     /// The case already recorded for this receipt, if one is.
     pub case: Option<EntityId>,
+    /// The rows the receipt's attempt read, as fixed code resolved them
+    /// (FIX 5761); kept from the skill, which never asserts them.
+    #[serde(skip)]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// Candidates that share a root: one source family's worth of history.
@@ -298,14 +306,10 @@ fn source_group(
         ),
         _ => None,
     };
-    let held = family.as_ref().map_or(0, |family| family.roots.len());
-    let blocked = if known.len() > 1 {
-        Some("these roots already belong to different eval families")
-    } else if held + fresh_roots > MAX_ROOTS {
-        Some("an eval family holds at most 256 source roots")
-    } else {
-        None
-    };
+    // A family holds every root its lineage has (Rule 5); assigning it
+    // measures its size.
+    let blocked =
+        (known.len() > 1).then_some("these roots already belong to different eval families");
     Ok(EvalSourceGroup {
         id,
         seat,
@@ -487,6 +491,7 @@ pub fn eval_authoring_inventory(vault: &Vault, now: u64) -> Result<EvalAuthoring
                 at: member.receipt.occurred_at,
                 labels,
                 case: case.map(|case| case.id),
+                source_rows: member.lineage.sources.clone(),
             });
         }
         groups.push(source_group(vault, &txn, id, &members)?);
