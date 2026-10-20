@@ -5,6 +5,7 @@ mod ledger;
 mod limit;
 mod model;
 mod pricing;
+mod rollup;
 pub use codec::UsageError;
 pub use ledger::{CycleSettlements, SeatUsage, UnpricedCache, UsageLedger};
 pub use limit::{CachedBudgetLimit, ExchangeRate};
