@@ -212,9 +212,8 @@ pub(crate) fn guard_record_put(
     // kept: the one change a pinned TURN takes (FIX 5639).
     if pin != WITHDRAWN_PIN
         && let Some(previous) = prior.as_ref()
-        && let Some(erased) = crate::workspace_roster::erased_audience_edit(&previous.body)?
         && (previous.entity_type, previous.occurred, previous.learned_at) == metadata
-        && erased == body
+        && crate::workspace_roster::audience_edit_erased_from(&previous.body, body)?
     {
         return Ok(());
     }
@@ -743,7 +742,7 @@ pub(crate) fn pin_typed_record(
         && let Some(pin) = stored_record_pin(store, txn, id)?
         && held != pin
         && held != WITHDRAWN_PIN
-        && crate::workspace_roster::erased_audience_edit(body)?.as_deref() == Some(body)
+        && crate::workspace_roster::audience_edit_is_erased(body)?
     {
         BODY_PINS.put(store, txn, id, &pin)?;
     }

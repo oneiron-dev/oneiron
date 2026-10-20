@@ -440,9 +440,11 @@ pub(crate) struct McpPageSnapshot {
     pub(crate) health: McpRetrievalHealth,
     pub(crate) keyframe: Option<BoardStreamFrame>,
     /// The rows the producer derived `output` and `keyframe` from, listed
-    /// when it produced them. A continuation is released off this device
-    /// only while every one of them may leave it (DEC-0005).
-    pub(crate) rows: Vec<oneiron::EntityId>,
+    /// when it produced them: `None` when one of its paths listed none while
+    /// the gateway's `NARROW_UNKNOWN_MCP_READS` holds (FIX 5988). A
+    /// continuation is released off this device only while they are known
+    /// and every one of them may leave it (DEC-0005).
+    pub(crate) rows: Option<Vec<oneiron::EntityId>>,
 }
 
 /// The state returned after a valid cursor is consumed before any producer or

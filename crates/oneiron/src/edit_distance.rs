@@ -501,12 +501,23 @@ struct PeerBinding {
 impl PeerBinding {
     /// Reads a binding row bound to `peer_id`.
     ///
-    /// `None` when the row names another peer, or when its value map is
-    /// malformed — a row that binds nothing is skipped rather than failing
-    /// every attribution read. Skipping can only ever REMOVE evidence (one more
+    /// `None` when the row names another peer, is not this vault's own
+    /// observation, or when its value map is malformed — a row that binds
+    /// nothing is skipped rather than failing every attribution read. Skipping can only ever REMOVE evidence (one more
     /// device-peer fallback), never name a wrong actor, which is the safe
     /// direction for a predicate that arrives by replication.
     fn from_row(claim_id: EntityId, body: &ClaimBody, peer_id: u64) -> Option<Self> {
+        // Only this vault's own observation binds a peer (FIX 5954): an
+        // imported binding, or one with imported or generated lineage, stays
+        // stored and readable but vouches for no actor.
+        if body.source != Some(ClaimSource::Observed)
+            || crate::claim::claim_generated_origin(body)
+            || crate::claim::claim_evidence_taint(body).is_some_and(|taint| {
+                matches!(taint, ClaimSource::Imported | ClaimSource::ToolOutput)
+            })
+        {
+            return None;
+        }
         if peer_binding_field(body, PEER_BINDING_VALUE_KEY_PEER)?.as_u64()? != peer_id {
             return None;
         }
