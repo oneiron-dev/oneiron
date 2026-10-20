@@ -545,6 +545,10 @@ side_tables! {
     /// id16(attempt) + be64(lease generation) + be64(step).
     CODE_RUN_REPLAY_CAPSULE: VaultMeta b"code_run:replay_capsule:v1:" Named Authored
         => crate::code_run::erase_capsule_actor_in_txn;
+    /// Whose reply content one code-run replay record holds (FIX 5718): the run it is (its own,
+    /// or a write receipt's run) and the actor its host stamped, or Erased once that actor's erase
+    /// took it. The capsule table's scrub erases it. Key: id16(record).
+    CODE_RUN_RESPONSE_OWNER: VaultMeta b"code_run:response_owner:v1:" Named Engine;
     /// A summary a code run's `summarize` made: its task and its text's occurrence (JSON). Key:
     /// bytes32(memo: BLAKE3 of the members' occurrences and ranges, and the recipe).
     CODE_RUN_SUMMARY_MEMO: VaultMeta b"code_run:summary_memo:v1:" Raw Authored;

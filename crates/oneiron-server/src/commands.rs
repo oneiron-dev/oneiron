@@ -88,7 +88,11 @@ pub async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     });
     #[cfg(not(unix))]
     let files = None;
-    serve_with_config(config, files).await
+    // The custody anchor door's owner credential, on the pipe the operator
+    // named, read before the vault opens (FIX 5788).
+    let anchor =
+        crate::owner::backup::CustodyAnchorCredentials::handed(args.custody_anchor_credentials_fd)?;
+    serve_anchored(config, files, anchor).await
 }
 
 /// The files a plain `serve` read its config from, as its runtime file names
@@ -110,6 +114,8 @@ mod device;
 pub use device::device_enrol;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
+use self::serve::serve_anchored;
+#[cfg(test)]
 use self::serve::serve_with_config;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::serve::spawn_fact_hooks;

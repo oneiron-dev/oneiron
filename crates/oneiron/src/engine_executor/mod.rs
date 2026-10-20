@@ -40,8 +40,8 @@ pub use self::shadow_step::run_shadow_step;
 pub(crate) use self::shadow_step::shadow_readable_outputs;
 pub use self::skill_call::{execute_live_skill_call, execute_live_skill_call_listing};
 pub(crate) use self::store::{
-    RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, is_result_output_path,
-    result_handle_json, store_result_output_path,
+    RESULT_READ_ROOT, RESULT_REPLY_INLINE_BYTES, clean_for_context, holds_reply_content,
+    is_result_output_path, result_handle_json, store_result_output_path,
 };
 pub use self::types::{
     ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,

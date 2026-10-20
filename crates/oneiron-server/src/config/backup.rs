@@ -38,10 +38,11 @@ pub struct BackupConfig {
     pub custody_anchor_root: Option<PathBuf>,
     /// CALLS CUSTODY_ANCHOR_URL (KS-4A2, FIX 5788): another install's
     /// custody anchor door, `<url>/v1/owner/custody-anchor`, for a host whose
-    /// own disks would roll back with its vault (`ONEIRON_CUSTODY_ANCHOR_URL`;
-    /// the owner credential it presents in `ONEIRON_CUSTODY_ANCHOR_TOKEN`, a
-    /// slip's binding seed in `ONEIRON_CUSTODY_ANCHOR_BINDING_KEY`). Unset by
-    /// default; one of this and `custody_anchor_root` at most.
+    /// own disks would roll back with its vault (`ONEIRON_CUSTODY_ANCHOR_URL`).
+    /// The owner credential it presents is never configured: it arrives on a
+    /// pipe, `--custody-anchor-credentials-fd`, and without it the door is
+    /// not called. Unset by default; one of this and `custody_anchor_root` at
+    /// most.
     pub custody_anchor_url: Option<String>,
     /// CALLS CUSTODY_HOSTED_TARGETS (KS-4A2): hosted custody holders this
     /// vault's required target set names (`wasabi:<name>`, `s3:<name>`,

@@ -12,19 +12,23 @@
 //! live instance the exact record lands, and replay checks it as before.
 //! Its owners are the run, the actor its live run binding names, the actor
 //! a turn program's run runs as, and the source rows its verb calls served.
-//! The live record's erase scrub is L11-B's (FIX 5718); this retires every
-//! image's copy beside it.
+//! The live record's erase scrub is L11-B's (FIX 5718, [`erase_replies`]);
+//! this retires every image's copy beside it.
 
 use super::records::REPLAY_RECORDS;
-use crate::code_run::payload::self_dispatch_outcome_value;
-use crate::code_run::{SelfDispatchOutcome, SelfFailedResult};
+use super::response_owners::response_owner_in_txn;
+use crate::code_run::payload::{decode_self_dispatch_outcome, self_dispatch_outcome_value};
+use crate::code_run::wait_rows::keep_erased_answer_rows;
+use crate::code_run::{CodeRunReplayRecord, SelfDispatchOutcome, SelfFailedResult};
+use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::SideTableDbs;
 use crate::store::ResponseCarriage;
+use crate::task_verb::TaskAskStatus;
 
 /// The error a call whose outcome an erase took replays with.
-const ERASED_OUTCOME: &str = "response_erased";
+pub(crate) const RESPONSE_ERASED: &str = "response_erased";
 
 /// The preview text of a result whose record an erase retired.
 const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
@@ -43,7 +47,7 @@ pub(crate) fn replay_carriage(value: &[u8]) -> Option<ResponseCarriage> {
         call.outcome =
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
-                error: ERASED_OUTCOME.to_owned(),
+                error: RESPONSE_ERASED.to_owned(),
             }))
             .ok()?;
     }
@@ -59,9 +63,10 @@ pub(crate) fn replay_carriage(value: &[u8]) -> Option<ResponseCarriage> {
 }
 
 /// Who owns the replay record `value`'s outcomes: its run, the actor its
-/// live run binding names, the actor a turn program's run runs as, and the
-/// source rows its verb calls listed as served. None for a record that does
-/// not decode.
+/// live run binding names, the actor a turn program's run runs as, the run
+/// and actor its owner row names (a write receipt's among them, FIX 5718),
+/// and the source rows its verb calls listed as served. None for a record
+/// that does not decode.
 ///
 /// # Errors
 ///
@@ -82,5 +87,95 @@ pub(crate) fn replay_owners(
         txn,
         &record.run_id,
     )?);
+    // A write receipt names its run and actor here alone (FIX 5718).
+    if let Some(owner) = response_owner_in_txn(dbs, txn, &record.run_id)? {
+        owners.extend(Some(owner.run).filter(|run| *run != record.run_id));
+        owners.extend(owner.actor());
+    }
     Ok(owners)
+}
+
+/// What an erase of its run's actor leaves of `record` live (FIX 5718,
+/// ruling 1): each call whose recorded outcome holds a reply
+/// ([`outcome_holds_reply`]) fails with `response_erased` under its own
+/// effect, as a checkpoint's image of it does, a verb's answer keeping the
+/// rows it was served from, and each output that holds reply content
+/// ([`holds_reply_content`]) previews as erased. What the run did stays
+/// whole: every call's seq, effect, request, times and action
+/// digest, every output's path, handle, digest, counts and completeness, its
+/// checkpoints (so its generation), its names and its live run binding. A
+/// resumed run that reaches an erased call traps on it, as a write whose
+/// receipt holds one is never made again.
+///
+/// # Errors
+///
+/// An outcome that does not encode.
+pub(crate) fn erase_replies(record: &mut CodeRunReplayRecord) -> Result<()> {
+    for call in &mut record.bridge_calls {
+        // A verb's answer keeps the rows it was served from; one that does
+        // not decode names none it is known to be served from.
+        let rows = match decode_self_dispatch_outcome(&call.outcome) {
+            Ok(outcome) if !outcome_holds_reply(&outcome) => continue,
+            Ok(SelfDispatchOutcome::AgentVerb(answer)) => Some(answer.rows),
+            Ok(_) => None,
+            Err(_) => Some(None),
+        };
+        call.outcome =
+            self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
+                effect: call.effect,
+                error: RESPONSE_ERASED.to_owned(),
+            }))?;
+        if let Some(rows) = rows {
+            keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
+        }
+    }
+    for output in &mut record.outputs {
+        if holds_reply_content(&output.path) {
+            output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
+        }
+    }
+    Ok(())
+}
+
+/// Whether a recorded outcome holds reply content an erase of its run's
+/// actor takes (FIX 5718; CALLS "reply-bearing outcomes"): a verb's or a
+/// fold's answer, a skill's return, a search's hits, the inference defaults
+/// read, an ask's settled answer, a reader wait's reduction, a summary and
+/// the leader's advice. What a call did and whom it named stays as it was
+/// recorded: a speech bubble, the wait a call parked on, a refusal or a
+/// failure, and every receipt (a spawn's, an ask's, a write's, a report's,
+/// a reader's, a team's), a context spec, a written policy and a refusal's
+/// dial. An outcome that does not decode holds one.
+fn outcome_holds_reply(outcome: &SelfDispatchOutcome) -> bool {
+    match outcome {
+        SelfDispatchOutcome::AgentVerb(_)
+        | SelfDispatchOutcome::Fold(_)
+        | SelfDispatchOutcome::SkillCall(_)
+        | SelfDispatchOutcome::MemorySearch(_)
+        | SelfDispatchOutcome::InferenceDefaults(_)
+        | SelfDispatchOutcome::TaskWaitSet(_)
+        | SelfDispatchOutcome::Summarize(_)
+        | SelfDispatchOutcome::Leader(_) => true,
+        SelfDispatchOutcome::TaskAskStatus(status) => matches!(
+            status,
+            TaskAskStatus::Settled(_) | TaskAskStatus::WorldPrivacy(_)
+        ),
+        SelfDispatchOutcome::AgentSpawn(_)
+        | SelfDispatchOutcome::AgentDefinitionPut(_)
+        | SelfDispatchOutcome::TaskAsk(_)
+        | SelfDispatchOutcome::MemoryWrite(_)
+        | SelfDispatchOutcome::MemoryEdgeWrite(_)
+        | SelfDispatchOutcome::DurableWait(_)
+        | SelfDispatchOutcome::Denied(_)
+        | SelfDispatchOutcome::Failed(_)
+        | SelfDispatchOutcome::Context(_)
+        | SelfDispatchOutcome::Speech(_)
+        | SelfDispatchOutcome::ReportBlocked { .. }
+        | SelfDispatchOutcome::WakePolicyWritten(_)
+        | SelfDispatchOutcome::TaskRefusal(_)
+        | SelfDispatchOutcome::ReaderSpawn(_)
+        | SelfDispatchOutcome::ReaderReport(_)
+        | SelfDispatchOutcome::Team(_)
+        | SelfDispatchOutcome::TeamSubmitted(_) => false,
+    }
 }

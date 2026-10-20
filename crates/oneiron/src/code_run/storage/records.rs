@@ -1,5 +1,7 @@
 //! The code-run vault_meta row families: replay records, raw output, taint refs and heal counts.
 
+use std::borrow::Cow;
+
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::secret_lease::SecretTaintRef;
 use crate::secret_rotation::{
@@ -17,6 +19,8 @@ use super::super::replay::{
     CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
 };
 use super::super::support::invalid_code_run_replay;
+use super::replay_bodies::RESPONSE_ERASED;
+use super::response_erase::{fence_replay_in_txn, response_erased_in_txn};
 
 mod bodies;
 
@@ -148,7 +152,8 @@ impl Vault {
     /// Persists the replay record for `record.run_id`.
     pub fn put_code_run_replay_record(&self, record: &CodeRunReplayRecord) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
-        REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, record)?;
+        let record = fence_replay_in_txn(self, &mut wtxn, Cow::Borrowed(record))?;
+        REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, &record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -208,6 +213,8 @@ impl Vault {
             })
             .transpose()?;
         let record = record.over_held(current.as_ref());
+        // A record whose replies an erase took stays erased (FIX 5718).
+        let record = fence_replay_in_txn(self, &mut wtxn, record)?;
         REPLAY_RECORDS.put(self, &mut wtxn, &record.run_id, &record)?;
         if let Some((key, count)) = next_heal_count {
             MODEL_HEAL_COUNTS.put(&self.store, &mut wtxn, &key, &HealCount(count))?;
@@ -301,21 +308,40 @@ impl Vault {
     ) -> Result<ArtifactTaintState> {
         let rtxn = self.store.env.read_txn()?;
         let (refs, secret) = self.result_marks_in_txn(&rtxn, owner, output)?;
-        if secret.is_some() {
+        if secret.is_some() || self.result_erased_in_txn(&rtxn, owner)? {
             return Ok(ArtifactTaintState::TaintedLive);
         }
         taint_state_for_refs_in_txn(&self.store, &rtxn, &refs)
     }
 
     /// The reason the secret scan marked the occurrence of `output` that
-    /// `owner` holds with, if it did.
+    /// `owner` holds with, if it did; `response_erased` once an erase of the
+    /// run's actor took its replies (FIX 5718).
     pub fn code_run_raw_output_secret(
         &self,
         owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<Option<String>> {
         let rtxn = self.store.env.read_txn()?;
+        if self.result_erased_in_txn(&rtxn, owner)? {
+            return Ok(Some(RESPONSE_ERASED.to_owned()));
+        }
         Ok(self.result_marks_in_txn(&rtxn, owner, output)?.1)
+    }
+
+    /// Whether run `owner`'s results read as erased (FIX 5718): an erase of
+    /// the run's actor took its replies, so every read of one is withheld
+    /// as a marked body's is, naming `response_erased`, whoever else holds
+    /// the same bytes. A result no run holds is read as its bytes are.
+    fn result_erased_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        owner: Option<EntityId>,
+    ) -> Result<bool> {
+        match owner {
+            Some(owner) => response_erased_in_txn(&self.store, rtxn, &owner),
+            None => Ok(false),
+        }
     }
 
     /// Marks the occurrence of `output` that `owner` holds with the taint of
@@ -435,15 +461,19 @@ impl Vault {
     }
 
     /// Why the occurrence of `output` that `owner` holds is withheld from a
-    /// view leaving the vault: the secret scan marked it, or it carries
-    /// taint refs, live or stale alike. Another occurrence of the same
-    /// bytes neither withholds nor clears it.
+    /// view leaving the vault: an erase of the run's actor took it (FIX
+    /// 5718), the secret scan marked it, or it carries taint refs, live or
+    /// stale alike. Another occurrence of the same bytes neither withholds
+    /// nor clears it.
     pub(crate) fn code_run_result_withheld_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         owner: Option<EntityId>,
         output: &CodeRunRawOutput,
     ) -> Result<Option<&'static str>> {
+        if self.result_erased_in_txn(rtxn, owner)? {
+            return Ok(Some(RESPONSE_ERASED));
+        }
         let (refs, secret) = self.result_marks_in_txn(rtxn, owner, output)?;
         if secret.is_some() {
             return Ok(Some("secret_scan"));

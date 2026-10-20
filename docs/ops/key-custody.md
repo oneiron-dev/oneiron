@@ -45,9 +45,15 @@ custody_anchor_root = "/mnt/usb/oneiron-anchor"  # ONEIRON_CUSTODY_ANCHOR_ROOT: 
 custody_anchor_url = "https://other-host:8443"   # ONEIRON_CUSTODY_ANCHOR_URL: another install's anchor door
 ```
 
-With `custody_anchor_url`, the owner credential that door admits goes in
-`ONEIRON_CUSTODY_ANCHOR_TOKEN`, and a capability slip's binding seed in
-`ONEIRON_CUSTODY_ANCHOR_BINDING_KEY`. A server with `custody_anchor_root` set serves that root
+With `custody_anchor_url`, the owner credential that door admits is handed to each command that
+calls it on a pipe of its own, never in the config, the environment or a file:
+`--custody-anchor-credentials-fd <fd>` on `oneiron serve` (managed or plain), `oneiron backup`
+and `oneiron restore` where no vault is yet. The pipe carries one JSON object, then ends:
+`{"bearer": "<token>", "binding_seed": null}`, or for a capability slip its 32-byte binding seed
+as an array of 32 numbers in place of `null`. A descriptor that is not a pipe, or a pipe that
+carries anything else, is refused before the vault opens. Without the flag the door is never
+called: the anchor step stays `custody_anchor_pending`, and a restore checked against that door
+is refused. A server with `custody_anchor_root` set serves that root
 to other installs: `GET /v1/owner/custody-anchor?vault=<64 hex>&namespace=<32 hex>` answers
 `{"record": "<hex>" | null}`, and `POST /v1/owner/custody-anchor` with
 `{"expected": "<BLAKE3 hex of the record read>" | null, "record": "<hex>"}` answers

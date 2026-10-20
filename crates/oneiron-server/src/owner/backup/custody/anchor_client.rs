@@ -7,12 +7,14 @@
 //! answers `false` when another writer moved it first. The door's store
 //! refuses a record that does not extend the current one; this install
 //! checks the record's tag under its own control secret. The owner
-//! credential the door admits is read from `ONEIRON_CUSTODY_ANCHOR_TOKEN`
-//! at each call, signed for with the slip's binding seed in
-//! `ONEIRON_CUSTODY_ANCHOR_BINDING_KEY` when one is set. Neither, nor the
-//! URL, is ever in an error, a status or a log line: a failure names only
-//! what went wrong and the HTTP status.
+//! credential the door admits is the one this process was handed on its
+//! pipe ([`CustodyAnchorCredentials`], `--custody-anchor-credentials-fd`):
+//! its bearer, with a holder proof its binding seed signs when it carries
+//! one. Without it the door is not called. Neither, nor the URL, is ever in
+//! an error, a status or a log line: a failure names only what went wrong
+//! and the HTTP status.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::store::custody_protocol::{
@@ -22,10 +24,9 @@ use reqwest::blocking::{Client, RequestBuilder};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use super::CustodyAnchorCredentials;
 use crate::owner::vault_key::hex;
 
-const TOKEN_ENV: &str = "ONEIRON_CUSTODY_ANCHOR_TOKEN";
-const BINDING_KEY_ENV: &str = "ONEIRON_CUSTODY_ANCHOR_BINDING_KEY";
 const ROUTE: &str = "/v1/owner/custody-anchor";
 /// How long one call to the door may take before the pass leaves the
 /// anchor step pending.
@@ -67,30 +68,40 @@ fn unhex(text: &str) -> oneiron::Result<Vec<u8>> {
         .collect()
 }
 
-/// Another install's custody anchor door.
+/// Another install's custody anchor door, and the owner credential it is
+/// called with.
 pub(crate) struct HttpAnchor {
     url: String,
+    credentials: Option<Arc<CustodyAnchorCredentials>>,
 }
 
-/// `request` with the owner credential and its binding, when set.
-fn credentialed(request: RequestBuilder) -> oneiron::Result<RequestBuilder> {
-    let Ok(token) = std::env::var(TOKEN_ENV) else {
+/// `request` with the owner credential, and with the holder proof its
+/// binding seed signs when it carries one.
+fn credentialed(
+    request: RequestBuilder,
+    credentials: &CustodyAnchorCredentials,
+) -> oneiron::Result<RequestBuilder> {
+    let request = request.bearer_auth(credentials.bearer());
+    let Some(seed) = credentials.binding_seed() else {
         return Ok(request);
     };
-    let request = request.bearer_auth(&token);
-    if std::env::var_os(BINDING_KEY_ENV).is_none() {
-        return Ok(request);
-    }
-    let binding = crate::commands::api::signed_binding(&token, BINDING_KEY_ENV)
+    let binding = crate::commands::api::signed_binding_with_seed(credentials.bearer(), seed)
         .map_err(|_| failed("credential's binding seed does not sign its slip"))?;
     Ok(request.header("x-oneiron-binding", binding))
 }
 
 impl HttpAnchor {
-    /// The door under `base` (`https://host[:port]`).
-    pub(crate) fn at(base: &str) -> Self {
+    /// The door under `base` (`https://host[:port]`), called with
+    /// `credentials`, the owner credential this process was handed on its
+    /// pipe. With none, each call fails before anything is sent: the door is
+    /// never called without its credential.
+    pub(crate) fn with_credentials(
+        base: &str,
+        credentials: Option<Arc<CustodyAnchorCredentials>>,
+    ) -> Self {
         Self {
             url: format!("{}{ROUTE}", base.trim_end_matches('/')),
+            credentials,
         }
     }
 
@@ -101,6 +112,9 @@ impl HttpAnchor {
         &self,
         request: impl FnOnce(&Client, &str) -> RequestBuilder + Send,
     ) -> oneiron::Result<T> {
+        let credentials = self.credentials.as_deref().ok_or_else(|| {
+            failed("has no owner credential: none was handed to this process on its pipe")
+        })?;
         std::thread::scope(|scope| {
             scope
                 .spawn(|| {
@@ -109,7 +123,7 @@ impl HttpAnchor {
                         .redirect(reqwest::redirect::Policy::none())
                         .build()
                         .map_err(|_| failed("has no HTTP client on this host"))?;
-                    let response = credentialed(request(&client, &self.url))?
+                    let response = credentialed(request(&client, &self.url), credentials)?
                         .send()
                         .map_err(|_| failed("is out of reach"))?;
                     let status = response.status();
