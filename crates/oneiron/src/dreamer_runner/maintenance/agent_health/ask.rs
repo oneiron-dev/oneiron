@@ -216,6 +216,8 @@ fn ask_coach_in_txn(
     card.coach = Some(ask.clone());
     card.updated_at = at;
     CARDS.put(&vault.store, txn, key, &card)?;
+    // A touched card can arm the digest on its own (FIX 1979).
+    crate::batch::queue_proactivity_change(vault, txn);
     Ok(ConcernMoveOutcome { card: handle, ask })
 }
 
@@ -351,7 +353,10 @@ impl Vault {
                 });
             }
             card.updated_at = now;
-            CARDS.put(&self.store, txn, &key, &card)
+            CARDS.put(&self.store, txn, &key, &card)?;
+            // A touched card can arm the digest on its own (FIX 1979).
+            crate::batch::queue_proactivity_change(self, txn);
+            Ok(())
         })?;
         drafted.map(|_| ())
     }

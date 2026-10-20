@@ -207,7 +207,7 @@
      "purpose": "A resident's own craft as its runs read it (OF-490): the lessons and failure modes the system learned about…",
      "surface": {
       "const": 1,
-      "fn": 10,
+      "fn": 11,
       "struct": 1
      }
     },
@@ -11993,7 +11993,7 @@
      "purpose": "Per-reader report schedules (OF-499)",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 10,
       "re-export": 2,
@@ -21699,7 +21699,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 12,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 6,
       "fn": 12,
       "re-export": 3,
@@ -21843,7 +21843,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 29,
+      "const": 30,
       "crate-vis": 9,
       "fn": 14,
       "trait": 1
@@ -21966,7 +21966,7 @@
      "path": "src/dreamer_runner/maintenance/curator.rs",
      "purpose": "Curator grading data and minimum-force findings",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -21979,7 +21979,8 @@
      "path": "src/dreamer_runner/maintenance/curator/approved.rs",
      "purpose": "A curator rung the owner approved (FIX 3223)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -22191,10 +22192,10 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1,
       "mod": 18,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -22292,7 +22293,7 @@
      "path": "src/dreamer_runner/maintenance/representation/proposal.rs",
      "purpose": "Pre-materialized author seam and durable maintenance execution",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 2,
       "trait": 1
@@ -23370,6 +23371,7 @@
       "LandingRequestNotice",
       "RunWakePass",
       "WakeAttemptContext",
+      "WakeAttemptMeter",
       "WakeMilestoneAuthor",
       "WakePassReport",
       "WakePassStop",
@@ -23381,8 +23383,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 2,
-      "struct": 6,
+      "fn": 4,
+      "struct": 7,
       "trait": 1
      }
     },
@@ -39164,6 +39166,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/retained_reasons.rs",
+     "purpose": "A push refusal's reasons, bounded where they are kept (FIX 5942)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/origin/smart_http/scan_cap_tests.rs",
@@ -46902,17 +46914,19 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CentroidCorpus",
       "CentroidReplay"
      ],
      "path": "src/self_heal/centroid_evidence.rs",
      "purpose": "Immutable, content-addressed centroid inputs beside vault-local telemetry",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -46938,7 +46952,7 @@
      "purpose": "The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded…",
      "surface": {
       "const": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -46978,9 +46992,9 @@
      "path": "src/self_heal/distillation.rs",
      "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -47057,7 +47071,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 8,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -47173,6 +47187,20 @@
      "surface": {
       "const": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SessionLine",
+      "SessionText"
+     ],
+     "path": "src/self_heal/session_text.rs",
+     "purpose": "What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -60622,7 +60650,7 @@
       "const": 2,
       "enum": 6,
       "fn": 22,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 13,
       "trait": 2,
       "type": 2
@@ -60639,6 +60667,22 @@
      "purpose": "Typed inputs for the two acquisition doors",
      "surface": {
       "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedEgressGuard",
+      "HostedInfrastructureRefusal"
+     ],
+     "path": "src/web_fetch/egress.rs",
+     "purpose": "The managed (hosted) node's web-fetch egress guard (SCAN C447)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -61517,6 +61561,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_carriers.rs",
+     "purpose": "Thread audience edit carriers under an erase (FIX 5640)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ThreadAudienceAddRequest",
       "ThreadAudienceReceipt",
@@ -61547,11 +61601,11 @@
      "path": "src/workspace_roster/rooms/audience_erase.rs",
      "purpose": "A privacy erase of a thread audience edit (FIX 5639)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ThreadAudienceHistory"
@@ -61559,7 +61613,7 @@
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 22,
       "enum": 1
      }
     },
@@ -61676,7 +61730,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "enum": 2,
       "fn": 6,
       "re-export": 13,
@@ -64216,7 +64270,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64510,7 +64564,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64818,7 +64872,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -64832,7 +64886,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 102,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64855,7 +64909,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4022,
+   "source_files": 4026,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76759,7 +76813,7 @@
      "path": "src/ai_host/resident_craft.rs",
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {

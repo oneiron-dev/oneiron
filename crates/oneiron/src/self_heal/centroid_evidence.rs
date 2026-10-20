@@ -2,8 +2,10 @@
 //! Current vectors can change; replay never consults them.
 use super::{
     DiagnosticSourceKind,
+    distillation::{MintedExample, centroid_labels},
     tiered::{DetectorPolicy, ProposedDiagnostic, ProposedTier, propose, valid_runs},
 };
+use crate::learning_setting::{SettingSpec, setting_value};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
@@ -11,6 +13,15 @@ use serde::{Deserialize, Serialize};
 
 const EVIDENCE: SideTable<[u8; 32], CentroidEvidence, Named> =
     SideTable::new(&side_table::SELF_HEAL_CENTROID_EVIDENCE);
+
+/// The cosine a T2a candidate must reach against its corpus's centroid (FIX
+/// 2078): an owner-steered catalog row over every cosine, -1 to 1.
+pub const DETECTOR_CENTROID_MIN_SIMILARITY: SettingSpec = SettingSpec {
+    key: "detector.centroid.min_similarity",
+    min: -1.0,
+    max: 1.0,
+    seed: 0.8,
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct VectorEvidence {
@@ -27,6 +38,25 @@ struct CentroidEvidence {
     labeled: Vec<VectorEvidence>,
     min_similarity: f32,
     similarity: f64,
+}
+
+/// One pass's T2a corpus for one family (FIX 2078): every entity a minted
+/// T2's live reviewed-positive examples retrieved that holds a vector, by id,
+/// the threshold in force, and a revision over both and those vectors. It is
+/// held in memory only; no corpus is stored.
+#[derive(Clone, Debug)]
+pub struct CentroidCorpus {
+    labeled: Vec<VectorEvidence>,
+    min_similarity: f32,
+    revision: [u8; 32],
+}
+
+impl CentroidCorpus {
+    /// The corpus's revision; `None` when it is empty and no T2a runs.
+    #[must_use]
+    pub fn revision(&self) -> Option<&[u8; 32]> {
+        (!self.labeled.is_empty()).then_some(&self.revision)
+    }
 }
 
 /// The exact historic inputs and recomputed verdict, independent of current vectors.
@@ -62,10 +92,13 @@ pub(crate) fn snapshot_live_in_txn(
 }
 
 fn similarity(candidate: &[f32], labeled: &[VectorEvidence]) -> Option<f64> {
-    if candidate.is_empty() || labeled.is_empty() || candidate.iter().any(|x| !x.is_finite()) {
-        return None;
-    }
-    let mut centroid = vec![0_f64; candidate.len()];
+    cosine(&centroid_of(labeled)?, candidate)
+}
+
+/// The summed centroid of `labeled`, in its order; `None` when it is empty or
+/// its vectors are not all finite and of one length.
+fn centroid_of(labeled: &[VectorEvidence]) -> Option<Vec<f64>> {
+    let mut centroid = vec![0_f64; labeled.first()?.vector.len()];
     for entry in labeled {
         if entry.vector.len() != centroid.len() || entry.vector.iter().any(|x| !x.is_finite()) {
             return None;
@@ -73,6 +106,17 @@ fn similarity(candidate: &[f32], labeled: &[VectorEvidence]) -> Option<f64> {
         for (sum, value) in centroid.iter_mut().zip(&entry.vector) {
             *sum += f64::from(*value);
         }
+    }
+    Some(centroid)
+}
+
+/// The cosine of `candidate` against a summed centroid of its length.
+fn cosine(centroid: &[f64], candidate: &[f32]) -> Option<f64> {
+    if candidate.is_empty()
+        || candidate.len() != centroid.len()
+        || candidate.iter().any(|x| !x.is_finite())
+    {
+        return None;
     }
     let dot: f64 = centroid
         .iter()
@@ -181,6 +225,92 @@ impl Vault {
             Some((hash, refs)),
             Vec::new(),
         )
+    }
+
+    /// The T2a corpus a minted T2's reviewed examples label (FIX 2078): every
+    /// distinct entity its live positive examples' runs retrieved that holds
+    /// a vector, read now, with the threshold in force. Every label is read:
+    /// past `limits.centroid_labels` the pass asks and reads them all. An
+    /// entity with no vector has nothing to average and labels nothing.
+    pub fn centroid_corpus(&self, examples: &[MintedExample]) -> Result<CentroidCorpus> {
+        let ids = centroid_labels(examples);
+        let _ = self.measure_limit(EngineLimit::CentroidLabels, ids.len() as u64);
+        let min_similarity = setting_value(self, &DETECTOR_CENTROID_MIN_SIMILARITY)? as f32;
+        let mut labeled = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some(vector) = self.get_vector(id)? {
+                labeled.push(VectorEvidence {
+                    id: *id.as_bytes(),
+                    vector,
+                });
+            }
+        }
+        labeled.sort_by_key(|item| item.id);
+        let mut hash = blake3::Hasher::new();
+        hash.update(b"oneiron.self_heal.centroid_corpus.v1\0");
+        hash.update(&min_similarity.to_bits().to_be_bytes());
+        hash.update(&(labeled.len() as u64).to_be_bytes());
+        for item in &labeled {
+            hash.update(&item.id);
+            hash.update(&(item.vector.len() as u64).to_be_bytes());
+            for value in &item.vector {
+                hash.update(&value.to_bits().to_be_bytes());
+            }
+        }
+        Ok(CentroidCorpus {
+            labeled,
+            min_similarity,
+            revision: *hash.finalize().as_bytes(),
+        })
+    }
+
+    /// T2a over a whole window (FIX 2078): every entity every run retrieved,
+    /// oldest run first, against the corpus's centroid. The first candidate
+    /// that reaches the threshold is pinned and proposed through
+    /// [`Self::classify_centroid`], one run's proposal, never a signed T1.
+    /// `None` when the corpus is empty or nothing matches: the caller asks
+    /// T2b as before. A candidate with no vector is no match, not a refusal.
+    pub fn classify_centroid_window(
+        &self,
+        policy: &DetectorPolicy,
+        corpus: &CentroidCorpus,
+        runs: &[RetrievalRunRecord],
+    ) -> Result<Option<ProposedDiagnostic>> {
+        policy.validate()?;
+        valid_runs(self, runs, policy.consecutive)?;
+        let Some(centroid) = centroid_of(&corpus.labeled) else {
+            return Ok(None);
+        };
+        let labeled = corpus
+            .labeled
+            .iter()
+            .map(|item| EntityId::from_bytes(item.id))
+            .collect::<Result<Vec<_>>>()?;
+        let floor = f64::from(corpus.min_similarity);
+        for run in runs {
+            for id in &run.result_ids {
+                let Ok(candidate) = EntityId::from_bytes(*id) else {
+                    continue;
+                };
+                let Some(vector) = self.get_vector(&candidate)? else {
+                    continue;
+                };
+                if cosine(&centroid, &vector).is_none_or(|score| score < floor) {
+                    continue;
+                }
+                let found = self.classify_centroid(
+                    policy,
+                    &labeled,
+                    candidate,
+                    run,
+                    corpus.min_similarity,
+                )?;
+                if found.is_some() {
+                    return Ok(found);
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Reconstructs the exact inputs used by a stored centroid finding.
