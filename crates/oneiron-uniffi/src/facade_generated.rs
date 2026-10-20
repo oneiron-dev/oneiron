@@ -3461,8 +3461,8 @@ export_facade! {
     let output = client.vault_rooms_list(&input)?;
     crate::codec::lift_record("vault.rooms.list", &output)
 };
-"vault.rooms.messages" => fn vault_rooms_messages(&self, input: RoomRequest) -> RoomPage = |client| {
-    let input: oneiron::task_verb::sdk::RoomRequest = crate::codec::lower_record("vault.rooms.messages", input)?;
+"vault.rooms.messages" => fn vault_rooms_messages(&self, input: RoomMessagesRequest) -> RoomPage = |client| {
+    let input: oneiron::workspace_roster::RoomMessagesRequest = crate::codec::lower_record("vault.rooms.messages", input)?;
     let output = client.vault_rooms_messages(&input)?;
     crate::codec::lift_record("vault.rooms.messages", &output)
 };

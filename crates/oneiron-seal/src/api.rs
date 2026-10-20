@@ -282,16 +282,14 @@ pub mod config {
     /// The most indirect objects one PDF file holds: ISO 32000-1 Annex C,
     /// section C.2, Table C.1 (8,388,607).
     pub const PDF_FORMAT_OBJECTS: usize = 8_388_607;
-    /// The most one PDF stream decodes to: a decompression-bomb guard, held
-    /// per stream and never summed over a document (Rule 5). The seal's old
-    /// default input size, kept as that codec bound.
-    pub const STREAM_DECODE_BYTES: usize = 256 * 1024 * 1024;
 
     /// The seal's resource limits: format bounds only, which refuse input
     /// the PDF codec cannot carry. Everything the seal used to cap on size
     /// (output growth, objects, revisions, structural work, prefix work,
-    /// decoded DSS material) it now counts in `observed` and serves whole;
-    /// the host measures those counts against its `[limits]` rows.
+    /// decoded DSS material, one stream's decoded bytes, nesting, reference
+    /// chains, field trees, signature contents) it now counts in `observed`
+    /// and serves whole; the host measures those counts against its
+    /// `[limits]` rows.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct SealResourceLimits {
         /// Bytes of a PDF read or written, at most [`PDF_FORMAT_BYTES`].
@@ -332,6 +330,28 @@ pub mod config {
         pub prefix_bytes: u64,
         /// Bytes one DSS extraction decoded across its Certs, CRLs and OCSPs.
         pub dss_decode_bytes: u64,
+        /// Bytes the largest single stream decoded to: an object or xref
+        /// stream the loader decodes, or one DSS entry.
+        pub stream_decode_bytes: u64,
+        /// Tokens the longest stream-dictionary header lexed to find its
+        /// `/Length`.
+        pub stream_header_tokens: u64,
+        /// The deepest nesting one lexed value reached: literal-string
+        /// parentheses, or arrays and dictionaries.
+        pub pdf_depth: u64,
+        /// Reference links the longest chain behind a security-checked name
+        /// (`/Type`, `/FT`, `/S`) took.
+        pub security_name_hops: u64,
+        /// Reference links the longest other chain the analysis followed took.
+        pub reference_hops: u64,
+        /// Reference steps one DSS coverage measurement took over all its
+        /// chains.
+        pub dss_reference_work: u64,
+        /// Nodes one AcroForm field-tree descent visited.
+        pub field_tree_work: u64,
+        /// DER bytes of the largest CMS or timestamp token a signature
+        /// revision's `/Contents` hole had to hold.
+        pub contents_bytes: u64,
     }
 
     /// One count [`SealObservations`] keeps.
@@ -343,13 +363,24 @@ pub mod config {
         Revisions,
         PrefixBytes,
         DssDecodeBytes,
+        StreamDecodeBytes,
+        StreamHeaderTokens,
+        PdfDepth,
+        SecurityNameHops,
+        ReferenceHops,
+        DssReferenceWork,
+        FieldTreeWork,
+        ContentsBytes,
     }
+
+    /// How many counts [`SealObservations`] keeps: one per [`Counter`].
+    const COUNTERS: usize = Counter::ContentsBytes as usize + 1;
 
     /// Where one invocation's counts go. Clones share it, so the caller
     /// that built a config reads what the engine counted under it; a fresh
     /// default starts at zero. Two are equal when they are the same sink.
     #[derive(Debug, Clone, Default)]
-    pub struct SealObservations(std::sync::Arc<[std::sync::atomic::AtomicU64; 6]>);
+    pub struct SealObservations(std::sync::Arc<[std::sync::atomic::AtomicU64; COUNTERS]>);
 
     impl SealObservations {
         /// The largest value each count has reached.
@@ -365,6 +396,14 @@ pub mod config {
                 revisions: read(Counter::Revisions),
                 prefix_bytes: read(Counter::PrefixBytes),
                 dss_decode_bytes: read(Counter::DssDecodeBytes),
+                stream_decode_bytes: read(Counter::StreamDecodeBytes),
+                stream_header_tokens: read(Counter::StreamHeaderTokens),
+                pdf_depth: read(Counter::PdfDepth),
+                security_name_hops: read(Counter::SecurityNameHops),
+                reference_hops: read(Counter::ReferenceHops),
+                dss_reference_work: read(Counter::DssReferenceWork),
+                field_tree_work: read(Counter::FieldTreeWork),
+                contents_bytes: read(Counter::ContentsBytes),
             }
         }
 
@@ -373,6 +412,49 @@ pub mod config {
             let value = u64::try_from(value).unwrap_or(u64::MAX);
             self.0[counter as usize].fetch_max(value, std::sync::atomic::Ordering::Relaxed);
         }
+
+        /// Makes these the counts of the analysis this thread runs until the
+        /// scope drops, so a helper deep inside it (a reference walk, the
+        /// lexer, the field-tree descent) counts through [`note_current`]
+        /// without carrying the sink. Entered by synchronous analyses only;
+        /// the scope is not `Send`, so it cannot be held across an await.
+        pub(crate) fn enter(&self) -> AnalysisScope {
+            let previous = ANALYSIS.with(|current| current.replace(Some(self.clone())));
+            AnalysisScope {
+                previous,
+                _thread: std::marker::PhantomData,
+            }
+        }
+    }
+
+    std::thread_local! {
+        /// The counts of the analysis running on this thread, while one is.
+        static ANALYSIS: std::cell::RefCell<Option<SealObservations>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// A [`SealObservations::enter`] in force; dropping it restores the
+    /// counts that were current before.
+    pub(crate) struct AnalysisScope {
+        previous: Option<SealObservations>,
+        _thread: std::marker::PhantomData<*const ()>,
+    }
+
+    impl Drop for AnalysisScope {
+        fn drop(&mut self) {
+            let previous = self.previous.take();
+            ANALYSIS.with(|current| *current.borrow_mut() = previous);
+        }
+    }
+
+    /// Raises `counter` to `value` in the counts of the analysis this thread
+    /// runs (see [`SealObservations::enter`]); outside one it counts nothing.
+    pub(crate) fn note_current(counter: Counter, value: usize) {
+        ANALYSIS.with(|current| {
+            if let Some(observed) = current.borrow().as_ref() {
+                observed.note(counter, value);
+            }
+        });
     }
 
     impl PartialEq for SealObservations {
@@ -456,10 +538,10 @@ pub mod config {
 }
 
 #[cfg(feature = "native")]
-pub(crate) use config::Counter;
+pub(crate) use config::{Counter, note_current};
 #[cfg(feature = "native")]
 pub use config::{
     FetchError, FetchMethod, FetchPolicy, FetchPurpose, FetchRequest, FetchResponse,
-    OfflineFetcher, PDF_FORMAT_BYTES, PDF_FORMAT_OBJECTS, STREAM_DECODE_BYTES, SealConfig,
-    SealFetcher, SealObservations, SealObserved, SealResourceLimits, TsaEndpoint,
+    OfflineFetcher, PDF_FORMAT_BYTES, PDF_FORMAT_OBJECTS, SealConfig, SealFetcher,
+    SealObservations, SealObserved, SealResourceLimits, TsaEndpoint,
 };
