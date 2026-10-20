@@ -51,6 +51,7 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 .post_json(&request.path, &request.headers, &body)
                 .await?;
             carry_served_model(reply.status, &mut reply.body);
+            carry_timings(&mut reply.body);
             Ok(OpenAiCompatHttpResponse {
                 status: reply.status,
                 headers: reply.headers,
@@ -109,6 +110,23 @@ pub(super) fn carry_served_model(status: u16, body: &mut JsonValue) {
         body.insert("usage".into(), JsonValue::Object(Default::default()));
     }
     record_served_model(body.get_mut("usage"), served);
+}
+
+/// Copies an engine's own timings into its usage.
+///
+/// llama-server and the house EXL3 server report their prefill and decode
+/// timings as a top-level `timings` object beside `usage`, on a plain reply
+/// and on a stream's last chunk. The adapter keeps only `usage`, so the
+/// object goes in as `usage.timings` and reaches the answer's raw provider
+/// usage. A usage that already holds `timings` keeps its own; a body with no
+/// usage object is left as it came.
+fn carry_timings(body: &mut JsonValue) {
+    let Some(timings) = body.get("timings").cloned().filter(JsonValue::is_object) else {
+        return;
+    };
+    if let Some(JsonValue::Object(usage)) = body.get_mut("usage") {
+        usage.entry("timings").or_insert(timings);
+    }
 }
 
 /// The stream as the adapter reads it, with the served model on its usage.
@@ -173,6 +191,7 @@ where
                             .iter()
                             .any(|choice| !choice["finish_reason"].is_null())
                     });
+                carry_timings(&mut chunk);
                 record_served_model(chunk.get_mut("usage"), self.served.clone());
                 Ok(OpenAiCompatStreamFrame::Chunk(chunk))
             }

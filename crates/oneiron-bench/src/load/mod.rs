@@ -23,7 +23,7 @@ mod corpus;
 mod embedder;
 mod phases;
 mod report;
-mod server;
+pub(crate) mod server;
 mod startup;
 mod stats;
 

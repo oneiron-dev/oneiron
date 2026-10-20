@@ -320,3 +320,94 @@ different corpus and host; never blend them into BEAM accuracy or interpret
 them as measured Oneiron/Chroma local costs. A public model benchmark still
 needs a pinned full dataset, real answering/judging, real model usage pricing,
 and matching answerer conditions.
+
+# Built-in inference bench (FIX 6559)
+
+`oneiron-bench infer run` measures one **arm** (a label such as
+`direct/llama-house`) over case packets read at run time, through the same
+seams the server uses, so each inference trick can be judged as a delta from a
+baseline arm run first. `oneiron-bench infer summarize --out ROWS.jsonl [--out
+...]` prints the per-arm table again from finished rows.
+
+```text
+oneiron-bench infer run --arm-id ID --transport direct|own-server \
+  --models-toml FILE --model PROVIDER:MODEL --cases /ABS/cases.jsonl --out /ABS/rows.jsonl \
+  [--reps 1] [--only CASE_ID]... [--warmup 1] [--sampling shipped|greedy|card] \
+  [--schema on|off] [--cache-bust on|off] [--keep-outputs /ABS/DIR] \
+  [--engine-cmd PATH [--engine-env KEY=VALUE]... --engine-health URL [--engine-ready-timeout 900]] \
+  [--gpu-index 0] [--vram-poll-ms 100] [--server oneiron-server]
+```
+
+- `--transport direct`: `ModelsConfig::from_toml` → `ModelRuntime::build` →
+  `router().served(<engine id>)` → `RunBackend` under an undeclared run, over
+  the `oneiron-llm-openai` wire, as the Dreamer's step layer calls a model.
+  The named provider must build `ready`.
+- `--transport own-server --server BIN`: a loopback `oneiron-server` (`init`,
+  `token bootstrap`, `serve`) gets the same `[models]` block in its config;
+  the bench redeems the owner pairing link (an owner-grade credential, which
+  `/v1/llm/stream` requires) and calls it through `RemoteLlmClient` and
+  `OwnServerBackend`. Its times include the SDK and server hop.
+- `--models-toml` takes a `[models]` section body, or a file written with
+  `[models]` / `[models.*]` headers (`deploy/house-model/models.toml`); other
+  tables are dropped. When no role's ladder names `--model`, the bench adds
+  it to the first free chat role and records `role_added` on every row.
+- `--engine-cmd` starts the engine as a child in its own process group (output
+  appended to `<out>.engine.log`), waits for `--engine-health` to answer 200,
+  records `engine_load_ms`, and stops it by its exact PID at the end, on an
+  error, and on SIGINT or SIGTERM. Without it the engine must already be up.
+- `--sampling`: `greedy` sends temperature 0 and top_k 1; `card` sends
+  temperature 0.7, top_p 0.8, top_k 20, min_p 0 and presence_penalty 1.5;
+  `shipped` sends no sampling field, as the Dreamer's extraction call does.
+  Every field rides `LlmRequest::params`, which the wire copies verbatim.
+- Thinking follows the case: `thinking: false` pins `seat_effort = none` (the
+  wire sends an own server `chat_template_kwargs.enable_thinking = false`);
+  `thinking: true` gets the Dreamer's default binding, `medium` with
+  `reasoning_budget_tokens = 4096`, on a row that takes a reasoning level.
+  The row's `thinking_knob` says which was sent.
+- `--schema on` sends the scorer's JSON shape as `response_format`; a provider
+  with `response_format = "none"` drops it on the wire, as in production.
+  `--cache-bust on` puts one nonce line at the head of each request's system
+  message, so no engine reuses a cached prefix across reps or arms.
+
+Case packets are JSONL: `id`, `kind`, `scorer` (`claims` or `decisions`),
+`messages` (`{role, content}`), `max_tokens`, `thinking`, and optionally
+`gold` (id → action, or id → `{action}`), `n_gold`, `prompt_tokens` and
+`approx_input_tokens`. The `claims` check holds a reply to the claim-candidate
+contract (each candidate exactly `subject`, `predicate`, `value`,
+`confidence`, `evidence_turn_refs`) and scores its valid count against
+`n_gold`; the `decisions` check holds it to `{"answers":[{"id","action",
+"reason"}]}` and scores gold ids whose action matches. Neither uses a model.
+
+Each finished (arm, case, rep) appends one `oneiron.infer-bench.row.v1` line,
+flushed and fsynced: the arm's identity (transport, model, served engine id
+and revision, `role_added`, `cases_digest`, `config_digest`, build git SHA,
+host, engine command and env names, GPU and loaded/idle VRAM), the case's
+`case_digest`, `rep`, `started_at`, `status` (`ok` or `error`) and error, what
+was sent (`params_sent`, `seat_effort`, `thinking_knob`, `schema_sent`,
+`max_tokens`), the timings (`ttft_any_ms`, `ttft_text_ms`, `t_last_ms`,
+`wall_ms`, token counts, `finish_reason`), `native`, `prefill_tps_e2e`,
+`decode_tps_e2e`, `output_digest`, `output_chars`, `vram_case_peak_mib` and the
+`quality` block. A rerun skips (arm, case, rep) rows that are `ok` under the
+same `config_digest` and retries error rows; a last line cut mid-write is
+ignored. The run exits 0 only when every selected case has an `ok` row. The
+summary goes to stdout and `<out>.summary.json`.
+
+Honesty rules:
+
+- Case packets, rows, kept outputs and summaries live **outside the repo**:
+  `--cases`, `--out` and `--keep-outputs` inside the source tree the binary
+  was built from are refused, and nothing is embedded. Rows hold the reply's
+  BLAKE3 and length, never its text; `--keep-outputs` is the only place text
+  is written.
+- `native` holds the engine's own `timings` (llama-server and the house EXL3
+  server: `prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`,
+  `predicted_ms`, `predicted_per_second`, `draft_n`, `draft_n_accepted`, and
+  any other number they send), which the server's OpenAI transport carries
+  into the usage. EXL3 sums a thinking call's reasoning and answer jobs into
+  one figure. `prefill_tps_e2e` (input tokens over `ttft_any_ms`) and
+  `decode_tps_e2e` (output tokens less one over first-to-last delta) are
+  client-side estimates over the whole path and always carry `_e2e`; the
+  summary marks each rate `native` or `e2e`.
+- VRAM is `nvidia-smi` sampled every `--vram-poll-ms` for `--gpu-index`: a
+  **sampled peak**, not an allocator high-water mark. Without `nvidia-smi`
+  the fields are null.
