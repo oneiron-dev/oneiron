@@ -2015,6 +2015,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/defer.rs",
+     "purpose": "A fresh row held to its own due instant (FIX 5957): the readiness a retry's backoff gives the try it mints…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -5173,7 +5183,7 @@
      "path": "src/batch/deindex.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -18711,8 +18721,8 @@
      "path": "src/conversation_dag/reply.rs",
      "purpose": "Revision-bound reply strips",
      "surface": {
-      "crate-vis": 3,
-      "fn": 9,
+      "crate-vis": 4,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -18844,7 +18854,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConversationCreateInput",
@@ -18854,7 +18864,7 @@
      "path": "src/core_write/conversations.rs",
      "purpose": "`vault.conversations.create` and `vault.conversations.turns.create` (OF-181): a conversation, and a TURN…",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -63317,7 +63327,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 44,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64782,7 +64792,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4015,
+   "source_files": 4016,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80862,7 +80872,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 11
      }
     },
     {
