@@ -8,6 +8,7 @@ mod program_resume;
 mod reader_folds;
 mod reader_jobs;
 mod records;
+mod replay_bodies;
 mod replay_capsule;
 mod routing;
 mod session_write;
@@ -31,11 +32,12 @@ pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
     StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
 };
+pub(crate) use self::replay_bodies::{replay_carriage, replay_owners};
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{
-    ForkRows, capsule_request, capsule_start_body, finalize_capsule, fork_response, fork_rows,
-    put_capsule, put_fork, put_unavailable, step_replay_capsules_in_txn, store_capsule_request,
-    store_capsule_start, store_fork_response,
+    ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
+    fork_response, fork_rows, put_fork, put_staged_capsule, put_unavailable,
+    step_replay_capsules_in_txn, store_fork_response,
 };
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]

@@ -10,9 +10,9 @@ use super::sync_rows::{
     NOTE_RECEIPT_BY_REQUEST, SYNC_AD_E, SYNC_DS_E, SYNC_NC_E, SYNC_QD_E, SYNC_QN_E,
 };
 
-// Byte-level cleanup runs featureless too. Incoming source/claim dependencies
-// stay indexed until hard erasure scrubs their citing documents. Soft deletion
-// is ordinary drift and must not silently discard the saved quotes.
+// Byte-level cleanup runs featureless too. UserDelete scrubs dependent active
+// pins through its delete hook; ordinary cursor drift retains saved quotes;
+// incoming indexes remain until that hook.
 pub(crate) fn delete_document_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

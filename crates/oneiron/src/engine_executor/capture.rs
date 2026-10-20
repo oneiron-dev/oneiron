@@ -50,6 +50,7 @@ impl EngineNativeExecutor<'_> {
                 run: config.run_id,
                 step,
                 host: CapsuleHost::EngineStep,
+                actor: self.gated_write.actor(),
                 request,
                 task: &config.task,
                 exposures,

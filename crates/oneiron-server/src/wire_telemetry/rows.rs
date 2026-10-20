@@ -195,6 +195,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::OrganNoteBytes),
         Self::Engine(EngineLimit::OrganLossCodeBytes),
         Self::Engine(EngineLimit::OrganMemoryBytes),
+        Self::Engine(EngineLimit::DeadlineJobsPerCaller),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

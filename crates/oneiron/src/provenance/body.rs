@@ -307,6 +307,21 @@ pub(crate) fn take_released_in_txn(
     Ok(queued && !digest_is_held_in_txn(store, txn, blake3)?)
 }
 
+/// Queues the file of `blake3` for the collector, its holders gone: an
+/// activation's prune of a body its source retired (KS-2B1, FIX 6020).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn queue_pruned_file_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    blake3: &[u8; 32],
+) -> Result<()> {
+    let at = crate::ports::recorded_at_in_txn(store, txn)?;
+    BODY_RELEASED.put(store, txn, blake3, &at)
+}
+
 /// A digest whose last holder just went: a file queues for the collector,
 /// and an erase of an earlier holder that waited on this release retires
 /// its instance now (KS-2A); a delete or a collection keeps the key.

@@ -95,8 +95,8 @@ pub use self::replay::{
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
 pub use self::replay_capsule::{
-    CapsuleHost, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot,
-    StepReplayCapsule, TaskExposure, capture_workflow_step, finalize_step_captures,
+    CapsuleContent, CapsuleHost, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot,
+    StepReplayCapsule, StoredSpan, TaskExposure, capture_workflow_step, finalize_step_captures,
     note_answering_rung,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
@@ -129,13 +129,15 @@ pub(crate) use self::storage::{
     deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
-    StoredRunContinuation, capsule_request, capsule_start_body, put_run_continuation_row_in_txn,
-    run_continuation_in_txn, seed_continuation_run, step_replay_capsules_in_txn,
+    StoredRunContinuation, capsule_request, capsule_start_body, erase_capsule_actor_in_txn,
+    put_run_continuation_row_in_txn, run_continuation_in_txn, seed_continuation_run,
+    step_replay_capsules_in_txn,
 };
 pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+pub(crate) use self::storage::{replay_carriage, replay_owners};
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};

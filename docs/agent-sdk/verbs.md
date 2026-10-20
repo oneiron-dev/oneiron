@@ -897,6 +897,7 @@ both bindings and their export-census tests in one change.
 - `vault.esign.get`
 - `vault.esign.links.issue`
 - `vault.esign.send_for_signature`
+- `vault.esign.notices.dispatch`
 - `vault.esign.remind`
 - `vault.esign.void`
 - `vault.esign.signing.act`

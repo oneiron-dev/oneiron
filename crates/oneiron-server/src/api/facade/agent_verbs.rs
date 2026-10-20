@@ -964,6 +964,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.esign.get", post(facade_route))
         .route("/vault.esign.links.issue", post(facade_route))
         .route("/vault.esign.send_for_signature", post(facade_route))
+        .route("/vault.esign.notices.dispatch", post(facade_route))
         .route("/vault.esign.remind", post(facade_route))
         .route("/vault.esign.void", post(facade_route))
         .route("/vault.esign.signing.act", post(facade_route))

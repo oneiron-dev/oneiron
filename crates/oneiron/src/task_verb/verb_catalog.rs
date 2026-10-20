@@ -915,6 +915,7 @@ pub enum AgentVerb {
     VaultEsignGet,
     VaultEsignLinksIssue,
     VaultEsignSendForSignature,
+    VaultEsignNoticesDispatch,
     VaultEsignRemind,
     VaultEsignVoid,
     VaultEsignSigningAct,
@@ -2010,6 +2011,7 @@ impl AgentVerb {
         Self::VaultEsignGet,
         Self::VaultEsignLinksIssue,
         Self::VaultEsignSendForSignature,
+        Self::VaultEsignNoticesDispatch,
         Self::VaultEsignRemind,
         Self::VaultEsignVoid,
         Self::VaultEsignSigningAct,
@@ -3130,6 +3132,7 @@ impl AgentVerb {
             Self::VaultEsignGet => "vault.esign.get",
             Self::VaultEsignLinksIssue => "vault.esign.links.issue",
             Self::VaultEsignSendForSignature => "vault.esign.send_for_signature",
+            Self::VaultEsignNoticesDispatch => "vault.esign.notices.dispatch",
             Self::VaultEsignRemind => "vault.esign.remind",
             Self::VaultEsignVoid => "vault.esign.void",
             Self::VaultEsignSigningAct => "vault.esign.signing.act",
@@ -4211,6 +4214,7 @@ impl AgentVerb {
                 | Self::VaultEsignGet
                 | Self::VaultEsignLinksIssue
                 | Self::VaultEsignSendForSignature
+                | Self::VaultEsignNoticesDispatch
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
                 | Self::VaultEsignSigningAct
@@ -5333,6 +5337,7 @@ impl AgentVerb {
                 | Self::VaultEsignGet
                 | Self::VaultEsignLinksIssue
                 | Self::VaultEsignSendForSignature
+                | Self::VaultEsignNoticesDispatch
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
                 | Self::VaultEsignSigningAct
@@ -6544,6 +6549,7 @@ impl AgentVerb {
                 | Self::VaultEsignGet
                 | Self::VaultEsignLinksIssue
                 | Self::VaultEsignSendForSignature
+                | Self::VaultEsignNoticesDispatch
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
                 | Self::VaultEsignSigningAct
@@ -7253,6 +7259,7 @@ impl AgentVerb {
                 | Self::VaultEsignCreate
                 | Self::VaultEsignLinksIssue
                 | Self::VaultEsignSendForSignature
+                | Self::VaultEsignNoticesDispatch
                 | Self::VaultEsignRemind
                 | Self::VaultEsignVoid
                 | Self::VaultEsignSigningAct
@@ -8315,6 +8322,7 @@ impl AgentVerb {
             Self::VaultEsignGet => &["spec"],
             Self::VaultEsignLinksIssue => &["spec"],
             Self::VaultEsignSendForSignature => &["spec"],
+            Self::VaultEsignNoticesDispatch => &["spec"],
             Self::VaultEsignRemind => &["spec"],
             Self::VaultEsignVoid => &["spec"],
             Self::VaultEsignSigningAct => &["spec"],
@@ -9411,6 +9419,7 @@ impl AgentVerb {
             Self::VaultEsignGet => &["spec"],
             Self::VaultEsignLinksIssue => &["spec"],
             Self::VaultEsignSendForSignature => &["spec"],
+            Self::VaultEsignNoticesDispatch => &["spec"],
             Self::VaultEsignRemind => &["spec"],
             Self::VaultEsignVoid => &["spec"],
             Self::VaultEsignSigningAct => &["spec"],
@@ -12241,6 +12250,9 @@ impl AgentVerb {
             }
             Self::VaultEsignSendForSignature => {
                 "Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."
+            }
+            Self::VaultEsignNoticesDispatch => {
+                "Dispatches the due transition notices of one signing document recorded for the caller through the email send gate, as the caller."
             }
             Self::VaultEsignRemind => {
                 "Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."

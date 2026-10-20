@@ -166,6 +166,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROVENANCE_BODY_INLINE, CONTENT),
     (&t::PROVENANCE_BODY_KEY, CONTENT),
     (&t::PROVENANCE_BODY_RELEASED, LIVE),
+    // A row-held response's binding follows its row (KS-2B1); the obligations are custody
+    // state, so a restore keeping current authority keeps the current vault's.
+    (&t::PROVENANCE_BODY_RESPONSE, CONTENT),
+    (&t::PROVENANCE_BODY_RESPONSE_OWNER, LIVE),
     (&t::PROVENANCE_ROW_BIRTH, CONTENT),
     (&t::PROVENANCE_WITHHELD_SECRET, LIVE),
     // Acts that already left the vault: a restore never revives a withdrawn submission or replays

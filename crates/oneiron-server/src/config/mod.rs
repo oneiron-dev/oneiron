@@ -65,7 +65,7 @@ pub use recall::RecallConfig;
 pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;
 pub use server_config::{IngressAuth, ServeConfig, SyncServerConfig};
-pub use skills::SkillsConfig;
+pub use skills::{ReplayJudgeWording, SkillsConfig};
 pub use trusted_proxy::TrustedProxy;
 
 #[cfg(test)]

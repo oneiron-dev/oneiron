@@ -349,6 +349,7 @@ impl LimitsConfig {
             organ_note_bytes,
             organ_loss_code_bytes,
             organ_memory_bytes,
+            deadline_jobs_per_caller,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -538,6 +539,7 @@ impl LimitsConfig {
             (EngineLimit::OrganNoteBytes, organ_note_bytes),
             (EngineLimit::OrganLossCodeBytes, organ_loss_code_bytes),
             (EngineLimit::OrganMemoryBytes, organ_memory_bytes),
+            (EngineLimit::DeadlineJobsPerCaller, deadline_jobs_per_caller),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -758,4 +760,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) organ_note_bytes: Option<u64>,
     pub(super) organ_loss_code_bytes: Option<u64>,
     pub(super) organ_memory_bytes: Option<u64>,
+    pub(super) deadline_jobs_per_caller: Option<u64>,
 }
