@@ -324,6 +324,8 @@ impl LimitsConfig {
             seal_report_json_bytes,
             seal_prepared_stream_bytes,
             seal_stream_decode_bytes,
+            esign_stream_decode_bytes,
+            esign_seal_stream_codec_bytes,
             seal_stream_header_tokens,
             seal_pdf_depth,
             seal_security_name_hops,
@@ -508,6 +510,14 @@ impl LimitsConfig {
                 seal_prepared_stream_bytes,
             ),
             (EngineLimit::SealStreamDecodeBytes, seal_stream_decode_bytes),
+            (
+                EngineLimit::EsignStreamDecodeBytes,
+                esign_stream_decode_bytes,
+            ),
+            (
+                EngineLimit::EsignSealStreamCodecBytes,
+                esign_seal_stream_codec_bytes,
+            ),
             (
                 EngineLimit::SealStreamHeaderTokens,
                 seal_stream_header_tokens,
@@ -735,6 +745,8 @@ pub(super) struct LimitsConfigOverride {
     pub(super) seal_report_json_bytes: Option<u64>,
     pub(super) seal_prepared_stream_bytes: Option<u64>,
     pub(super) seal_stream_decode_bytes: Option<u64>,
+    pub(super) esign_stream_decode_bytes: Option<u64>,
+    pub(super) esign_seal_stream_codec_bytes: Option<u64>,
     pub(super) seal_stream_header_tokens: Option<u64>,
     pub(super) seal_pdf_depth: Option<u64>,
     pub(super) seal_security_name_hops: Option<u64>,
