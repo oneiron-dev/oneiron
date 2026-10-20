@@ -51,6 +51,19 @@ pub(crate) struct EnrolmentFiles {
     pub(crate) credential: PathBuf,
 }
 
+/// Where serve looks for this machine's enrolment.
+#[derive(Clone, Copy)]
+pub(super) enum EnrolmentSource {
+    /// Plain serve: beside the key directory `keystore.dir` names, else the
+    /// platform default under XDG_STATE_HOME or HOME, as `oneiron device
+    /// enrol` writes it.
+    Plain,
+    /// A managed vault: beside the supervisor's key directory alone, the
+    /// settled `keystore.dir`. With none there is no enrolment: managed mode
+    /// never reads HOME or XDG (FIX 5768).
+    Managed,
+}
+
 impl EnrolmentFiles {
     /// `device-sync/<vault id>.json` and `.cred`, beside the key directory.
     pub(crate) fn for_vault(
@@ -66,12 +79,32 @@ impl EnrolmentFiles {
                 )
             })?,
         };
-        let dir = keys.parent().unwrap_or(&keys).join("device-sync");
+        Ok(Self::beside(&keys, vault))
+    }
+
+    /// Where serve finds `vault`'s enrolment, looking where `source` says:
+    /// `None` on a managed vault with no key directory.
+    pub(super) fn for_serve(
+        keystore: &KeystoreConfig,
+        vault: &oneiron::Vault,
+        source: EnrolmentSource,
+    ) -> anyhow::Result<Option<Self>> {
+        match (source, &keystore.dir) {
+            (EnrolmentSource::Plain, _) => Self::for_vault(keystore, vault).map(Some),
+            (EnrolmentSource::Managed, Some(keys)) => Ok(Some(Self::beside(keys, vault))),
+            (EnrolmentSource::Managed, None) => Ok(None),
+        }
+    }
+
+    /// `device-sync/<vault id>.json` and `.cred`, beside the key directory
+    /// `keys`.
+    fn beside(keys: &Path, vault: &oneiron::Vault) -> Self {
+        let dir = keys.parent().unwrap_or(keys).join("device-sync");
         let vault_id = hex(&vault.vault_key_vault_id());
-        Ok(Self {
+        Self {
             record: dir.join(format!("{vault_id}.json")),
             credential: dir.join(format!("{vault_id}.cred")),
-        })
+        }
     }
 
     /// The stored enrolment, or `None` before this machine enrolled.
