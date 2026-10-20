@@ -449,6 +449,7 @@ impl SyncServer {
                         ),
                         None => tracing::warn!(
                             kind = ?crate::logging::engine_kind(&error),
+                            world_key_refused = ?world_key_refusal(&error),
                             "scheduled backup failed"
                         ),
                     },
@@ -459,6 +460,20 @@ impl SyncServer {
             }
         }))
     }
+}
+
+/// The fixed reason of a world key refusal in `error`'s chain, as the engine
+/// names it: why a backup that could not seal its key custody failed. Static
+/// text only, never a value.
+fn world_key_refusal(error: &anyhow::Error) -> Option<&'static str> {
+    error
+        .chain()
+        .find_map(|cause| match cause.downcast_ref::<oneiron::Error>() {
+            Some(oneiron::Error::Secret(oneiron::error::SecretError::WorldKeyRefused(reason))) => {
+                Some(*reason)
+            }
+            _ => None,
+        })
 }
 
 #[cfg(test)]
