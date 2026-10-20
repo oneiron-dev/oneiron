@@ -29,7 +29,9 @@ use loro::{
 };
 
 use super::super::super::{RevisionRef, pending_index, phonetic};
-use super::super::{DOC, FRONTIER, IDENTITY, RevisionState, STATE, doc_raw, reference, text_fields};
+use super::super::{
+    DOC, FRONTIER, IDENTITY, RevisionState, STATE, doc_raw, reference, text_fields,
+};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, short_id_content_hash};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
