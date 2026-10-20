@@ -25,10 +25,13 @@
 //! and later exports project over them.
 //!
 //! Every creation names its node identity before it is logged, and so does
-//! every row or column a table edit inserts, so a fork's operations replay
-//! onto the head as the same nodes, rows and columns; a whole table written
-//! over a table is logged as the table edits that make it. A fork's review,
-//! preview and landing read its actual merged candidate ([`merge`]).
+//! every row or column a table edit inserts and every series a chart write
+//! or chart edit adds, so a fork's operations replay onto the head as the
+//! same nodes, rows, columns and series; a whole table written over a table
+//! is logged as the table edits that make it, and a whole chart written
+//! over a chart as the chart edits that make it. The per-call operation
+//! count is the caller's: a lowered write stays one operation. A fork's
+//! review, preview and landing read its actual merged candidate ([`merge`]).
 
 mod doc;
 mod export;
@@ -635,9 +638,10 @@ impl Fresh {
     }
 }
 
-/// `ops` with every creation, and every row or column a table edit inserts,
-/// naming a fresh identity, so the log, a fork's replay onto the head and a
-/// concurrent writer all make the same node, row or column.
+/// `ops` with every creation, every row or column a table edit inserts, and
+/// every series a chart write or chart edit adds, naming a fresh identity,
+/// so the log, a fork's replay onto the head and a concurrent writer all
+/// make the same node, row, column or series.
 fn name_creations(ops: &[DeckOp], fresh: &mut Fresh) -> Vec<DeckOp> {
     ops.iter()
         .map(|op| {
@@ -650,9 +654,10 @@ fn name_creations(ops: &[DeckOp], fresh: &mut Fresh) -> Vec<DeckOp> {
 
 /// Apply `ops` to `deck` as `maker` at `at`, each first lowered against the
 /// deck it applies to ([`LiveDeck::lower`]: a whole table written over a
-/// table becomes the table edits that make it, its new rows and columns
-/// named from `fresh`); what they did PowerPoint's way joins `effects`. The
-/// operations as logged.
+/// table becomes the table edits that make it, and a whole chart written
+/// over a chart the chart edits that make it, their new rows, columns and
+/// series named from `fresh`); what they did PowerPoint's way joins
+/// `effects`. The operations as logged.
 fn apply_ops(
     deck: &mut LiveDeck,
     ops: &[DeckOp],

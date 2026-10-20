@@ -108,9 +108,6 @@ pub enum MergeFault {
     Collapsed,
     /// It overlaps a merge that comes first in corner order.
     Overlaps,
-    /// A new table's merge would hide a cell's text, which the native table
-    /// writer does not write under a merge.
-    HidesText,
 }
 
 impl MergeFault {
@@ -120,7 +117,6 @@ impl MergeFault {
             Self::Reversed => "a corner row or column moved past the other",
             Self::Collapsed => "it covers one cell",
             Self::Overlaps => "it overlaps a merge before it",
-            Self::HidesText => "it would hide a cell's text in a new table",
         }
     }
 }

@@ -2,14 +2,14 @@
 //! and the merge preflight over the candidate a landing would make: the
 //! fork's operations replayed onto the head, or the candidate the engine
 //! joins as its document does (the head with the fork's changes imported),
-//! so concurrent table edits merge by identity rather than one replacing
-//! the other.
+//! so concurrent table and chart edits merge by identity rather than one
+//! replacing the other.
 
-use super::table;
 use super::{
     Conflict, DeckDiff, DeckFork, LiveDeck, NodeId, NodeKind, NodeMove, OpaqueChange,
     PreflightReport, sibling_index, slide_of, unit_changed, written,
 };
+use super::{chart, table};
 use crate::live::LiveError;
 use std::collections::BTreeSet;
 
@@ -124,20 +124,24 @@ pub fn diff(base: &LiveDeck, head: &LiveDeck, proposal: &LiveDeck) -> DeckDiff {
                 out.conflicts.push(Conflict::TextVsText { node: *id });
             }
             // Two tables conflict only in a cell both sides wrote
-            // differently; their other units join by identity.
+            // differently, two charts only in a series or chart field both
+            // sides wrote; their other units join by identity.
             if written(was) != written(head_node)
                 && rewritten
                 && written(head_node) != written(node)
             {
-                match table::conflicts(was, head_node, node) {
-                    Some(cells) => out.conflicts.extend(cells.into_iter().map(|(row, column)| {
+                if let Some(cells) = table::conflicts(was, head_node, node) {
+                    out.conflicts.extend(cells.into_iter().map(|(row, column)| {
                         Conflict::CellVsCell {
                             node: *id,
                             row,
                             column,
                         }
-                    })),
-                    None => out.conflicts.push(Conflict::PayloadVsPayload { node: *id }),
+                    }));
+                } else if let Some(found) = chart::conflicts(*id, was, head_node, node) {
+                    out.conflicts.extend(found);
+                } else {
+                    out.conflicts.push(Conflict::PayloadVsPayload { node: *id });
                 }
             }
         }

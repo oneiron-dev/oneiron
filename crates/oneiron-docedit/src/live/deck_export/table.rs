@@ -10,8 +10,8 @@ use crate::live::LiveError;
 use crate::live::conversion::Conversion;
 use crate::live::held::table as held_table;
 use crate::live::pptx::{
-    DeckNode, MergeFault, NodeId, NodePayload, TableBinding, TableBody, UNBOUND_GRID,
-    WRITTEN_FRAME, WRITTEN_TABLE,
+    DeckNode, NodeId, NodePayload, TableBinding, TableBody, UNBOUND_GRID, WRITTEN_FRAME,
+    WRITTEN_TABLE,
 };
 use crate::live::reshape;
 use crate::native_patch::{Frame, NativeEdit, native_patch};
@@ -31,7 +31,8 @@ pub(super) fn binding(node: &DeckNode) -> Option<TableBinding> {
 /// its binding and its XML hold them write nothing; otherwise the grid is
 /// rewritten by identity ([`reshape::table`]), the merges it does not draw
 /// named. Then each cell whose text differs is written through the native
-/// writer, which keeps a merge's continuation cells as they are.
+/// writer, a cell a merge covers included: its text stays under the merge,
+/// as PowerPoint keeps it (the Engine ruling of 10-20).
 pub(super) fn project(
     work: &mut Work,
     id: NodeId,
@@ -107,9 +108,9 @@ pub(super) fn project(
 /// Write a live-born table through the native writer as frame `id` at
 /// `offset` in `part`: its first row the header, then its rows, with the
 /// merges it draws, at its own extent or two inches per column by 0.4 inch
-/// per row. A merge that would hide a cell's text is not drawn (the native
-/// writer writes no text under a merge), and is named with the others the
-/// table does not draw.
+/// per row. Each cell keeps its own text, a cell a merge covers included,
+/// under the merge as PowerPoint keeps it; the merges the table does not
+/// draw are named.
 pub(super) fn born(
     work: &mut Work,
     live: NodeId,
@@ -126,46 +127,15 @@ pub(super) fn born(
         return Err(LiveError::Invalid(WRITTEN_TABLE));
     }
     let effective = table.effective();
-    let mut done: Vec<Conversion> = effective
+    let done: Vec<Conversion> = effective
         .faults
         .iter()
         .map(|&(merge, fault)| Conversion::TableMergeDeactivated { merge, fault })
         .collect();
-    let mut spans = Vec::new();
-    for (merge, span) in effective.drawn {
-        let hides = grid
-            .iter()
-            .enumerate()
-            .skip(span.row)
-            .take(span.rows)
-            .any(|(r, line)| {
-                line.iter()
-                    .enumerate()
-                    .skip(span.col)
-                    .take(span.cols)
-                    .any(|(c, text)| (r, c) != (span.row, span.col) && !text.is_empty())
-            });
-        if hides {
-            done.push(Conversion::TableMergeDeactivated {
-                merge,
-                fault: MergeFault::HidesText,
-            });
-        } else {
-            spans.push(span);
-        }
-    }
-    // A header cell a merge covers is written under the anchor's name, as
-    // the native writer requires; it writes no text there.
-    let mut names = header.clone();
-    for span in spans.iter().filter(|span| span.row == 0) {
-        let anchor = header[span.col].clone();
-        for name in names.iter_mut().skip(span.col + 1).take(span.cols - 1) {
-            name.clone_from(&anchor);
-        }
-    }
+    let spans = effective.spans();
     let data = Dataset {
         id: String::new(),
-        columns: names
+        columns: header
             .iter()
             .map(|name| Column {
                 name: name.clone(),

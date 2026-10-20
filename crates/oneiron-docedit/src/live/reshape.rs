@@ -12,22 +12,25 @@
 //! series' formatting, the chart's titles, axes and legend, and the
 //! workbook's other cells; a new series is formatted after a held one.
 
+mod layout;
 mod series;
 mod table;
 mod workbook;
 
+pub(super) use layout::plot_plan;
 pub(super) use table::table;
 
 use super::LiveError;
 use super::conversion::{Conversion, RebuildReason};
 use super::convert;
 use super::held::{self, C, children};
-use super::pptx::{ChartKind, ChartSeries, ChartSource, NodePayload, WRITTEN_FRAME};
+use super::pptx::{ChartKind, ChartSource, NodeId, NodePayload, WRITTEN_FRAME};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset};
 use crate::edit::xml::{self, P, R};
 use crate::native_patch::{Target, chart_data, chart_workbook, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
+use layout::{Data, Layout, Resolved, Wanted, first_category, number_cells, wanted};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The one sheet of a rewritten chart's embedded workbook.
@@ -53,16 +56,6 @@ pub(super) fn frame_of(tree: &XmlTree, native: u32) -> Option<usize> {
     })
 }
 
-/// One live series' data as the rewrite writes it.
-struct Data {
-    name: String,
-    /// Workbook columns (1-based) of its x values and its values.
-    x_col: Option<u32>,
-    y_col: u32,
-    x: Option<Vec<Cell>>,
-    values: Vec<Cell>,
-}
-
 fn letters(mut col: u32) -> String {
     let mut out = Vec::new();
     while col > 0 {
@@ -80,17 +73,6 @@ fn formula(col: u32, first: usize, last: usize) -> String {
     } else {
         format!("'{SHEET}'!${col}${first}:${col}${last}")
     }
-}
-
-fn number_cells(values: &[Option<serde_json::Number>], count: usize) -> Vec<Cell> {
-    (0..count)
-        .map(|at| {
-            values
-                .get(at)
-                .and_then(|value| value.as_ref()?.as_f64())
-                .map_or(Cell::Missing, Cell::Number)
-        })
-        .collect()
 }
 
 /// The chart-side writer: the part's chart prefix.
@@ -222,85 +204,6 @@ fn int(tree: &XmlTree, at: usize, name: &str) -> Option<u32> {
         .ok()
 }
 
-/// One plot a chart rewrite writes: a held plot (`held`, its index among
-/// the chart's plots) kept or converted to another family, or a new plot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct PlotTarget {
-    pub(super) held: Option<usize>,
-    pub(super) kind: ChartKind,
-}
-
-/// The plots a chart takes and the plot that draws each series, as
-/// PowerPoint's Change Chart Type lays them out for a whole chart or for one
-/// series. `held` is each held plot's family and series count; `resolved`
-/// is each series' family. A held plot stays while a series is drawn in its
-/// family, and a held plot no series is drawn in goes. A family no held
-/// plot draws gets a new plot after them. When no held plot stays, the
-/// first is converted to the first family. A chart with no series takes
-/// `family`. Each series goes to the first plot of its family with room
-/// for as many series as it held, else to that family's last plot.
-pub(super) fn plot_plan(
-    held: &[(ChartKind, usize)],
-    family: ChartKind,
-    resolved: &[ChartKind],
-) -> (Vec<PlotTarget>, Vec<usize>) {
-    let mut families: Vec<ChartKind> = Vec::new();
-    for kind in resolved
-        .iter()
-        .copied()
-        .chain(resolved.is_empty().then_some(family))
-    {
-        if !families.contains(&kind) {
-            families.push(kind);
-        }
-    }
-    let mut targets: Vec<PlotTarget> = held
-        .iter()
-        .enumerate()
-        .filter(|(_, (kind, _))| families.contains(kind))
-        .map(|(at, &(kind, _))| PlotTarget {
-            held: Some(at),
-            kind,
-        })
-        .collect();
-    if targets.is_empty()
-        && !held.is_empty()
-        && let Some(&kind) = families.first()
-    {
-        targets.push(PlotTarget {
-            held: Some(0),
-            kind,
-        });
-    }
-    for &kind in &families {
-        if !targets.iter().any(|target| target.kind == kind) {
-            targets.push(PlotTarget { held: None, kind });
-        }
-    }
-    let room = |target: &PlotTarget| match target.held {
-        Some(at) if held[at].0 == target.kind => held[at].1,
-        _ => 0,
-    };
-    let mut taken = vec![0_usize; targets.len()];
-    let assign = resolved
-        .iter()
-        .map(|kind| {
-            let mine: Vec<usize> = (0..targets.len())
-                .filter(|&at| targets[at].kind == *kind)
-                .collect();
-            let at = mine
-                .iter()
-                .copied()
-                .find(|&at| taken[at] < room(&targets[at]))
-                .or_else(|| mine.last().copied())
-                .unwrap_or(0);
-            taken[at] += 1;
-            at
-        })
-        .collect();
-    (targets, assign)
-}
-
 /// The family a live-born chart's native seed is written as before the
 /// rewrite gives the chart its own: a bar or line chart's own, a pie's when
 /// it has one series, a bar chart's otherwise.
@@ -341,27 +244,19 @@ fn own_workbook(
         .map(|rel| rel.target))
 }
 
-/// The first category slot any series of the chart holds.
-fn first_category(tree: &XmlTree) -> Option<usize> {
-    let (_, plots) = held::plots(tree)?;
-    plots
-        .iter()
-        .flat_map(|&(_, at)| children(tree, at, C, "ser"))
-        .find_map(|ser| xml::child(tree, ser, C, "cat"))
-}
-
 fn is_axis(node: &Node) -> bool {
     node.namespace == C && matches!(node.name.as_str(), "catAx" | "valAx" | "dateAx" | "serAx")
 }
 
 /// The rebuilt workbook's one sheet: categories in A, then each series' x
 /// column (a scatter series') and values column, under a header row.
-fn workbook_dataset(
-    categories: &[String],
-    numeric_cats: bool,
-    category_cells: &[Cell],
-    data: &[Data],
-) -> Dataset {
+fn workbook_dataset(categories: &[String], wanted: &Wanted) -> Dataset {
+    let Wanted {
+        numeric_cats,
+        category_cells,
+        data,
+        ..
+    } = wanted;
     let mut columns = Vec::new();
     let mut cells: Vec<Vec<Cell>> = Vec::new();
     let column = |name: String, kind| Column {
@@ -371,7 +266,7 @@ fn workbook_dataset(
         format: None,
     };
     if !categories.is_empty() {
-        let kind = if numeric_cats {
+        let kind = if *numeric_cats {
             ColumnKind::Number
         } else {
             ColumnKind::Text
@@ -406,163 +301,6 @@ fn workbook_dataset(
     }
 }
 
-/// The live data a chart rewrite writes: each series' family, whether the
-/// categories stay numbers, the category cells, and each series' cells on
-/// a rebuilt workbook's columns (categories in A, then each series' x
-/// column, a scatter series', and values column).
-struct Wanted {
-    resolved: Vec<ChartKind>,
-    numeric_cats: bool,
-    category_cells: Vec<Cell>,
-    data: Vec<Data>,
-}
-
-fn wanted(
-    tree: &XmlTree,
-    family: ChartKind,
-    categories: &[String],
-    series: &[ChartSeries],
-) -> Wanted {
-    let resolved: Vec<ChartKind> = series
-        .iter()
-        .map(|line| line.family.unwrap_or(family))
-        .collect();
-    // Categories stay numbers when the chart's were and every one reads
-    // back as itself.
-    let numeric_cats = first_category(tree)
-        .and_then(|slot| held::points(tree, slot))
-        .is_some_and(|points| points.numeric)
-        && categories.iter().all(|category| {
-            category
-                .trim()
-                .parse::<f64>()
-                .is_ok_and(|value| held::label(&Cell::Number(value)) == *category)
-        });
-    let category_cells: Vec<Cell> = categories
-        .iter()
-        .map(|category| match category.parse::<f64>() {
-            Ok(value) if numeric_cats => Cell::Number(value),
-            _ if category.is_empty() => Cell::Missing,
-            _ => Cell::Text(category.clone()),
-        })
-        .collect();
-    let mut next_col: u32 = if categories.is_empty() { 1 } else { 2 };
-    let mut take = || {
-        let col = next_col;
-        next_col = next_col.saturating_add(1);
-        col
-    };
-    let data: Vec<Data> = series
-        .iter()
-        .zip(&resolved)
-        .map(|(line, kind)| {
-            let scatter = *kind == ChartKind::Scatter;
-            let count = match (&line.x, scatter) {
-                (Some(x), true) => x.len().max(line.values.len()),
-                (None, true) => line.values.len(),
-                _ if categories.is_empty() => line.values.len(),
-                _ => categories.len(),
-            };
-            let x = line
-                .x
-                .as_ref()
-                .filter(|_| scatter)
-                .map(|x| number_cells(x, count));
-            let x_col = x.as_ref().map(|_| take());
-            Data {
-                name: line.name.clone(),
-                x_col,
-                y_col: take(),
-                x,
-                values: number_cells(&line.values, count),
-            }
-        })
-        .collect();
-    Wanted {
-        resolved,
-        numeric_cats,
-        category_cells,
-        data,
-    }
-}
-
-/// Where one live series sits among the held ones. `held` is the held
-/// series in its plot slot, whose idx and order it keeps (and, in a kept
-/// plot, its bytes). `template` is the held series it is formatted after:
-/// its own, else the last of its plot's, else the chart's series at its
-/// position, else the chart's last. `cells` is the held series whose
-/// workbook cells it writes: its own, else its template when no other
-/// live series holds that one.
-#[derive(Debug, Clone, Copy, Default)]
-struct Seat {
-    held: Option<usize>,
-    template: Option<usize>,
-    cells: Option<usize>,
-}
-
-/// A chart's held plots and how the live series take them: the plot area,
-/// the held plots, the plots [`plot_plan`] lays out, the live series each
-/// one draws (in order), and each live series' seat.
-struct Layout {
-    area: usize,
-    plots: Vec<(ChartKind, usize)>,
-    targets: Vec<PlotTarget>,
-    assigned: Vec<Vec<usize>>,
-    seats: Vec<Seat>,
-}
-
-fn layout(tree: &XmlTree, family: ChartKind, resolved: &[ChartKind]) -> Option<Layout> {
-    let (area, plots) = held::plots(tree)?;
-    let held_sers: Vec<Vec<usize>> = plots
-        .iter()
-        .map(|&(_, at)| children(tree, at, C, "ser").collect())
-        .collect();
-    let held_plots: Vec<(ChartKind, usize)> = plots
-        .iter()
-        .zip(&held_sers)
-        .map(|(&(kind, _), sers)| (kind, sers.len()))
-        .collect();
-    let (targets, assign) = plot_plan(&held_plots, family, resolved);
-    let mut assigned: Vec<Vec<usize>> = vec![Vec::new(); targets.len()];
-    for (index, &target) in assign.iter().enumerate() {
-        assigned[target].push(index);
-    }
-    let every = held_sers.concat();
-    let mut seats = vec![Seat::default(); resolved.len()];
-    for (at, target) in targets.iter().enumerate() {
-        let sers = target
-            .held
-            .map_or(&[][..], |plot| held_sers[plot].as_slice());
-        for (slot, &index) in assigned[at].iter().enumerate() {
-            let held = sers.get(slot).copied();
-            seats[index] = Seat {
-                held,
-                template: held
-                    .or_else(|| sers.last().copied())
-                    .or_else(|| every.get(index).copied())
-                    .or_else(|| every.last().copied()),
-                cells: held,
-            };
-        }
-    }
-    let mut taken: BTreeSet<usize> = seats.iter().filter_map(|seat| seat.held).collect();
-    for seat in &mut seats {
-        if seat.cells.is_none()
-            && let Some(template) = seat.template
-            && taken.insert(template)
-        {
-            seat.cells = Some(template);
-        }
-    }
-    Some(Layout {
-        area,
-        plots,
-        targets,
-        assigned,
-        seats,
-    })
-}
-
 /// Rewrite a written chart's part to `payload`: its plots as [`plot_plan`]
 /// lays them out (a kept plot's series in place with their formatting, a
 /// new series formatted after a held one as [`series::fresh`] writes it, a
@@ -578,62 +316,82 @@ fn layout(tree: &XmlTree, family: ChartKind, resolved: &[ChartKind]) -> Option<L
 /// ([`Conversion::WorkbookRebuilt`]). A chart whose data lived elsewhere (a
 /// link, a shared workbook) gets a new embedded workbook, as PowerPoint's
 /// Edit Data does; so does a literal chart the payload moves to a
-/// workbook, and any other literal chart stays literal. The rewrite reads
+/// workbook, and any other literal chart stays literal. Each live series is
+/// written over its own held series, found by its identity through
+/// `bound`, the identity each `c:ser` of the part holds in its own order;
+/// one resolution of the live series over the held ones drives both the
+/// workbook edit and the rewrite ([`layout::resolve`]). The rewrite reads
 /// back as the live data, and every cache equals its cells, or it refuses.
-/// The parts it changed; `done` gets what it did PowerPoint's way.
+/// The parts it changed and the series identities in the order the part
+/// now holds them; `done` gets what it did PowerPoint's way.
 pub(super) fn chart(
     package: &mut Package,
     chart: &str,
     payload: &NodePayload,
+    bound: &[NodeId],
     done: &mut Vec<Conversion>,
-) -> Result<Vec<String>, LiveError> {
+) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
     let (part, reason) = match workbook::original(package, chart, payload)? {
-        workbook::Original::Absent => return rewrite(package, chart, payload, done, None),
+        workbook::Original::Absent => return rewrite(package, chart, payload, bound, done, None),
         workbook::Original::Replaced(part, reason) => (part, reason),
         workbook::Original::Own(part) => {
             // The edit runs on a copy: whatever stops it, the rebuild below
             // starts from the package as it was.
             let mut candidate = package.clone();
             let mut kept = Vec::new();
-            let reason = match workbook::in_place(&candidate, chart, &part, payload) {
-                Ok(edit) => match rewrite(&mut candidate, chart, payload, &mut kept, Some(edit)) {
-                    Ok(changed) => {
-                        *package = candidate;
-                        done.extend(kept);
-                        return Ok(changed);
+            let reason = match layout::resolve(&candidate, chart, payload, bound, None) {
+                Err(_) => RebuildReason::Unreadable,
+                Ok(read) => match workbook::in_place(&candidate, &part, &read) {
+                    Err(reason) => reason,
+                    Ok(edit) => {
+                        let planned = Some((edit, read));
+                        match rewrite(&mut candidate, chart, payload, bound, &mut kept, planned) {
+                            Ok(written) => {
+                                *package = candidate;
+                                done.extend(kept);
+                                return Ok(written);
+                            }
+                            Err(_) => RebuildReason::ReadBack,
+                        }
                     }
-                    Err(_) => RebuildReason::ReadBack,
                 },
-                Err(reason) => reason,
             };
             (part, reason)
         }
     };
-    let changed = rewrite(package, chart, payload, done, None)?;
+    let written = rewrite(package, chart, payload, bound, done, None)?;
     done.push(Conversion::WorkbookRebuilt { part, reason });
-    Ok(changed)
+    Ok(written)
 }
 
 /// Rewrite a live-born chart's native seed to `payload`, its workbook
 /// rebuilt from the live data: the seed's is the engine's own, holding
-/// nothing a deck kept.
+/// nothing a deck kept, and holds one series per live series, in the live
+/// order. The parts it changed and the series identities in the order the
+/// part now holds them.
 pub(super) fn reseed(
     package: &mut Package,
     chart: &str,
     payload: &NodePayload,
-) -> Result<Vec<String>, LiveError> {
-    rewrite(package, chart, payload, &mut Vec::new(), None)
+) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
+    let seeded: Vec<NodeId> = match payload {
+        NodePayload::Chart { series, .. } => series.iter().filter_map(|line| line.id).collect(),
+        _ => Vec::new(),
+    };
+    rewrite(package, chart, payload, &seeded, &mut Vec::new(), None)
 }
 
 /// [`chart`]'s rewrite: into the chart's own workbook as `in_place` edits
-/// it, or, without an edit, into one rebuilt from the live data.
+/// it, over the resolution that edit read, or, without an edit, into one
+/// rebuilt from the live data.
 fn rewrite(
     package: &mut Package,
     chart: &str,
     payload: &NodePayload,
+    bound: &[NodeId],
     done: &mut Vec<Conversion>,
-    in_place: Option<workbook::InPlace>,
-) -> Result<Vec<String>, LiveError> {
+    in_place: Option<(workbook::InPlace, Resolved)>,
+) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
     let NodePayload::Chart {
         family,
         categories,
@@ -643,36 +401,50 @@ fn rewrite(
     else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
-    let (_, first) = xml::read(package, chart)?;
-    let Wanted {
-        resolved,
-        numeric_cats,
-        category_cells,
-        data,
-    } = wanted(&first, *family, categories, series);
-    let dataset = workbook_dataset(categories, numeric_cats, &category_cells, &data);
     let mut changed = vec![chart.to_owned()];
-    let book = match &in_place {
-        Some(edit) => Some(edit.part.clone()),
-        None => match own_workbook(package, chart, &first)? {
-            Some(book) => Some(book),
-            None if *source == ChartSource::Literal => None,
-            None => {
-                let workbook = chart_workbook(&dataset, SHEET, package.limits())?;
-                let (book, embedded) = convert::embed_workbook(package, chart, workbook)?;
-                done.extend(embedded);
-                Some(book)
-            }
-        },
+    let (edit, read, book) = match in_place {
+        Some((edit, read)) => {
+            let book = Some(edit.part.clone());
+            (Some(edit), read, book)
+        }
+        None => {
+            let (_, first) = xml::read(package, chart)?;
+            let wanted = wanted(&first, *family, categories, series);
+            let book = match own_workbook(package, chart, &first)? {
+                Some(book) => Some(book),
+                None if *source == ChartSource::Literal => None,
+                None => {
+                    let dataset = workbook_dataset(categories, &wanted);
+                    let workbook = chart_workbook(&dataset, SHEET, package.limits())?;
+                    let (book, embedded) = convert::embed_workbook(package, chart, workbook)?;
+                    done.extend(embedded);
+                    Some(book)
+                }
+            };
+            let read = layout::resolve(package, chart, payload, bound, Some(wanted))?;
+            (None, read, book)
+        }
     };
-    let (bytes, tree) = xml::read(package, chart)?;
-    let Layout {
-        area,
-        plots,
-        targets,
-        assigned,
-        seats,
-    } = layout(&tree, *family, &resolved).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
+    let dataset = workbook_dataset(categories, &read.wanted);
+    let Resolved {
+        bytes,
+        tree,
+        wanted:
+            Wanted {
+                numeric_cats,
+                category_cells,
+                data,
+                ..
+            },
+        layout:
+            Layout {
+                area,
+                plots,
+                targets,
+                assigned,
+                seats,
+            },
+    } = read;
     for target in &targets {
         match target.held {
             Some(at) if plots[at].0 != target.kind => done.push(Conversion::ChartTypeChanged {
@@ -765,27 +537,52 @@ fn rewrite(
         };
         ids_of.push(ids);
     }
+    // The display order follows the live order. Each survivor keeps its own
+    // `c:order` while the survivors keep the order the part holds them in
+    // (no series moved) and every new series follows them; else each series
+    // takes its place in the live order. A survivor's `c:idx` is its own.
+    let keep_order = {
+        let (mut last, mut born) = (None, false);
+        seats.iter().all(|seat| match seat.held {
+            None => {
+                born = true;
+                true
+            }
+            Some(ser) => {
+                let kept = !born && Some(ser) > last;
+                last = Some(ser);
+                kept
+            }
+        })
+    };
     let mut plot_xml: Vec<Vec<u8>> = Vec::with_capacity(targets.len());
+    let mut emitted: Vec<usize> = Vec::with_capacity(seats.len());
     for (at_target, target) in targets.iter().enumerate() {
         let kind = target.kind;
         let kept = target.held.filter(|&at| plots[at].0 == kind);
         let mut sers = Vec::new();
         for &index in &assigned[at_target] {
+            emitted.push(index);
             let seat = seats[index];
+            let place = u32::try_from(index).unwrap_or(u32::MAX);
             let (idx, order) = match seat.held {
                 Some(ser) => (
                     int(&tree, ser, "idx").unwrap_or(next_idx),
-                    int(&tree, ser, "order").unwrap_or(next_idx),
+                    if keep_order {
+                        int(&tree, ser, "order").unwrap_or(next_idx)
+                    } else {
+                        place
+                    },
                 ),
                 None => {
                     let minted = next_idx;
                     next_idx = next_idx.saturating_add(1);
-                    (minted, minted)
+                    (minted, if keep_order { minted } else { place })
                 }
             };
             let line = &data[index];
             let rebuilt;
-            let refs = match &in_place {
+            let refs = match &edit {
                 Some(edit) => &edit.refs[index],
                 None => {
                     rebuilt = if book.is_some() {
@@ -834,7 +631,11 @@ fn rewrite(
             );
             let tx = writer.tx(&line.name, refs.name.as_deref());
             let count = line.values.len();
-            sers.extend(match seat.held.filter(|_| kept.is_some()) {
+            // A survivor keeps its own series' bytes in the plot that held
+            // it; drawn in another plot, it is formatted after its own.
+            let own_plot = seat.held.and_then(|ser| tree.nodes[ser].parent);
+            let in_kept = kept.is_some_and(|at| own_plot == Some(plots[at].1));
+            sers.extend(match seat.held.filter(|_| in_kept) {
                 Some(ser) => kept_ser(
                     &bytes,
                     &tree,
@@ -907,7 +708,7 @@ fn rewrite(
     let next = xml::splice(&bytes, vec![(tree.nodes[area].span.clone(), out)])?;
     package.replace_xml_part(chart, next)?;
     if let Some(book) = &book {
-        let (workbook, notes) = match in_place {
+        let (workbook, notes) = match edit {
             Some(edit) => (edit.bytes, edit.notes),
             None => (
                 Some(chart_workbook(&dataset, SHEET, package.limits())?),
@@ -936,11 +737,22 @@ fn rewrite(
         }
         done.extend(notes);
     }
+    // The part reads back as the live series in the order it holds them.
+    let written = NodePayload::Chart {
+        family: *family,
+        categories: categories.clone(),
+        series: emitted.iter().map(|&index| series[index].clone()).collect(),
+        source: *source,
+    };
     let read = held::chart(package, chart).ok_or(LiveError::Invalid(READ_BACK))?;
-    if !same_data(&read, payload) {
+    if !same_data(&read, &written) {
         return Err(LiveError::Invalid(READ_BACK));
     }
-    Ok(changed)
+    let order = emitted
+        .iter()
+        .filter_map(|&index| series[index].id)
+        .collect();
+    Ok((changed, order))
 }
 
 /// A kept series with its sequences replaced: `idx` and `order` as held,

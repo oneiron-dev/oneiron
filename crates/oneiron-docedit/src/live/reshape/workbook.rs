@@ -14,6 +14,7 @@
 //! its reason named.
 
 use super::Refs;
+use super::layout::{Layout, Resolved};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, R};
 use crate::live::LiveError;
@@ -84,8 +85,9 @@ pub(super) fn original(
 }
 
 /// A chart's own workbook as the rewrite edits it: each live series'
-/// references, by index; the edited workbook, `None` when no cell changes;
-/// and what the edit did.
+/// references, by its index in the live order the one resolution seats
+/// ([`Resolved`]); the edited workbook, `None` when no cell changes; and
+/// what the edit did.
 pub(super) struct InPlace {
     pub(super) part: String,
     pub(super) refs: Vec<Refs>,
@@ -93,28 +95,20 @@ pub(super) struct InPlace {
     pub(super) notes: Vec<Conversion>,
 }
 
-/// Plan the edit of `chart`'s own workbook `part` to `payload`, reading
-/// the chart's series as the rewrite seats them.
+/// Plan the edit of a chart's own workbook `part`, reading the chart's
+/// series as the one resolution seats them, each on its own series' cells
+/// by identity ([`Resolved`]).
 pub(super) fn in_place(
     package: &Package,
-    chart: &str,
     part: &str,
-    payload: &NodePayload,
+    resolved: &Resolved,
 ) -> Result<InPlace, RebuildReason> {
-    let NodePayload::Chart {
-        family,
-        categories,
-        series,
+    let Resolved {
+        tree,
+        wanted,
+        layout: Layout { seats, .. },
         ..
-    } = payload
-    else {
-        return Err(RebuildReason::Unreadable);
-    };
-    let (_, tree) = xml::read(package, chart).map_err(|_| RebuildReason::Unreadable)?;
-    let wanted = super::wanted(&tree, *family, categories, series);
-    let seats = super::layout(&tree, *family, &wanted.resolved)
-        .ok_or(RebuildReason::Unreadable)?
-        .seats;
+    } = resolved;
     let source = package
         .part(part)
         .ok()
@@ -122,7 +116,7 @@ pub(super) fn in_place(
         .ok_or(RebuildReason::Unreadable)?;
     let limits = package.limits();
     let book = read_xlsx_cells(&source, limits).map_err(|_| RebuildReason::Projection)?;
-    let mut plan = Plan::new(&book, &tree)?;
+    let mut plan = Plan::new(&book, tree)?;
     let wants: Vec<Want<'_>> = wanted
         .data
         .iter()
@@ -135,7 +129,7 @@ pub(super) fn in_place(
                     numeric: true,
                     shared: false,
                 }),
-                (None, false) if !categories.is_empty() => Some(First {
+                (None, false) if !wanted.category_cells.is_empty() => Some(First {
                     cells: &wanted.category_cells,
                     numeric: wanted.numeric_cats,
                     shared: true,
@@ -149,9 +143,9 @@ pub(super) fn in_place(
     // Held series first, at their own cells: the chart's categories are
     // the first such series' that draws them.
     let mut shared: Option<Line> = None;
-    for ((want, seat), refs) in wants.iter().zip(&seats).zip(&mut refs) {
+    for ((want, seat), refs) in wants.iter().zip(seats).zip(&mut refs) {
         if let Some(ser) = seat.cells {
-            let cats = plan.held(&held_refs(&tree, ser)?, want, refs)?;
+            let cats = plan.held(&held_refs(tree, ser)?, want, refs)?;
             if shared.is_none() && want.first.as_ref().is_some_and(|first| first.shared) {
                 shared = cats;
             }
@@ -159,7 +153,7 @@ pub(super) fn in_place(
     }
     // Then a held series' categories it had no cells for, and each new
     // series beside its template.
-    for ((want, seat), refs) in wants.iter().zip(&seats).zip(&mut refs) {
+    for ((want, seat), refs) in wants.iter().zip(seats).zip(&mut refs) {
         match (seat.cells, seat.template) {
             (Some(_), _) => {
                 if refs.first.is_none()
@@ -171,7 +165,7 @@ pub(super) fn in_place(
                 }
             }
             (None, Some(template)) => {
-                plan.added(&held_refs(&tree, template)?, want, shared.as_ref(), refs)?;
+                plan.added(&held_refs(tree, template)?, want, shared.as_ref(), refs)?;
             }
             (None, None) => {}
         }

@@ -59,10 +59,10 @@ pub enum Conversion {
     /// A reshaped table's frame took its grid's size.
     TableFrameFitted { extent: (i64, i64) },
     /// A table merge is not drawn: a corner row or column went, the order
-    /// puts one corner past the other, it covers one cell, it overlaps a
-    /// merge before it in corner order, or a new table's merge would hide a
-    /// cell's text. Its cells keep their text and properties, and it draws
-    /// again once the order allows (CALLS, the invalid-merge rule).
+    /// puts one corner past the other, it covers one cell, or it overlaps a
+    /// merge before it in corner order. Its cells keep their text and
+    /// properties, and it draws again once the order allows (CALLS, the
+    /// invalid-merge rule).
     TableMergeDeactivated {
         merge: TableMerge,
         fault: MergeFault,
