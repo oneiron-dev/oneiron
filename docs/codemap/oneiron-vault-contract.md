@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib/artifact_origin.rs` | src | s | 1 struct · 2 enum · 7 fn · 3 const | ArtifactHost, ArtifactHostRead, ArtifactLabelRefusal | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
+| `src/lib/artifact_origin.rs` | src | s | 2 struct · 3 enum · 10 fn · 4 const | ArtifactHost, ArtifactHostRead, ArtifactInternalHost, ArtifactInternalRead, ArtifactLabelRefusal | The artifact origin's naming and forwarding contract (OF-356, ARCH-0078) |
 | `src/lib/backup_handoff.rs` | src | s | 3 struct · 1 enum · 8 fn · 3 const | BackupHandoffPolicy, BackupStageAck, HeldBackup, PrivateFile | The backup handoff between a managed vault's engine and its node's supervisor (LC backup shipper rows… |
 | `src/lib/commitment.rs` | src | s | 2 enum | QuotaWindow, Schedule | Shared recurrence vocabulary for commitments and ICS poll cadences |
 | `src/lib/conversation_training.rs` | src | m | 18 struct · 4 enum · 12 fn · 18 const · 3 re-export | TrainingChunkV2, TrainingControlBodyV2, TrainingControlChangeV2, TrainingControlV2, TrainingFileName, TrainingFilterV2, TrainingForgetSourceV2, TrainingNoHumanReadV2 +14 | The publisher training outbox (OF-420, "Learn from my conversations"; TRAINING-LINK = C): the files a vault… |
