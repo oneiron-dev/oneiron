@@ -11,6 +11,11 @@
 //! writer quiescence as `prepare_reap` reports it, a backup still being
 //! written included; a deadline never makes it true.
 //!
+//! Every answer carries the writes in flight when the attempt froze the
+//! vault, by kind (FIX 6902): one at the freeze, the same on every call.
+//! An owner write among them answers `writers_busy`; background passes are
+//! waited for until the deadline before the vault is judged quiet.
+//!
 //! Coverage is opaque: a supervisor compares two for equality and never
 //! orders their fields.
 
@@ -42,6 +47,9 @@ pub struct IdleReapWire {
     /// backup in flight, its lease table drained, and no sync session that
     /// could still commit.
     pub quiescent: bool,
+    /// The admitted writes in flight when the attempt froze the vault, by
+    /// kind: the same on every call that joins it.
+    pub in_flight_at_freeze: IdleReapInFlight,
     /// The wake ledger's revision, as `PrepareReap.ledger_rev`.
     pub ledger_rev: u64,
     /// The wake entries at `ledger_rev`, as `PrepareReap.next_wake`.
@@ -50,6 +58,26 @@ pub struct IdleReapWire {
     pub training: ManagedTrainingSetting,
     /// The backup taken or reused before the reap, or why there is none.
     pub backup: IdleBackupWire,
+}
+
+/// The admitted writes in flight when an idle reap's preparation froze the
+/// vault, counted by kind; each count is a number of admissions, never what
+/// they write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IdleReapInFlight {
+    /// The owner's foreground work: served requests other than reads, a
+    /// held MCP socket's receipts, voice calls and live voice sessions,
+    /// device sync connections, relay deletes, mutating ctl requests and
+    /// agent runs.
+    pub owner_write: u64,
+    /// Tagging passes.
+    pub background_tagging: u64,
+    /// Dreamer passes, and the home timer, drafts and fallback timers its
+    /// gate admits.
+    pub dreamer: u64,
+    /// Every other background pass, scheduled backups among them, and
+    /// backups before an idle reap still running.
+    pub other: u64,
 }
 
 /// Where the backup before an idle reap stands.
@@ -101,10 +129,11 @@ pub struct BackupCoverageWire {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdleBackupFailure {
-    /// An admitted write or a sync session was in flight when the vault
-    /// froze: it is not idle, and no backup was started.
+    /// An owner write or a sync session was in flight when the vault froze:
+    /// it is not idle, and no backup was started.
     WritersBusy,
-    /// Another backup held the backup lock until the deadline.
+    /// Another backup held the backup lock until the deadline, or was in
+    /// flight when the deadline cut short the wait for background passes.
     BackupBusy,
     /// The disk's free-space floor refused the backup's room.
     DiskFloor,
@@ -122,7 +151,8 @@ pub enum IdleBackupFailure {
     PublishFailed,
     /// The backup's worker stopped without an answer.
     WorkerFailed,
-    /// The deadline passed while the backup was being prepared or written.
+    /// The deadline passed while the backup was being prepared or written,
+    /// or while background passes were waited for.
     DeadlineExceeded,
 }
 

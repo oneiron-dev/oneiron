@@ -14,6 +14,11 @@
 //! a development tool and opens no vault and no network. Its conversation
 //! window, which tags a case's whole conversation as the model project's
 //! reference predictor does, is a window the slot never builds.
+//!
+//! `fetch` places a shipped release from the catalogue
+//! ([`crate::oneironer::release`]) under a models root: resumable, verified
+//! file by file, committed whole. It opens no vault; a managed engine never
+//! runs it, its supervisor does, into the node's shared model root.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -32,6 +37,7 @@ use crate::config::{
     EmbedderDevice, OneironerConfig, OneironerProvider, ServeArgs, ServeConfig,
     resolve_serve_config,
 };
+use crate::oneironer::release::{self, ReleaseSource};
 
 #[derive(Subcommand)]
 pub enum OneironerCommand {
@@ -48,6 +54,10 @@ pub enum OneironerCommand {
     /// input order: qualification against the model project's decode. Needs
     /// no vault; prints counts only.
     Qualify(QualifyArgs),
+    /// Fetch a shipped tagger release into a models root, resumable and
+    /// verified, and print the `[oneironer]` section that serves it. Needs
+    /// no vault.
+    Fetch(FetchArgs),
 }
 
 #[derive(Args, Clone)]
@@ -138,6 +148,29 @@ pub struct QualifyArgs {
     pub live_window_tokens: Option<u32>,
 }
 
+#[derive(Args, Clone)]
+pub struct FetchArgs {
+    /// The release's stack_sha16; the catalogue's default release when
+    /// absent.
+    #[arg(long)]
+    pub stack: Option<String>,
+    /// The models root the bundle lands under, as `<root>/oneironer/<stack>/`
+    /// (a node's shared model root, say). When absent,
+    /// `$XDG_DATA_HOME/oneiron/models`, else
+    /// `$HOME/.local/share/oneiron/models`; with it, no environment is read.
+    #[arg(long)]
+    pub into: Option<PathBuf>,
+    /// The Hugging Face model repo the release is fetched from;
+    /// `oneiron-dev/oneironer` when absent.
+    #[arg(long)]
+    pub repo: Option<String>,
+    /// A file holding a read token for a private release repo, such as a
+    /// credential file. It is sent to huggingface.co alone and never printed;
+    /// without one the fetch is anonymous.
+    #[arg(long)]
+    pub token_file: Option<PathBuf>,
+}
+
 /// The engine device a qualification runs on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum QualifyDevice {
@@ -176,6 +209,7 @@ pub fn oneironer(command: OneironerCommand) -> anyhow::Result<()> {
         OneironerCommand::Export(args) => export(args),
         OneironerCommand::Publish(args) => publish(*args),
         OneironerCommand::Qualify(args) => qualify(args),
+        OneironerCommand::Fetch(args) => fetch(args),
     }
 }
 
@@ -270,7 +304,7 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
             .unwrap_or(defaults.live_window_tokens),
         ..defaults
     };
-    let (mut tagger, _) = crate::oneironer::engines::load(&config)?;
+    let (mut tagger, _) = crate::oneironer::engines::load(&config, None)?;
     if args.layers == QualifyLayers::E4 {
         tagger.decode_as_e4();
     }
@@ -314,6 +348,60 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
         "live_window_tokens": config.live_window_tokens,
         "stack_sha16": tagger.card().stack_sha16,
     }))
+}
+
+/// Places a shipped release under a models root and prints one JSON object:
+/// the outcome, the bundle's directory and, once the bundle is there, the
+/// `[oneironer]` section that serves it. A release not published, or private
+/// to this fetch, prints its outcome and then fails.
+fn fetch(args: FetchArgs) -> anyhow::Result<()> {
+    let Some(entry) = release::find(args.stack.as_deref()) else {
+        let named = args.stack.unwrap_or_default();
+        let known = release::known_stacks();
+        anyhow::bail!("no oneironer release has stack {named}; known: {known}");
+    };
+    let source = ReleaseSource::new(args.repo, args.token_file.as_deref())?;
+    // A named root reads no environment.
+    let root = match args.into {
+        Some(root) => root,
+        None => release::default_models_root()?,
+    };
+    let root = std::path::absolute(root)?;
+    let dir = release::bundle_dir(&root, entry);
+    let Some(model_dir) = dir.to_str().map(str::to_owned) else {
+        anyhow::bail!("the bundle directory {} is not UTF-8", dir.display());
+    };
+    // The blocking HTTP client cannot run on the CLI's async runtime, so the
+    // fetch gets a thread of its own.
+    let fetched = std::thread::scope(|scope| {
+        scope
+            .spawn(|| release::fetch_release(entry, &source, &root))
+            .join()
+    });
+    let outcome = fetched.map_err(|_| anyhow::anyhow!("the oneironer fetch panicked"))??;
+    let stack = entry.stack_sha16;
+    let repo = source.repo();
+    let refusal = outcome.refusal(repo, stack);
+    let (bytes, resumed_bytes) = outcome.transferred().unzip();
+    let block = outcome
+        .placed()
+        .map(|placed| release::oneironer_block(entry, placed));
+    print(serde_json::json!({
+        "outcome": outcome.as_str(),
+        "stack_sha16": stack,
+        "repo": repo,
+        "licence": entry.licence,
+        "model_dir": model_dir,
+        "bytes": bytes,
+        "resumed_bytes": resumed_bytes,
+        "file": outcome.refused_file(),
+        "message": refusal.as_deref(),
+        "oneironer_block": block,
+    }))?;
+    if let Some(refusal) = refusal {
+        anyhow::bail!(refusal);
+    }
+    Ok(())
 }
 
 /// One qualification case.

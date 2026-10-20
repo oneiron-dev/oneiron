@@ -36,8 +36,17 @@ impl Vault {
     pub fn refresh_model_catalog_as_owner(
         &self,
         owner: &AuthenticatedOwner,
-        input: ModelCatalogRefresh,
+        mut input: ModelCatalogRefresh,
     ) -> Result<ModelCatalogRevision> {
+        // The owner's rows and scores name no row they were read from, and a
+        // description may carry the vault's measurements: unknown, never a
+        // set the request claims (FIX 5760).
+        for row in &mut input.catalog.rows {
+            row.source_rows = None;
+        }
+        for snapshot in &mut input.scores {
+            snapshot.source_rows = None;
+        }
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
         if input.revision.trim().is_empty()

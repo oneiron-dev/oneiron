@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3783 declarations.
+// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3788 declarations.
 // Replies: 1000 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -1511,8 +1511,8 @@ declare namespace Sdk {
   type EvalFamilyView = { family: SourceFamily; effective_purpose: FamilyPurpose; feeds_training: boolean; rows: EvalCaseLineage[] };
   type EvalFamilyAssignRequest = { seat: EvalSeat; roots: string[]; purpose: FamilyPurpose };
   type EvalCasesRequest = { seat: EvalSeat; purpose: FamilyPurpose };
-  type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number };
-  type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[] };
+  type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number; source_rows?: EntityId[] | null };
+  type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[]; source_rows?: EntityId[] | null };
   type EvalCaseDraft = { seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number };
   type CohortRetirement = { reason: string; skill: EntityId; revision: string; attempt: EntityId; exposure: EvalExposureCounts };
   type EvalCohort = { id: EntityId; seat: EvalSeat; from: number; until: number; families: EntityId[]; cases: EntityId[]; membership_digest: string; rubric_revision: string; reference: boolean; cut_at: number; retired_at?: number | null; retirement?: CohortRetirement | null };
@@ -1558,7 +1558,7 @@ declare namespace Sdk {
   type OfferCandidateRecord = { id: EntityId; setup: OfferCandidateSetup; at: number };
   type OfferPilotPrepare = { candidate: EntityId; cohort: EntityId };
   type OfferPilotMeasurement = { sufficiency: SufficiencyInput; receipt_refs: string[]; currency: string; one_off_cost?: number | null; incumbent_score?: number | null; candidate_score?: number | null };
-  type OfferPilot = { id: EntityId; candidate: EntityId; exposure: EvalExposure; membership_digest: string; rubric_revision: string; families: number; floor_slices: Record<string, number>; prepared_at: number; measurement?: OfferPilotMeasurement | null; card?: SufficiencyCard | null; completed_at?: number | null };
+  type OfferPilot = { id: EntityId; candidate: EntityId; exposure: EvalExposure; membership_digest: string; rubric_revision: string; families: number; floor_slices: Record<string, number>; prepared_at: number; measurement?: OfferPilotMeasurement | null; card?: SufficiencyCard | null; completed_at?: number | null; release_source_rows?: EntityId[] | null; measurement_source_rows?: EntityId[] | null };
   type OfferPilotPrepared = { pilot: OfferPilot; release: EvalRelease };
   type OfferPilotComplete = { pilot: EntityId; measurement: OfferPilotMeasurement };
   type OfferPilotRef = { pilot: EntityId };
@@ -1987,7 +1987,8 @@ declare namespace Sdk {
   type HostCompactResult = { epoch: number; summary: EntityId; text: string; keep_list: string[]; first_turn: number; last_turn: number };
   type HostWakeKind = "compaction" | "session_end" | "event" | "timer";
   type HostWakeRequest = { wake_kind: HostWakeKind; queue_head: EntityId[] };
-  type HostWakeResult = { wake_kind: HostWakeKind; queue_head: EntityId[]; attempt: string; already_queued: boolean };
+  type NightStepRequestId = string;
+  type HostWakeResult = { wake_kind: HostWakeKind; queue_head: EntityId[]; attempt: string; already_queued: boolean; request_id?: NightStepRequestId | null };
   type BudgetExhaustionPolicy = { kind: "suspend" } | { kind: "continue_on_local" } | { kind: "overdraft"; cap: number };
   type HostBudgetHitRequest = { seat: string; policy: BudgetExhaustionPolicy };
   type HostBudgetAccounting = { line: SpendScope; root: SpendScope; spend: SpendRead };
@@ -2779,10 +2780,10 @@ declare namespace Sdk {
   type ModelWireFormat = "openai-compat" | "anthropic-messages" | "gemini" | "own-server" | "local";
   type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null };
   type LlmCatalogEntry = { model: ModelId; display_name: string; locality: ModelLocality; context_window_tokens: number; max_output_tokens?: number | null; cost?: LlmCatalogCost | null; capabilities?: LlmCapability[]; metadata?: Record<string, unknown> };
-  type ModelRegistryRow = { version: number; wire: ModelWireFormat; catalog: LlmCatalogEntry; scores?: Record<string, Record<string, number>>; fetched_at?: Record<string, number>; tokens_per_o200k?: number | null; stale_since?: number | null };
+  type ModelRegistryRow = { version: number; wire: ModelWireFormat; catalog: LlmCatalogEntry; scores?: Record<string, Record<string, number>>; fetched_at?: Record<string, number>; tokens_per_o200k?: number | null; stale_since?: number | null; source_rows?: EntityId[] | null };
   type CatalogSeed = { version: number; rows: ModelRegistryRow[] };
   type ScoreObservation = { model: ModelId; benchmark: string; score: number };
-  type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[] };
+  type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[]; source_rows?: EntityId[] | null };
   type ModelCatalogRefresh = { revision: string; expected_revision?: string | null; catalog: CatalogSeed; scores?: ScoreSnapshot[] };
   type ModelScoreDiff = { model: ModelId; source: string; benchmark: string; previous?: number | null; score: number; fetched_at: number };
   type ModelCatalogRevision = { revision: string; previous_revision?: string | null; catalog: CatalogSeed; rows: ModelRegistryRow[]; score_diffs: ModelScoreDiff[]; refreshed_at: number };
@@ -3439,8 +3440,12 @@ declare namespace Sdk {
   type WakeRecipeInputView = { recipe: WakeRecipe; turn_count: number; record_count: number; nightly_count: number; after_turn?: number[] | null; after_record?: number[] | null; after_nightly?: number[] | null; through: number[]; observed_at: number };
   type WakeCadenceView = { policy: DreamerWakePolicy; receipt?: WakeCadenceReceipt | null; pending: WakeRecipeInputView[] };
   type WakeSettlementsRequest = { after?: EntityId | null; limit: number };
-  type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] };
-  type WakeSettlementView = { wake: EntityId; input?: WakeRecipeInputView | null; settled: boolean; jobs: WakeRecipeJobView[] };
+  type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; retry_of?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] };
+  type WakeOutcomeState = "running" | "succeeded" | "partial" | "failed";
+  type WakeParkedJob = { attempt: EntityId; cause?: DreamerParkCauseView | null };
+  type WakeDeferredJob = { attempt: EntityId; due?: number | null };
+  type WakeOutcomeView = { state: WakeOutcomeState; waiting_on: EntityId[]; parked: WakeParkedJob[]; failed: EntityId[]; stopped: EntityId[]; deferred: WakeDeferredJob[]; result_refs: string[]; conclusions: EntityId[] };
+  type WakeSettlementView = { wake: EntityId; input?: WakeRecipeInputView | null; settled: boolean; jobs: WakeRecipeJobView[]; request_id?: NightStepRequestId | null; outcome: WakeOutcomeView };
   type WakeSettlementsPage = { wakes: WakeSettlementView[]; next?: EntityId | null };
   type WakeSettlementRequest = { wake: EntityId };
   type SievePageRequest = { limit?: number | null };

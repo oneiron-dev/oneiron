@@ -351,6 +351,44 @@ on the ctl socket: the vault records one purge per scope and answers
 `not_needed`, `pending` (with `purge_unsent`, `receipt_pending` or
 `purge_rejected`) or `done`, and the erase waits for `done`.
 
+A self-hosted vault (plain `oneiron-server serve`) shares through the anonymous
+training window instead, and only with two argv flags together:
+`--publisher-training-outbox-dir <absolute path>` and
+`--publisher-training-self-host-shipper` (off by default; managed serve reads it
+but never runs it, and the shipper flag alone warns once and does nothing). The
+vault then fetches the intake's public keys from
+`https://oneiron.dev/feedback/training/v1/keys`
+(`--publisher-training-intake-origin` names another HTTPS origin) at start and
+hourly, and writes `intake-recipient.v1` and `intake-receipt-key.v1` from them.
+Every 30 s it sends the uploads and withdrawals that are due over HTTPS, and at
+most every 15 minutes it asks for receipts; a pass with nothing due sends
+nothing. Uploads carry each released offer's sealed text, its chunk files as
+written (only the intake's key opens them), in byte ranges, with its code-only
+facts: the month's scope, the month's codes for the conversation, the people and
+the worlds, the filter, the sizes and the digests. Each offer goes under its own
+code, a 64-hex handle the vault made once and keeps, which is the only way to
+withdraw it. Withdrawals carry those codes alone: every offer a deleted
+conversation or message, a world turned private, a person's erasure, a newer
+offer of the same conversation or the vault's erase withdraws, sent until the
+intake signs it `removal_pending`. Receipt asks carry the codes whose next state
+is owed, those pending removal among them, until they read `removed`. No request
+carries an account, a bearer, a cookie, a user agent, an install key, a vault id
+or an IP address of the vault's; the intake sees the connection, as any HTTPS
+server does. Every receipt is checked against the intake's receipt keys (the
+current one or the one before it) and kept in the vault: `uploading`, `accepted`
+(held whole in quarantine, not yet trainable), `eligible` or `refused` after the
+intake's own filter, `rejected`, `conflict` or `invalid_submission` (sent again
+later), `removal_pending`, then `removed`. The offer's files go once it reads
+`eligible`, `refused` or `removed`, or once the vault withholds or withdraws it;
+its code stays in the vault after them, and the vault's training key is
+destroyed only after every offer of an erase reads `removed`. Requests start at
+19 MiB; a `413` or a request that runs out of time (30 s, plus a second for each
+64 KiB) makes them smaller for the rest of the process, a `429` or `503` waits
+what the intake names, and no reply waits 30 s doubling to 15 minutes, without
+end. Nothing is dropped or cut short, and a restart starts the waits afresh.
+Turning "Learn from my conversations" off pauses uploads; withdrawals and
+receipts go on.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
@@ -2576,3 +2614,96 @@ tagger probe succeeded provider=local label_count=53 links=false checkpoint_sha1
 `decode_revision` is the native decoder this build runs, `-` for an
 endpoint, whose card names none. `stack_pinned` says whether the section
 pins `stack_sha16` too.
+
+### Fetch a shipped release (`oneiron oneironer fetch`)
+
+The engine carries a catalogue of shipped tagger bundles. Each one is pinned
+file by file, by size and SHA-256, under its `stack_sha16`. One release ships
+today: stack `fde950a412728a86`, checkpoint `eeeaf8bea4e8d166`, 53 labels,
+licence Apache-2.0. It has five files, about 1.2 GB in all: `oneironer.json`,
+`config.json`, `char_config.json`, `tokenizer.json` and `trunk.safetensors`.
+
+```sh
+oneiron oneironer fetch [--stack <stack_sha16>] [--into <models-root>] \
+  [--repo <org/name>] [--token-file <path>]
+```
+
+- `--stack` picks a release. Without it, the fetch takes the default. An
+  unknown stack is refused, and the refusal lists the known ones.
+- `--into` is the models root. The bundle lands at
+  `<root>/oneironer/<stack_sha16>/`, the layout the shared model root uses.
+  Without `--into`, the root is the embedder's:
+  `$XDG_DATA_HOME/oneiron/models`, else `$HOME/.local/share/oneiron/models`.
+  With it, the fetch reads no environment variable.
+- `--repo` is the Hugging Face model repo, `oneiron-dev/oneironer` by
+  default. Each release sits at a git ref named by its `stack_sha16`, and each
+  file is read from `https://huggingface.co/<repo>/resolve/<stack_sha16>/<file>`.
+- `--token-file` names a file holding a Hugging Face read token. The repo
+  stays private until the model is final, and then goes public under
+  Apache-2.0. Until then, a fetch needs the token. The fetch sends the token
+  to `huggingface.co` only, never on a redirect to its CDN, and never prints
+  or logs it. Pass a file, such as a systemd credential at
+  `$CREDENTIALS_DIRECTORY/<name>`. There is no way to pass the token itself.
+
+The fetch stages files in `<root>/oneironer/.staging-<stack_sha16>/`, under
+the lock file `<root>/oneironer/.staging-<stack_sha16>.lock`. A second fetch
+of the same stack waits for the first, then reuses its bundle. Each file
+downloads to `<file>.partial`. After an interrupted run, the next run resumes
+the partial with an HTTP `Range` request. Every file is checked for size, then
+for SHA-256. When a file's size or digest is wrong, the fetch deletes its
+partial and fails. Once all five files pass, the staging directory is renamed
+into place in one step, with directories at `0755` and files at `0644`.
+
+A bundle already in place is checked the same way and reused. If it fails the
+check, the fetch fails and leaves the directory as it is. Look at it, then
+remove it yourself.
+
+The command prints one JSON object:
+
+```json
+{"outcome": "downloaded", "stack_sha16": "fde950a412728a86",
+ "repo": "oneiron-dev/oneironer", "licence": "Apache-2.0",
+ "model_dir": "/srv/oneiron/models/oneironer/fde950a412728a86",
+ "bytes": 1243862518, "resumed_bytes": 0, "file": null, "message": null,
+ "oneironer_block": "[oneironer]\nprovider = \"local\"\n..."}
+```
+
+- `outcome` is one of four values. `reused` and `downloaded` mean the bundle
+  is in place. `not_published` means a file answered 404: the release is not
+  uploaded yet. `unauthorized` means a file answered 401 or 403: the release
+  is private and the fetch had no token, or its token has no access.
+- `bytes` and `resumed_bytes` are set on a download only. `bytes` came over
+  the network on this run. `resumed_bytes` were already on disk from an
+  earlier run.
+- `file` and `message` are set on `not_published` and `unauthorized` only.
+  For these two outcomes the command prints the object, then exits non-zero.
+- `oneironer_block` is the `[oneironer]` section that serves the bundle, ready
+  to paste into a settings file. It is null until the bundle is in place.
+
+```toml
+[oneironer]
+provider = "local"
+model_dir = "/srv/oneiron/models/oneironer/fde950a412728a86"
+checkpoint_sha16 = "eeeaf8bea4e8d166"
+stack_sha16 = "fde950a412728a86"
+label_count = 53
+```
+
+A managed engine never downloads a bundle, and a managed vault has no fetch
+setting or flag. Hypnos places the bundle: it runs this command as root once
+per node, with `--into <shared_model_root>`. Each vault's `[oneironer]
+model_dir` then names `<shared_model_root>/oneironer/<stack_sha16>/`, which
+the shared-root check in section 2 admits.
+
+### Where the engine rows live
+
+With `device = "auto"`, the engine measures each engine on this machine
+against the bundle's `parity.json`. It keeps the results as rows in
+`engines.json`, so a later start skips the measurement. A self-hosted server
+and `oneiron init` keep the rows at
+`$XDG_DATA_HOME/oneiron/oneironer/engines.json`, else at
+`$HOME/.local/share/oneiron/oneironer/engines.json`. A managed vault keeps
+them at `<data_dir>/oneironer/engines.json` and reads no HOME or XDG. Rows
+never go into the shared model root or into a bundle directory. If the rows
+file cannot be written, the server logs a warning, and the next start
+measures again.
