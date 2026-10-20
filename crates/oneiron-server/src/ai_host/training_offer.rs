@@ -196,7 +196,10 @@ pub(super) fn draft(
             continue;
         };
         // The call reads the brief and the offer skill's body (FIX 5760).
+        // The attempt it runs on records that set before the model sees it,
+        // and its pack receipt keeps the union of its calls' (FIX 6934).
         let read = union_source_rows([brief.sources.rows(), Some(vec![offer_skill.0])]);
+        vault.record_attempt_sources(attempt.id, read.clone())?;
         let Some(text) = models.generate_sourced(
             models.coach(),
             vec![
