@@ -27720,9 +27720,55 @@
      "surface": {
       "enum": 2,
       "fn": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrainingPieceState",
+      "TrainingTransport"
+     ],
+     "path": "src/feedback/conversation_training/anonymous.rs",
+     "purpose": "The anonymous training window's side of local custody (TL-6, FIX 5813): where each anonymous piece stands at…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 2,
+      "fn": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AnonymousApplied",
+      "AnonymousRefusal"
+     ],
+     "path": "src/feedback/conversation_training/anonymous/apply.rs",
+     "purpose": "Signed piece receipts applied to anonymous custody (TL-6; CALLS TL6_ANON_RECEIPT_APPLICATION)",
+     "surface": {
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnonymousStatusWork",
+      "AnonymousUploadWork",
+      "AnonymousWithdrawalWork"
+     ],
+     "path": "src/feedback/conversation_training/anonymous/pages.rs",
+     "purpose": "The self-host shipper's pages over anonymous custody (TL-6): the pieces to upload, the codes to withdraw and…",
+     "surface": {
+      "const": 1,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -27794,7 +27840,7 @@
      "path": "src/feedback/conversation_training/purge.rs",
      "purpose": "The training purge (TRAINING-LINK = C, TL-5, the engine half): before an erase destroys the vault, every…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -27802,6 +27848,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnonymousReceiptView",
       "PersonTrainingReceipts",
       "PersonTrainingSubmission",
       "TrainingCustody",
@@ -27813,7 +27860,7 @@
      "surface": {
       "enum": 1,
       "fn": 4,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -27831,6 +27878,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/reconcile/receipts_v2.rs",
+     "purpose": "The intake's V2 receipts (C2, C3, C5), applied per scope: each scope keeps its own cursor, and no scope's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -27841,6 +27898,16 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/release/prepare.rs",
+     "purpose": "An offer's preparation: its hold in local custody, then its seal and its signed manifest (OF-420 A2…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -65911,7 +65978,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 26,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66809,7 +66876,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4186,
+   "source_files": 4191,
    "test_files": 902
   },
   "oneiron-android": {
