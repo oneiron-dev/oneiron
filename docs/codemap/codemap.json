@@ -26024,9 +26024,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/checkpoint/documents.rs",
-     "purpose": "The document rows of entity and NOTE documents (KS7-2): each slot's snapshot and pending updates, joined to…",
+     "purpose": "The document rows of entity and NOTE documents (KS7-2, FIX 6072): each slot's snapshot and pending updates…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/checkpoint/loro.rs",
+     "purpose": "The entity document's actor carriers in its Loro history (FIX 6072): its birth's actor and every engine…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -26074,7 +26084,7 @@
      "path": "src/entity_doc/document.rs",
      "purpose": "The common actor-stamped Loro document primitive",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 18,
       "fn": 9,
       "struct": 3
      }
@@ -51862,10 +51872,40 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/store/checkpoint_payload/loro.rs",
+     "purpose": "The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/loro/frame.rs",
+     "purpose": "A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/loro/proof.rs",
+     "purpose": "The typed equality of two Loro histories a join's proof compares (FIX 6072, Engine R1): change by change and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/checkpoint_payload/mod.rs",
      "purpose": "Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -51905,7 +51945,7 @@
      "path": "src/store/checkpoint_payload/rows/typed.rs",
      "purpose": "Reading a declared table's rows with its own codec, and splitting the actors a row names out of an owner's…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -65077,7 +65117,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65805,7 +65845,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 119,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66031,7 +66071,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4117,
+   "source_files": 4121,
    "test_files": 902
   },
   "oneiron-android": {
