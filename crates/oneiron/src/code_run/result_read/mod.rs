@@ -23,8 +23,8 @@ mod unplaced;
 pub(crate) use self::unplaced::unplaced_answer;
 
 use crate::code_run::{
-    CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunOutputKind, CodeRunRawOutput, CodeRunReplayRecord,
-    CodeRunResultBinding, ExecutorStorage,
+    CODE_RUN_OUTPUT_PREVIEW_ERASED, CODE_RUN_OUTPUT_PREVIEW_WITHHELD, CodeRunOutputKind,
+    CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding, ExecutorStorage, RESPONSE_ERASED,
 };
 use crate::engine_executor::{
     JsResultRef, JsResultTarget, RESULT_REPLY_INLINE_BYTES, is_result_output_path,
@@ -52,6 +52,11 @@ const RANGE_PREVIEW_BYTES: usize = 2 * 1024;
 /// What a read of a body that is not clean says in place of its content.
 const WITHHELD_REASON: &str = "this result holds a secret or sits under a custody hold, so no \
      read shows its content; this is not a size limit";
+
+/// What a read of a body an erase of its run's actor took says in place of
+/// its content (FIX 6536).
+const ERASED_REASON: &str = "its owner's erase took this result's content, so no read shows \
+     it; this is not a size limit";
 
 /// One of a result's `more` facets: a deterministic read of its body.
 #[derive(
@@ -289,7 +294,7 @@ impl ResultRead {
             }
         }
         if self.state.is_tainted() {
-            card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
+            card["preview"] = json!(withheld_preview(self.secret.as_deref()));
             return Ok(card);
         }
         let head = body.read(0, SHAPE_HEAD_BYTES)?;
@@ -353,7 +358,7 @@ impl ResultRead {
             "lines": self.range.is_none().then_some(self.output.lines),
             "kind": kind_word(self.output.kind),
             "taint": {"state": taint_word(state), "secret": secret},
-            "reason": WITHHELD_REASON,
+            "reason": withheld_reason(secret),
         })
     }
 
@@ -454,6 +459,24 @@ impl ResultRead {
 /// marked body's is. The body's row keeps its taint as it was.
 fn unmarked_secret(shown: &Value) -> Option<&'static str> {
     crate::batch::secret_scan::write_payload_hit(shown.to_string().as_bytes())
+}
+
+/// The preview of a body that is not clean, whose hit was `secret`: erased
+/// once an erase of its run's actor took it (FIX 6536), else withheld.
+fn withheld_preview(secret: Option<&str>) -> &'static str {
+    match secret {
+        Some(RESPONSE_ERASED) => CODE_RUN_OUTPUT_PREVIEW_ERASED,
+        _ => CODE_RUN_OUTPUT_PREVIEW_WITHHELD,
+    }
+}
+
+/// What a facet of a body that is not clean, whose hit was `secret`, says in
+/// place of its content (FIX 6536).
+fn withheld_reason(secret: Option<&str>) -> &'static str {
+    match secret {
+        Some(RESPONSE_ERASED) => ERASED_REASON,
+        _ => WITHHELD_REASON,
+    }
 }
 
 /// A result's card in run `owner`, its taint read now (see
