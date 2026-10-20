@@ -123,7 +123,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/workflow/workflow_task.rs` | src | m | 4 fn · 9 crate-vis | — | A saved workflow that realizes a TASK (FIX 4391), on the dispatch side: the bound admission, the wrapper… |
 | `src/agent_dispatch/workflow_host.rs` | src | s | 2 fn | — | Typed headless host door for running the one ready workflow leaf |
 | `src/agent_dispatch/workflow_pump.rs` | src | s | 1 fn | — | Ordered workflow host pump |
-| `src/agent_dispatch/workflow_record.rs` | src | m | 2 struct · 1 enum · 2 fn · 19 crate-vis | WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult | Durable, inert workflow admission and result provenance |
+| `src/agent_dispatch/workflow_record.rs` | src | m | 2 struct · 1 enum · 2 fn · 20 crate-vis | WorkflowDispatchStatus, WorkflowProgress, WorkflowStepResult | Durable, inert workflow admission and result provenance |
 | `src/agent_dispatch/workflow_tests.rs` | test | m | — | — | Headless saved-workflow execution and authority regressions |
 | `src/agent_inbox_lens.rs` | src | m | 6 struct · 1 enum · 5 fn · 1 const · 2 re-export | AgentInboxConcern, AgentInboxDiaryReview, AgentInboxItemKind, AgentInboxLensItem, AgentInboxLensQuery, AgentInboxParticipant, InboxImpact | Renderer-neutral inbox query |
 | `src/agent_inbox_lens/inbound.rs` | src | s | 1 crate-vis | — | Identity-stamped conversation and membership projections; no writes or index repairs |
@@ -564,6 +564,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/ceremony.rs` | src | m | 1 struct · 3 enum · 2 fn · 1 const · 2 crate-vis | SigningAction, SigningCaller, SigningOutcome, SigningPage | One public signing executor: turn, access, viewed, terminal, then action |
 | `src/blob_artifact/esign/delivery_capability.rs` | src | m | 1 struct · 2 enum · 4 fn · 7 crate-vis | EsignDeliveryLink, EsignDeliveryMint, EsignDeliveryWait | Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable… |
 | `src/blob_artifact/esign/delivery_settlement.rs` | src | m | 1 struct · 2 enum · 2 fn · 3 crate-vis | EsignDeliveryEndReason, EsignDeliveryReceipt, EsignDeliveryReceiptState | An ended delivery settles (OF-415, FIX 6363, Engine ruling 10-20) |
+| `src/blob_artifact/esign/dispatch_key.rs` | src | s | 2 crate-vis | — | FIX 6424 (Engine 10-20 20:4x): an e-sign act called with no retry key is keyed on its own call |
 | `src/blob_artifact/esign/document_view.rs` | src | s | 1 struct · 2 enum · 1 crate-vis | EsignDocumentTrail, EsignDocumentView, EsignSealTrail | The owner's view of one signing document on `vault.esign.get` (FIX 6481) and of its seal on… |
 | `src/blob_artifact/esign/door.rs` | src | m | 21 struct · 11 fn | EsignCreateRequest, EsignDispatchRequest, EsignDispatchView, EsignDraftView, EsignGetRequest, EsignIssuedLink, EsignLinksIssueRequest, EsignLinksView +13 | The e-sign doors outside Rust (ARCH-0064 D3, D5, SGN-02) |
 | `src/blob_artifact/esign/escalation.rs` | src | m | 2 struct · 2 enum · 8 fn · 3 const · 1 crate-vis | HeldAskWait, HeldSigning, HeldSigningAnswer, HeldSigningState | The sign act the dial does not open goes up its role chain (ARCH-0064 D6, ARCH-0064a, ARCH-0076… |
@@ -571,7 +572,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/fold.rs` | src | m | 1 fn · 4 crate-vis | — | Pure projection of the append-only esign claim family |
 | `src/blob_artifact/esign/ingress.rs` | src | s | 1 struct · 2 fn | EsignIngress | Token-first admission at the public signing doors (FIX 3808, Engine ruling 10-18): a recipient link's… |
 | `src/blob_artifact/esign/ledger.rs` | src | m | 3 fn · 1 const · 15 crate-vis | — | Claims are the document state machine |
-| `src/blob_artifact/esign/lifecycle.rs` | src | m | 2 struct · 3 fn · 6 crate-vis | EsignLifecycleRules, EsignNoticeSwitches | Pack-supplied lifecycle timing and atomic claim/edge-handoff sweeps |
+| `src/blob_artifact/esign/lifecycle.rs` | src | m | 4 struct · 4 fn · 6 crate-vis | EsignLifecycleRules, EsignNoticeSwitches, EsignReminderSweep, HeldEsignReminder | Pack-supplied lifecycle timing and atomic claim/edge-handoff sweeps |
 | `src/blob_artifact/esign/mod.rs` | src | s | 2 mod · 21 re-export · 6 crate-vis | — | Native signing requests on versioned blob artifacts; claims are the state machine |
 | `src/blob_artifact/esign/model.rs` | src | m | 10 struct · 9 enum · 6 crate-vis | AccessStatus, DeliveryStatus, DocumentKind, DocumentStatus, EsignAuditActor, EsignDocument, EsignEvent, EsignEventRow +11 | Typed document, recipient, field and event vocabulary for ARCH-0064 |
 | `src/blob_artifact/esign/notice_dispatch.rs` | src | m | 1 struct · 2 fn · 1 const · 7 crate-vis | EsignNotice | Durable e-sign transition intents cross OF-327 before edge handoff |
@@ -579,7 +580,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/blob_artifact/esign/notice_scope.rs` | src | s | 6 crate-vis | — | FIX 6220: a world-, facet- or record-scoped credential sends its own e-sign notices… |
 | `src/blob_artifact/esign/notice_send_act.rs` | src | s | 4 crate-vis | — | The send act a signing document's staged notices go out under while no caller is present (FIX 6219, Engine… |
 | `src/blob_artifact/esign/notice_unattended.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | EsignNoticeGroup, EsignUnattendedNotices | FIX 6219 (Engine design B): a signing document's staged notices (pending, completed, rejection, expiry) go… |
-| `src/blob_artifact/esign/outbound.rs` | src | m | 1 struct · 1 enum · 4 fn · 4 crate-vis | EsignOutboundCommand, EsignOutboundVerb | SGN-02 uses the ordinary OF-327 gate and durable intent ledger |
+| `src/blob_artifact/esign/outbound.rs` | src | m | 1 struct · 1 enum · 5 fn · 4 crate-vis | EsignOutboundCommand, EsignOutboundVerb | SGN-02 uses the ordinary OF-327 gate and durable intent ledger |
 | `src/blob_artifact/esign/principals.rs` | src | s | 1 struct · 1 enum · 2 fn · 3 crate-vis | SigningAutonomy, SigningPrincipal | Owner-editable principal set and the legal-reality-gated D6 action dial |
 | `src/blob_artifact/esign/public_read.rs` | src | s | 2 fn | — | Capability-scoped PDF bytes |
 | `src/blob_artifact/esign/rate.rs` | src | s | 2 struct · 3 fn · 2 const · 3 crate-vis | EsignRateCheck, EsignRateReceipt | Vault-local, receipt-backed ceremony observation and the `[limits]` crossings of signature uploads and… |
@@ -674,9 +675,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/booking/emergency_reschedule/tests/pending_lookup.rs` | test | m | — | — | — |
 | `src/booking/invite_grant/authorization.rs` | src | m | 2 fn · 9 crate-vis | — | Whether a page's standing grant covers a recipient, read from persisted claims only |
 | `src/booking/invite_grant/codec.rs` | src | s | 4 crate-vis | — | Claim-value decode and the booking error constructors this lane uses |
-| `src/booking/invite_grant/dispatch.rs` | src | m | 1 fn · 5 crate-vis | — | Builds the outbound dispatch for the first confirm's invite and commits its passport |
+| `src/booking/invite_grant/dispatch.rs` | src | m | 1 struct · 2 fn · 6 crate-vis | ConfirmInviteOutcome | Builds the outbound dispatch for the first confirm's invite and commits its passport |
 | `src/booking/invite_grant/mint.rs` | src | s | 1 fn · 3 crate-vis | — | Mints the one standing page invite grant and finds the live one for a page |
-| `src/booking/invite_grant/mod.rs` | src | s | 4 re-export · 2 crate-vis | — | ONE-1814 [BK-A-3] the booking page's standing invite grant |
+| `src/booking/invite_grant/mod.rs` | src | s | 4 re-export · 3 crate-vis | — | ONE-1814 [BK-A-3] the booking page's standing invite grant |
 | `src/booking/invite_grant/tests/mod.rs` | test | L | — | — | Lane tests for the booking page's standing invite grant |
 | `src/booking/invite_grant/types.rs` | src | s | 3 struct · 1 crate-vis | BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest | Caller-facing shapes for the booking page's standing invite grant |
 | `src/booking/lifecycle/authorship.rs` | src | s | 2 crate-vis | — | Engine authorship of booking lifecycle heads (FIX 5994) |
@@ -1352,7 +1353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/effect.rs` | src | m | 5 struct · 4 enum · 32 fn · 4 const · 7 crate-vis | CatastropheClass, CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, EffectPlace, ReversibilityClass +1 | — |
 | `src/consent/grant.rs` | src | m | 6 struct · 4 enum · 1 trait · 16 fn · 10 const · 1 crate-vis | ActionGrant, CodeWaitReceiptLinks, ConsentGrant, ConsentGrantRow, ConsentGrantStatus, ConsentGuard, ConsentOwnerStamp, ConsentProposal +3 | — |
 | `src/consent/lifecycle.rs` | src | s | 9 struct · 1 enum · 5 fn · 1 crate-vis | ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest, DenyConsentRequest, DisclosureBoundRequest, DisclosureEnvelopeRequest +2 | Typed public consent lifecycle calls |
-| `src/consent/mod.rs` | src | s | 3 mod · 10 re-export · 4 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
+| `src/consent/mod.rs` | src | s | 3 mod · 11 re-export · 4 crate-vis | — | DEC-0006 unified consent-mode — bounded standing grants |
 | `src/consent/owner_reason.rs` | src | m | 3 struct · 2 enum · 3 fn · 1 const · 1 crate-vis | OwnerReasonConfirm, OwnerReasonConfirmation, OwnerReasonUndo, OwnerReasonVerdict, ReasonMatchConfidence | Owner-authenticated confirm reasons, bounded rule rows, and their derived grants |
 | `src/consent/owner_reason/selection.rs` | src | s | 4 crate-vis | — | Pure nearest-reason selection: remove dominated covering bounds first |
 | `src/consent/registry.rs` | src | m | 6 struct · 1 fn · 3 const · 4 crate-vis | ConsentRegistry, ConsentRegistryAgentGrant, ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegistryRow, ConsentRevokeAction | — |
@@ -2077,7 +2078,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_signals/code_fix.rs` | src | m | 6 struct · 9 enum · 2 trait · 5 fn · 5 const · 1 re-export · 10 crate-vis | CandidateFix, CandidateFixResult, CodeFixExport, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber +9 | FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2) |
 | `src/failure_signals/code_fix/exact.rs` | src | s | 1 struct · 1 enum · 1 fn · 3 crate-vis | ExactReplayRequest, ReplayFidelity | The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it… |
 | `src/failure_signals/code_fix/subject.rs` | src | s | 4 crate-vis | — | What a code fix reads of the real failure behind its source: the text and every world it touched, a failure… |
-| `src/failure_signals/delivery.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 fn · 3 const | FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport, FailureSignalTransportRequest | Delivery of the failure-signal exports to the deployment's publisher (OF-380) |
+| `src/failure_signals/delivery.rs` | src | m | 2 struct · 1 enum · 1 trait · 2 fn · 3 const | FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport, FailureSignalTransportRequest | Delivery of the failure-signal exports to the deployment's publisher (OF-380) |
 | `src/failure_signals/live.rs` | src | m | 1 enum · 1 fn · 8 crate-vis | DispatchFailure | Live tier-1 counting (OF-380, FIX 2146) |
 | `src/failure_signals/policy.rs` | src | s | 10 crate-vis | — | Versioned tier-1 aggregation dials from trusted POLICY_MANIFEST rows |
 | `src/failure_signals/tests.rs` | test | m | — | — | — |
@@ -2192,10 +2193,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/dreamer_grant.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | DreamerWeaveReach | The Dreamer's weave rows, the owner's grant that adds them to a vault seeded without them, and the read-only… |
 | `src/gate/dreamer_precommit.rs` | src | s | 4 crate-vis | — | GATE-12 pre-commit validation for Dreamer-authored claim writes |
 | `src/gate/effect/admitted_approval.rs` | src | s | 2 crate-vis | — | The owner's one-send press a send's admission records on its ledger row (FIX 6362; an L12-B seam the Engine… |
+| `src/gate/effect/approval_target.rs` | src | s | 6 crate-vis | — | FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send |
 | `src/gate/effect/effect_consent.rs` | src | s | 5 crate-vis | — | Pure DEC-0006 consent constructors over gate input |
 | `src/gate/effect/effect_contacts.rs` | src | s | 2 crate-vis | — | Counterparty hydration plus send-override and do-not-contact fold |
 | `src/gate/effect/effect_grants.rs` | src | m | 5 crate-vis | — | Standing-grant resolution plus scoped-MCP channel check and grant touch |
-| `src/gate/effect/mod.rs` | src | L | 18 crate-vis | — | — |
+| `src/gate/effect/mod.rs` | src | L | 19 crate-vis | — | — |
 | `src/gate/fanout_policy.rs` | src | s | 16 crate-vis | — | Manifest-backed fan-out policy composition; no executable defaults |
 | `src/gate/foreign_agent.rs` | src | m | 4 fn · 2 crate-vis | — | Owner-bound foreign introductions |
 | `src/gate/grants.rs` | src | m | 10 crate-vis | — | — |
@@ -3092,13 +3094,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/capability.rs` | src | m | 5 struct · 4 enum · 10 fn · 3 const · 2 crate-vis | OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState, OutboundRetryClass, OutboundVerbContract +1 | — |
 | `src/outbound/connector_reply.rs` | src | s | 2 struct · 2 fn | ConnectorReply, ConnectorReplyDispatch | A standing connector's reply leg (OF-218) |
 | `src/outbound/connector_task.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 const · 21 crate-vis | ConnectorSendTask, ConnectorSendTaskOutcome | — |
-| `src/outbound/dispatch_attempt_id.rs` | src | s | 1 crate-vis | — | — |
+| `src/outbound/dispatch_attempt_id.rs` | src | s | 2 crate-vis | — | — |
 | `src/outbound/dispatch_pipeline/admission.rs` | src | s | 3 crate-vis | — | Pure execute-time admission: one decision consumed by freeze and gate paths |
 | `src/outbound/dispatch_pipeline/effect.rs` | src | s | 2 crate-vis | — | Admitted effect: only this lane enters the replay-first chokepoint |
 | `src/outbound/dispatch_pipeline/esign_delivery.rs` | src | s | 4 crate-vis | — | E-sign delivery authority (FIX 5238 option 3; an L02 seam that changes no existing body) |
 | `src/outbound/dispatch_pipeline/frozen_payload.rs` | src | s | 3 crate-vis | — | Frozen retry-contract payload: the intent bytes a connector reads and the ledger hashes |
-| `src/outbound/dispatch_pipeline/govern.rs` | src | s | 1 crate-vis | — | Gate input assembled from the canonical outbound request |
-| `src/outbound/dispatch_pipeline/mod.rs` | src | s | 1 re-export · 11 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
+| `src/outbound/dispatch_pipeline/govern.rs` | src | s | 1 fn · 4 crate-vis | — | Gate input assembled from the canonical outbound request |
+| `src/outbound/dispatch_pipeline/mod.rs` | src | s | 2 re-export · 11 crate-vis | — | O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision… |
 | `src/outbound/dispatch_pipeline/pipeline.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | OutboundDispatchPipeline | O2 dispatch: shared request preparation, ledger replay, execution and receipts |
 | `src/outbound/dispatch_pipeline/policy_risk.rs` | src | s | 2 crate-vis | — | Pending gate-outcome name and gate-vs-manifest policy-risk resolution |
 | `src/outbound/dispatch_pipeline/request_binding.rs` | src | m | 8 crate-vis | — | One normalized outbound request and the single ledger replay validator |
@@ -3111,8 +3113,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound/executor.rs` | src | m | 1 enum · 3 fn · 4 crate-vis | ConnectorTaskExecutorError | — |
 | `src/outbound/intent.rs` | src | s | 3 struct · 1 enum · 14 fn · 1 const · 1 re-export | OutboundIntent, OutboundIntentDraft, OutboundIntentSource, OutboundIntentTrigger | — |
 | `src/outbound/manifests.rs` | src | m | 1 crate-vis | — | — |
-| `src/outbound/mod.rs` | src | s | 1 fn · 10 re-export · 7 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
-| `src/outbound/receipt_fields.rs` | src | m | 8 crate-vis | — | — |
+| `src/outbound/mod.rs` | src | s | 1 fn · 10 re-export · 8 crate-vis | — | Outbound action capability manifests and dispatch spine for OF-327 |
+| `src/outbound/receipt_fields.rs` | src | m | 9 crate-vis | — | — |
 | `src/outbound/reply_content.rs` | src | s | 1 struct · 3 fn · 1 const | ConnectorReplyBody | The body of an agent's reply to a connector event (OF-519) |
 | `src/outbound/retry_audit.rs` | src | m | 7 crate-vis | — | Atomic send-receipt retry and terminal settlement |
 | `src/outbound/served_sink.rs` | src | m | 2 struct · 6 fn | OwnedServedChannelSink, ServedChannelSink | The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine… |
@@ -3835,7 +3837,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/decls/vault_meta_t_z.rs` | src | m | — | — | — |
 | `src/side_table/erased.rs` | src | s | 4 crate-vis | — | The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form |
 | `src/side_table/key.rs` | src | s | 3 crate-vis | — | Key types: what a table's key contributes after its declared prefix |
-| `src/side_table/mod.rs` | src | L | 45 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
+| `src/side_table/mod.rs` | src | L | 47 crate-vis | — | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `src/side_table/tests.rs` | test | L | — | — | — |
 | `src/skill/call.rs` | src | m | 1 fn · 1 re-export · 2 crate-vis | — | Callable skill execution through the caller's existing sandbox runtime and host |
 | `src/skill/call/answer.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | CallableSkillAnswer | A callable skill's answer, spooled as it streams and checked against its return contract as it is read, with… |
