@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1072 facade rows, 3669 declarations.
+Census: 1072 facade rows, 3670 declarations.
 Inputs: 1007 of 1072 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 961 of 1072 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -100,7 +100,9 @@ class CommitmentIndexOutcomeIndexed(TypedDict):
 class CommitmentIndexOutcomeStoredRrule(TypedDict):
     outcome: Literal["stored_rrule"]
     route: str
-CommitmentIndexOutcome = CommitmentIndexOutcomeIndexed | CommitmentIndexOutcomeStoredRrule
+class CommitmentIndexOutcomeStoredAwaitingApproval(TypedDict):
+    outcome: Literal["stored_awaiting_approval"]
+CommitmentIndexOutcome = CommitmentIndexOutcomeIndexed | CommitmentIndexOutcomeStoredRrule | CommitmentIndexOutcomeStoredAwaitingApproval
 class CommitmentCreateReceipt(TypedDict):
     commitment: CommitmentView
     index: CommitmentIndexOutcome
@@ -11577,12 +11579,14 @@ class OutlineFreshnessEvidenceMovedBody(TypedDict):
 class OutlineFreshnessEvidenceMoved(TypedDict):
     evidence_moved: OutlineFreshnessEvidenceMovedBody
 OutlineFreshness = Literal["fresh", "not_kept", "edited"] | OutlineFreshnessEvidenceMoved
+KeptOutlineOmissionReason = Literal["sources_unreadable", "invalid_frozen_outline"]
 class DeckOutlineView(TypedDict):
     outline_ref: str
     frontier: list[int]
     outline: DeckOutline
     kept: NotRequired[KeptOutline | None]
     freshness: OutlineFreshness
+    kept_omission: NotRequired[KeptOutlineOmissionReason | None]
 class DeckOutlineRefRequest(TypedDict):
     outline_ref: str
 class DeckOutlineSettleRequest(TypedDict):

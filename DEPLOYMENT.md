@@ -374,6 +374,12 @@ launchctl load ~/Library/LaunchAgents/com.oneiron.server.plist
 
 The templates assume `oneiron-server` was installed by Cargo into
 `~/.cargo/bin` and use `~/.local/share/oneiron/default` as the vault path.
+They pass no `--config`, so the service uses the normal serve config lookup:
+`ONEIRON_CONFIG` when set, otherwise `$XDG_CONFIG_HOME/oneiron/oneiron.toml`
+or `$HOME/.config/oneiron/oneiron.toml`. That file is optional; without it the
+service starts on defaults. An `ONEIRON_CONFIG` or `XDG_CONFIG_HOME` set in the
+service environment now applies to the service too. A path you name yourself,
+with `--config` or `ONEIRON_CONFIG`, must exist.
 
 The Linux unit sets `MALLOC_ARENA_MAX=2`: glibc otherwise keeps a malloc arena
 per busy thread, and two arenas measured 75 to 93 MiB less resident per vault

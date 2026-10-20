@@ -229,6 +229,7 @@ pub(super) fn booking_event_type_in(
         };
         if body.predicate == BOOKING_EVENT_TYPE_REF_PREDICATE
             && body.subject == ClaimSubject::Entity(*event_ref)
+            && head_counts(vault, rtxn, &claim_id, &body)?
         {
             return Ok(Some(
                 decode_claim_value::<BookingEventTypeRefValue>(&body.value, "event type ref")?
@@ -258,7 +259,9 @@ fn is_confirmed_booking_in(
         else {
             continue;
         };
-        if body.subject != ClaimSubject::Entity(*event_ref) {
+        if body.subject != ClaimSubject::Entity(*event_ref)
+            || !head_counts(vault, rtxn, &claim_id, &body)?
+        {
             continue;
         }
         // A held head still charges the cap; only a settled one discharges it.
@@ -435,7 +438,22 @@ pub(super) fn put_claim(
     vault
         .put_claim_in_txn(wtxn, &id, &body, at(now_utc), now_utc)
         .map_err(|error| engine_failure("booking claim write", error))?;
+    // FIX 5994: the head is born of the booking process, in this write.
+    super::authorship::stamp_engine_head_in_txn(vault, wtxn, &id, now_utc)
+        .map_err(|error| engine_failure("booking head birth", error))?;
     Ok(id)
+}
+
+/// Whether a surfaceable head counts on a lifecycle read (FIX 5994): one no
+/// booking process issued is ignored, never decoded.
+fn head_counts(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+    body: &ClaimBody,
+) -> Result<bool, BookingError> {
+    super::authorship::counts_in_txn(vault, rtxn, claim_id, body)
+        .map_err(|error| engine_failure("booking head birth read", error))
 }
 
 /// Writes a replacement head and supersedes every live claim it replaces, in
@@ -531,6 +549,7 @@ fn booking_facts_in(
         };
         if !crate::claim::claim_surfaceable(&body)
             || body.subject != ClaimSubject::Entity(*event_ref)
+            || !head_counts(vault, rtxn, &claim_id, &body)?
         {
             continue;
         }

@@ -3,11 +3,15 @@
 //! own (OF-510, FIX 3701): the range reads cells of the workbook the chart
 //! no longer reads.
 
+use super::LiveError;
 use super::held::{self, C, children};
+use crate::edit::EditRefusal;
 use crate::edit::xml::{self, A};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::pptx_comments::guid;
+use crate::retained_opc;
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 /// The chart extensions of Office 2013: data-label ranges among them.
 const C15: &str = "http://schemas.microsoft.com/office/drawing/2012/chart";
@@ -65,7 +69,127 @@ fn range_flag(tree: &XmlTree, owner: usize) -> Option<bool> {
 /// that already carries text keeps it, a cell-range field in it taking the
 /// cached text as a run. The range goes, and no label shows a range any
 /// more. The count of labels written.
-pub(super) fn unlink_ranges(bytes: &[u8], tree: &XmlTree, edits: &mut Vec<xml::Splice>) -> u32 {
+///
+/// The last argument is the part's `(part bytes, package bytes left)` from
+/// `Package::xml_replacement_budget`. The part these edits and the ones
+/// already in `edits` would write is measured first, every removal counted,
+/// and refused with the error its replacement would return, before a
+/// label's bytes are built. Below both bounds the bytes are as they were.
+pub(super) fn unlink_ranges(
+    bytes: &[u8],
+    tree: &XmlTree,
+    edits: &mut Vec<xml::Splice>,
+    (part_bytes, package_left): (usize, usize),
+) -> Result<u32, LiveError> {
+    let mut planned: Vec<(Range<usize>, usize)> = edits
+        .iter()
+        .map(|(range, value)| (range.clone(), value.len()))
+        .collect();
+    walk::<Measured>(bytes, tree, &mut |range, value| {
+        planned.push((range, value.0));
+    });
+    let written = spliced_len(bytes.len(), planned)?;
+    if written > part_bytes {
+        return Err(retained_opc::Error::Edit("edited part size limit").into());
+    }
+    if written > package_left {
+        return Err(retained_opc::Error::Edit("edited package size limit").into());
+    }
+    Ok(walk::<Vec<u8>>(bytes, tree, &mut |range, value| {
+        edits.push((range, value));
+    }))
+}
+
+/// A splice value as `walk` writes it: built, or only measured.
+trait Value: Default {
+    /// Markup or bytes already escaped.
+    fn put(&mut self, markup: &[u8]);
+    /// Element text, escaped as `escape_text` escapes it.
+    fn put_text(&mut self, text: &str);
+    fn append(&mut self, other: Self);
+    fn is_empty(&self) -> bool;
+
+    fn of(markup: &[u8]) -> Self {
+        let mut value = Self::default();
+        value.put(markup);
+        value
+    }
+}
+
+impl Value for Vec<u8> {
+    fn put(&mut self, markup: &[u8]) {
+        self.extend_from_slice(markup);
+    }
+
+    fn put_text(&mut self, text: &str) {
+        self.extend_from_slice(escape_text(text).as_bytes());
+    }
+
+    fn append(&mut self, other: Self) {
+        self.extend_from_slice(&other);
+    }
+
+    fn is_empty(&self) -> bool {
+        <[u8]>::is_empty(self)
+    }
+}
+
+/// A value's length, counted without building it.
+#[derive(Default)]
+struct Measured(usize);
+
+impl Value for Measured {
+    fn put(&mut self, markup: &[u8]) {
+        self.0 = self.0.saturating_add(markup.len());
+    }
+
+    fn put_text(&mut self, text: &str) {
+        self.0 = self.0.saturating_add(escaped_len(text));
+    }
+
+    fn append(&mut self, other: Self) {
+        self.0 = self.0.saturating_add(other.0);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+/// `escape_text(text).len()` without building it: quick-xml's `escape`
+/// writes `<` and `>` as 4 bytes, `&` and a carriage return (`&#13;`) as 5,
+/// `'` and `"` as 6.
+fn escaped_len(text: &str) -> usize {
+    text.bytes().fold(0usize, |len, byte| {
+        len.saturating_add(match byte {
+            b'<' | b'>' => 4,
+            b'&' | b'\r' => 5,
+            b'\'' | b'"' => 6,
+            _ => 1,
+        })
+    })
+}
+
+/// The length `xml::splice` writes from `len` source bytes and these
+/// edits (range, value length), refusing the overlaps it refuses.
+fn spliced_len(len: usize, mut edits: Vec<(Range<usize>, usize)>) -> Result<usize, EditRefusal> {
+    edits.sort_by_key(|(range, _)| (range.start, range.end));
+    let (mut written, mut at) = (0usize, 0usize);
+    for (range, value) in edits {
+        if range.start < at || range.end > len || range.start > range.end {
+            return Err(EditRefusal::Invalid("overlapping writes"));
+        }
+        written = written
+            .saturating_add(range.start - at)
+            .saturating_add(value);
+        at = range.end;
+    }
+    Ok(written.saturating_add(len - at))
+}
+
+/// The edits `unlink_ranges` makes, each passed to `emit`. The count of
+/// labels written.
+fn walk<V: Value>(bytes: &[u8], tree: &XmlTree, emit: &mut impl FnMut(Range<usize>, V)) -> u32 {
     const FLAGS: &[&str] = &[
         "showLegendKey",
         "showVal",
@@ -96,11 +220,12 @@ pub(super) fn unlink_ranges(bytes: &[u8], tree: &XmlTree, edits: &mut Vec<xml::S
             .parent
             .filter(|&ext| tree.nodes[ext].is(C, "ext") && tree.nodes[ext].children.len() == 1)
             .unwrap_or(range);
-        edits.push((tree.nodes[gone].span.clone(), Vec::new()));
+        emit(tree.nodes[gone].span.clone(), V::default());
         for flag in
             held::within(tree, ser).filter(|&at| tree.nodes[at].is(C15, "showDataLabelsRange"))
         {
-            edits.push(xml::set_attribute(bytes, &tree.nodes[flag], "val", "0"));
+            let (at, value) = xml::set_attribute(bytes, &tree.nodes[flag], "val", "0");
+            emit(at, V::of(&value));
         }
         let Some(labels) = xml::child(tree, ser, C, "dLbls") else {
             continue;
@@ -119,31 +244,33 @@ pub(super) fn unlink_ranges(bytes: &[u8], tree: &XmlTree, edits: &mut Vec<xml::S
                 .or_else(|| xml::child(tree, labels, C, name))
         };
         // The label's text: the cached range text, then each part it shows.
-        let compose = |label: Option<usize>, idx: u64, text: &str| {
+        let compose = |out: &mut V, label: Option<usize>, idx: u64, text: &str| {
             let separator =
                 setting(label, "separator").map_or(SEPARATOR, |at| tree.nodes[at].text.as_str());
-            let mut runs = run(text);
+            run(out, text);
             for (flag, kind, shown_as) in label_parts(xy) {
                 if !setting(label, flag).is_some_and(|at| on(&tree.nodes[at])) {
                     continue;
                 }
                 for (n, part) in separator.split('\n').enumerate() {
                     if n > 0 {
-                        runs.push_str("<a:br/>");
+                        out.put(b"<a:br/>");
                     }
                     if !part.is_empty() {
-                        runs.push_str(&run(part));
+                        run(out, part);
                     }
                 }
                 let seed = blake3::hash(format!("{ser}:{idx}:{kind}").as_bytes());
                 let mut id = [0u8; 16];
                 id.copy_from_slice(&seed.as_bytes()[..16]);
-                runs.push_str(&format!(
-                    r#"<a:fld id="{}" type="{kind}"><a:t>{shown_as}</a:t></a:fld>"#,
-                    guid(id)
-                ));
+                out.put(
+                    format!(
+                        r#"<a:fld id="{}" type="{kind}"><a:t>{shown_as}</a:t></a:fld>"#,
+                        guid(id)
+                    )
+                    .as_bytes(),
+                );
             }
-            runs
         };
         let c = xml::prefix(&tree.nodes[labels]);
         let q = |name: &str| xml::qualify(c, name);
@@ -162,16 +289,17 @@ pub(super) fn unlink_ranges(bytes: &[u8], tree: &XmlTree, edits: &mut Vec<xml::S
                 Some((tree.nodes[idx].attr("val")?.trim().parse().ok()?, label))
             })
             .collect();
-        let mut fresh = Vec::new();
+        let mut fresh = V::default();
         for (idx, text) in &cached {
             let label = held_labels.get(idx).copied();
-            let rich = |label: Option<usize>| {
-                format!(
-                    r#"<{tx}><{rich}><a:bodyPr xmlns:a="{A}"/><a:p xmlns:a="{A}">{}</a:p></{rich}></{tx}>"#,
-                    compose(label, *idx, text),
-                    tx = q("tx"),
-                    rich = q("rich"),
-                )
+            let rich = |out: &mut V, label: Option<usize>| {
+                let (tx, rich) = (q("tx"), q("rich"));
+                out.put(
+                    format!(r#"<{tx}><{rich}><a:bodyPr xmlns:a="{A}"/><a:p xmlns:a="{A}">"#)
+                        .as_bytes(),
+                );
+                compose(out, label, *idx, text);
+                out.put(format!("</a:p></{rich}></{tx}>").as_bytes());
             };
             match label {
                 Some(label) if xml::child(tree, label, C, "tx").is_some() => {
@@ -184,20 +312,21 @@ pub(super) fn unlink_ranges(bytes: &[u8], tree: &XmlTree, edits: &mut Vec<xml::S
                         .collect();
                     for field in &fields {
                         let a = xml::prefix(&tree.nodes[*field]);
-                        let mut run = format!("<{}>", xml::qualify(a, "r")).into_bytes();
+                        let mut run = V::of(format!("<{}>", xml::qualify(a, "r")).as_bytes());
                         if let Some(r_pr) = xml::child(tree, *field, A, "rPr") {
-                            run.extend_from_slice(piece(r_pr));
+                            run.put(piece(r_pr));
                         }
-                        run.extend(
+                        run.put(format!("<{}>", xml::qualify(a, "t")).as_bytes());
+                        run.put_text(text);
+                        run.put(
                             format!(
-                                "<{t}>{}</{t}></{r}>",
-                                escape_text(text),
+                                "</{t}></{r}>",
                                 t = xml::qualify(a, "t"),
                                 r = xml::qualify(a, "r"),
                             )
-                            .into_bytes(),
+                            .as_bytes(),
                         );
-                        edits.push((tree.nodes[*field].span.clone(), run));
+                        emit(tree.nodes[*field].span.clone(), run);
                     }
                     if !fields.is_empty() {
                         written += 1;
@@ -213,42 +342,45 @@ pub(super) fn unlink_ranges(bytes: &[u8], tree: &XmlTree, edits: &mut Vec<xml::S
                     let after = xml::child(tree, label, C, "layout")
                         .or_else(|| xml::child(tree, label, C, "idx"));
                     let at = after.map_or(tree.nodes[label].open_end, |at| tree.nodes[at].span.end);
-                    edits.push((at..at, rich(Some(label)).into_bytes()));
+                    let mut value = V::default();
+                    rich(&mut value, Some(label));
+                    emit(at..at, value);
                     written += 1;
                 }
                 None => {
-                    fresh.extend(
-                        format!(
-                            r#"<{}><{} val="{idx}"/>{}"#,
-                            q("dLbl"),
-                            q("idx"),
-                            rich(None)
-                        )
-                        .into_bytes(),
-                    );
-                    fresh.extend_from_slice(&flags);
-                    fresh.extend(format!("</{}>", q("dLbl")).into_bytes());
+                    fresh.put(format!(r#"<{}><{} val="{idx}"/>"#, q("dLbl"), q("idx")).as_bytes());
+                    rich(&mut fresh, None);
+                    fresh.put(&flags);
+                    fresh.put(format!("</{}>", q("dLbl")).as_bytes());
                     written += 1;
                 }
             }
         }
         if !fresh.is_empty() {
             // Point labels come first in dLbls, after any it holds.
-            edits.push(match children(tree, labels, C, "dLbl").last() {
+            let node = &tree.nodes[labels];
+            match children(tree, labels, C, "dLbl").last() {
                 Some(last) => {
                     let at = tree.nodes[last].span.end;
-                    (at..at, fresh)
+                    emit(at..at, fresh);
                 }
-                None => {
-                    xml::insert_first(bytes, &tree.nodes[labels], &String::from_utf8_lossy(&fresh))
+                // `xml::insert_first`: a self-closed dLbls is opened.
+                None if node.empty => {
+                    let mut value = V::of(&xml::open_tag(bytes, node));
+                    value.append(fresh);
+                    value.put(format!("</{}>", node.qualified).as_bytes());
+                    emit(node.span.clone(), value);
                 }
-            });
+                None => emit(node.open_end..node.open_end, fresh),
+            }
         }
     }
     written
 }
 
 /// A plain text run.
-fn run(text: &str) -> String {
-    format!("<a:r><a:t>{}</a:t></a:r>", escape_text(text))
+fn run<V: Value>(out: &mut V, text: &str) {
+    out.put(b"<a:r><a:t>");
+    out.put_text(text);
+    out.put(b"</a:t></a:r>");
 }
