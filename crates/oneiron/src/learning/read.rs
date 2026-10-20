@@ -7,14 +7,16 @@
 //! assembled here at read: it never mints a claim.
 
 use crate::Vault;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::learning_setting::{self, LEARNING_BORROWED_PRIOR_RUNS};
 
 use super::cell::{LearningCell, TypeRef};
-use super::estimate::{Estimate, Prior, PriorOrigin};
+use super::estimate::{Estimate, OwnTally, Prior, PriorOrigin};
 use super::evidence::{CELL, cells_for_subject_in_txn};
 use super::prior::cell_prior_in_txn;
-use super::project::{StoredEstimateClaim, active_heads_in_txn, window_in_txn};
+use super::project::{
+    StoredEstimateClaim, active_heads_in_txn, measured_tally_in_txn, window_in_txn,
+};
 
 /// One reading of a cell.
 #[derive(Debug, Clone, PartialEq)]
@@ -45,12 +47,53 @@ pub(crate) fn own_estimate_in_txn(
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Option<Estimate>> {
+    Ok(own_head_in_txn(vault, txn, cell)?.map(|(estimate, _)| estimate))
+}
+
+/// The head [`own_estimate_in_txn`] reads, with the time it was projected.
+fn own_head_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+) -> Result<Option<(Estimate, u64)>> {
     Ok(active_heads_in_txn(vault, txn, cell)?
         .into_iter()
-        .filter_map(|(_, body, _)| StoredEstimateClaim::from_value(&body.value).ok())
-        .map(|stored| stored.estimate)
-        .filter(|estimate| estimate.ver == super::estimate::ESTIMATOR_VERSION)
-        .max_by(|a, b| a.runs.total_cmp(&b.runs)))
+        .filter_map(|(_, body, at)| {
+            StoredEstimateClaim::from_value(&body.value)
+                .ok()
+                .map(|stored| (stored.estimate, at))
+        })
+        .filter(|(estimate, _)| estimate.ver == super::estimate::ESTIMATOR_VERSION)
+        .max_by(|a, b| a.0.runs.total_cmp(&b.0.runs)))
+}
+
+/// The measured success and failure mass behind `cell`'s own head, with no
+/// prior: its evidence folded again under the head's window at the time the
+/// head was projected, so it is the mass that head holds. `None` when the
+/// cell has no own head, or its head is not a success estimate. A read only:
+/// no backoff, nothing written.
+///
+/// # Errors
+///
+/// Storage errors, or a head whose cell is not registered.
+pub(crate) fn measured_outcomes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+) -> Result<Option<(f64, f64)>> {
+    let Some((estimate, at)) = own_head_in_txn(vault, txn, cell)? else {
+        return Ok(None);
+    };
+    let digest = cell.digest();
+    let row = CELL
+        .get(&vault.store, txn, &digest)?
+        .ok_or(Error::CorruptedIndex("learning cell"))?;
+    Ok(
+        match measured_tally_in_txn(vault, txn, &row, &digest, estimate.window, at)? {
+            OwnTally::Beta { wins, losses } => Some((wins, losses)),
+            OwnTally::Mean { .. } | OwnTally::Counts { .. } => None,
+        },
+    )
 }
 
 /// Reads `cell` with backoff. `type_parents` is the cell's task-type chain

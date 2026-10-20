@@ -455,6 +455,15 @@ impl Journal {
         &self.dir
     }
 
+    /// The journal `batch` was sealed from.
+    pub(super) fn of_batch(batch: &super::protocol::CustodyBatch) -> Self {
+        Self {
+            dir: batch.journal.clone(),
+            vault: batch.position.vault,
+            namespace: batch.position.namespace,
+        }
+    }
+
     fn open(&self, create: bool) -> Result<()> {
         open_dir(&self.dir, create, None).map(drop)
     }

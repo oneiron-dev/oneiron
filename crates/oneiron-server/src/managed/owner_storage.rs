@@ -16,7 +16,9 @@ use crate::owner::schedule::OwnerHost;
 
 /// The owner host over the vault `config` serves. `rehearsal_config` is the
 /// config the vault was opened with, its page seal cleared: a rehearsal's
-/// scratch takes a fresh incarnation of the seal (`owner::backup`).
+/// scratch takes a fresh incarnation of the seal (`owner::backup`). Its
+/// declared `outbox:` custody members ship through `custody/` under the
+/// escrow outbox `managed` names, which the engine makes itself (FIX 5899).
 ///
 /// Both directories are made here, private, when missing, and checked with a
 /// write. One that is missing or cannot be written is said with its reason,
@@ -27,12 +29,19 @@ use crate::owner::schedule::OwnerHost;
 pub(super) fn owner_host(
     config: &ServeConfig,
     rehearsal_config: oneiron::VaultConfig,
+    managed: &super::args::ManagedArgs,
 ) -> OwnerHost {
     let rehearsals = rehearsal_dir(&config.vault_path);
     // Its custody anchors where `[backup]` names (FIX 5789).
     let host = OwnerHost::from_config(config, rehearsal_config)
         .with_rehearsal_dir(rehearsals.clone())
-        .anchored_at(&config.backup);
+        .anchored_at(&config.backup)
+        .shipping_custody_to(managed.escrow_outbox.as_ref().map(|outbox| {
+            oneiron::recovery::checkpoint::CustodyOutbox::at(
+                outbox.join("custody"),
+                managed.vault_name.clone(),
+            )
+        }));
     for (storage, dir, private) in [
         ("backups", host.backups.dir.as_path(), false),
         ("rehearsals", rehearsals.as_path(), true),
