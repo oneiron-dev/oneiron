@@ -312,7 +312,8 @@ impl Memory<'_> {
     /// walk-in for the Owner or an Admin adding themselves, as a person
     /// (FIX 6381), refused for an Admin entering while the Owner's setting
     /// is off (FIX 6382); from outside the thread, an Admin's add from now
-    /// on, and the Owner's with full history an opened history (FIX 6383);
+    /// on (a full one for someone already in changes nothing), and the
+    /// Owner's with full history an opened history (FIX 6383);
     /// else an add with the caller's pick. An agent adding itself, or its
     /// PERSON, into a thread they are not in is refused (FIX 6384).
     fn added_event_in(
@@ -358,6 +359,10 @@ impl Memory<'_> {
         } else if outside {
             if owner && history == ThreadAudienceHistory::Full {
                 (AudienceOp::OpenFullHistory, None)
+            } else if history == ThreadAudienceHistory::Full && !entering {
+                // A full add held to from now never moves a member's cut:
+                // a walk-in folds as nothing for someone already in.
+                (AudienceOp::WalkIn, None)
             } else {
                 (AudienceOp::Add, Some(ThreadAudienceHistory::FromNow))
             }
