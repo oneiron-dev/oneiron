@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use loro::LoroDoc;
 
 use super::codec::SyncSelector;
-use super::document_admission::{DocumentGrant, admit_selected_in_txn, authorize_in_txn};
+use super::document_admission::{DocumentGrant, admit_selected_in_txn, authorize_at_in_txn};
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
@@ -87,13 +87,15 @@ fn carried_rows(doc: &LoroDoc) -> Vec<(EntityId, u8)> {
 /// `selector`'s grant's windows carry, for each row `doc` carries: the bound
 /// choice's fields of [`Vault::born_with_text`], none from a row a world
 /// `withhold` keeps off the destination holds, and a prompt only from a
-/// source that grant reads in `scope` ([`readable_births`], FIX 5937).
-/// Nothing here writes a birth, so its masked refs stay masked.
+/// source that grant reads in `scope` at the export's `now_secs`
+/// ([`readable_births`], FIX 5937). Nothing here writes a birth, so its
+/// masked refs stay masked.
 pub(super) fn carry_born_with(
     vault: &Vault,
     doc: &LoroDoc,
     scope: FederationGrantScope,
     selector: &SyncSelector,
+    now_secs: u64,
     withhold: Withhold<'_>,
 ) -> Result<()> {
     let Some(bound) = vault.federation_grant_travel(&selector.grant_id)? else {
@@ -103,7 +105,7 @@ pub(super) fn carry_born_with(
     let rows = carried_rows(doc);
     // A choice without the prompt sends no prompt text, so no source is read.
     let births = if bound.travel.born_with.contains(&BornWithField::Prompt) {
-        readable_births(vault, scope, selector, &rows)?
+        readable_births(vault, scope, selector, now_secs, &rows)?
     } else {
         rows.iter().map(|_| None).collect()
     };
@@ -143,11 +145,15 @@ struct ReadableBirth {
 /// is ([`admit_selected_in_txn`]), not by whether `doc` carries them. Every
 /// other source goes as [`DENIED_PROMPT_ACTION`] says; every other input
 /// stays as stamped, in its order. `None` for a row with no birth. The grant
-/// resolves once, and only when a birth names a prompt.
+/// resolves once, at the export's `now_secs`, and only when a birth names a
+/// prompt. The export's own check already admitted that grant: should this
+/// one deny it, every prompt source here is denied, and the export still
+/// goes.
 fn readable_births(
     vault: &Vault,
     scope: FederationGrantScope,
     selector: &SyncSelector,
+    now_secs: u64,
     rows: &[(EntityId, u8)],
 ) -> Result<Vec<Option<ReadableBirth>>> {
     let txn = vault.store.env.read_txn()?;
@@ -161,10 +167,20 @@ fn readable_births(
         .flat_map(|birth| &birth.made_by.inputs)
         .any(|input| input.role == MadeByInputRole::Prompt);
     let admission = if prompted {
-        Some(authorize_in_txn(vault, &txn, scope, selector, None)?)
+        match authorize_at_in_txn(vault, &txn, scope, selector, None, now_secs) {
+            Ok(admission) => Some(admission),
+            Err(Error::Sync(SyncError::SyncProtocolError {
+                context: SyncProtocolValidation::Selector { .. },
+            })) => None,
+            Err(Error::Sync(SyncError::SyncProtocolError {
+                context: SyncProtocolValidation::DocumentAdmissionDenied,
+            })) => None,
+            Err(error) => return Err(error),
+        }
     } else {
         None
     };
+    let admission = admission.as_ref();
     let mut readable = Vec::with_capacity(births.len());
     for birth in births {
         let Some(birth) = birth else {
@@ -173,7 +189,7 @@ fn readable_births(
         };
         let mut made_by = birth.made_by;
         let mut omitted = false;
-        if let Some(admission) = &admission {
+        if prompted {
             for input in std::mem::take(&mut made_by.inputs) {
                 if input.role != MadeByInputRole::Prompt
                     || prompt_source_readable(vault, &txn, input.row, selector, admission)?
@@ -191,16 +207,19 @@ fn readable_births(
     Ok(readable)
 }
 
-/// Whether the export `admission` resolved reads prompt source `source`. A
-/// source not live here, or the admission's denial, answers no; any other
-/// error is the export's.
+/// Whether the export `admission` resolved reads prompt source `source`. No
+/// admission (its grant denied here), a source not live here, or the
+/// admission's denial answers no; any other error is the export's.
 fn prompt_source_readable(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     source: EntityId,
     selector: &SyncSelector,
-    admission: &DocumentGrant,
+    admission: Option<&DocumentGrant>,
 ) -> Result<bool> {
+    let Some(admission) = admission else {
+        return Ok(false);
+    };
     if !live_entity_row_in_txn(&vault.store, txn, &source)?.is_live() {
         return Ok(false);
     }

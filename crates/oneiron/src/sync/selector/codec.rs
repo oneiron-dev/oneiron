@@ -319,12 +319,8 @@ pub fn filtered_window_doc_for_peer(
             BirthReach::OtherVault(&withheld)
         }
     };
-    let position = authorize_selector_export(
-        vault,
-        grant_scope,
-        selector,
-        vault.store.clock.now_recorded_at(),
-    )?;
+    let now_secs = vault.store.clock.now_recorded_at();
+    let position = authorize_selector_export(vault, grant_scope, selector, now_secs)?;
     let out = filter_window_doc(
         vault,
         source,
@@ -336,7 +332,14 @@ pub fn filtered_window_doc_for_peer(
     )?;
     // Beside the masked births goes the text the grant's owner lets travel.
     if matches!(reach, BirthReach::OtherVault(_)) {
-        carry_born_with(vault, &out, grant_scope, selector, Withhold::Peer(peer))?;
+        carry_born_with(
+            vault,
+            &out,
+            grant_scope,
+            selector,
+            now_secs,
+            Withhold::Peer(peer),
+        )?;
     }
     Ok(out)
 }
@@ -435,12 +438,8 @@ pub(crate) fn guest_share_envelope_body_listing(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<(GuestShareEnvelopeBody, Vec<EntityId>)> {
-    let position = authorize_selector_export(
-        vault,
-        grant_scope,
-        selector,
-        vault.store.clock.now_recorded_at(),
-    )?;
+    let now_secs = vault.store.clock.now_recorded_at();
+    let position = authorize_selector_export(vault, grant_scope, selector, now_secs)?;
     // A guest is another vault: its births go masked under its grant's key.
     let withheld = WithheldKey::for_destination(vault, selector.grant_id.as_bytes())?;
     let filtered = filter_window_doc(
@@ -453,7 +452,14 @@ pub(crate) fn guest_share_envelope_body_listing(
         BirthReach::OtherVault(&withheld),
     )?;
     let stripped = strip_guest_share_metadata(&filtered, key, &withheld)?;
-    carry_born_with(vault, &stripped, grant_scope, selector, Withhold::Unknown)?;
+    carry_born_with(
+        vault,
+        &stripped,
+        grant_scope,
+        selector,
+        now_secs,
+        Withhold::Unknown,
+    )?;
     let update = stripped
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
