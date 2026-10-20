@@ -360,8 +360,9 @@ pub(crate) fn tag_set_in_txn(
 /// kept turn reads only partly here until a promotion brings the row back.
 /// Queued work on the turn (its tag pass, its sieve read, its projection and
 /// consolidation) waits on this one predicate rather than reading the
-/// fragment, and keeps every row it holds. No saved set is `false`: an
-/// untagged turn keeps no list to tell by.
+/// fragment, and keeps every row it holds. The demotion's missing-membership
+/// marker tells first, for an untagged turn too, and a row back without its
+/// `PartOf` edge still lacks (FIX 3859, [`crate::store::turn_missing`]).
 ///
 /// An intentional raw maintenance read of the stored set, not a read door:
 /// it reads only the set's own MESSAGE list and hands no tag out.
@@ -370,6 +371,9 @@ pub(crate) fn tagged_messages_absent_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<bool> {
+    if crate::store::turn_missing::absent_in_txn(store, txn, turn)? {
+        return Ok(true);
+    }
     let Some(tags) = TAG_SET.get(store, txn, turn)? else {
         return Ok(false);
     };

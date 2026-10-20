@@ -184,6 +184,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     // before the edges do, and the sieve and projection rows of the same
     // words with them.
     crate::tagging::tear_in_txn(store, wtxn, id)?;
+    crate::store::turn_missing::tear_in_txn(store, wtxn, id)?;
     crate::dreamer_wake::erase_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache

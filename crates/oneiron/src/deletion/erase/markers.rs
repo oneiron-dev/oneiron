@@ -196,6 +196,7 @@ impl Vault {
             || self.port_retrieval_delete_scope_exists(txn, id)?
             || self.port_short_id_mapping_exists(txn, id)?
             || crate::tagging::erase_scope_exists_in_txn(&self.store, txn, id)?
+            || crate::store::turn_missing::delete_scope_exists_in_txn(&self.store, txn, id)?
             || crate::identity_redirect::redirect_row_exists_in_txn(&self.store, txn, id)?
         {
             return Ok(true);
