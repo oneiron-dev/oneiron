@@ -53,8 +53,17 @@ impl VaultUsage {
         vault_id: String,
         catalog: Arc<oneiron::Vault>,
     ) -> Result<Arc<Self>, UsageError> {
-        // Validate the scope and read any existing rollup before binding it.
-        ledger.vault_rollup(&owner, &vault_id)?;
+        // Validate the scope before binding it. The derived rollup is warmed
+        // here, and one that cannot be read never keeps the meter from
+        // binding: a recorded call does not wait on it (FIX 6407).
+        UsageLedger::validate_scope(&owner, &vault_id)?;
+        if let Err(error) = ledger.vault_rollup(&owner, &vault_id) {
+            tracing::warn!(
+                vault_id = %vault_id,
+                ?error,
+                "the vault usage rollup could not be read; calls are still metered"
+            );
+        }
         Ok(Arc::new(Self {
             ledger,
             owner,
@@ -291,12 +300,35 @@ impl VaultUsage {
                         settlement_refused: error.is_some(),
                     }),
                 };
-                if self
-                    .ledger
-                    .record_event_sourced(event, source, UsageEventOrigin::Engine, source_rows)
-                    .is_err()
-                {
-                    tracing::error!("served run usage could not be persisted");
+                // The call's identity, for its log line once the event moves
+                // into the ledger.
+                let idempotency_key = event.idempotency_key.clone();
+                match self.ledger.record_event_sourced(
+                    event,
+                    source,
+                    UsageEventOrigin::Engine,
+                    source_rows,
+                ) {
+                    // Recorded with its counts and frozen rates, and no price:
+                    // its price at them does not fit in an amount (FIX 6407).
+                    Ok(recorded) if recorded.unpriced == Some(UnpricedReason::PriceOverflow) => {
+                        tracing::warn!(
+                            vault_id = %self.vault_id,
+                            %idempotency_key,
+                            replayed = recorded.replayed,
+                            reason = "price_overflow",
+                            "a settled call was recorded without a representable price"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::error!(
+                            vault_id = %self.vault_id,
+                            %idempotency_key,
+                            ?error,
+                            "served run usage could not be persisted"
+                        );
+                    }
                 }
             }
             _ => {}

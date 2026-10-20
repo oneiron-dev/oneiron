@@ -112,6 +112,11 @@ pub enum UnpricedReason {
     /// each measured above zero, listed once each in order. Every other count
     /// had a quoted rate.
     UnquotedCache { dimensions: Vec<CacheDimension> },
+    /// The rates frozen on the call quote every count it measured, and its
+    /// price at them does not fit in an amount (FIX 6407). The event keeps
+    /// its counts and those rates; the ledger, not the settlement, names
+    /// this when it records the call.
+    PriceOverflow,
 }
 
 /// Fixed-point provider money: one amount unit is 10^-9 of the named currency.
@@ -124,18 +129,23 @@ pub struct Money {
 }
 impl Money {
     pub(super) fn validate(&self) -> Result<(), UsageError> {
-        if self.currency.len() != 3 || !self.currency.bytes().all(|b| b.is_ascii_uppercase()) {
-            return Err(UsageError::InvalidField {
-                field: "currency",
-                message: "expected a three-letter currency",
-            });
-        }
-        validate_dimension(
-            "priceTableSnapshot",
-            &self.price_table_snapshot,
-            MAX_DIMENSION_LEN,
-        )
+        validate_price_names(&self.currency, &self.price_table_snapshot)
     }
+}
+
+/// A three-letter currency and a price-table snapshot id that fits.
+fn validate_price_names(currency: &str, price_table_snapshot: &str) -> Result<(), UsageError> {
+    if currency.len() != 3 || !currency.bytes().all(|b| b.is_ascii_uppercase()) {
+        return Err(UsageError::InvalidField {
+            field: "currency",
+            message: "expected a three-letter currency",
+        });
+    }
+    validate_dimension(
+        "priceTableSnapshot",
+        price_table_snapshot,
+        MAX_DIMENSION_LEN,
+    )
 }
 
 /// Provider list rates in nano-currency units per million tokens.
@@ -154,6 +164,12 @@ pub struct UsageCostRates {
     pub cache_write_per_million: Option<u64>,
 }
 impl UsageCostRates {
+    /// Checks the currency and price-table snapshot these rates name, before
+    /// any count is priced at them: a bad name is never read as an overflow.
+    pub(super) fn validate(&self) -> Result<(), UsageError> {
+        validate_price_names(&self.currency, &self.price_table_snapshot)
+    }
+
     /// Whether these rates price `counts`: every count above zero has a
     /// quoted rate. Cached tokens with no quoted cache rate have no price.
     pub fn prices(&self, counts: &UsageTokenCounts) -> bool {
@@ -329,6 +345,22 @@ impl UsageEvent {
                 message: "requires a currency and price-table snapshot in costRates",
             });
         }
+        if let Some(rates) = &self.cost_rates {
+            rates.validate()?;
+        }
+        // Only the event's own rates establish a price overflow: they quote
+        // each measured count, and its price at them does not fit.
+        if self.unpriced == Some(UnpricedReason::PriceOverflow)
+            && !self
+                .cost_input()
+                .is_some_and(|input| matches!(input.calculate(), Err(UsageError::Overflow)))
+        {
+            return Err(UsageError::InvalidField {
+                field: "unpriced",
+                message: "price_overflow names an event whose costRates quote each measured \
+                          count and price it past what an amount holds",
+            });
+        }
         if let Some(UnpricedReason::UnquotedCache { dimensions }) = &self.unpriced
             && (self.cost_rates.is_some()
                 || dimensions.is_empty()
@@ -394,13 +426,37 @@ pub struct UsageRecordResult {
     pub replayed: bool,
     pub source: UsageMode,
     pub cost: Option<Money>,
+    /// Why the call has no price, as its durable record names it: on a
+    /// replay, the first write's reason.
+    pub unpriced: Option<UnpricedReason>,
     pub vault_rollup: Option<UsageRollup>,
+    /// Whether `vault_rollup` sums every recorded call. The call is recorded
+    /// whatever this says.
+    pub rollup_status: UsageRollupStatus,
+}
+
+/// How far a vault rollup can be read as the sum of its recorded calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageRollupStatus {
+    /// The counters sum every recorded call. An unpriced call adds its
+    /// counts and no money: unknown is never zero.
+    Current,
+    /// A sum would pass what a counter holds: the counters stop before the
+    /// call that would carry one past it, a floor and never the total.
+    ArithmeticOverflow,
+    /// The rollup could not be read or brought up to date; the call itself
+    /// is recorded.
+    Unavailable,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageRollup {
     pub owner: String,
     pub vault_id: String,
+    /// [`UsageRollupStatus::Current`] or
+    /// [`UsageRollupStatus::ArithmeticOverflow`].
+    pub status: UsageRollupStatus,
     pub counters: UsageCounter,
     pub agents: BTreeMap<String, UsageCounter>,
     pub models: BTreeMap<String, UsageCounter>,
@@ -411,31 +467,52 @@ impl UsageRollup {
         Self {
             owner: owner.into(),
             vault_id: vault_id.into(),
+            status: UsageRollupStatus::Current,
             counters: UsageCounter::default(),
             agents: BTreeMap::new(),
             models: BTreeMap::new(),
             services: BTreeMap::new(),
         }
     }
+    /// Adds one call to the vault's counters and to its agent's, model's
+    /// and service's. Every sum is checked before any is kept: on an
+    /// overflow the rollup is left as it was.
     pub(super) fn add_event(
         &mut self,
         event: &UsageEvent,
         cost: Option<&Money>,
     ) -> Result<(), UsageError> {
-        self.counters.add(&event.token_counts, cost)?;
-        for (map, key) in [
-            (&mut self.agents, &event.agent_id),
-            (&mut self.models, &event.model),
-            (&mut self.services, &event.service),
+        let counts = &event.token_counts;
+        let counters = self.counters.clone().added(counts, cost)?;
+        let agent = added_entry(&self.agents, event.agent_id.as_deref(), counts, cost)?;
+        let model = added_entry(&self.models, event.model.as_deref(), counts, cost)?;
+        let service = added_entry(&self.services, event.service.as_deref(), counts, cost)?;
+        self.counters = counters;
+        for (map, entry) in [
+            (&mut self.agents, agent),
+            (&mut self.models, model),
+            (&mut self.services, service),
         ] {
-            if let Some(key) = key {
-                map.entry(key.clone())
-                    .or_default()
-                    .add(&event.token_counts, cost)?;
+            if let Some((key, counter)) = entry {
+                map.insert(key, counter);
             }
         }
         Ok(())
     }
+}
+/// `key`'s counter in `map` with one call added, `None` when the call names
+/// no key there.
+fn added_entry(
+    map: &BTreeMap<String, UsageCounter>,
+    key: Option<&str>,
+    counts: &UsageTokenCounts,
+    cost: Option<&Money>,
+) -> Result<Option<(String, UsageCounter)>, UsageError> {
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    let counter = map.get(key).cloned().unwrap_or_default();
+    Ok(Some((key.to_owned(), counter.added(counts, cost)?)))
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -449,7 +526,9 @@ pub struct UsageCounter {
     pub amounts_by_currency: BTreeMap<String, u64>,
 }
 impl UsageCounter {
-    fn add(&mut self, t: &UsageTokenCounts, cost: Option<&Money>) -> Result<(), UsageError> {
+    /// This counter with one call's counts and money added, or an overflow
+    /// when a sum would pass what its field holds.
+    fn added(mut self, t: &UsageTokenCounts, cost: Option<&Money>) -> Result<Self, UsageError> {
         for (dest, value) in [
             (&mut self.event_count, 1),
             (&mut self.input_tokens, t.input_tokens),
@@ -468,6 +547,6 @@ impl UsageCounter {
                 .checked_add(cost.amount)
                 .ok_or(UsageError::Overflow)?;
         }
-        Ok(())
+        Ok(self)
     }
 }

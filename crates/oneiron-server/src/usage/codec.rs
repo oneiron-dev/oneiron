@@ -1,15 +1,15 @@
 //! Msgpack codec for durable meter facts.
-use super::{ledger::StoredUsageEvent, model::UsageRollup};
+use super::{ledger::StoredUsageEvent, rollup::CachedRollup};
 pub(super) fn encode_entry(value: &StoredUsageEvent) -> Result<Vec<u8>, UsageError> {
     Ok(rmp_serde::to_vec_named(value)?)
 }
 pub(super) fn decode_entry(raw: &[u8]) -> Result<StoredUsageEvent, UsageError> {
     Ok(rmp_serde::from_slice(raw)?)
 }
-pub(super) fn encode_rollup(value: &UsageRollup) -> Result<Vec<u8>, UsageError> {
+pub(super) fn encode_rollup(value: &CachedRollup) -> Result<Vec<u8>, UsageError> {
     Ok(rmp_serde::to_vec_named(value)?)
 }
-pub(super) fn decode_rollup(raw: &[u8]) -> Result<UsageRollup, UsageError> {
+pub(super) fn decode_rollup(raw: &[u8]) -> Result<CachedRollup, UsageError> {
     Ok(rmp_serde::from_slice(raw)?)
 }
 #[derive(Debug, thiserror::Error)]
