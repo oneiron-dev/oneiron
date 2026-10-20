@@ -413,6 +413,9 @@ pub struct AttemptRecord {
     /// Operator-selected placement, separate from the immutable executor payload.
     #[serde(default)]
     pub placement: Option<AttemptPlacement>,
+    /// FIX 5240: each failure a same-intent requeue kept, oldest first.
+    #[serde(default)]
+    pub history: Vec<super::RequeuedFailure>,
 }
 
 impl AttemptRecord {

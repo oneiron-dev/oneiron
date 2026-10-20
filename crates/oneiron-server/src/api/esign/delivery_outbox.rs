@@ -2,23 +2,37 @@
 //! authorized `esign.delivery` intent to the host's sender as a file. The
 //! intents are the vault's own. A row reaches that queue only after OF-327
 //! let it through: the e-sign command's gate for an invitation, a reminder
-//! or a void, the email send's for a promoted notice. This worker adds no
-//! authority of its own, sends nothing and mints nothing.
+//! or a void, the email send's for a promoted notice. This worker sends
+//! nothing, and adds no authority of its own: the signing link an invitation
+//! or a reminder carries is minted by the vault, under the send's authority
+//! as it stands at export (FIX 5238 option 3).
 //!
 //! It runs only for `--esign-delivery-outbox-dir`. Each tick, under the
-//! directory's `.lock`, it reads the sender's acks and settles each one
-//! that echoes a current lease, reclaims this kind's expired leases, then
+//! directory's `.lock`, it removes the temporaries a stop left mid-write,
+//! reads the sender's acks and settles each one that echoes a current lease,
+//! reclaims this kind's expired leases and retires their envelopes, then
 //! claims the ready intents and writes each one's envelope:
 //!
 //! - `esign-delivery-<key>.json`, where `key` is the lower-hex BLAKE3 of
 //!   `esign.delivery\0` and the intent's dedupe key. It carries
-//!   `schema_version` 1, `kind`, `channel` ("email"), `dedupe_key`,
+//!   `schema_version` 2, `kind`, `channel` ("email"), `dedupe_key`,
 //!   `attempt_id` (32 lower-hex), `lease_owner`, `attempt_count`,
-//!   `leased_at` and `lease_expires_at` (Unix seconds), `payload_sha256`
-//!   (lower-hex, over the payload's bytes as the file holds them) and
-//!   `payload`, the queued e-sign notice copied byte for byte.
+//!   `leased_at` and `lease_expires_at` (Unix seconds), `payload`, the
+//!   queued e-sign notice copied byte for byte, `signing_link`, and
+//!   `payload_sha256`, the lower-hex SHA-256 of the content delivered: the
+//!   payload's bytes as the file holds them and, with a link, a NUL, its
+//!   `url`, a NUL and its `hard_expires_at` as 8 big-endian bytes.
+//! - `signing_link` is null for every notice but an invitation or a
+//!   reminder. Those carry a fresh signing URL and its hard expiry,
+//!   `{"url": "<base>/sign#<capability>", "hard_expires_at": <Unix
+//!   seconds>}`: minted for this delivery, valid until the document's
+//!   deadline, and never revoked by a later delivery, reminder or ack. The
+//!   sender delivers that URL as given and keeps no copy of it once its
+//!   send is retired. The base is `oauth_resource_indicator`; without a
+//!   valid https one, or without the send's authority, the delivery stays
+//!   queued and unexported, its reason logged.
 //! - The sender answers with `esign-delivery-<key>.ack.json`. It carries
-//!   `schema_version` 1, the envelope's `dedupe_key`, `attempt_id`,
+//!   `schema_version` 2, the envelope's `dedupe_key`, `attempt_id`,
 //!   `lease_owner`, `attempt_count` and `payload_sha256`, a `status` of
 //!   "ok" or "failed", and a `reason` (null for ok, a nonempty code for
 //!   failed).
@@ -26,27 +40,26 @@
 //!   `esign-delivery-<key>.done.json`, its completion receipt
 //!   ([`oneiron_vault_contract::esign_delivery`], FIX 5306): `schema_version`
 //!   1, `kind`, `state` ("completed"), and the completed lease's
-//!   `dedupe_key`, `attempt_id`, `lease_owner`, `attempt_count` and
-//!   `payload_sha256`.
+//!   `dedupe_key`, `attempt_id`, `lease_owner`, `attempt_count` and the
+//!   envelope's `payload_sha256`.
 //!
 //! An ok completes the intent: its envelope goes, its receipt is written,
 //! and its ack goes last. The sender removes the receipt once it has retired
 //! its record of the send; until then no newer envelope is written under
-//! that key, and that lease waits. A failed one is tried again a minute later,
-//! with its reason kept. With no ack the lease stands until it expires; then
+//! that key, and that lease waits. A failed one goes back to the queue as
+//! the same intent, its reason kept beside the earlier ones, and is tried
+//! again a minute later. With no ack the lease stands until it expires; then
 //! the intent is queued again, and its next claim replaces the envelope. An
-//! ack that does not echo the current lease settles nothing. Nothing here
-//! fails an intent, so none is ever dropped. Both sides write a file whole:
-//! a private temporary sibling, synced, renamed, then the directory synced.
-//!
-//! No signing link is carried. Invitations and reminders need one, and until
-//! the vault keeps custody of it a sender acks those failed
-//! (`missing_signing_capability`), so they stay queued.
+//! ack that does not echo the current lease, its link included, settles
+//! nothing. Nothing here fails an intent, so none is ever dropped. Both
+//! sides write a file whole: a private temporary sibling, synced, renamed,
+//! then the directory synced. The directory is 0700 and every file 0600: a
+//! link is written only while no other user may enter it.
 
 use std::collections::BTreeSet;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write as _};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -54,34 +67,39 @@ use anyhow::Context as _;
 use oneiron::Vault;
 use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
-    CompleteAttempt, RetryAttempt,
+    CompleteAttempt, RequeueAttempt,
 };
-use rand_core::{OsRng, RngCore as _};
+use oneiron::blob_artifact::esign::{EsignCapability, EsignDeliveryMint};
+use oneiron_vault_contract::esign_delivery::{
+    ESIGN_DELIVERY_FILE_PREFIX as FILE_PREFIX, ESIGN_DELIVERY_KIND as DELIVERY_KIND,
+    ESIGN_DELIVERY_LEASE_OWNER as LEASE_OWNER,
+};
 
+use self::files::{
+    read_if_present, remove_if_present, remove_if_unchanged, sync_dir, write_atomic,
+};
+use self::signing_links::{SigningLink, delivered_digest};
 use self::wire::{
-    Ack, AckStatus, FileRole, ack_binds, envelope_bytes, export, hex, parse_ack, parse_fence,
-    parse_name,
+    Ack, AckStatus, Export, FileRole, ack_binds, envelope_bytes, export, hex, parse_ack,
+    parse_fence, parse_name,
 };
 use crate::server::{HousekeepingAdmission, SyncServer};
 
 mod completion;
+mod files;
+mod signing_links;
 mod wire;
 
-/// The queue kind the vault keeps authorized e-sign mail under.
-const DELIVERY_KIND: &str = "esign.delivery";
 /// How often the outbox runs.
 const POLL: Duration = Duration::from_secs(15);
 /// How long an exported intent waits for its ack before it is queued again.
 const LEASE_SECS: u64 = 300;
 /// How long an intent its sender failed waits before its next try.
 const RETRY_DELAY_SECS: u64 = 60;
-/// The lease owner every outbox claim carries.
-const LEASE_OWNER: &str = "esign-delivery-outbox";
-/// The version of both file shapes.
-const SCHEMA_VERSION: u32 = 1;
+/// The version of the envelope and the ack.
+const SCHEMA_VERSION: u32 = 2;
 /// The channel an e-sign intent is delivered on.
 const CHANNEL: &str = "email";
-const FILE_PREFIX: &str = "esign-delivery-";
 const ENVELOPE_SUFFIX: &str = ".json";
 const ACK_SUFFIX: &str = ".ack.json";
 /// Held for a tick, so two publishers never share the directory.
@@ -95,10 +113,15 @@ pub(crate) fn spawn(
     admit: HousekeepingAdmission,
     dir: PathBuf,
 ) -> tokio::task::JoinHandle<()> {
+    let signing_base =
+        signing_links::signing_base(server.config.oauth_resource_indicator.as_deref());
+    if let Err(reason) = signing_base {
+        tracing::warn!(reason, "esign invitations and reminders wait unexported");
+    }
     let weak = Arc::downgrade(&server);
     drop(server);
     tracing::info!(dir = %dir.display(), "esign delivery outbox runs");
-    let outbox = Arc::new(Outbox { dir });
+    let outbox = Arc::new(Outbox { dir, signing_base });
     tokio::spawn(async move {
         let mut every = tokio::time::interval(POLL);
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -138,6 +161,8 @@ pub(crate) fn spawn(
 
 struct Outbox {
     dir: PathBuf,
+    /// The https base signing links are built on, or why there is none.
+    signing_base: Result<String, &'static str>,
 }
 
 /// What writing one lease's envelope came to, least pressing first.
@@ -145,26 +170,33 @@ struct Outbox {
 enum Published {
     /// Written, already written, or left unexported (not an e-sign notice).
     Done,
-    /// Its slot still holds a completion the sender has not taken: the lease
-    /// stays leased and unwritten until it has.
+    /// Its slot still holds a completion the sender has not taken, or its
+    /// link cannot be minted yet: the lease stays leased and unwritten.
     Held,
     /// The write failed.
     Failed,
 }
 
 impl Outbox {
-    /// One tick: acks, reclaim, then envelopes. `Ok(true)` when an envelope
-    /// could not be written or waits on its slot, so the next tick writes the
-    /// leases it holds first; after a failed write it claims no more until
-    /// those are written.
+    /// One tick: temporaries, acks, reclaim, then envelopes. `Ok(true)` when
+    /// an envelope could not be written or waits, so the next tick writes
+    /// the leases it holds first; after a failed write it claims no more
+    /// until those are written.
     fn tick(&self, vault: &Vault, recover: bool) -> anyhow::Result<bool> {
-        let Some(_lock) = self.lock()? else {
+        let Some(_lock) = files::lock(&self.dir)? else {
             return Ok(recover);
         };
+        // Under the lock no write is in flight: a temporary is a stop's.
+        if files::remove_orphan_temps(&self.dir)
+            .with_context(|| format!("clear the outbox {}", self.dir.display()))?
+        {
+            sync_dir(&self.dir).with_context(|| format!("sync {}", self.dir.display()))?;
+        }
         let queue = AttemptQueue::new(vault);
         // The sender's acks settle their leases first, and the files of
         // intents no longer leased here go.
-        self.reconcile(&queue)?;
+        self.settle_acks(vault, &queue)?;
+        self.retire_envelopes(&queue)?;
         // This kind's leases that waited out their ack go back to the queue;
         // no other kind's lease is touched.
         let reclaimed = queue.cleanup_kind_leases(
@@ -179,53 +211,29 @@ impl Outbox {
                 requeued = report.stale_requeued,
                 "esign deliveries no ack answered are queued again"
             );
+            // Their envelopes name ended leases: they go before any
+            // republish, so no sender acts on one.
+            self.retire_envelopes(&queue)?;
         }
         let mut pending = Published::Done;
         if recover {
-            pending = self.publish_leased(&queue)?;
+            pending = self.publish_leased(vault, &queue)?;
             if pending == Published::Failed {
                 return Ok(true);
             }
         }
-        Ok(pending.max(self.claim_ready(&queue)?) != Published::Done)
+        Ok(pending.max(self.claim_ready(vault, &queue)?) != Published::Done)
     }
 
-    /// The directory's lock, or `None` while another publisher holds it.
-    fn lock(&self) -> anyhow::Result<Option<File>> {
-        ensure_directory(&self.dir)
-            .with_context(|| format!("create the outbox {}", self.dir.display()))?;
-        let path = self.dir.join(LOCK_FILE);
-        let mut options = OpenOptions::new();
-        options.create(true).truncate(false).read(true).write(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        let file = options
-            .open(&path)
-            .with_context(|| format!("open {}", path.display()))?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(file)),
-            Err(fs::TryLockError::WouldBlock) => {
-                tracing::debug!(
-                    dir = %self.dir.display(),
-                    "another publisher holds the esign delivery outbox; this tick waits"
-                );
-                Ok(None)
-            }
-            Err(fs::TryLockError::Error(error)) => {
-                Err(anyhow::Error::new(error).context(format!("lock {}", path.display())))
-            }
-        }
-    }
-
-    /// Settles every ack that echoes a current lease and clears the files a
-    /// settled or ended lease left.
-    fn reconcile(&self, queue: &AttemptQueue<'_>) -> anyhow::Result<()> {
-        let (acks, envelopes) = self
+    /// Settles every ack that echoes a current lease and clears the files of
+    /// tries already settled.
+    fn settle_acks(&self, vault: &Vault, queue: &AttemptQueue<'_>) -> anyhow::Result<()> {
+        let (acks, _) = self
             .listing()
             .with_context(|| format!("read the outbox {}", self.dir.display()))?;
         let mut changed = false;
         for stem in &acks {
-            match self.settle_ack(queue, stem) {
+            match self.settle_ack(vault, queue, stem) {
                 Ok(cleared) => changed |= cleared,
                 Err(error) => tracing::warn!(
                     error = %format!("{error:#}"),
@@ -234,6 +242,19 @@ impl Outbox {
                 ),
             }
         }
+        if changed {
+            sync_dir(&self.dir).with_context(|| format!("sync {}", self.dir.display()))?;
+        }
+        Ok(())
+    }
+
+    /// Removes the envelopes of leases that ended (settled, queued again or
+    /// paused), so no sender acts on one.
+    fn retire_envelopes(&self, queue: &AttemptQueue<'_>) -> anyhow::Result<()> {
+        let (_, envelopes) = self
+            .listing()
+            .with_context(|| format!("read the outbox {}", self.dir.display()))?;
+        let mut changed = false;
         for stem in &envelopes {
             match self.retire_envelope(queue, stem) {
                 Ok(cleared) => changed |= cleared,
@@ -272,7 +293,12 @@ impl Outbox {
     /// Settles the lease one ack answers, when it echoes that lease, and
     /// clears the files of a try already settled. `Ok(true)` when a file
     /// went.
-    fn settle_ack(&self, queue: &AttemptQueue<'_>, stem: &str) -> anyhow::Result<bool> {
+    fn settle_ack(
+        &self,
+        vault: &Vault,
+        queue: &AttemptQueue<'_>,
+        stem: &str,
+    ) -> anyhow::Result<bool> {
         let path = self.ack_path(stem);
         let Some(bytes) = read_if_present(&path)? else {
             return Ok(false);
@@ -288,7 +314,7 @@ impl Outbox {
         if row.kind != DELIVERY_KIND {
             return Ok(false);
         }
-        let bound = ack_binds(&ack, &row, stem);
+        let bound = binds(vault, &ack, &row, stem)?;
         if row.state == AttemptState::Leased {
             // An older lease's answer, or one that does not echo this lease,
             // leaves it standing.
@@ -309,7 +335,7 @@ impl Outbox {
         // ack, hands the slot to the sender through its completion receipt.
         let completed = matches!(row.state, AttemptState::Leased | AttemptState::Completed);
         if bound && ack.status == AckStatus::Ok && completed {
-            return self.hand_off(stem, &row, &path, &bytes);
+            return self.hand_off(vault, stem, &row, &path, &bytes);
         }
         // Settled, now or before a stop that left its files: they go only
         // after the commit, the envelope first, and only the ones naming
@@ -360,23 +386,27 @@ impl Outbox {
 
     /// Writes the envelope of every lease this outbox holds, after a stop, a
     /// failed write or a held slot: the most pressing outcome of them all.
-    fn publish_leased(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
+    fn publish_leased(
+        &self,
+        vault: &Vault,
+        queue: &AttemptQueue<'_>,
+    ) -> oneiron::Result<Published> {
         let mut outcome = Published::Done;
         for row in queue.list()? {
             if row.kind == DELIVERY_KIND
                 && row.state == AttemptState::Leased
                 && row.lease_owner.as_deref() == Some(LEASE_OWNER)
             {
-                outcome = outcome.max(self.publish_logged(queue, &row));
+                outcome = outcome.max(self.publish_logged(vault, queue, &row));
             }
         }
         Ok(outcome)
     }
 
     /// Claims every ready intent and writes its envelope. One that could not
-    /// be written stays leased, and claiming stops; one whose slot is held
-    /// stays leased and unwritten, and claiming goes on.
-    fn claim_ready(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
+    /// be written stays leased, and claiming stops; one that waits stays
+    /// leased and unwritten, and claiming goes on.
+    fn claim_ready(&self, vault: &Vault, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
         let mut outcome = Published::Done;
         loop {
             let claimed = queue.claim_kind(
@@ -389,15 +419,20 @@ impl Outbox {
             let ClaimOutcome::Claimed(row) = claimed else {
                 return Ok(outcome);
             };
-            outcome = outcome.max(self.publish_logged(queue, &row));
+            outcome = outcome.max(self.publish_logged(vault, queue, &row));
             if outcome == Published::Failed {
                 return Ok(outcome);
             }
         }
     }
 
-    fn publish_logged(&self, queue: &AttemptQueue<'_>, row: &AttemptRecord) -> Published {
-        match self.publish(queue, row) {
+    fn publish_logged(
+        &self,
+        vault: &Vault,
+        queue: &AttemptQueue<'_>,
+        row: &AttemptRecord,
+    ) -> Published {
+        match self.publish(vault, queue, row) {
             Ok(published) => published,
             Err(error) => {
                 tracing::warn!(
@@ -412,9 +447,17 @@ impl Outbox {
 
     /// Writes `row`'s envelope for its current lease, unless the file
     /// already holds it or its slot still holds a completion the sender has
-    /// not taken. A row that is not an e-sign notice with a dedupe key is
-    /// left leased and unexported, never dropped.
-    fn publish(&self, queue: &AttemptQueue<'_>, row: &AttemptRecord) -> anyhow::Result<Published> {
+    /// not taken. An invitation or a reminder reuses the envelope this lease
+    /// already wrote whole; otherwise, behind that slot guard, the vault
+    /// mints its link, or holds it with the reason. A row that is not an
+    /// e-sign notice with a dedupe key is left leased and unexported, never
+    /// dropped.
+    fn publish(
+        &self,
+        vault: &Vault,
+        queue: &AttemptQueue<'_>,
+        row: &AttemptRecord,
+    ) -> anyhow::Result<Published> {
         let Some(export) = export(row) else {
             tracing::warn!(
                 attempt = %hex(row.id.as_bytes()),
@@ -422,12 +465,23 @@ impl Outbox {
             );
             return Ok(Published::Done);
         };
-        let bytes = envelope_bytes(row, &export)?;
         let path = self.envelope_path(&export.stem);
-        if read_if_present(&path)?.as_deref() == Some(bytes.as_slice()) {
-            return Ok(Published::Done);
-        }
-        if self.holds_slot(queue, &export.stem)? {
+        let written = read_if_present(&path)?;
+        let unlinked = if export.carries_link {
+            if let (Some(bytes), Some(delivered)) = (&written, vault.esign_delivery_digest(row)?)
+                && signing_links::holds_lease(bytes, row, &delivered)
+            {
+                return Ok(Published::Done);
+            }
+            None
+        } else {
+            let bytes = envelope_bytes(row, &export, None)?;
+            if written.as_deref() == Some(bytes.as_slice()) {
+                return Ok(Published::Done);
+            }
+            Some(bytes)
+        };
+        if self.holds_slot(vault, queue, &export.stem)? {
             tracing::debug!(
                 attempt = %hex(row.id.as_bytes()),
                 stem = %export.stem,
@@ -435,6 +489,21 @@ impl Outbox {
             );
             return Ok(Published::Held);
         }
+        let bytes = match unlinked {
+            Some(bytes) => bytes,
+            None => match self.linked_envelope(vault, row, &export)? {
+                Ok(bytes) => bytes,
+                Err(reason) => {
+                    tracing::warn!(
+                        attempt = %hex(row.id.as_bytes()),
+                        stem = %export.stem,
+                        reason,
+                        "esign delivery waits unexported for its signing link"
+                    );
+                    return Ok(Published::Held);
+                }
+            },
+        };
         // The sender has not seen this lease, so an ack beside it answers an
         // older one.
         remove_if_present(&self.ack_path(&export.stem))?;
@@ -448,6 +517,39 @@ impl Outbox {
         Ok(Published::Done)
     }
 
+    /// The envelope of an invitation or reminder with a link the vault
+    /// minted for this lease, or why none can be minted now.
+    fn linked_envelope(
+        &self,
+        vault: &Vault,
+        row: &AttemptRecord,
+        export: &Export<'_>,
+    ) -> anyhow::Result<Result<Vec<u8>, &'static str>> {
+        let base = match &self.signing_base {
+            Ok(base) => base.as_str(),
+            Err(reason) => return Ok(Err(*reason)),
+        };
+        if !files::is_private(&self.dir).with_context(|| format!("stat {}", self.dir.display()))? {
+            return Ok(Err(
+                "the outbox directory admits other users; links are written only to a 0700 one",
+            ));
+        }
+        let deliver = |capability: &EsignCapability, hard_expires_at: u64| {
+            delivered_digest(
+                export.payload,
+                Some(&SigningLink::new(base, capability, hard_expires_at)),
+            )
+        };
+        let minted =
+            vault.mint_esign_delivery_link(row.id, LEASE_OWNER, row.attempt_count, &deliver)?;
+        let link = match minted {
+            EsignDeliveryMint::Minted(link) => link,
+            EsignDeliveryMint::Held(reason) => return Ok(Err(reason)),
+        };
+        let link = SigningLink::new(base, &link.capability, link.hard_expires_at);
+        Ok(Ok(envelope_bytes(row, export, Some(&link))?))
+    }
+
     fn envelope_path(&self, stem: &str) -> PathBuf {
         self.dir.join(format!("{stem}{ENVELOPE_SUFFIX}"))
     }
@@ -457,9 +559,34 @@ impl Outbox {
     }
 }
 
-/// Completes the intent on an ok; on a failed ack, finalizes this try and
-/// schedules the next one [`RETRY_DELAY_SECS`] later, keeping the reason.
-/// Never a terminal failure.
+/// The digest of the content `row`'s current lease delivered: its notice's
+/// bytes alone, or the digest the vault recorded with the link it minted
+/// for that lease. `None` before a link was minted for it.
+fn delivered(
+    vault: &Vault,
+    row: &AttemptRecord,
+    export: &Export<'_>,
+) -> oneiron::Result<Option<String>> {
+    if export.carries_link {
+        vault.esign_delivery_digest(row)
+    } else {
+        Ok(Some(hex(&delivered_digest(export.payload, None))))
+    }
+}
+
+/// Whether `ack` echoes `row`'s lease whole, the content it delivered
+/// included.
+fn binds(vault: &Vault, ack: &Ack, row: &AttemptRecord, stem: &str) -> oneiron::Result<bool> {
+    let Some(export) = export(row) else {
+        return Ok(false);
+    };
+    Ok(delivered(vault, row, &export)?
+        .is_some_and(|delivered| ack_binds(ack, row, &export, stem, &delivered)))
+}
+
+/// Completes the intent on an ok. On a failed ack, the same intent goes back
+/// to the queue [`RETRY_DELAY_SECS`] later with its reason kept beside the
+/// earlier ones (FIX 5240): no new row per try, never a terminal failure.
 fn settle(queue: &AttemptQueue<'_>, row: &AttemptRecord, ack: &Ack) -> oneiron::Result<()> {
     let now = unix_now();
     match ack.status {
@@ -472,86 +599,16 @@ fn settle(queue: &AttemptQueue<'_>, row: &AttemptRecord, ack: &Ack) -> oneiron::
             })?;
         }
         AckStatus::Failed => {
-            queue.retry(RetryAttempt {
+            queue.requeue(RequeueAttempt {
                 id: row.id,
                 lease_owner: LEASE_OWNER.to_owned(),
                 attempt_count: row.attempt_count,
-                backoff_until: now.saturating_add(RETRY_DELAY_SECS),
-                last_error: ack.reason.clone(),
-                now,
+                reason: ack.reason.clone().unwrap_or_default(),
+                due_at: now.saturating_add(RETRY_DELAY_SECS),
             })?;
         }
     }
     Ok(())
-}
-
-fn read_if_present(path: &Path) -> io::Result<Option<Vec<u8>>> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-fn remove_if_present(path: &Path) -> io::Result<bool> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-/// Removes `path` while it still holds `bytes`: a file its writer replaced
-/// since it was read stays.
-fn remove_if_unchanged(path: &Path, bytes: &[u8]) -> io::Result<bool> {
-    if read_if_present(path)?.as_deref() != Some(bytes) {
-        return Ok(false);
-    }
-    remove_if_present(path)
-}
-
-/// Writes `bytes` to `path` whole: a private temporary sibling, synced,
-/// renamed over `path`, then the directory synced.
-fn write_atomic(dir: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let name = path
-        .file_name()
-        .and_then(std::ffi::OsStr::to_str)
-        .unwrap_or(FILE_PREFIX);
-    let staged = dir.join(format!(".{name}.{:016x}.tmp", OsRng.next_u64()));
-    let mut options = OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let written = options
-        .open(&staged)
-        .and_then(|mut file| {
-            file.write_all(bytes)?;
-            file.sync_all()
-        })
-        .and_then(|()| fs::rename(&staged, path));
-    if let Err(error) = written {
-        let _ = fs::remove_file(&staged);
-        return Err(error);
-    }
-    sync_dir(dir)
-}
-
-/// Syncs the directory's entries. A directory opens as a file only on unix;
-/// elsewhere a rename is as durable as the system makes it.
-fn sync_dir(dir: &Path) -> io::Result<()> {
-    if cfg!(unix) {
-        File::open(dir)?.sync_all()
-    } else {
-        Ok(())
-    }
-}
-
-fn ensure_directory(dir: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder.create(dir)
 }
 
 fn unix_now() -> u64 {

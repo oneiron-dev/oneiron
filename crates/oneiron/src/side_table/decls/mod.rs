@@ -67,7 +67,6 @@ include!("vault_meta_t_z.rs");
 
 /// Every declared table: the restore-class census walks it, and so does a
 /// left shared vault's purge (`store::local_replica`, `sync`-only).
-#[cfg(any(test, feature = "sync"))]
 pub(crate) fn declared() -> impl Iterator<Item = &'static SideTableDecl> {
     PARTS.into_iter().flatten().copied()
 }
