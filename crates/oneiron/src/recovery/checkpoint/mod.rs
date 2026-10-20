@@ -27,6 +27,7 @@ mod host_holds;
 mod image;
 mod landing;
 mod rebuild;
+mod response_rows;
 mod restore_class;
 mod snapshot;
 mod tiers;
@@ -225,6 +226,10 @@ pub enum RestoreReason {
     Restore,
     Wake,
     Migrate,
+    /// An owner's activation of an archived vault as a side vault
+    /// ([`Vault::activate_archived`]): it lands no checkpoint, so its epoch
+    /// names none.
+    Activate,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -496,17 +501,43 @@ impl Vault {
     /// binds, and, before opening anything, a missing `path` or one where
     /// another user could move a directory on it; a refusal leaves it
     /// archived, as it was.
+    ///
+    /// Every body the archive keeps is read back under its forked custody
+    /// first, once what `source` retired took its rows as an erase took
+    /// them (FIX 6020). The report says what a restore's says, from the
+    /// vault reopened live (FIX 6033): when it was activated, the decisions
+    /// dropped because their keys stayed on another host, the custody note
+    /// its publication status gives, and the training note when its training
+    /// link key did not come with it. It names no checkpoint and rebuilt
+    /// nothing.
     pub fn activate_archived(
         path: &Path,
         config: VaultConfig,
         source: &SideRestoreSource<'_>,
-    ) -> Result<()> {
+    ) -> Result<RestoreReport> {
         // The archive is admitted like the source before anything opens it
         // by name; a missing one is refused, not made.
         crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
-        let archive = Self::open_owned(path, config)?;
-        archive.store.activate_archived(&live)
+        let archive = Self::open_owned(path, config.clone())?;
+        let dropped_gate_decisions = archive.store.activate_archived(&live)?;
+        let restored_at = archive.now_recorded_at();
+        drop(archive);
+        // Reopened, it reads what it holds under its own custody.
+        let vault = Self::open_owned(path, config)?;
+        Ok(RestoreReport {
+            epoch: RestoreEpoch {
+                checkpoint_id: String::new(),
+                restored_at,
+                reason: RestoreReason::Activate,
+            },
+            rebuilt_entities: 0,
+            rebuilt_text_documents: 0,
+            pending_embeddings: 0,
+            dropped_gate_decisions,
+            custody_note: vault.activation_custody_note(),
+            training_note: vault.training_link_restore_notice(),
+        })
     }
     /// Historical content restore beside a live vault: the image's content
     /// with `current`'s live authority, consent, policy, credential and
