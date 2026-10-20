@@ -89045,7 +89045,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/schedule/managed.rs",

@@ -16,7 +16,7 @@
 //! acked.
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,6 +36,59 @@ pub(crate) use self::managed::{MANAGED_BACKUP_EVERY, PreIdleAttempt, PreIdleBack
 
 /// How often a running server checks whether a backup is due.
 pub(crate) const SCHEDULE_TICK: Duration = Duration::from_secs(60);
+
+/// How often a scheduled backup pass that has not finished says so (FIX
+/// 6769): a pass held on the backup lock or in a long backup shows in the
+/// log, not only by its silence.
+const PASS_STILL_RUNNING_EVERY: Duration = Duration::from_secs(60);
+
+/// Where a scheduled backup pass is, as its "still running" line names it.
+#[derive(Clone, Copy)]
+#[repr(u8)]
+enum PassStage {
+    /// Handed to the blocking executor, not started yet.
+    Queued,
+    /// Waiting for the backup lock.
+    BackupLock,
+    /// Reading the policy in force.
+    Policy,
+    /// Taking the owner's scheduled backup.
+    OwnerBackup,
+    /// The managed duty reading its marker and the vault's watermark.
+    Deciding,
+    /// Writing the managed backup.
+    Producing,
+    /// Recording, publishing and pruning after the managed backup.
+    Recording,
+    /// Pruning alone.
+    Pruning,
+}
+
+impl PassStage {
+    const ALL: [Self; 8] = [
+        Self::Queued,
+        Self::BackupLock,
+        Self::Policy,
+        Self::OwnerBackup,
+        Self::Deciding,
+        Self::Producing,
+        Self::Recording,
+        Self::Pruning,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::BackupLock => "backup_lock",
+            Self::Policy => "policy",
+            Self::OwnerBackup => "owner_backup",
+            Self::Deciding => "deciding",
+            Self::Producing => "producing",
+            Self::Recording => "recording",
+            Self::Pruning => "pruning",
+        }
+    }
+}
 
 /// What a server knows about its vault's place on disk and its backups.
 pub(crate) struct OwnerHost {
@@ -59,6 +112,11 @@ pub(crate) struct OwnerHost {
     /// The backup jobs in flight: the resident pass and a backup before an
     /// idle reap, which a reap preparation tells from other writes.
     backup_jobs: AtomicU64,
+    /// The managed pass's last decision said that took no backup, `0` for
+    /// none (`managed`).
+    managed_said: AtomicU8,
+    /// Where the scheduled pass is ([`PassStage`]).
+    pass_stage: AtomicU8,
 }
 
 impl OwnerHost {
@@ -84,6 +142,8 @@ impl OwnerHost {
             rehearse_temp: None,
             managed_every: None,
             backup_jobs: AtomicU64::new(0),
+            managed_said: AtomicU8::new(0),
+            pass_stage: AtomicU8::new(PassStage::Queued as u8),
         }
     }
 
@@ -99,6 +159,18 @@ impl OwnerHost {
     pub(crate) fn registered_as(mut self, registry: String) -> Self {
         self.backups.registry = Some(registry);
         self
+    }
+
+    /// Marks the scheduled pass as at `stage`.
+    fn enter(&self, stage: PassStage) {
+        self.pass_stage.store(stage as u8, Ordering::SeqCst);
+    }
+
+    /// Where the scheduled pass is, by its stage's name.
+    fn stage(&self) -> &'static str {
+        PassStage::ALL
+            .get(usize::from(self.pass_stage.load(Ordering::SeqCst)))
+            .map_or("unknown", |stage| stage.as_str())
     }
 
     fn one_at_a_time(&self) -> std::sync::MutexGuard<'_, ()> {
@@ -270,7 +342,9 @@ impl OwnerHost {
         &self,
         vault: &oneiron::Vault,
     ) -> anyhow::Result<Option<BackupOutcome>> {
+        self.enter(PassStage::BackupLock);
         let _one_at_a_time = self.one_at_a_time();
+        self.enter(PassStage::Policy);
         let (plan, policy) = self.effective_plan(vault)?;
         if policy.enabled {
             let every_ms = policy
@@ -281,6 +355,7 @@ impl OwnerHost {
                 .last()
                 .is_none_or(|newest| now_unix_ms().saturating_sub(newest.taken_ms) >= every_ms);
             if due {
+                self.enter(PassStage::OwnerBackup);
                 return backup::take(vault, &plan).map(Some);
             }
         }
@@ -309,23 +384,52 @@ impl SyncServer {
         tick: Duration,
         admit: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        let host = Arc::clone(self.owner_host.as_ref()?);
+        let Some(host) = self.owner_host.as_ref().map(Arc::clone) else {
+            tracing::info!("no backup schedule: this server keeps no backups");
+            return None;
+        };
         let server = Arc::clone(self);
+        tracing::info!(
+            tick_secs = tick.as_secs(),
+            managed_every_secs = ?host.managed_every.map(|every| every.as_secs()),
+            "backup schedule started"
+        );
         Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut refused = false;
             loop {
                 interval.tick().await;
                 let Some(admission) = admit() else {
+                    // Said once a run of refused ticks, as the pause is.
+                    if !std::mem::replace(&mut refused, true) {
+                        tracing::info!(
+                            "scheduled backup tick refused: the vault is paused; the next \
+                             admitted tick decides"
+                        );
+                    }
                     continue;
                 };
-                let (host, server) = (Arc::clone(&host), Arc::clone(&server));
-                let outcome = tokio::task::spawn_blocking(move || {
+                refused = false;
+                host.enter(PassStage::Queued);
+                let job = (Arc::clone(&host), Arc::clone(&server));
+                let mut pass = tokio::task::spawn_blocking(move || {
+                    let (host, server) = job;
                     let _admission = admission;
                     let _job = host.backup_job();
                     host.take_if_due(server.vault())
-                })
-                .await;
+                });
+                let started = tokio::time::Instant::now();
+                let outcome = loop {
+                    match tokio::time::timeout(PASS_STILL_RUNNING_EVERY, &mut pass).await {
+                        Ok(outcome) => break outcome,
+                        Err(_) => tracing::info!(
+                            running_secs = started.elapsed().as_secs(),
+                            stage = host.stage(),
+                            "scheduled backup pass still running"
+                        ),
+                    }
+                };
                 match outcome {
                     Ok(Ok(Some(taken))) => tracing::info!(
                         backup = %taken.backup.path.display(),
