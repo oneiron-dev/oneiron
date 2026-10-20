@@ -76412,8 +76412,8 @@
      "path": "src/api.rs",
      "purpose": "Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5)",
      "surface": {
-      "const": 5,
-      "crate-vis": 3,
+      "const": 4,
+      "crate-vis": 6,
       "enum": 11,
       "fn": 2,
       "mod": 1,
@@ -76599,6 +76599,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/native/pdf/decode.rs",
+     "purpose": "Strict loads with every stream decoded whole (Rule 5)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/native/pdf/incremental.rs",
      "purpose": "Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and…",
      "surface": {
@@ -76610,7 +76620,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/native/pdf/lex.rs",
-     "purpose": "Bounded PDF structural tokens",
+     "purpose": "PDF structural tokens",
      "surface": {
       "crate-vis": 12
      }
@@ -76622,7 +76632,7 @@
      "path": "src/native/pdf/mod.rs",
      "purpose": "Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -76672,6 +76682,16 @@
      "path": "src/native/pdf/tests.rs",
      "purpose": "Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native/pdf/walk.rs",
+     "purpose": "Reference chains and the page tree, followed whole (Rule 5)",
+     "surface": {
+      "crate-vis": 7
+     }
     },
     {
      "bucket": "m",
@@ -76786,7 +76806,7 @@
      "path": "src/native/verify/verify_dss_core.rs",
      "purpose": "DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 7
      }
     },
     {
@@ -77011,7 +77031,7 @@
      "purpose": "Stable seal error classes and codes (ONE-1837 §6)"
     },
     "native": {
-     "files": 42,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77027,7 +77047,7 @@
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 45,
+   "source_files": 47,
    "test_files": 12
   },
   "oneiron-server": {

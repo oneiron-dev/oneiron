@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/api.rs` | src | m | 15 struct · 11 enum · 4 trait · 2 fn · 1 type · 5 const · 1 mod · 2 re-export · 3 crate-vis | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +22 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
+| `src/api.rs` | src | m | 15 struct · 11 enum · 4 trait · 2 fn · 1 type · 4 const · 1 mod · 2 re-export · 6 crate-vis | BackendError, BackendRejectCode, BackendSignature, DigestAlgorithm, FetchError, FetchMethod, FetchPolicy, FetchPurpose +22 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) |
 | `src/api/report.rs` | src | m | 6 struct · 10 enum · 7 fn | Anomaly, ByteRangeEvidence, Coverage, ModificationLevel, Modifications, RevisionKind, RevisionReport, SignatureKind +8 | Evidence-oriented verification report |
 | `src/bin/oneiron-seal-organ.rs` | src | s | — | — | The seal organ's process: serves the host on the socket it passes |
 | `src/error.rs` | src | s | 5 enum · 1 fn | FatalCode, InputInvalidCode, RetryableCode, SealError, SealStage | Stable seal error classes and codes (ONE-1837 §6) |
@@ -26,14 +26,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/engine.rs` | src | m | 1 struct · 3 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
 | `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
+| `src/native/pdf/decode.rs` | src | s | 1 crate-vis | — | Strict loads with every stream decoded whole (Rule 5) |
 | `src/native/pdf/incremental.rs` | src | s | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
-| `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | Bounded PDF structural tokens |
-| `src/native/pdf/mod.rs` | src | s | 6 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
+| `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | PDF structural tokens |
+| `src/native/pdf/mod.rs` | src | s | 8 crate-vis | — | Read-only PDF parse plus byte-exact incremental-update writer (§7.1, §7.2) |
 | `src/native/pdf/objects.rs` | src | m | 6 crate-vis | — | Revision object graphs (§7.2): PDF value serializers, sig-dict placeholders, AcroForm/page updates, checked… |
 | `src/native/pdf/parse.rs` | src | m | 15 crate-vis | — | Prepared-input validation (§7.1): object/catalog scans, strict load, xref consistency, and RevisionState… |
 | `src/native/pdf/revision_chain.rs` | src | s | 6 crate-vis | — | Shared PDF revision discovery from the actual xref /Prev chain |
 | `src/native/pdf/revision_facts.rs` | src | m | 8 crate-vis | — | One structural account of PDF revisions, definitions and xref roles |
 | `src/native/pdf/tests.rs` | test | m | — | — | Inline test mod: fixture loaders, doc builders, validation and writer round-trip tests |
+| `src/native/pdf/walk.rs` | src | s | 7 crate-vis | — | Reference chains and the page tree, followed whole (Rule 5) |
 | `src/native/profile/assembly.rs` | src | m | 6 crate-vis | — | B-B/B-T/B-LTA orchestration: backend signing, TSA failover, capacity ladder, DocTimeStamp, degrade warnings |
 | `src/native/profile/dss.rs` | src | s | 3 crate-vis | — | DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append |
 | `src/native/profile/material.rs` | src | s | 4 crate-vis | — | B-LT validation-material gather: CRL DP discovery, key-bound issuer resolution, fetch+validate CRLs |
@@ -45,7 +47,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/review_1842_tests.rs` | test | m | — | — | SGN-05 public verifier regressions retained across the ONE-1941 report merge |
 | `src/native/verify/timestamp_evidence.rs` | src | s | 7 crate-vis | — | Total private RFC 3161 outcomes; one projection emits crypto and TSA trust |
 | `src/native/verify/verify_chain_gates.rs` | src | m | 10 crate-vis | — | Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and… |
-| `src/native/verify/verify_dss_core.rs` | src | m | 8 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
+| `src/native/verify/verify_dss_core.rs` | src | m | 7 crate-vis | — | DSS validation: Cert/CRL/OCSP array decoding, issuer binding and coverage rules, DSS-revision coverage… |
 | `src/native/verify/verify_evidence.rs` | src | s | 6 crate-vis | — | Private, bounded evidence collected before trust, time, and profile decisions |
 | `src/native/verify/verify_report_build.rs` | src | s | 2 crate-vis | — | Project completed evidence into the public per-envelope report once |
 | `src/native/verify/verify_revisions.rs` | src | m | 1 crate-vis | — | Bounded revision snapshots and default-deny classification of post-sign changes |
