@@ -87515,6 +87515,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/restore/host_holds.rs",
+     "purpose": "The host-order legal holds a cold restore installs (FIX 1485, FIX 6598)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/restore/input.rs",
      "purpose": "The restore's two pipes and the plan on the input pipe: each descriptor proven the right end of a pipe…",
      "surface": {
@@ -87617,8 +87627,18 @@
      "path": "src/managed/state_serve/reap.rs",
      "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/reap/host_holds.rs",
+     "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -91097,7 +91117,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 49,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91253,7 +91273,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 939,
+   "source_files": 941,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95653,8 +95673,8 @@
      "surface": {
       "const": 1,
       "fn": 2,
-      "mod": 3,
-      "re-export": 3,
+      "mod": 4,
+      "re-export": 4,
       "struct": 1
      }
     },
@@ -95702,6 +95722,7 @@
      "path": "src/lib/restore/framing.rs",
      "purpose": "The result pipe (`--restore-result-fd`) and the `restore_status` answer",
      "surface": {
+      "crate-vis": 1,
       "enum": 5,
       "fn": 6
      }
@@ -95714,6 +95735,26 @@
      "purpose": "Byte fields on the restore wire, spelled as the rest of the contract spells bytes: lowercase hex strings…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostHoldsBytes",
+      "HostHoldsCursor",
+      "HostHoldsSource",
+      "HostOrderHoldsExport",
+      "HostOrderHoldsNotProven",
+      "ManagedRestoreHostHolds",
+      "RestoreHostHoldsStatus"
+     ],
+     "path": "src/lib/restore/host_holds.rs",
+     "purpose": "The host-order legal holds a cold managed restore carries from its source (FIX 1485, FIX 6598)",
+     "surface": {
+      "enum": 3,
+      "fn": 6,
+      "struct": 4
      }
     },
     {
@@ -95943,7 +95984,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95952,7 +95993,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 38,
+   "source_files": 39,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
