@@ -18,5 +18,7 @@ pub(crate) fn document_birth_in_txn(
     let (_, body) = super::verbs::note_core(vault, txn, id)?;
     // The birth records its stored author, live or erased (FIX 6072): the
     // seed is the same on every replica, and no writer is made from it.
-    Ok(Some(NoteDocument::birth_by(id, &body.markdown, body.author_ref)?.doc))
+    Ok(Some(
+        NoteDocument::birth_by(id, &body.markdown, body.author_ref)?.doc,
+    ))
 }

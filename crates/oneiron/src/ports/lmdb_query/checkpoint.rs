@@ -95,8 +95,7 @@ fn note_placement(value: &[u8]) -> Placement {
 
 /// Whether `value` is a NOTE's entity row.
 fn is_note(value: &[u8]) -> bool {
-    EntityMetadataHeader::parse(value)
-        .is_some_and(|header| header.entity_type == ENTITY_TYPE_NOTE)
+    EntityMetadataHeader::parse(value).is_some_and(|header| header.entity_type == ENTITY_TYPE_NOTE)
 }
 
 /// A CLAIM's place, by its predicate: a dreamer step's holds a model

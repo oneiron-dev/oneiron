@@ -457,10 +457,9 @@ fn stamp(doc: &LoroDoc, actor: &WriteActor) {
 
 /// The engine stamp naming `author`, or no one once erased.
 fn stamp_author(doc: &LoroDoc, author: super::NoteActor) {
-    doc.commit_with(CommitOptions::new().commit_msg(&format!(
-        "oneiron.note/v1 actor={}",
-        author.to_wire()
-    )));
+    doc.commit_with(
+        CommitOptions::new().commit_msg(&format!("oneiron.note/v1 actor={}", author.to_wire())),
+    );
 }
 
 /// A title is human metadata, not a body hash. Keep the socket check bounded.

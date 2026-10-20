@@ -32,7 +32,9 @@ use std::collections::BTreeSet;
 use heed::{RoTxn, RwTxn};
 
 pub(crate) use self::body::{CORE_RAW_REFS, join_core_row, reads_core_row, split_core_row};
-pub(crate) use self::loro::{check_live_snapshot, frames_live, join_live, snapshot_note, split_live};
+pub(crate) use self::loro::{
+    check_live_snapshot, frames_live, join_live, snapshot_note, split_live,
+};
 
 use super::documents::{NOTE_HEAD, NOTE_HEAD_DOC, NOTE_PROPOSAL_DOC};
 use super::lifecycle::NOTE_SEAL;

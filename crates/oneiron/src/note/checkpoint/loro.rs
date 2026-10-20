@@ -197,7 +197,9 @@ fn cut_stamp(message: &str) -> Option<(&str, &str)> {
     } else {
         let rest = message.strip_prefix(PROGRAM_STAMP)?;
         let (action, _) = rest.split_once(PROGRAM_ACTOR)?;
-        let named = action.bytes().all(|byte| byte.is_ascii_lowercase() || byte == b'_');
+        let named = action
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_');
         if action.is_empty() || !named {
             return None;
         }
@@ -324,7 +326,7 @@ fn full_snapshot(bytes: &[u8]) -> Result<()> {
 /// when its history names no one; a shallow one, an undecided fork's and
 /// one that is no value-only proposal stay under the vault-wide seal, named
 /// with the NOTE.
-pub(crate) fn capture_proposal(
+pub(super) fn capture_proposal(
     out: &mut Captured,
     note: EntityId,
     undecided: bool,
@@ -372,20 +374,22 @@ fn proposal_shape(
 /// The NOTE a proposal row's key leads with.
 fn proposal_note(at: &RowLocator) -> Result<EntityId> {
     let key = at.key.strip_prefix(NOTE_PROPOSAL_DOC.decl().prefix);
-    let key = key.and_then(HexPair::decode_key).ok_or_else(rows::bad_part)?;
+    let key = key
+        .and_then(HexPair::decode_key)
+        .ok_or_else(rows::bad_part)?;
     Ok(key.0.0)
 }
 
 /// Refuses a proposal row unless it is a full value-only document of the
 /// NOTE its key leads with.
-pub(crate) fn check_proposal(at: &RowLocator, bytes: &[u8]) -> Result<()> {
+pub(super) fn check_proposal(at: &RowLocator, bytes: &[u8]) -> Result<()> {
     full_snapshot(bytes)?;
     proposal_shape(proposal_note(at)?, false, bytes).map_err(|_| rows::bad_part())
 }
 
 /// A proposal document rebuilt from its content and the actors that
 /// opened: a full value-only document of the NOTE its key leads with.
-pub(crate) fn join_proposal(
+pub(super) fn join_proposal(
     at: &RowLocator,
     content: &[u8],
     parts: &[&ActorPart],

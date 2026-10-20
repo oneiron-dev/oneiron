@@ -72,8 +72,7 @@ impl CanonicalDocument {
     /// each record's actor only while it names one.
     fn held(&self) -> usize {
         let authorship = self.authorship.iter().map(|record| {
-            16
-                + record.actor.id().map_or(0, |_| 16)
+            16 + record.actor.id().map_or(0, |_| 16)
                 + record.command_hash.len()
                 + record.actor_class.len()
                 + record.grant.as_ref().map_or(0, String::len)
