@@ -204,6 +204,19 @@ fn recall_within_ceiling(
             Ok::<_, crate::memory::MemoryError>(pack)
         })
         .transpose()?;
+    // SCAN C030: past the deadline a door that answers the cut pack has
+    // answered, so nothing embeds or retrieves for it; each heavy stage below
+    // starts only while the answer is not yet due.
+    let due = || {
+        deadline
+            .as_ref()
+            .is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
+    };
+    if due()
+        && let Some(fallback) = fallback.as_ref()
+    {
+        return Ok(fallback.clone());
+    }
     let vectors = embed(&input.query);
     let embedding = vectors.text_index.as_deref();
     let media = vectors.media_seeds();
@@ -239,6 +252,11 @@ fn recall_within_ceiling(
             on_cut(ready.clone());
         }
         fallback = Some(ready);
+    }
+    if due()
+        && let Some(fallback) = fallback.as_ref()
+    {
+        return Ok(fallback.clone());
     }
     let at_deadline = |answer: MemoryResult<crate::memory::MemoryPack>| {
         if deadline

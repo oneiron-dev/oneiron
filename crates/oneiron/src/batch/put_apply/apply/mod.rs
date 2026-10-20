@@ -320,6 +320,13 @@ pub(in crate::batch) fn apply_put(
         crate::skill_hub::decode_skill_hub_record(data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR {
         crate::comm::decode_claim_class_descriptor(data)?;
+    } else if entity_type == crate::registry::ENTITY_TYPE_MODEL {
+        // SCAN C046: a MODEL body is the engine's pinned shape on every door.
+        // A replica's that fails it is the peer's bytes, refused as a claim
+        // body is (quarantined, the batch goes on), never stored to wedge
+        // the model substrate.
+        crate::provenance::decode_model_entity_body(data)
+            .map_err(|_| Error::InvalidClaimBody("MODEL entity body"))?;
     } else if entity_type == ENTITY_TYPE_SKILL {
         let decoded = crate::skill::decode_skill_record(data)?;
         crate::skill::resident::validate_owner_put_in_txn(store, wtxn, &id, &decoded, replicated)?;

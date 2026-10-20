@@ -192,8 +192,11 @@ impl Vault {
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
         // short-ids, edges): orphan residue without an entities row still
         // counts as local state to erase, mirroring the local
-        // `delete_entity_without_header` semantics.
-        if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
+        // `delete_entity_without_header` semantics. A tombstone batch's one
+        // decision-ledger scan stands in for this id's own once it proved
+        // the id clear (SCAN C049).
+        let ledger_clear = self.tombstone_ledger_clear(id);
+        if !self.active_delete_scope_exists_after_probe_in_txn(wtxn, id, ledger_clear)? {
             crate::claim::invalidate_weave_digest_source_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;

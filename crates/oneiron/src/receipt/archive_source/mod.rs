@@ -2,7 +2,7 @@
 mod access;
 mod codec;
 mod custody;
-pub(crate) use access::archived_receipt_sources_in_txn;
+pub(crate) use access::archived_receipt_carriers_in_txn;
 pub(crate) use codec::is_receipt_archive_source;
 pub(crate) use custody::{
     receipt_archive_custody_exists, receipt_archives_for_holder, remove_receipt_archive_custody,

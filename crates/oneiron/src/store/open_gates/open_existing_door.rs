@@ -178,6 +178,8 @@ impl Store {
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
             limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
+            deadline_jobs: crate::store::DeadlineJobs::default(),
+            tombstone_scope_probes: crate::deletion::TombstoneScopeProbes::default(),
             #[cfg(unix)]
             body_seal: crate::store::BodySealSlot::default(),
             reader_job_runner: std::sync::RwLock::new(None),

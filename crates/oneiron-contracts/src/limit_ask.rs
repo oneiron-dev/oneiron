@@ -392,6 +392,13 @@ pub enum EngineLimit {
     /// receipt, while new calls wait for the budget to drain. Measured against
     /// the host's own budget.
     OrganMemoryBytes,
+    /// Deadline jobs one caller has running at once: the recalls and searches
+    /// a door answers at their deadline, each counted until its work ends,
+    /// after its answer too (SCAN C030). Past it the job runs on and the row
+    /// asks, as the typed `deadline_jobs_high` check naming the caller and the
+    /// count, once per caller per window; nothing is refused, queued or
+    /// dropped.
+    DeadlineJobsPerCaller,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

@@ -451,13 +451,26 @@ impl PendingEmbeddingReconciler {
             ))?;
             let inputs: Vec<PendingEmbeddingInput> =
                 remote_work.iter().map(|work| work.input.clone()).collect();
-            match self.embed_on(rung.embedder.as_ref(), &inputs) {
-                Ok(vectors) => {
-                    if vectors.len() != remote_work.len() {
-                        return Err(Error::InvariantViolation(
-                            "embedder returned mismatched vector count",
-                        ));
+            // SCAN C041: an answer that does not fit the request (a vector
+            // count or width it did not ask for) is a failed remote embed, as
+            // an error is: the rows fall back to the local embedder, whose
+            // fills clear their leases, and the pass goes on.
+            let dimensions = self.vault.config.dimensions;
+            let answer = self
+                .embed_on(rung.embedder.as_ref(), &inputs)
+                .and_then(|vectors| {
+                    if vectors.len() == remote_work.len()
+                        && vectors.iter().all(|(vector, _)| vector.len() == dimensions)
+                    {
+                        Ok(vectors)
+                    } else {
+                        Err(Error::InvariantViolation(
+                            "remote embedder answered vectors that do not fit the request",
+                        ))
                     }
+                });
+            match answer {
+                Ok(vectors) => {
                     report.routed_remote += remote_work.len();
                     report.embedded += vectors.len();
                     self.fill_batch(

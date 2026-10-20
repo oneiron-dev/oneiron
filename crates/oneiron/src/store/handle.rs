@@ -279,6 +279,14 @@ pub struct StoreCore {
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).
     pub(crate) limit_watch: crate::limit_ask::LimitWatch,
+    /// The deadline jobs each caller has running on this vault, held to
+    /// `limits.deadline_jobs_per_caller` ([`crate::Vault::admit_deadline_job`]).
+    /// Never persisted.
+    pub(crate) deadline_jobs: crate::store::DeadlineJobs,
+    /// A tombstone batch's one decision-ledger scan answer, while the batch
+    /// applies ([`crate::Vault::batch_tombstone_scope_probes_in_txn`]). Never
+    /// persisted.
+    pub(crate) tombstone_scope_probes: crate::deletion::TombstoneScopeProbes,
     /// A sealed vault's body-file wrap key, held from its open (FIX 5348):
     /// every body file it writes is an envelope under a key it wraps.
     #[cfg(unix)]

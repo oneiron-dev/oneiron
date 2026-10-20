@@ -151,3 +151,6 @@ mod markers;
 mod provenance;
 mod redirect_shells;
 mod replay;
+mod scope_probes;
+
+pub(crate) use scope_probes::TombstoneScopeProbes;
