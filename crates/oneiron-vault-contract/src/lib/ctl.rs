@@ -457,9 +457,14 @@ pub enum CtlResponse {
     /// FIX 5389), never the slug itself. `slim_recovery_revision` is that of
     /// the supervisor SLIM recovery surface
     /// ([`SLIM_RECOVERY_REVISION`](crate::slim_control::SLIM_RECOVERY_REVISION),
-    /// FIX 5186): `slim_status`, `unslim` and `Shed.wait_id`. Each rides v3
-    /// with a build floor: a vault built before it sends none, which reads as
-    /// unknown, never as revision 1, and so does a value that is not a u32.
+    /// FIX 5186): `slim_status`, `unslim` and `Shed.wait_id`.
+    /// `vm_outbox_revision` is that of a vault VM's outbox carrier
+    /// ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION),
+    /// FIX 5235), sent only when its storage, its companion and its
+    /// attachment to the carrier port are all in place; a node's process
+    /// vault sends none. Each rides v3 with a build floor: a vault built
+    /// before it sends none, which reads as unknown, never as revision 1, and
+    /// so does a value that is not a u32.
     Ping {
         ok: bool,
         vault: String,
@@ -490,6 +495,12 @@ pub enum CtlResponse {
             deserialize_with = "super::version::observed_revision"
         )]
         slim_recovery_revision: Option<u32>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::version::observed_revision"
+        )]
+        vm_outbox_revision: Option<u32>,
     },
     Ok {
         ok: bool,

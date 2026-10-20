@@ -17,7 +17,9 @@
 # OF-570 (page AEAD): the C library is mdb.master3 (`lmdb-master3-sys`, data
 # format 3) instead of `lmdb-master-sys`, every LMDB feature forwards to it,
 # and the page cipher a sealed environment uses adds `chacha20poly1305`,
-# `getrandom` and `zeroize`, all already in the workspace lock.
+# `getrandom` and `zeroize`, all already in the workspace lock. FIX 1910: that
+# library is the sibling vendored `lmdb-master3-sys-0.2.6` (same version), which
+# wipes its copy of the page key.
 #
 # This package is vendored inside the repository's `crates/` directory but is
 # deliberately NOT a member of the Oneiron workspace — the root manifest
@@ -108,6 +110,8 @@ version = "0.2.155"
 
 [dependencies.lmdb-master3-sys]
 version = "0.2.6"
+# FIX 1910: the sibling vendored copy (the root patch selects it too).
+path = "../lmdb-master3-sys-0.2.6"
 
 [dependencies.chacha20poly1305]
 version = "0.11.0"

@@ -14,5 +14,13 @@
     "derivation_owner": "0000000000000000000000000000000000000000000000000000000000000000",
     "vault_disk_uuid": "00000000-0000-0000-0000-000000000000",
     "fscrypt_key_identifier": "00000000000000000000000000000000"
+  },
+  "outbox": {
+    "store": "/var/lib/oneiron/vaults/example/outbox-carrier",
+    "escrow_outbox": "/var/lib/oneiron/vaults/example/escrow-outbox",
+    "esign_outbox": "/var/lib/oneiron/vaults/example/esign-outbox",
+    "training_outbox": "/var/lib/oneiron/vaults/example/training-outbox",
+    "recipients": "/var/lib/oneiron/vaults/example/config/escrow",
+    "backups": "/var/lib/oneiron/vaults/example/backups"
   }
 }
