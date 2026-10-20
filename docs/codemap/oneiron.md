@@ -2019,7 +2019,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/wire.rs` | src | m | 6 crate-vis | — | Reply normalization: fence/exec stripping, console-block scanning, and the structural gate |
 | `src/entity_doc/carried.rs` | src | m | 12 crate-vis | — | A MESSAGE's document between the owner's machines (FIX 853) |
 | `src/entity_doc/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of entity documents (KS7-2): each entity's head, citation floors, forks, pins, purge… |
-| `src/entity_doc/checkpoint/documents.rs` | src | s | 4 crate-vis | — | The document rows of entity and NOTE documents (KS7-2, FIX 6072): each slot's snapshot and pending updates… |
+| `src/entity_doc/checkpoint/documents.rs` | src | m | 4 crate-vis | — | The document rows of entity and NOTE documents (KS7-2, FIX 6072): each slot's snapshot and pending updates… |
 | `src/entity_doc/checkpoint/loro.rs` | src | s | 6 crate-vis | — | The entity document's actor carriers in its Loro history (FIX 6072): its birth's actor and every engine… |
 | `src/entity_doc/checkpoint/proposal.rs` | src | s | 2 crate-vis | — | A text-edit proposal's review bundle, split by its forks' entities (KS7-2) |
 | `src/entity_doc/citation_floor.rs` | src | s | 6 crate-vis | — | Citation floors: a derived record that quotes an entity document keeps the history it quoted |
@@ -2918,8 +2918,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/brief_doors.rs` | src | s | 3 struct · 1 fn | AuthorBriefRequest, BriefClaimCitation, BriefKindStamp | Typed claim-citing brief authoring over the existing NOTE pin and write doors |
 | `src/note/brief_view.rs` | src | s | 2 struct · 4 fn | BriefCitationView, BriefView | Fresh brief views: current ledger state, cursor drift, and one renderer |
 | `src/note/carrier_erase.rs` | src | s | 8 crate-vis | — | A NOTE workflow row as a carrier holds it (FIX 3878): a window's copy, or a recovery artifact's |
-| `src/note/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of NOTE rows (KS7-2): each NOTE's head, head documents, overrides and seal under its… |
+| `src/note/checkpoint.rs` | src | s | 5 crate-vis | — | The checkpoint getter of NOTE rows (KS7-2): each NOTE's head, head documents, overrides and seal under its… |
+| `src/note/checkpoint/body.rs` | src | s | 6 crate-vis | — | A NOTE core's author in its raw entity row (FIX 6072, Engine R2): the `author_ref` of the pinned four-key… |
 | `src/note/checkpoint/bundle.rs` | src | m | 2 crate-vis | — | A NOTE review bundle (KS7-2), under the NOTEs its waiting forks and landings name |
+| `src/note/checkpoint/loro.rs` | src | m | 8 crate-vis | — | A NOTE document's actor carriers in its Loro history (FIX 6072): every engine stamp's actor and every… |
 | `src/note/checkpoint/pins.rs` | src | s | 3 crate-vis | — | The NOTE citation-pin index rows (KS7-2), each under its citing document and holding while the document or… |
 | `src/note/citation_erase.rs` | src | s | 9 crate-vis | — | Hard-erase dependency fences |
 | `src/note/citation_scrub.rs` | src | s | 2 crate-vis | — | Pin-only live-state rebuild |
@@ -2928,7 +2930,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/coreference/mod.rs` | src | s | 1 crate-vis | — | Transaction-bound resident diary coreference over NOTE, edge and grant rows |
 | `src/note/coreference/pair.rs` | src | s | 7 crate-vis | — | Canonical pair identity and resident-owned submission witnesses |
 | `src/note/delete.rs` | src | s | 1 crate-vis | — | Transactional erasure of a NOTE's own carriers and outgoing pin indexes |
-| `src/note/document.rs` | src | m | 3 struct · 2 enum · 1 fn · 19 crate-vis | NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution | NOTE entity-document operations, stable cursors and citation provenance |
+| `src/note/document.rs` | src | m | 3 struct · 2 enum · 1 fn · 20 crate-vis | NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution | NOTE entity-document operations, stable cursors and citation provenance |
 | `src/note/document_store.rs` | src | m | 9 fn · 12 crate-vis | — | Actor-bound NOTE editor verbs and atomic entity-document persistence |
 | `src/note/document_tests.rs` | test | m | — | — | Concurrent editor operations, stable provenance and blessed brief acceptance |
 | `src/note/documents.rs` | src | m | 3 struct · 2 enum · 6 fn · 22 crate-vis | NoteAnchor, NoteDocument, NoteEdit, NoteEditOutcome, NoteVersion | Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites |
@@ -2942,12 +2944,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/lifecycle.rs` | src | s | 3 struct · 1 enum · 5 fn · 7 crate-vis | NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal | The one NOTE seal (ARCH-0032: `Active → Sealed → Archived → Tombstoned`) |
 | `src/note/live_body.rs` | src | s | 1 crate-vis | — | Live NOTE read projection without rewriting the immutable birth record |
 | `src/note/live_body_tests.rs` | test | s | — | — | Live read projections share a document frontier and keep raw birth bytes intact |
-| `src/note/operations.rs` | src | m | 3 struct · 1 enum · 5 fn · 7 crate-vis | NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt | Authenticated semantic NOTE commands |
+| `src/note/operations.rs` | src | m | 3 struct · 1 enum · 5 fn · 8 crate-vis | NoteAuthorship, NoteChange, NoteOperation, NoteOperationReceipt | Authenticated semantic NOTE commands |
 | `src/note/overrides.rs` | src | s | 3 struct · 4 fn · 5 crate-vis | NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest | A NOTE's own extraction, context and retention defaults (ARCH-0032: each kind "carries its own extraction… |
 | `src/note/pin_index.rs` | src | s | 13 crate-vis | — | Exact citation dependency indexes shared by sync and featureless erasure |
 | `src/note/program_tests.rs` | test | m | — | — | NOTE caller-observable storage, cursor, fork and bridge laws |
 | `src/note/proposal_doors.rs` | src | m | 10 struct · 6 fn | NoteForkReadRequest, NoteForkRecordView, NoteForkRequest, NoteForkView, NoteLandingView, NoteProposalForkRef, NoteProposalOpenRequest, NoteProposalRequest +2 | Typed NOTE forks and explicit proposal sets over the existing NOTE engine doors |
-| `src/note/proposals.rs` | src | m | 3 struct · 3 enum · 5 fn · 1 const · 12 crate-vis | NoteActor, NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict, PendingNoteForkErase | Grant-routed fork bundles, atomic verdicts and durable head-move receipts |
+| `src/note/proposals.rs` | src | m | 3 struct · 3 enum · 7 fn · 1 const · 13 crate-vis | NoteActor, NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict, PendingNoteForkErase | Grant-routed fork bundles, atomic verdicts and durable head-move receipts |
 | `src/note/reads.rs` | src | s | 9 struct · 1 enum · 4 fn · 2 crate-vis | NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest, NoteEditorClosed, NoteHistoryView, NoteReadRequest, NoteReadSource +2 | Caller-scoped NOTE text, stable edit anchors and retained operation attribution |
 | `src/note/recovery.rs` | src | s | 6 crate-vis | — | Host-local history-free recovery of uncited NOTE values |
 | `src/note/replica.rs` | src | s | 4 crate-vis | — | Canonical authority-to-replica import and citation-closed NOTE disclosure |
@@ -4034,7 +4036,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/body_store.rs` | src | m | 35 crate-vis | — | File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++) |
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/checkpoint_payload/instance.rs` | src | s | 10 crate-vis | — | The instance table of checkpoint payload compartments (KS-7, `checkpoint_payload:instance:v1:`): one row per… |
-| `src/store/checkpoint_payload/loro.rs` | src | m | 16 crate-vis | — | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
+| `src/store/checkpoint_payload/loro.rs` | src | m | 17 crate-vis | — | The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full… |
 | `src/store/checkpoint_payload/loro/frame.rs` | src | s | 3 crate-vis | — | A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each… |
 | `src/store/checkpoint_payload/loro/proof.rs` | src | s | 1 crate-vis | — | The typed equality of two Loro histories a join's proof compares (FIX 6072, Engine R1): change by change and… |
 | `src/store/checkpoint_payload/mod.rs` | src | m | 25 crate-vis | — | Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at… |

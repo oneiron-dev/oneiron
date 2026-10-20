@@ -26093,7 +26093,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/checkpoint/documents.rs",
@@ -38003,7 +38003,17 @@
      "path": "src/note/checkpoint.rs",
      "purpose": "The checkpoint getter of NOTE rows (KS7-2): each NOTE's head, head documents, overrides and seal under its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/checkpoint/body.rs",
+     "purpose": "A NOTE core's author in its raw entity row (FIX 6072, Engine R2): the `author_ref` of the pinned four-key…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -38014,6 +38024,16 @@
      "purpose": "A NOTE review bundle (KS7-2), under the NOTEs its waiting forks and landings name",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/checkpoint/loro.rs",
+     "purpose": "A NOTE document's actor carriers in its Loro history (FIX 6072): every engine stamp's actor and every…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -38109,7 +38129,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -38307,7 +38327,7 @@
      "path": "src/note/operations.rs",
      "purpose": "Authenticated semantic NOTE commands",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -38384,9 +38404,9 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 3,
-      "fn": 5,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -51988,7 +52008,7 @@
      "path": "src/store/checkpoint_payload/loro.rs",
      "purpose": "The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -65591,7 +65611,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 53,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -66251,7 +66271,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4137,
+   "source_files": 4139,
    "test_files": 902
   },
   "oneiron-android": {
