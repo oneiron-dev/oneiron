@@ -675,11 +675,12 @@ fn carrier_withheld(
     let Some(carrier) = carrier else {
         return Ok(false);
     };
-    crate::settings::device_only_withholds(store, rtxn, device_only, carrier)
-        .or_else(|error| match error {
+    crate::settings::device_only_withholds(store, rtxn, device_only, carrier).or_else(|error| {
+        match error {
             Error::CorruptedIndex(_) => Ok(true),
             error => Err(error),
-        })
+        }
+    })
 }
 
 /// The vault owner as a diary reader: the embedded and OKF exports' reader.

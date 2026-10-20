@@ -67,9 +67,7 @@ fn deadline_jobs_refused(bound: u64) -> MemoryError {
     MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         format!("{row}: this caller already runs {bound} deadline jobs"),
-        &[
-            "Retry once an earlier recall or search under a deadline has ended, or raise the row.",
-        ],
+        &["Retry once an earlier recall or search under a deadline has ended, or raise the row."],
     )
 }
 

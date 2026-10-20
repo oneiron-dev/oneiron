@@ -166,8 +166,7 @@ pub(super) fn resolution_rule_holds_for_store_in_txn(
     if proposal_record.approval != ClaimApprovalStatus::Proposed {
         return Ok(false);
     }
-    let IdentityTopologyAction::Apply(proposed_op) = proposal_record.action.to_fold_action()
-    else {
+    let IdentityTopologyAction::Apply(proposed_op) = proposal_record.action.to_fold_action() else {
         return Ok(false);
     };
     let Ok(target) = proposal_scope_target(&proposed_op) else {
