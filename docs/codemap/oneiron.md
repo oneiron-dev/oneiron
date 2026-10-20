@@ -3332,7 +3332,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/prompt.rs` | src | m | 5 struct · 6 fn · 4 const | PromptRecompileStamp, ResolvedPrompt, SessionPromptAssembly, SessionPromptParts, StampedLlmRequest | — |
 | `src/provenance/actor_substrate.rs` | src | s | 1 fn · 1 const · 8 crate-vis | — | Actor-class validation, legacy evidence transition, and model substrate codec |
 | `src/provenance/archive.rs` | src | s | 2 crate-vis | — | Foreign archive provenance reconstructed through the owning lifecycle |
-| `src/provenance/birth.rs` | src | m | 3 struct · 1 enum · 9 fn · 1 const · 12 crate-vis | RowBirth, WithheldKey, WithheldRef, WithheldRole | Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the… |
+| `src/provenance/birth.rs` | src | m | 3 struct · 1 enum · 9 fn · 13 crate-vis | RowBirth, WithheldKey, WithheldRef, WithheldRole | Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the… |
 | `src/provenance/birth/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of row births (KS7-2): each birth envelope under its born row's entity tree, and each… |
 | `src/provenance/body.rs` | src | m | 3 struct · 2 enum · 3 fn · 14 crate-vis | BodyLocation, BodyRef, BodyState, OwnedBody, RetainedResultProvenance | Who owns a body and whether it is whole |
 | `src/provenance/body/checkpoint.rs` | src | s | 3 crate-vis | — | The checkpoint getter of body descriptors (KS7-2): each descriptor and each digest holder row under its… |
@@ -4210,7 +4210,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/ingest/peer_import.rs` | src | s | 11 crate-vis | — | Which rows of a window a federation peer's import brought (Docs Q04) |
 | `src/sync/ingest/promotion.rs` | src | s | 6 crate-vis | — | What a promotion owes the TURNs it lands (OF-534) |
 | `src/sync/ingest/task_pairs.rs` | src | s | 7 crate-vis | — | TASK rows one delta or pass changes together (FIX 5998) |
-| `src/sync/ingest/tombstone.rs` | src | s | 2 crate-vis | — | The tombstone classification every replicated tombstone takes before replay |
+| `src/sync/ingest/tombstone.rs` | src | s | 3 crate-vis | — | The tombstone classification every replicated tombstone takes before replay |
 | `src/sync/lease.rs` | src | m | 2 struct · 1 enum · 15 fn · 7 const · 1 mod · 4 crate-vis | LeaseRecord, LeaseRegistryKey, LeaseStatus | Device-lease registry for the REDACTION_AUDIT stream (ONE-1140) |
 | `src/sync/lease/tests.rs` | test | m | — | — | — |
 | `src/sync/local_claims.rs` | src | s | 3 crate-vis | — | Egress exclusion for claims whose authority exists only in the local vault |
@@ -4310,7 +4310,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/forward/calendar.rs` | src | s | 1 crate-vis | — | Deferred calendar-origin binding after entity/claim/edge replay settles |
 | `src/sync/window/forward/edge_pass.rs` | src | m | 1 crate-vis | — | Edge pass of forward rematerialization: materialize window edge rows into LMDB |
 | `src/sync/window/forward/entity_pass.rs` | src | s | 1 crate-vis | — | Entity pass of forward rematerialization: every window entity blob through the shared ingest entry, one… |
-| `src/sync/window/forward/tombstone_pass.rs` | src | s | 2 crate-vis | — | Tombstone pass of forward rematerialization: reason-aware replay of window tombstones |
+| `src/sync/window/forward/tombstone_pass.rs` | src | m | 2 crate-vis | — | Tombstone pass of forward rematerialization: reason-aware replay of window tombstones |
 | `src/sync/window/history_free.rs` | src | m | 1 enum · 9 fn · 7 crate-vis | WindowExport | History-free window transport: what a window pinned history-free, or already shallow, ships to a peer that… |
 | `src/sync/window/history_free_tests.rs` | test | XL | — | — | The stall ticket's invariants over the code's own list of pin causes and replacement steps |
 | `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 8 re-export · 22 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |

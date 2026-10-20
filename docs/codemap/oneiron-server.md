@@ -172,6 +172,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
 | `src/api/esign.rs` | src | m | 5 crate-vis | — | Session-less signing ceremony |
 | `src/api/esign/delivery_outbox.rs` | src | m | 1 crate-vis | — | The e-sign delivery outbox (OF-415, FIX 3577): the seam that hands each authorized `esign.delivery` intent… |
+| `src/api/esign/delivery_outbox/completion.rs` | src | s | 2 crate-vis | — | A completed delivery's hand-off (FIX 5306): the completion receipt the sender takes to retire its own record… |
+| `src/api/esign/delivery_outbox/wire.rs` | src | s | 13 crate-vis | — | The outbox's file codec: the envelope the vault writes, the sender's ack, the lease an envelope names, and… |
 | `src/api/esign/editor_auth.rs` | src | s | 5 crate-vis | — | The owner's editor capability (FIX 5618) |
 | `src/api/esign/editor_budget.rs` | src | s | 5 crate-vis | — | Router-owned admission for editor computation |
 | `src/api/esign/hold_worker.rs` | src | s | 2 crate-vis | — | The held sign act's worker (OF-415, ARCH-0064 D6, ARCH-0076 #roles-everywhere): every tick it asks each new… |
@@ -802,11 +804,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/host.rs` | src | s | 6 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
 | `src/managed/isolation.rs` | src | s | 7 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
 | `src/managed/key_sync.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 const · 1 re-export | KeyInvalidation, KeyInvalidationKind | Managed-host wiring for the node account-key path (OF-448, the node half of CROSS-ARCH-0008 section 4, owner… |
-| `src/managed/ledger.rs` | src | m | 2 struct · 10 fn · 1 const · 4 crate-vis | LedgerSnapshot, WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
+| `src/managed/ledger.rs` | src | m | 2 struct · 10 fn · 1 const · 5 crate-vis | LedgerSnapshot, WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
 | `src/managed/listener.rs` | src | m | 1 struct · 2 enum · 10 fn · 1 const · 2 crate-vis | BoundServeListener, ManagedCtl, ServeListener | Managed sockets: listener resolution and binding, the ctl plane, and readiness |
 | `src/managed/listener/tests.rs` | test | s | — | — | — |
 | `src/managed/mod.rs` | src | s | 3 mod · 8 re-export · 3 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
 | `src/managed/org_routing.rs` | src | s | 2 struct · 1 enum · 11 fn | OrgRoutingError, OrgVaultRoute, OrgVaultRouter | Read-only organization-to-vault routing over a host's registry projection |
+| `src/managed/owner_recovery.rs` | src | s | 1 crate-vis | — | Owner-signing recovery (FIX 5260): the vault's proof, on its supervisor's `recover_owner_signing` challenge… |
 | `src/managed/owner_stage.rs` | src | m | 2 crate-vis | — | Managed ingress's byte-exact staging of an owner-attested request whose body streams (FIX 5255, part 2 of… |
 | `src/managed/owner_storage.rs` | src | s | 4 crate-vis | — | The owner host a managed vault serves with: its backups and restore rehearsals on the tenant's own disk, in… |
 | `src/managed/peer.rs` | src | s | 3 crate-vis | — | Kernel-verified local transport peer, not a public caller IP |
@@ -815,7 +818,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/relay.rs` | src | m | 1 struct · 1 fn · 1 const | RelayConfig | A relay room has no engine, vault key, Loro document or inference worker |
 | `src/managed/settings.rs` | src | m | 5 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
 | `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
-| `src/managed/state_serve.rs` | src | XL | 3 struct · 21 fn · 1 type · 1 const · 17 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
+| `src/managed/state_serve.rs` | src | XL | 3 struct · 20 fn · 1 type · 1 const · 17 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
+| `src/managed/state_serve/control.rs` | src | s | 1 fn | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 5 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
 | `src/managed/vm_guest.rs` | src | s | 6 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
 | `src/managed/vm_host.rs` | src | m | 3 struct · 1 enum · 15 fn | SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun | The microVM adapter's host half: one Firecracker VM per vault |
