@@ -4133,9 +4133,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/surface_event/provider_payload.rs` | src | s | 3 fn · 1 const | — | Custody of a verified provider event's body (OF-519) |
 | `src/surface_event/tests.rs` | test | L | — | — | — |
 | `src/surface_event/tests/cc_intake.rs` | test | s | — | — | — |
-| `src/sweep/compact.rs` | src | L | 3 crate-vis | — | Window shallow-snapshot compaction and erased-id scrub |
+| `src/sweep/compact.rs` | src | L | 5 crate-vis | — | Window shallow-snapshot compaction and erased-id scrub |
 | `src/sweep/finalize.rs` | src | m | 5 crate-vis | — | Job finalize, retry rewrite, and dropped-obligation audit |
-| `src/sweep/mod.rs` | src | s | 2 crate-vis | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
+| `src/sweep/mod.rs` | src | s | 3 crate-vis | — | ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via… |
+| `src/sweep/owed.rs` | src | s | 4 crate-vis | — | Window compactions an erase owes (FIX 6387) |
 | `src/sweep/run.rs` | src | m | 13 crate-vis | — | Sweep driver, run state, and race-injection hooks |
 | `src/sweep/tests.rs` | test | L | — | — | — |
 | `src/sync/asset_body.rs` | src | s | 5 crate-vis | — | File-plane ASSET rows at sync (FIX 5393 cut 1): no export ships a manifest without its bytes |
@@ -4300,7 +4301,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/room_facts/erased.rs` | src | s | 3 crate-vis | — | The room side rows a carrier holds that name an actor this vault erased (FIX 4227, 4228): each is rewritten… |
 | `src/sync/room_facts/turn_marks.rs` | src | s | 5 crate-vis | — | The claims, responses and participation facts a turn door or a DAG append writes for a room or thread root… |
 | `src/sync/room_turns.rs` | src | m | 8 crate-vis | — | OF-522: a room's turn rows on the window plane |
-| `src/sync/row_birth.rs` | src | m | 13 crate-vis | — | Rule A row births on sync |
+| `src/sync/row_birth.rs` | src | m | 14 crate-vis | — | Rule A row births on sync |
 | `src/sync/row_birth/actor_erase.rs` | src | s | 3 crate-vis | — | An erased actor's births leave the window carriers (FIX 6279) |
 | `src/sync/schema.rs` | src | s | 6 fn · 3 crate-vis | — | CRDT Doc schema creation for the sync layer |
 | `src/sync/selector/admission.rs` | src | XL | 1 enum · 2 fn · 26 crate-vis | FederationAdmissionRole | Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone… |
