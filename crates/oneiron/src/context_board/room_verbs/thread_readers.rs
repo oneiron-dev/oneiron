@@ -3,11 +3,12 @@
 //! room's roster.
 
 use super::{
-    clearances_in, peer_read_keys_in, reading_defaults_in, room_facets_axis_in, room_reader_in,
-    room_roster_in,
+    clearances_in, peer_read_keys_in, reading_defaults_in, room_clearance_in, room_facets_axis_in,
+    room_reader_in, room_roster_in,
 };
 use crate::claim::{RoomTerms, RoomTurnCeiling};
 use crate::context_board::room::{RoomPresence, room_clearance, room_worlds};
+use crate::federation::Scope;
 use crate::{EntityId, Vault};
 
 /// Whether `caller` reads thread `thread` of `room` as `txn` reads it
@@ -60,7 +61,9 @@ pub(crate) fn thread_reader_in(
 /// private thread's (FIX 2951) are over the members in its audience alone;
 /// one whose audience holds no member now, read by the vault's Owner or an
 /// Admin in it off the room (FIX 6267), is bound to that caller alone: its
-/// worlds and clearance, and it as the audience. `None` when `caller` does
+/// worlds and clearance, and it as the audience. One whose audience still
+/// holds members, read so, meets that caller's own clearance too
+/// ([`off_room_reader_clearance_in`], FIX 6497). `None` when `caller` does
 /// not read the thread here. Held, as the room's.
 pub(crate) fn thread_ceiling_in(
     vault: &Vault,
@@ -84,6 +87,7 @@ pub(crate) fn thread_ceiling_in(
     {
         members.push(caller);
     }
+    let own = off_room_reader_clearance_in(vault, txn, room, thread, &members, caller)?;
     let worlds = reading_defaults_in(vault, txn, &members)?;
     let clearances = clearances_in(vault, txn, &members)?;
     let roster: Vec<_> = members
@@ -101,7 +105,7 @@ pub(crate) fn thread_ceiling_in(
     let terms = RoomTerms {
         worlds: room_worlds(&roster)?,
         facets: room_facets_axis_in(vault, txn, room)?,
-        clearance: room_clearance(&roster),
+        clearance: crate::claim::meet_clearance(room_clearance(&roster).as_ref(), own.as_ref()),
         p7: true,
     };
     Ok(Some(RoomTurnCeiling {
@@ -113,4 +117,52 @@ pub(crate) fn thread_ceiling_in(
         branch: Some(thread),
         personal: false,
     }))
+}
+
+/// What the vault's Owner or an Admin reading a private thread off the room
+/// brings to its ceiling while the audience still holds room members.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OffRoomReaderClearance {
+    /// Its own contact clearance meets into the P7 terms beside the members';
+    /// it joins no roster, world, peer read or audience.
+    MeetOwn,
+}
+
+/// CALLS `FIX 6497 off-room privileged reader clearance`: the one value
+/// [`off_room_reader_clearance_in`] reads, for the constructor and the
+/// per-row refresh alike.
+const OFF_ROOM_PRIVILEGED_READER_CLEARANCE: OffRoomReaderClearance =
+    OffRoomReaderClearance::MeetOwn;
+
+/// The clearance `caller` brings to private thread `thread` of `room` beside
+/// `members`, the room's members in its audience now (FIX 6497): when they
+/// are not empty, `caller` is none of them (a pen through its PERSON), and
+/// it is the vault's Owner or an Admin in that audience reading off the room
+/// ([`crate::workspace_roster::privileged_private_thread_reader_in`]), its
+/// own clearance as `txn` reads it. `None` otherwise: a public thread, a
+/// member's own read, the empty-audience case (FIX 6336) that binds the
+/// caller as a member instead. The vault owner and the vault's own agents
+/// bring no clearance, so for them this is `None` too.
+pub(crate) fn off_room_reader_clearance_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    members: &[EntityId],
+    caller: EntityId,
+) -> crate::Result<Option<Scope>> {
+    if members.is_empty() || members.contains(&caller) {
+        return Ok(None);
+    }
+    let named: std::collections::BTreeSet<_> = members.iter().copied().collect();
+    if crate::workspace_roster::names_actor_in(vault, txn, &named, caller)?
+        || !crate::workspace_roster::privileged_private_thread_reader_in(
+            vault, txn, room, thread, caller,
+        )?
+    {
+        return Ok(None);
+    }
+    match OFF_ROOM_PRIVILEGED_READER_CLEARANCE {
+        OffRoomReaderClearance::MeetOwn => room_clearance_in(vault, txn, &[caller]),
+    }
 }
