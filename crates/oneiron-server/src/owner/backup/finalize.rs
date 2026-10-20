@@ -218,3 +218,14 @@ pub(crate) fn accepted_marker(plan: &BackupPlan) -> Option<BackupMarker> {
         _ => None,
     }
 }
+
+/// When `plan`'s failed-attempt guard went down, in unix ms, by its mtime:
+/// `None` while none stands or its time does not read. A guard stands for a
+/// pre-idle backup that landed and was not recorded (FIX 6731).
+pub(crate) fn attempt_guard_ms(plan: &BackupPlan) -> Option<u64> {
+    let modified = std::fs::symlink_metadata(plan.dir.join(guard_name(&plan.label)))
+        .and_then(|metadata| metadata.modified())
+        .ok()?;
+    let since = modified.duration_since(std::time::UNIX_EPOCH).ok()?;
+    u64::try_from(since.as_millis()).ok()
+}

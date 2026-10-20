@@ -247,6 +247,18 @@ impl EgressRelay for OpenEgressProxy {
             .map(|_| ())
             .map_err(io::Error::other)
     }
+    /// A loopback call the guest fence refused is a blocked receipt naming
+    /// its address, as a refused connect is; no network work happens.
+    fn record_refusal(&self, refusal: &oneiron_container::LoopbackRefusal) -> io::Result<()> {
+        self.record(
+            &format!("loopback_{}", refusal.operation.as_str()),
+            &refusal.address.to_string(),
+            refusal.reason.as_str().as_bytes(),
+            PolicyClassifyDecision::Block,
+            PolicyVerdictCategory::None,
+            None,
+        )
+    }
     fn authorize_datagram(&self, target: SocketAddr) -> io::Result<()> {
         let allowed = target.port() == 53 || self.address_allowed(target);
         self.record(

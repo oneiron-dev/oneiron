@@ -115,6 +115,10 @@ pub(crate) struct OwnerHost {
     /// The managed pass's last decision said that took no backup, `0` for
     /// none (`managed`).
     managed_said: AtomicU8,
+    /// When the managed pass last landed a backup whose marker did not
+    /// write, in unix ms, `0` for none this run: it counts for the hour like
+    /// a recorded one (`managed`, FIX 6731).
+    managed_unrecorded_ms: AtomicU64,
     /// Where the scheduled pass is ([`PassStage`]).
     pass_stage: AtomicU8,
 }
@@ -143,6 +147,7 @@ impl OwnerHost {
             managed_every: None,
             backup_jobs: AtomicU64::new(0),
             managed_said: AtomicU8::new(0),
+            managed_unrecorded_ms: AtomicU64::new(0),
             pass_stage: AtomicU8::new(PassStage::Queued as u8),
         }
     }
@@ -449,6 +454,7 @@ impl SyncServer {
                         ),
                         None => tracing::warn!(
                             kind = ?crate::logging::engine_kind(&error),
+                            world_key_refused = ?world_key_refusal(&error),
                             "scheduled backup failed"
                         ),
                     },
@@ -459,6 +465,20 @@ impl SyncServer {
             }
         }))
     }
+}
+
+/// The fixed reason of a world key refusal in `error`'s chain, as the engine
+/// names it: why a backup that could not seal its key custody failed. Static
+/// text only, never a value.
+fn world_key_refusal(error: &anyhow::Error) -> Option<&'static str> {
+    error
+        .chain()
+        .find_map(|cause| match cause.downcast_ref::<oneiron::Error>() {
+            Some(oneiron::Error::Secret(oneiron::error::SecretError::WorldKeyRefused(reason))) => {
+                Some(*reason)
+            }
+            _ => None,
+        })
 }
 
 #[cfg(test)]

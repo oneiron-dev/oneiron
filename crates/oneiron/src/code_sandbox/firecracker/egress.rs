@@ -136,6 +136,7 @@ fn request(
             Err(error) => Err(error),
         },
         RelayRequest::AuthorizeDatagram { target } => relay.authorize_datagram(target),
+        RelayRequest::Refusal(refusal) => relay.record_refusal(&refusal),
         RelayRequest::Datagram { target, bytes } => relay
             .datagram(target, &bytes)
             .map(|bytes| reply.bytes = bytes),

@@ -31179,7 +31179,7 @@
      "path": "src/ingest/history/plan.rs",
      "purpose": "A dry run: what an import would do, read from the vault's files with LMDB opened read-only",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -52693,7 +52693,7 @@
      "path": "src/store/key_custody/log.rs",
      "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 3,
       "struct": 2
      }
@@ -64018,9 +64018,19 @@
      "purpose": "The maximum tier (OF-570): every LMDB page of a vault sealed under a page key",
      "surface": {
       "const": 1,
-      "crate-vis": 18,
+      "crate-vis": 16,
       "fn": 15,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/page_seal/read_only.rs",
+     "purpose": "The read-only door to a sealed vault (OF-570 maximum tier): the page key a reader that opens no `Vault`…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -66633,7 +66643,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66649,7 +66659,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4173,
+   "source_files": 4174,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69803,6 +69813,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/bin/oneiron-browser-relay.rs",
+     "purpose": "Fenced stdio carrier for a browser that speaks CDP only over TCP",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/bin/oneiron-fence.rs",
      "purpose": "Engine-mounted Linux fence launcher, not a development runner",
      "surface": {}
@@ -69813,12 +69831,17 @@
      "notable": [
       "EgressRelay",
       "HttpRequest",
-      "HttpResponse"
+      "HttpResponse",
+      "LoopbackOperation",
+      "LoopbackRefusal",
+      "LoopbackRefusalReason"
      ],
      "path": "src/egress.rs",
      "purpose": "Host-owned transport",
      "surface": {
-      "struct": 2,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -69847,6 +69870,16 @@
      "purpose": "Unprivileged in-container launcher and syscall-argument broker",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/launcher/loopback.rs",
+     "purpose": "The launcher's half of the guest's virtual loopback (FIX 6680)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69934,6 +69967,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/loopback.rs",
+     "purpose": "The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -69941,6 +69984,16 @@
      "purpose": "Bounded relay workers for a guest's datagrams (FIX 5979)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/sockets.rs",
+     "purpose": "A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix pair, which the notification's ADDFD…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69965,7 +70018,7 @@
      "path": "src/wire.rs",
      "purpose": "Private, bounded launcher/supervisor protocol",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     }
    ],
@@ -69985,10 +70038,10 @@
      "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
     },
     "launcher": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Unprivileged in-container launcher and syscall-argument broker"
     },
     "linux": {
@@ -70013,7 +70066,7 @@
      "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
     },
     "supervisor": {
-     "files": 3,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -70036,7 +70089,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 13,
+   "source_files": 17,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -84992,9 +85045,19 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 19,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/doctor.rs",
+     "purpose": "`oneiron doctor`: where the vault lives and how it is, read on a stopped vault or beside a running `serve`…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -85089,15 +85152,12 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "OpenedServedVault"
-     ],
+     "notable": [],
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
       "crate-vis": 14,
-      "fn": 1,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -85108,6 +85168,20 @@
      "purpose": "The vault's one hook sandbox and the fact-hook runner that runs on it, for plain and managed serve",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OpenedServedVault"
+     ],
+     "path": "src/commands/serve/page_seal.rs",
+     "purpose": "The vault serve opens before it builds its server, plain or sealed (OF-570 maximum tier), for plain serve…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -85647,6 +85721,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/page_seal.rs",
+     "purpose": "A sealed vault's page seal from this device's keystore (moved out of `server_config` whole)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/config/privacy_tests.rs",
@@ -85738,7 +85822,7 @@
      "purpose": "Resolved server configuration: `SyncServerConfig` and `ServeConfig`",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -88756,7 +88840,7 @@
      "path": "src/owner/backup/finalize.rs",
      "purpose": "A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -90754,14 +90838,14 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 43,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91134,7 +91218,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 936,
+   "source_files": 939,
    "test_files": 182
   },
   "oneiron-spawn": {
