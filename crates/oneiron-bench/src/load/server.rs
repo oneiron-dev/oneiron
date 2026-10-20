@@ -21,17 +21,17 @@ use super::embedder::{MODEL_ID, MODEL_KEY, PassCount};
 
 /// How the vault embeds: not at all, through the loopback stub, or with the
 /// shipped local model.
-pub(super) enum Embedding {
+pub(crate) enum Embedding {
     None,
     Stub { endpoint: String, dimensions: usize },
     Local,
 }
 
 /// A fresh vault with its config, issuer secret and owner principal.
-pub(super) struct Vault {
+pub(crate) struct Vault {
     pub(super) dir: PathBuf,
     pub(super) path: PathBuf,
-    pub(super) config: PathBuf,
+    pub(crate) config: PathBuf,
     pub(super) secret: String,
     pub(super) owner: String,
 }
@@ -72,7 +72,7 @@ fn tail(text: &str, n: usize) -> &str {
 }
 
 impl Vault {
-    pub(super) fn init(
+    pub(crate) fn init(
         bin: &Path,
         dir: &Path,
         embedding: &Embedding,
@@ -159,6 +159,33 @@ impl Vault {
         serde_json::from_str(&printed).map_err(|e| format!("token agent output: {e}"))
     }
 
+    /// The owner's first pairing link (`token bootstrap`) on the stopped
+    /// vault, for a server that will listen at `origin`. Redeeming it gives
+    /// an owner-grade credential, which a full-access agent token is not.
+    pub(crate) fn bootstrap_owner(&self, bin: &Path, origin: &str) -> Result<String, String> {
+        let vault_arg = self.path.to_string_lossy().into_owned();
+        let config_arg = self.config.to_string_lossy().into_owned();
+        let printed = run(
+            bin,
+            &[
+                "token",
+                "bootstrap",
+                "--url",
+                origin,
+                "--config",
+                &config_arg,
+                "--vault-path",
+                &vault_arg,
+            ],
+            &[("ONEIRON_AUTH_SECRET", &self.secret)],
+        )?;
+        let link = printed.trim();
+        if link.is_empty() {
+            return Err("token bootstrap printed no link".into());
+        }
+        Ok(link.to_owned())
+    }
+
     /// Bytes on disk under the vault directory.
     pub(super) fn disk_bytes(&self) -> u64 {
         fn walk(path: &Path) -> u64 {
@@ -234,18 +261,18 @@ pub(super) fn cpu_seconds(pid: u32) -> Option<f64> {
 }
 
 /// A running `serve`: its port, readiness time and memory peak.
-pub(super) struct Running {
+pub(crate) struct Running {
     child: Child,
     log: PathBuf,
-    pub(super) pid: u32,
-    pub(super) base: String,
+    pub(crate) pid: u32,
+    pub(crate) base: String,
     pub(super) ready_ms: f64,
     peak: Arc<Mutex<Memory>>,
     stop: Arc<AtomicBool>,
     sampler: Option<JoinHandle<()>>,
 }
 
-fn free_port() -> Result<u16, String> {
+pub(crate) fn free_port() -> Result<u16, String> {
     let listener =
         std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| format!("pick a port: {e}"))?;
     listener
@@ -262,7 +289,19 @@ impl Running {
         log_name: &str,
         log_level: &str,
     ) -> Result<Self, String> {
-        let port = free_port()?;
+        Self::start_on(bin, vault, env, log_name, log_level, free_port()?)
+    }
+
+    /// [`Self::start`] on a port the caller picked, for a pairing link that
+    /// names the origin before the server is up.
+    pub(crate) fn start_on(
+        bin: &Path,
+        vault: &Vault,
+        env: &[(String, String)],
+        log_name: &str,
+        log_level: &str,
+        port: u16,
+    ) -> Result<Self, String> {
         let log_path = vault.dir.join(log_name);
         let log = fs::File::create(&log_path).map_err(|e| format!("server log: {e}"))?;
         let err = log.try_clone().map_err(|e| format!("server log: {e}"))?;
@@ -382,7 +421,7 @@ impl Running {
 
     /// SIGTERM, then a wait of up to 120 s for a clean exit before SIGKILL;
     /// returns how the server exited.
-    pub(super) fn stop(mut self) -> String {
+    pub(crate) fn stop(mut self) -> String {
         let _ = self.signal("TERM");
         let deadline = Instant::now() + Duration::from_secs(120);
         let status = loop {
