@@ -70342,7 +70342,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit/geometry.rs",
-     "purpose": "`set_preset` and `set_glue`: a shape's or connector's preset geometry, and a connector's glue",
+     "purpose": "`set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue",
      "surface": {
       "crate-vis": 6
      }
@@ -71111,7 +71111,7 @@
      "path": "src/live/svg_fallback.rs",
      "purpose": "A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
