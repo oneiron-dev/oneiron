@@ -61,8 +61,12 @@ pub(super) async fn turn_board(
     };
     let prompt_for =
         crate::device_local::prompt_destination(auth.destination(), ModelLocality::ThirdParty);
-    match crate::device_local::retained_hold(vault, &prompt_for, &board.rows, board.block.as_bytes())
-    {
+    match crate::device_local::retained_hold(
+        vault,
+        &prompt_for,
+        &board.rows,
+        board.block.as_bytes(),
+    ) {
         Ok(None) => Some(board.block),
         Ok(Some(hold)) => {
             tracing::info!(
