@@ -52,6 +52,9 @@ struct NoticeSink<'a> {
     attempt: &'a AttemptRecord,
     notice: &'a EsignNotice,
     now: u64,
+    /// The caller's credential scope, judged again in the snapshot that
+    /// queues the delivery (FIX 6220, `notice_scope`).
+    in_scope: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
 }
 impl OutboundExecutionSink for NoticeSink<'_> {
     fn execute(&mut self, _request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
@@ -68,6 +71,7 @@ impl OutboundExecutionSink for NoticeSink<'_> {
             {
                 return Err(invalid("notice lease changed"));
             }
+            (self.in_scope)(txn)?;
             let document = EntityId::from_hex(&self.notice.document)?;
             let state = state_in(self.vault, txn, document)?;
             if state
@@ -149,7 +153,19 @@ impl Vault {
     pub fn dispatch_esign_notice(
         &self,
         attempt: &AttemptRecord,
+        request: OutboundDispatchRequest,
+    ) -> std::result::Result<crate::outbound::OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_esign_notice_in_scope(attempt, request, &|_| Ok(()))
+    }
+
+    /// [`Self::dispatch_esign_notice`] for a caller whose credential scope
+    /// `in_scope` judges again in the snapshot that queues the delivery
+    /// (FIX 6220): one it no longer admits there is a failed send.
+    pub(super) fn dispatch_esign_notice_in_scope(
+        &self,
+        attempt: &AttemptRecord,
         mut request: OutboundDispatchRequest,
+        in_scope: &dyn Fn(&heed::RoTxn<'_>) -> Result<()>,
     ) -> std::result::Result<crate::outbound::OutboundDispatchResult, OutboundDispatchError> {
         let notice = decode(attempt)?;
         let principal = notice
@@ -230,6 +246,7 @@ impl Vault {
                 attempt,
                 notice: &notice,
                 now,
+                in_scope,
             },
             (actor, actor_class),
             key,

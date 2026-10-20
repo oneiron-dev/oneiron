@@ -27581,7 +27581,7 @@ async fn vault_esign_notices_dispatch(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
