@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1082 facade rows, 3678 generated types.
+// UniFFI census: 1082 facade rows, 3681 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1034.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -48675,6 +48675,32 @@ pub struct HeldMedia {
     pub hash: String,
 }
 
+/// `oneiron_docedit::live::pptx::table::TableMerge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TableMerge {
+    #[serde(rename = "first_row")]
+    pub first_row: u64,
+    #[serde(rename = "first_column")]
+    pub first_column: u64,
+    #[serde(rename = "last_row")]
+    pub last_row: u64,
+    #[serde(rename = "last_column")]
+    pub last_column: u64,
+}
+
+/// `oneiron_docedit::live::pptx::table::TableBody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TableBody {
+    #[serde(rename = "rows")]
+    pub rows: Vec<u64>,
+    #[serde(rename = "columns")]
+    pub columns: Vec<u64>,
+    #[serde(rename = "cells", default, skip_serializing_if = "Option::is_none")]
+    pub cells: Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
+    #[serde(rename = "merges", default, skip_serializing_if = "Option::is_none")]
+    pub merges: Option<Vec<TableMerge>>,
+}
+
 /// `oneiron_docedit::live::pptx::ChartKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChartKind {
@@ -48862,12 +48888,7 @@ pub enum NodePayload {
         media: HeldMedia,
     },
     #[serde(rename = "table")]
-    Table {
-        #[serde(rename = "header")]
-        header: Vec<String>,
-        #[serde(rename = "rows")]
-        rows: Vec<Vec<Option<String>>>,
-    },
+    Table(TableBody),
     #[serde(rename = "chart")]
     Chart {
         #[serde(rename = "family")]
@@ -49259,6 +49280,62 @@ pub enum XlsxBodyOp {
     },
 }
 
+/// `oneiron_docedit::live::pptx::table::TableEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TableEdit {
+    #[serde(rename = "insert_row")]
+    InsertRow {
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "insert_column")]
+    InsertColumn {
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "delete_row")]
+    DeleteRow {
+        #[serde(rename = "row")]
+        row: u64,
+    },
+    #[serde(rename = "delete_column")]
+    DeleteColumn {
+        #[serde(rename = "column")]
+        column: u64,
+    },
+    #[serde(rename = "move_row")]
+    MoveRow {
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "move_column")]
+    MoveColumn {
+        #[serde(rename = "column")]
+        column: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "set_cell")]
+    SetCell {
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "column")]
+        column: u64,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "merge")]
+    Merge(TableMerge),
+    #[serde(rename = "unmerge")]
+    Unmerge(TableMerge),
+}
+
 /// `oneiron_docedit::live::pptx::DeckOp`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeckOp {
@@ -49334,6 +49411,13 @@ pub enum DeckOp {
         node: u64,
         #[serde(rename = "payload")]
         payload: NodePayload,
+    },
+    #[serde(rename = "edit_table")]
+    EditTable {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "edits")]
+        edits: Vec<TableEdit>,
     },
     #[serde(rename = "replace_opaque")]
     ReplaceOpaque {
@@ -49990,6 +50074,15 @@ pub enum Conflict {
     PayloadVsPayload {
         #[serde(rename = "node")]
         node: u64,
+    },
+    #[serde(rename = "cell_vs_cell")]
+    CellVsCell {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "column")]
+        column: u64,
     },
 }
 
