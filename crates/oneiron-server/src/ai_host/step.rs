@@ -2,9 +2,14 @@
 //!
 //! A step's prompt is data the vault already holds: the agent definition's
 //! `instructions` as the system message, then the step's resolved context
-//! (briefing, then each earlier step's output) as user messages. A first step
-//! with no context is asked its definition's own `desc`. No text is invented
-//! here; the output's raw bytes become the step's durable result.
+//! (briefing, the memory and chat rows its context selected, as text, then
+//! each earlier step's output) as user messages. A first step with no
+//! briefing and no earlier output is asked its definition's own `desc`. No
+//! text is invented here; the output's raw bytes become the step's durable
+//! result.
+//!
+//! A step may hand a masked secret's handle to the use door's table through
+//! a `self.use` tool (FIX 2315, `secret_use`); no handle is ever expanded.
 //!
 //! A step whose task names an objective is also asked for its confession
 //! (OF-544, ARCH-0079): after a DONE line, one fenced block naming each
@@ -29,6 +34,10 @@ use oneiron::{
 use super::CHAT_ROLE;
 use super::payer_funding::{PayerFault, requires_payer, scope_funding};
 use crate::models::ModelRuntime;
+
+mod secret_use;
+
+use secret_use::StepSecretUse;
 
 /// The purpose a workflow step's calls are metered and routed under.
 const STEP_PURPOSE: &str = "workflow_step";
@@ -160,6 +169,11 @@ impl StepRunner {
         context: ResolvedContextProjection,
     ) -> Result<StepOutput, StepFault> {
         let definition = &step.input.definition;
+        // FIX 6290: the memory and chat rows the step's context selected, as
+        // text read on its run's own lanes. A row that no longer reads is
+        // counted left out, never refused.
+        let selected =
+            AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
         let mut messages = Vec::new();
         if let Some(instructions) = definition
             .instructions
@@ -173,21 +187,35 @@ impl StepRunner {
         if let Some(notice) = context.narrowed_notice() {
             messages.push(message(LlmMessageRole::System, notice.body));
         }
-        let briefing = context.briefing.filter(|text| !text.trim().is_empty());
-        if let Some(briefing) = &briefing {
-            messages.push(message(LlmMessageRole::User, briefing.clone()));
+        // What the selected rows lost here is told by count, beside it.
+        if let Some(left_out) = selected.omission_notice() {
+            messages.push(message(LlmMessageRole::System, left_out));
         }
-        for earlier in &context.workflow_output_refs {
-            let bytes = restore_output(vault, earlier.source)?;
-            messages.push(message(
+        let briefing = context.briefing.filter(|text| !text.trim().is_empty());
+        let mut earlier = Vec::with_capacity(context.workflow_output_refs.len());
+        for output in &context.workflow_output_refs {
+            let bytes = restore_output(vault, output.source)?;
+            earlier.push(message(
                 LlmMessageRole::User,
                 String::from_utf8_lossy(&bytes).into_owned(),
             ));
         }
-        let asked_desc = !messages.iter().any(|m| m.role == LlmMessageRole::User);
-        if asked_desc {
+        // The step's request is its briefing; with no briefing and no
+        // earlier output, its definition's own `desc`. Its selected rows are
+        // context, never a request, so they ask nothing in its place.
+        let asked_desc = briefing.is_none() && earlier.is_empty();
+        if let Some(briefing) = &briefing {
+            messages.push(message(LlmMessageRole::User, briefing.clone()));
+        } else if asked_desc {
             messages.push(message(LlmMessageRole::User, definition.desc.clone()));
         }
+        if let Some(memory) = selected.memory_text() {
+            messages.push(message(LlmMessageRole::User, memory));
+        }
+        if let Some(chat) = selected.chat_text() {
+            messages.push(message(LlmMessageRole::User, chat));
+        }
+        messages.extend(earlier);
         let request = briefing
             .as_deref()
             .or(asked_desc.then_some(definition.desc.as_str()));
@@ -210,6 +238,7 @@ impl StepRunner {
                 response_format: ResponseFormat::Text,
             },
             payer_required,
+            true,
         )?;
         let confession = if objectives.is_empty() {
             None
@@ -225,18 +254,21 @@ impl StepRunner {
         vault: &Vault,
         input: ModelStep<'_>,
     ) -> Result<Vec<u8>, StepFault> {
-        self.generate_in(runtime, vault, input, false)
+        self.generate_in(runtime, vault, input, false, false)
     }
 
     /// [`Self::generate`] for a step that knows whether it must read its
     /// payer (`payer_required`): a room-bound step's root scope must name
     /// its payer (OF-531), and so must a member's bound run's (FIX 5316).
+    /// A workflow text step (`offers_use`) may also use a masked secret's
+    /// handle through `self.use` (FIX 2315), on a route that takes tools.
     fn generate_in(
         &self,
         runtime: &tokio::runtime::Runtime,
         vault: &Vault,
         input: ModelStep<'_>,
         payer_required: bool,
+        offers_use: bool,
     ) -> Result<Vec<u8>, StepFault> {
         let ModelStep {
             definition,
@@ -297,7 +329,8 @@ impl StepRunner {
             .models
             .admit_role(vault, CHAT_ROLE, request)
             .map_err(|refusal| Error::InvalidConfig(format!("workflow step refused: {refusal}")))?;
-        let request = call.request;
+        let mut request = call.request;
+        let offers_use = offers_use && secret_use::offer(&call.ladder, &mut request);
         // The agent pays: its live budget policy rows, its own meter. Every
         // earlier try of this step failed its model call, and each rung it
         // sent was charged its reservation. Those charges are replayed into
@@ -383,10 +416,12 @@ impl StepRunner {
             guard.settle_reserved(&spent).map_err(budget)?;
         }
         let replayed = guard.read().used_units;
+        let uses = offers_use.then(|| StepSecretUse::new(vault, attempt, actor, &run_id));
         // The step is a run on that meter: each rung its call reaches is
         // admitted on its own permit, sent through the run's gate and
         // settled. An answer pays its tokens, or the reservation when it
         // reports none; a rung that went out and failed pays its reservation.
+        // A round `self.use` asks again is the same call on the same run.
         let run = self.models.funded_run(run_id, guard, payer);
         // The admitted request is the step's replay capsule (FIX 3028),
         // finalized with the rung that answers it. A capture that fails
@@ -398,7 +433,10 @@ impl StepRunner {
             actor,
             &request,
         );
-        let generated = runtime.block_on(call.ladder.generate_served(&run, request, None));
+        let generated = match &uses {
+            Some(uses) => uses.converse(runtime, &call.ladder, &run, request),
+            None => runtime.block_on(call.ladder.generate_served(&run, request, None)),
+        };
         oneiron::code_run::finalize_step_captures(vault);
         // What this try spent goes on the lease whatever the call answered;
         // the replayed tries recorded their own.
