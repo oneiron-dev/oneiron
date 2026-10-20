@@ -5,7 +5,9 @@
 //! checked, never request text. A pumped run's wave is its own, bound to its
 //! live lease (its host door); a credential's has no lease, so it is root and
 //! the owner's, as `POST /v1/ai/waves` is.
-use oneiron::attempt_queue::EnqueueOutcome;
+use oneiron::attempt_queue::{
+    AttemptInterventionKind, AttemptQueue, EnqueueOutcome, InterveneAttempt,
+};
 use oneiron::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
     MemoryResult,
@@ -82,6 +84,32 @@ pub(crate) fn wave_plan(
         )
     })?;
     Ok((epic, constraints))
+}
+
+/// The same wave asked again while its plan waits at its spend cap (OF-541,
+/// FIX 1723): the ask takes that plan up again through the ordinary Resume,
+/// as the asker, as asking again requeued the plan while an exhausted plan
+/// failed. Any other answer, and a plan a person paused, stand as they are.
+pub(super) fn resume_held_wave(
+    server: &SyncServer,
+    asker: WriteActor,
+    outcome: EnqueueOutcome,
+    now: u64,
+) -> MemoryResult<EnqueueOutcome> {
+    let EnqueueOutcome::Existing(attempt) = &outcome else {
+        return Ok(outcome);
+    };
+    if !attempt.budget_hold() {
+        return Ok(outcome);
+    }
+    let resumed = AttemptQueue::new(server.vault()).intervene(InterveneAttempt {
+        id: attempt.id,
+        kind: AttemptInterventionKind::Resume,
+        actor: asker.entity_ref().to_hex(),
+        note: Some("the same wave asked again".to_owned()),
+        now,
+    })?;
+    Ok(EnqueueOutcome::Existing(resumed.record))
 }
 
 /// The planning attempt one enqueue answered with.
