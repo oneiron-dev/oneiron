@@ -15,12 +15,11 @@
 /// the voice loop's socket, the key directory, the publisher training
 /// outbox and the direct Linear mirror's response custody, which the host
 /// derives beside the data directory. The training outbox and the last
-/// six are reserved argv-only bindings the server's schema has no key for:
-/// the guests' container CLIs, the pack organ directory, the mesh
-/// listener's bind and relays and the artifact origin's public slug, which
-/// the supervisor passes as `--browser-runtime`, `--desktop-runtime`,
-/// `--organ-dir`, `--mesh-bind`, `--mesh-relays` and
-/// `--artifact-public-slug`. An owner's `[browser] runtime` and `[desktop]
+/// five are reserved argv-only bindings the server's schema has no key for:
+/// the guests' container CLIs, the pack organ directory and the mesh
+/// listener's bind and relays, which the supervisor passes as
+/// `--browser-runtime`, `--desktop-runtime`, `--organ-dir`, `--mesh-bind`
+/// and `--mesh-relays`. An owner's `[browser] runtime` and `[desktop]
 /// runtime` stay his, inside the vault's own storage.
 pub const SUPERVISOR_OWNED: &[&str] = &[
     "vault_path",
@@ -54,7 +53,6 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "organ_dir",
     "mesh_bind",
     "mesh_relays",
-    "artifact_public_slug",
 ];
 
 /// The leaves that name a key by the environment variable holding it.
