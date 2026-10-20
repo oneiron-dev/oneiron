@@ -11,9 +11,9 @@
 //!
 //! The check reads the same meter on the offer's check date. A promise is
 //! checked only after a yes, and only once the approved model served the
-//! whole window and every call in it was priced; until then the check waits,
-//! and the next night queues it again. A window whose only unpriced calls
-//! lack a quoted cache rate closes as neither a pass nor a fail (FIX 6265).
+//! whole window; until then the check waits, and the next night queues it
+//! again. A window with calls the check cannot price or sum closes as
+//! unverifiable, neither a pass nor a fail (FIX 6265, 6317).
 //! The check is fixed code: no model call.
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach::coach_offer_check_target;
@@ -45,7 +45,7 @@ mod sources;
 mod unverifiable;
 use cost::{candidate_monthly, monthly, payback};
 use sources::Sources;
-use unverifiable::UnverifiableUnpricedCache;
+use unverifiable::Unverifiable;
 
 const DAY_SECS: u64 = 24 * 60 * 60;
 /// The workload an offer is priced from, and the window its check reads.
@@ -717,8 +717,8 @@ pub(super) fn check(
         .seat_usage(meter.owner(), meter.vault_id(), &role_key(role), from, now)
         .map_err(|_| Error::InvalidConfig("the seat's usage could not be read".into()))?;
     // Applied and metered throughout: every call in the window ran on the
-    // approved model and was priced. Anything less waits for a later night,
-    // but calls unpriced only for an unquoted cache rate close the check.
+    // approved model. Anything less waits for a later night; calls the check
+    // cannot price or sum close it unverifiable.
     if usage.calls == 0
         || usage.models.get(&approved) != Some(&usage.calls)
         || usage.metered_since.is_none_or(|since| since > from)
@@ -726,7 +726,7 @@ pub(super) fn check(
         return Ok(());
     }
     if !usage.complete {
-        let Some(outcome) = UnverifiableUnpricedCache::of(&usage) else {
+        let Some(outcome) = Unverifiable::of(&usage) else {
             return Ok(());
         };
         return outcome.record(vault, admitted, &offer, &approved, usage.refs, now);

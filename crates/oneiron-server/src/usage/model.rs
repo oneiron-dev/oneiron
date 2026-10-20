@@ -95,10 +95,19 @@ pub enum CacheDimension {
     CacheWrite,
 }
 
-/// Why a measured call has no price, as its settlement recorded it.
+/// Why a call has no price, as its settlement recorded it: the first of
+/// these that holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UnpricedReason {
+    /// The call measured no tokens: no usage block, or every count zero.
+    /// Nothing is priced, and a service quantity it reported stays on its run.
+    NoUsage,
+    /// The call measured tokens, but no rates were frozen on it at admission:
+    /// no host override names its offer, and the catalog has no row or no
+    /// price that converts for its model (a paid connector call has none).
+    /// The event's `model` names the model.
+    UnpricedModel,
     /// The rates frozen on the call quote no rate for these cache dimensions,
     /// each measured above zero, listed once each in order. Every other count
     /// had a quoted rate.
@@ -332,6 +341,18 @@ impl UsageEvent {
                 field: "unpriced",
                 message: "names each unquoted cache dimension once, in order, each measured, \
                           on an event with no costRates",
+            });
+        }
+        let has_tokens = self.token_counts != UsageTokenCounts::default();
+        if let Some(reason @ (UnpricedReason::NoUsage | UnpricedReason::UnpricedModel)) =
+            &self.unpriced
+            && (self.cost_rates.is_some()
+                || has_tokens != matches!(reason, UnpricedReason::UnpricedModel))
+        {
+            return Err(UsageError::InvalidField {
+                field: "unpriced",
+                message: "no_usage names an event with every count zero, unpriced_model one \
+                          with a token count, each with no costRates",
             });
         }
         validate_dimension("owner", &self.owner, MAX_DIMENSION_LEN)?;

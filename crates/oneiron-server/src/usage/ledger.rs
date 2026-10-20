@@ -321,15 +321,27 @@ pub struct SeatUsage {
     /// The stamped prices summed, in 10^-9 units of `currency`.
     pub cost_amount: u64,
     pub currency: Option<String>,
-    /// False when any call in the window has no price, or a price in another
-    /// currency.
+    /// False when any call in the window has no price, a price in another
+    /// currency, or one the sum cannot hold: exactly when
+    /// [`SeatUsage::gap_calls`] is above zero.
     pub complete: bool,
+    /// The unpriced calls whose record says they measured no tokens.
+    pub no_usage: u64,
+    /// The unpriced calls whose record says no list price was frozen on
+    /// them at admission.
+    pub unpriced_model: u64,
     /// The unpriced calls whose record says their frozen rates quote no rate
     /// for a cache dimension they measured.
     pub unpriced_cache: UnpricedCache,
-    /// `complete` with the `unpriced_cache` calls set aside: false when any
-    /// other call has no price, or a price in another currency.
-    pub complete_but_unpriced_cache: bool,
+    /// The calls priced in a currency other than `currency`, the first
+    /// priced call's; left out of `cost_amount`.
+    pub mixed_currency: u64,
+    /// The calls whose price would carry `cost_amount` past what it holds;
+    /// left out of it.
+    pub sum_overflow: u64,
+    /// The unpriced calls whose record names no reason: an older record, or
+    /// a posted one that gave none.
+    pub unclassified: u64,
     /// Calls per model id.
     pub models: std::collections::BTreeMap<String, u64>,
     /// The vault's first metered call of any seat: a window that starts
@@ -337,6 +349,22 @@ pub struct SeatUsage {
     pub metered_since: Option<u64>,
     /// Every call's idempotency key, newest first.
     pub refs: Vec<String>,
+}
+impl SeatUsage {
+    /// The window's calls not priced and summed in `currency`, each counted
+    /// once under one kind: zero exactly when `complete`.
+    pub fn gap_calls(&self) -> u64 {
+        [
+            self.no_usage,
+            self.unpriced_model,
+            self.unpriced_cache.calls,
+            self.mixed_currency,
+            self.sum_overflow,
+            self.unclassified,
+        ]
+        .into_iter()
+        .fold(0, u64::saturating_add)
+    }
 }
 /// A window's calls left unpriced only because the rates frozen on each
 /// quote no rate for a cache dimension it measured.
@@ -375,11 +403,7 @@ impl UsageLedger {
     ) -> Result<SeatUsage, UsageError> {
         validate_dimension("owner", owner, MAX_DIMENSION_LEN)?;
         validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
-        let mut usage = SeatUsage {
-            complete: true,
-            complete_but_unpriced_cache: true,
-            ..SeatUsage::default()
-        };
+        let mut usage = SeatUsage::default();
         let mut refs = Vec::new();
         self.vault
             .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
@@ -412,6 +436,10 @@ impl UsageLedger {
                         if let Some(model) = &stored.event.model {
                             *usage.models.entry(model.clone()).or_default() += 1;
                         }
+                        // Priced and summed in the window's currency, or
+                        // counted once under why not: an unpriced call by the
+                        // reason its settlement recorded, an older record that
+                        // names none apart.
                         match (&stored.cost, &stored.event.unpriced) {
                             (Some(cost), _)
                                 if usage
@@ -422,29 +450,25 @@ impl UsageLedger {
                                 usage.currency = Some(cost.currency.clone());
                                 match usage.cost_amount.checked_add(cost.amount) {
                                     Some(sum) => usage.cost_amount = sum,
-                                    None => {
-                                        usage.complete = false;
-                                        usage.complete_but_unpriced_cache = false;
-                                    }
+                                    None => usage.sum_overflow += 1,
                                 }
                             }
-                            // Unpriced for want of a quoted cache rate, as its
-                            // settlement recorded; an older record names no
-                            // reason and counts as any other gap.
+                            (Some(_), _) => usage.mixed_currency += 1,
+                            (None, Some(UnpricedReason::NoUsage)) => usage.no_usage += 1,
+                            (None, Some(UnpricedReason::UnpricedModel)) => {
+                                usage.unpriced_model += 1;
+                            }
                             (None, Some(UnpricedReason::UnquotedCache { dimensions })) => {
-                                usage.complete = false;
                                 usage.unpriced_cache.add(dimensions);
                             }
-                            _ => {
-                                usage.complete = false;
-                                usage.complete_but_unpriced_cache = false;
-                            }
+                            (None, None) => usage.unclassified += 1,
                         }
                         refs.push(std::cmp::Reverse((at, stored.event.idempotency_key)));
                         Ok(())
                     },
                 )
             })?;
+        usage.complete = usage.gap_calls() == 0;
         refs.sort_unstable();
         usage.refs = refs
             .into_iter()
