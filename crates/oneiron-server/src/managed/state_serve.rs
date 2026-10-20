@@ -602,9 +602,9 @@ fn with_managed_requests(router: Router, state: Arc<ManagedState>) -> Router {
     router.layer(freeze)
 }
 
-/// The managed artifact origin: this vault's `/a/`, and its names under the
-/// artifact domains (`oneiron_vault_contract::artifact_origin`), behind the
-/// same freeze gate as the API socket.
+/// The managed artifact origin: this vault's `/a/`, and its names on its
+/// internal authority, `<vault_id>.artifact.invalid` (FIX 6716,
+/// `oneiron_vault_contract::artifact_origin`), behind the API's freeze gate.
 pub(super) fn build_managed_artifact_app(
     server: Arc<SyncServer>,
     state: Arc<ManagedState>,

@@ -514,15 +514,69 @@ pub(super) fn check_goal_current_in_txn(
     txn: &heed::RoTxn<'_>,
     binding: &ResearchBinding,
 ) -> Result<()> {
-    if let (ResearchTarget::Skill { skill }, Some(pin)) = (&binding.target, &binding.goal) {
-        let goal = crate::skill_optimize::skill_edit_goal_in_txn(vault, txn, skill)?;
-        if goal.goal_id != pin.goal_id || goal.revision != pin.revision {
-            return Err(invalid(
-                "the skill's goal moved since the campaign was bound; bind a new campaign",
-            ));
-        }
+    if !goal_pin_current_in_txn(vault, txn, binding)? {
+        return Err(invalid(
+            "the skill's goal moved since the campaign was bound; bind a new campaign",
+        ));
     }
     Ok(())
+}
+
+/// The current-pin check: whether a skill campaign's pinned goal is still
+/// the goal in force. A campaign that pins no goal has none to move.
+fn goal_pin_current_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: &ResearchBinding,
+) -> Result<bool> {
+    if let (ResearchTarget::Skill { skill }, Some(pin)) = (&binding.target, &binding.goal) {
+        let goal = crate::skill_optimize::skill_edit_goal_in_txn(vault, txn, skill)?;
+        return Ok(goal.goal_id == pin.goal_id && goal.revision == pin.revision);
+    }
+    Ok(true)
+}
+
+/// What a host judges a skill campaign's goal on (FIX 1331): the governed
+/// skill, the goal record the campaign was bound under, the campaign's
+/// incumbent (its latest promoted candidate, else the root) and the receipts
+/// the incumbent's search measurement is grounded on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResearchGoalBasis {
+    pub root: AttemptId,
+    pub skill: EntityId,
+    pub pin: ResearchGoalPin,
+    pub incumbent: AttemptId,
+    /// Empty when the incumbent holds no search measurement.
+    pub receipts: Vec<String>,
+}
+
+/// The basis `root`'s goal is judged on, read in one snapshot. `None` for a
+/// campaign with no goal to meet: a config campaign, a skill campaign bound
+/// without a goal, or one whose goal moved since it was bound (the
+/// current-pin check). It reads; it judges nothing.
+/// # Errors
+/// An unbound campaign, an unreadable goal, or storage errors.
+pub fn research_goal_basis(vault: &Vault, root: AttemptId) -> Result<Option<ResearchGoalBasis>> {
+    let txn = vault.store.env.read_txn()?;
+    let binding = binding_in_txn(vault, &txn, root)?;
+    let (ResearchTarget::Skill { skill }, Some(pin)) = (&binding.target, &binding.goal) else {
+        return Ok(None);
+    };
+    if !goal_pin_current_in_txn(vault, &txn, &binding)? {
+        return Ok(None);
+    }
+    let incumbent = research_incumbent_in_txn(vault, &txn, root)?;
+    let receipts = nodes_in_txn(vault, &txn, root)?
+        .remove(incumbent.as_bytes())
+        .and_then(|node| node.search)
+        .map_or_else(Vec::new, |search| search.receipt_refs);
+    Ok(Some(ResearchGoalBasis {
+        root,
+        skill: *skill,
+        pin: pin.clone(),
+        incumbent,
+        receipts,
+    }))
 }
 
 /// Bind a campaign to an existing root attempt: validate its configuration,

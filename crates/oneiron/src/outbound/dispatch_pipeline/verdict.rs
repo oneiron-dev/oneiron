@@ -20,4 +20,10 @@ pub(in crate::outbound) struct DispatchVerdict {
     /// writer lock. The pipeline folds it into the seat decision the receipt
     /// carries.
     pub(in crate::outbound) ceiling_count: Option<u32>,
+    /// FIX 6424 part 2a: the approve-once digest the holding Gate decision
+    /// names, as the chokepoint composed it over the input that decision
+    /// evaluated (a co-actor's, when the co-actor held the send).
+    pub(in crate::outbound) held_approval_digest: Option<String>,
+    /// The actor whose decision named `held_approval_digest`.
+    pub(in crate::outbound) held_approval_actor: Option<crate::entity_id::EntityId>,
 }

@@ -4,19 +4,28 @@
 //! index falls in a band, files the band's mode as an advisory finding. It
 //! applies at once with a receipt the owner reverts (OF-023), and the inbox's
 //! finding notice tells the owner; one the Gate parks waits in the run tray.
-//! A mode is advice only: it grants nothing and changes no consent, and a
-//! missing input selects no mode.
+//! A mode is advice: it grants nothing and changes no consent, and a missing
+//! input selects no mode. A band may name one explicit agent-ceiling patch
+//! (FIX 1786); its finding freezes the patch, and only the owner's
+//! [`Vault::apply_action_mode`] puts it on the agent's definition, with an
+//! inverse the owner's revert runs. A finding landing, even at Auto, applies
+//! no patch.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use super::applied::MaintenanceInverse;
+use super::applied::{self, AppliedMaintenance, MaintenanceInverse, MaintenanceRevert};
 use super::{MAINTENANCE_QUEUE_KIND, invalid, proposals, validate_owner_in_txn};
 use crate::affect::state_inputs::StateWindow;
+use crate::agent_def::AgentCeiling;
+use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore};
+use crate::edge::EdgeActorClass;
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{EntityId, Result, Vault};
+use crate::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor,
+};
 
 pub const ACTION_MODE_FACET: &str = "dreamer.action_mode";
 /// Predicate of an advisory action-mode finding.
@@ -32,6 +41,63 @@ pub struct ActionModeRule {
     pub mode: String,
     pub min_index: f32,
     pub max_index: f32,
+    /// The explicit agent-ceiling patch an approved mode applies (FIX
+    /// 1786). `None` keeps the mode advice only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<ActionModeEffect>,
+}
+
+/// One band's explicit patch (FIX 1786): the agent whose definition ceiling
+/// the mode sets, and that ceiling. It names no grant, scope or connector;
+/// the ceiling still meets the preset and the owner's manifest at every gate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ActionModeEffect {
+    pub agent: EntityId,
+    pub ceiling: ActionModeCeiling,
+}
+
+/// An agent definition's ceiling as a patch names it: ask first, or eligible
+/// to act.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionModeCeiling {
+    Proposed,
+    Auto,
+}
+
+impl ActionModeCeiling {
+    const fn agent_ceiling(self) -> AgentCeiling {
+        match self {
+            Self::Proposed => AgentCeiling::Proposed,
+            Self::Auto => AgentCeiling::Auto,
+        }
+    }
+
+    const fn of(ceiling: AgentCeiling) -> Self {
+        match ceiling {
+            AgentCeiling::Proposed => Self::Proposed,
+            AgentCeiling::Auto => Self::Auto,
+        }
+    }
+}
+
+/// A patch as its finding froze it: with the agent's definition version the
+/// night read, which the owner's apply is fenced on; `None` when no
+/// definition stood at that id then.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FrozenEffect {
+    agent: EntityId,
+    ceiling: ActionModeCeiling,
+    agent_version: Option<String>,
+}
+
+/// The part of an action-mode finding's value the apply reads.
+#[derive(Deserialize)]
+struct FrozenFinding {
+    #[serde(default)]
+    effect: Option<FrozenEffect>,
 }
 
 /// The owner's action-mode policy: the window each index is measured over,
@@ -154,6 +220,155 @@ impl Vault {
             Ok(policy.clone())
         })
     }
+
+    /// The owner's apply of one action-mode finding's ceiling patch (FIX
+    /// 1786), in ONE transaction. `approved` is the patch the owner was
+    /// shown and must be the one the finding froze. The agent's ceiling moves
+    /// to it through the owner's definition writer, fenced on the definition
+    /// version the finding read, and the finding's applied row takes the
+    /// inverse under the owner's receipt, so the owner's revert of the
+    /// finding puts the ceiling back. A second apply returns the first.
+    ///
+    /// # Errors
+    ///
+    /// A proof that no longer holds; a finding that is no live action-mode
+    /// finding the Dreamer applied or the owner approved, or that carries no
+    /// patch or another one than `approved`; [`Error::ConcurrentWrite`] when
+    /// the agent's definition moved since the finding read it; the
+    /// definition writer's own refusals; storage errors.
+    pub fn apply_action_mode(
+        &self,
+        owner: &AuthenticatedOwner,
+        finding: EntityId,
+        approved: &ActionModeEffect,
+        now: u64,
+    ) -> Result<AppliedMaintenance> {
+        let applied = self.with_write_txn_grouped(|txn| {
+            let actor = validate_owner_in_txn(self, txn, owner)?;
+            let effect = frozen_patch_in_txn(self, txn, &finding)?;
+            if effect.agent != approved.agent || effect.ceiling != approved.ceiling {
+                return Err(invalid());
+            }
+            if let Some(done) = applied::action_mode_applied_in_txn(self, txn, finding)? {
+                return Ok(done);
+            }
+            let version = effect.agent_version.ok_or_else(invalid)?;
+            let before = self
+                .read_agent_definition_in_txn(txn, &effect.agent)?
+                .ceiling;
+            let patched = self.patch_agent_ceiling_at_version_in_txn(
+                txn,
+                owner,
+                &effect.agent,
+                &version,
+                effect.ceiling.agent_ceiling(),
+                now,
+            )?;
+            applied::record_action_mode_in_txn(
+                self,
+                txn,
+                finding,
+                WriteActor::new(actor, EdgeActorClass::Human),
+                MaintenanceInverse::ActionMode {
+                    agent: effect.agent,
+                    before_ceiling: ActionModeCeiling::of(before),
+                    applied_ceiling: effect.ceiling,
+                    applied_version: patched.version,
+                },
+                now,
+            )
+        })?;
+        self.store.notify_proactivity_changes();
+        Ok(applied)
+    }
+}
+
+/// The patch action-mode `finding` froze, from a live finding the Dreamer
+/// applied at Auto or the owner approved in the run tray.
+fn frozen_patch_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    finding: &EntityId,
+) -> Result<FrozenEffect> {
+    let body = vault
+        .get_claim_in_txn(txn, finding)?
+        .ok_or(Error::EntityNotFound)?;
+    if body.predicate != ACTION_MODE_PROPOSAL_PREDICATE
+        || body.lifecycle != ClaimLifecycleStatus::Active
+        || !matches!(
+            body.approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+        )
+    {
+        return Err(invalid());
+    }
+    let frozen: FrozenFinding =
+        serde_json::from_str(body.value.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
+    frozen.effect.ok_or_else(invalid)
+}
+
+/// A band's patch as its finding freezes it, with the agent's definition
+/// version as it stands in this write.
+fn frozen_effect_in_txn(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    effect: &ActionModeEffect,
+) -> Result<serde_json::Value> {
+    let agent_version = match vault.read_agent_definition_in_txn(txn, &effect.agent) {
+        Ok(definition) => Some(definition.version),
+        Err(Error::EntityNotFound | Error::Artifact(_)) => None,
+        Err(error) => return Err(error),
+    };
+    serde_json::to_value(FrozenEffect {
+        agent: effect.agent,
+        ceiling: effect.ceiling,
+        agent_version,
+    })
+    .map_err(|_| invalid())
+}
+
+/// Undoes the owner's apply of a ceiling patch (FIX 1786), as the owner,
+/// through the same definition writer: the agent's ceiling goes back to
+/// `before` while the revision the apply wrote still stands. A definition a
+/// later write moved, or one gone, is left alone.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one applied patch's agent, prior ceiling and revision, and the revert's writer"
+)]
+pub(super) fn revert_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    owner: &AuthenticatedOwner,
+    agent: EntityId,
+    before: ActionModeCeiling,
+    applied_version: &str,
+    now: u64,
+    out: &mut MaintenanceRevert,
+) -> Result<()> {
+    let current = match vault.read_agent_definition_in_txn(txn, &agent) {
+        Ok(definition) => definition,
+        Err(Error::EntityNotFound) => {
+            out.left_alone.push(agent.to_hex());
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    if current.version != applied_version {
+        out.left_alone.push(agent.to_hex());
+        return Ok(());
+    }
+    if current.ceiling != before.agent_ceiling() {
+        vault.patch_agent_ceiling_at_version_in_txn(
+            txn,
+            owner,
+            &agent,
+            applied_version,
+            before.agent_ceiling(),
+            now,
+        )?;
+    }
+    out.restored.push(agent);
+    Ok(())
 }
 
 impl DreamerRunnerStore<'_> {
@@ -212,11 +427,14 @@ pub(super) fn run(
             };
             let index = projection.state_index;
             let claim = EntityId::from_hex(index.claim.as_deref().ok_or_else(invalid)?)?;
-            let value = serde_json::json!({
+            let mut value = serde_json::json!({
                 "mode": rule.mode,
                 "band": [rule.min_index, rule.max_index],
                 "state_index": index,
             });
+            if let Some(effect) = &rule.effect {
+                value["effect"] = frozen_effect_in_txn(vault, txn, effect)?;
+            }
             landing
                 .land_in_txn(
                     vault,

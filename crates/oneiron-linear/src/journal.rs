@@ -38,7 +38,7 @@ impl<T> LinearResponseJournal<T> {
         self.journal_dir.join(blake3::Hash::from(*id).to_hex())
     }
 
-    fn request_ref(id: &[u8; 32]) -> String {
+    pub(crate) fn request_ref(id: &[u8; 32]) -> String {
         format!("linear:request:v1:{}", blake3::Hash::from(*id).to_hex())
     }
 
