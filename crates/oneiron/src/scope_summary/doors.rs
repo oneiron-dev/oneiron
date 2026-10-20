@@ -6,7 +6,9 @@ use super::codec::{
 };
 use crate::affect::Vad;
 use crate::batch::EdgeValueFields;
-use crate::claim::{ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead};
+use crate::claim::{
+    ClaimApprovalStatus, ClaimReadStatus, ClaimSource, ClaimSubject, ScopedRead, ScopedReadActorKey,
+};
 #[cfg(test)]
 use crate::conversation_dag::selected_thread_in_txn;
 use crate::conversation_dag::{
@@ -22,8 +24,8 @@ use crate::memory::{Memory, MemoryError};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SESSION,
-    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_NOTE,
+    ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::{
     ClaimCandidate, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
@@ -51,11 +53,16 @@ pub(super) fn summary_in_txn(
     let stored = require_type(&vault.store, txn, summary, ENTITY_TYPE_SUMMARY)?;
     let logical = crate::entity_doc::resolve_record_body(&vault.store, txn, summary, &stored)?;
     let body = decode_scope_summary_body(&logical)?;
-    validate_covers_in_txn(vault, txn, &body)?;
+    validate_covers_in_txn(vault, txn, summary, &body)?;
     Ok(body)
 }
 
-fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBody) -> Result<()> {
+fn validate_covers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+    body: &ScopeSummaryBody,
+) -> Result<()> {
     // A composed body holds the words of every MESSAGE it names: once one is
     // erased, or edited past the revision it was composed from (SCAN C028),
     // the summary is not served again.
@@ -72,7 +79,9 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
             return Err(invalid("summary source message revision changed"));
         }
     }
-    let scope = &body.scope;
+    let Some(scope) = &body.scope else {
+        return validate_note_covers_in_txn(vault, txn, summary, &body.covers);
+    };
     if let ScopePath::BranchSpan { after, through } = scope.path {
         // The span's records, of which the body covers those it was written
         // from: a reply the Dreamer could not read is not claimed.
@@ -128,6 +137,39 @@ fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBod
                 && verified_worker_branch == session)
         {
             return Err(invalid("summary cover belongs to another path"));
+        }
+    }
+    Ok(())
+}
+
+/// A NOTE set's summary (FIX 5757) covers NOTEs its saved declaration named,
+/// each still live. No conversation, session or path holds them.
+fn validate_note_covers_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    summary: &EntityId,
+    covers: &[EntityId],
+) -> Result<()> {
+    let declared = crate::entity_doc::summary_meta_in_txn(vault, txn, summary)
+        .and_then(|meta| super::derivation::decode(&meta.derivation.request))
+        .and_then(|input| super::request::decode_request(&input))
+        .map_err(|_| invalid("NOTE summary has no saved declaration"))?;
+    let super::ScopeSummaryTarget::Sources {
+        scope: None,
+        sources,
+    } = declared.target
+    else {
+        return Err(invalid(
+            "summary in no conversation was not declared over NOTEs",
+        ));
+    };
+    for covered in covers {
+        if !sources.contains(covered)
+            || crate::vault::live_entity_row_in_txn(&vault.store, txn, covered)?.live_type()
+                != Some(ENTITY_TYPE_NOTE)
+            || vault.archive_tombstone_in_txn(txn, covered)?.is_some()
+        {
+            return Err(invalid("summary cover is not a live NOTE it declared"));
         }
     }
     Ok(())
@@ -238,6 +280,65 @@ pub(super) fn scope_sources_in_txn(
     Ok(ScopeSources { members, sources })
 }
 
+/// A NOTE set's sources (FIX 5757), read in the planner's writer: each a live
+/// NOTE its requester reads there, sorted and once each, so the same set
+/// plans the same sources whatever order it was named in. A set has no
+/// conversation to resolve, so its NOTEs are its members.
+pub(super) fn note_sources_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    requester: WriteActor,
+    declared: &[EntityId],
+) -> Result<ScopeSources> {
+    let notes: Vec<EntityId> = declared
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if notes.is_empty() {
+        return Err(invalid("summary source set is empty"));
+    }
+    let read = requester_read_in(vault, txn, requester)?;
+    let rows = read.get_entities_parts_in_txn(txn, &notes)?;
+    for (note, row) in notes.iter().zip(rows) {
+        if row.is_none()
+            || crate::vault::live_entity_row_in_txn(&vault.store, txn, note)?.live_type()
+                != Some(ENTITY_TYPE_NOTE)
+            || vault.archive_tombstone_in_txn(txn, note)?.is_some()
+        {
+            return Err(invalid("summary source is not a NOTE its requester reads"));
+        }
+    }
+    Ok(ScopeSources {
+        members: notes.clone(),
+        sources: notes,
+    })
+}
+
+/// The requester's own read, built in `txn`: the vault owner's key for the
+/// owner, any other actor's under its access grants, without a room turn or
+/// a credential. The public door read each source on the caller's own lane
+/// before the declaration queued; this holds at every later plan.
+fn requester_read_in<'v>(
+    vault: &'v Vault,
+    txn: &RoTxn<'_>,
+    requester: WriteActor,
+) -> Result<ScopedRead<'v>> {
+    let actor = requester.entity_ref();
+    let class = requester.actor_class();
+    let owner = crate::memory::actor_is_vault_owner_in_txn(vault, txn, actor, class)
+        .map_err(|_| invalid("summary requester does not resolve"))?;
+    let key = if owner {
+        ScopedReadActorKey::vault_owner(actor)
+    } else {
+        ScopedReadActorKey::with_actor_class(actor.to_hex(), class.gate_actor_class())
+            .ok_or_else(|| invalid("summary requester cannot read"))?
+            .require_access_grants(Some(actor))
+    };
+    Ok(vault.scoped_read(key))
+}
+
 /// What a summary body says, and what it was written from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SummaryContent<'a> {
@@ -277,14 +378,15 @@ fn word_sources(body: &ScopeSummaryBody) -> impl Iterator<Item = &EntityId> {
         .chain(body.messages.iter().map(|message| &message.id))
 }
 
-/// Mints a summary of `content`. Each MESSAGE is registered as a dependency
-/// beside the covers' DerivedFrom edges, so erasing one invalidates the
-/// summary in the erasing transaction.
+/// Mints a summary of `content`, in `scope`'s conversation or, for a NOTE
+/// set's summary, in none. Each MESSAGE is registered as a dependency beside
+/// the covers' DerivedFrom edges, so erasing one invalidates the summary in
+/// the erasing transaction.
 pub(super) fn mint_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     id: EntityId,
-    scope: &ScopeSelector,
+    scope: Option<&ScopeSelector>,
     actor: WriteActor,
     now: u64,
     content: SummaryContent<'_>,
@@ -293,7 +395,7 @@ pub(super) fn mint_in_txn(
     let text = content.text;
     let body = ScopeSummaryBody {
         v: if content.memo.is_some() { 2 } else { 1 },
-        scope: scope.clone(),
+        scope: scope.cloned(),
         text: text.to_owned(),
         actor: actor.entity_ref().to_hex(),
         covers: content.covers,
@@ -449,11 +551,15 @@ pub(super) fn land_in_txn(
 ) -> std::result::Result<(LandedHeader, Option<AppendRecord>), AppendFailure> {
     actor_in_txn(&vault.store, txn, actor)?;
     let body = summary_in_txn(vault, txn, summary)?;
-    crate::conversation_dag::migrate_in_txn(vault, txn, &body.scope.conversation)?;
-    validate_landing_in_txn(vault, txn, &body.scope, turn)?;
+    // A NOTE set's summary (FIX 5757) stands alone: it lands on no turn.
+    let Some(scope) = body.scope.clone() else {
+        return Err(invalid("a NOTE set's summary lands on no turn").into());
+    };
+    crate::conversation_dag::migrate_in_txn(vault, txn, &scope.conversation)?;
+    validate_landing_in_txn(vault, txn, &scope, turn)?;
     let source = Value::Map(vec![
         (Value::from("kind"), Value::from("scope_summary")),
-        (Value::from("scope"), scope_value(&body.scope)),
+        (Value::from("scope"), scope_value(&scope)),
     ]);
     // ClaimSource is the engine's fixed trust vocabulary. The more specific
     // source descriptor belongs in provenance, never a forged new enum value.
@@ -501,7 +607,7 @@ pub(super) fn land_in_txn(
         .apply(txn)?;
     let reply = if let Some(lane) = reply {
         let scope = ScopeSelector {
-            conversation: body.scope.conversation,
+            conversation: scope.conversation,
             session: None,
             path: ScopePath::Canonical,
             include_forks: false,
@@ -517,7 +623,7 @@ pub(super) fn land_in_txn(
         // they came from: erasing any of it invalidates the reply as well.
         let sources = word_sources(&body).copied().collect::<Vec<_>>();
         let input = AppendRecord {
-            conversation: body.scope.conversation,
+            conversation: scope.conversation,
             parent: head,
             reply_to: Some(*turn),
             quote: None,
@@ -564,14 +670,18 @@ pub(crate) fn body_covers_in_txn(
     if entity_type == ENTITY_TYPE_SUMMARY && super::codec::is_scope_summary(bytes) {
         let logical = crate::entity_doc::resolve_record_body(&vault.store, txn, record, bytes)?;
         let body = decode_scope_summary_body(&logical)?;
-        validate_covers_in_txn(vault, txn, &body)?;
+        validate_covers_in_txn(vault, txn, record, &body)?;
         return Ok(Some(word_sources(&body).copied().collect()));
     }
     if entity_type == ENTITY_TYPE_TURN
         && let Some(summary) = super::codec::reply_summary(bytes)?
     {
         let summary = summary_in_txn(vault, txn, &summary)?;
-        if conversation_of(&vault.store, txn, record)? != summary.scope.conversation {
+        // A NOTE set's summary lands no reply, so none names it.
+        let Some(scope) = &summary.scope else {
+            return Err(invalid("reply names a summary in no conversation"));
+        };
+        if conversation_of(&vault.store, txn, record)? != scope.conversation {
             return Err(invalid("reply and summary conversations differ"));
         }
         return Ok(Some(word_sources(&summary).copied().collect()));
@@ -589,7 +699,11 @@ fn merge_summary_in_txn(
         return Ok(None);
     };
     let summary = summary_in_txn(vault, txn, &summary)?;
-    validate_landing_in_txn(vault, txn, &summary.scope, &turn)?;
+    // A NOTE set's summary lands no header, so none names it.
+    let Some(scope) = &summary.scope else {
+        return Err(invalid("header names a summary in no conversation"));
+    };
+    validate_landing_in_txn(vault, txn, scope, &turn)?;
     Ok(Some(summary))
 }
 

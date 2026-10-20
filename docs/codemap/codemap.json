@@ -5705,7 +5705,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "mod": 1,
       "re-export": 3
      }
@@ -6323,7 +6323,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -44107,16 +44107,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "ArtifactKind",
       "ArtifactUnlocks",
       "CheckpointKey"
      ],
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
-      "crate-vis": 9,
-      "enum": 1,
+      "crate-vis": 10,
       "fn": 7,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -44171,15 +44170,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CheckpointSigner"
-     ],
+     "notable": [],
      "path": "src/recovery/checkpoint/commitment.rs",
      "purpose": "Hash-signed checkpoints (OF-570 (e))",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 1,
-      "struct": 1
+      "re-export": 1
      }
     },
     {
@@ -44487,7 +44484,7 @@
      "surface": {
       "enum": 1,
       "fn": 19,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 3
      }
     },
@@ -44619,6 +44616,24 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackupSnapshotReceipt",
+      "BackupWatermark"
+     ],
+     "path": "src/recovery/checkpoint/watermark.rs",
+     "purpose": "The backup watermark: where a vault stood when a backup was taken, and where it stands now, so a host backs…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "fn": 7,
+      "re-export": 1,
+      "struct": 2,
+      "type": 1
      }
     },
     {
@@ -46341,7 +46356,7 @@
      "path": "src/scope_summary/doors.rs",
      "purpose": "Transactional spawn, summary mint, merge-header and drill doors",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 5,
       "struct": 1
      }
@@ -51895,7 +51910,7 @@
      "path": "src/store/key_custody/recovery.rs",
      "purpose": "Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -56309,7 +56324,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -62972,7 +62987,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "EscrowRetirement",
@@ -62980,17 +62995,16 @@
       "ResealedEscrowCapsule",
       "VaultKeyEscrowCapsule",
       "VaultKeyStatus",
-      "VaultKeyUnlock",
-      "VaultKeyWrapInfo",
-      "VaultKeyWrapKind"
+      "VaultKeyUnlock"
      ],
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 20,
-      "enum": 4,
+      "crate-vis": 22,
+      "enum": 3,
       "fn": 27,
-      "struct": 4
+      "re-export": 1,
+      "struct": 3
      }
     },
     {
@@ -64946,7 +64960,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -65417,7 +65431,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4071,
+   "source_files": 4072,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69633,6 +69647,83 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CheckpointSigner",
+      "Commitment",
+      "CustodyRef"
+     ],
+     "path": "src/backup/commitment.rs",
+     "purpose": "The clear commitment every sealed artifact carries, its digest, and the check of its dual Ed25519 +…",
+     "surface": {
+      "const": 7,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BackupEvidence"
+     ],
+     "path": "src/backup/inspect.rs",
+     "purpose": "Evidence of one sealed artifact, read in one pass with no key: its clear prelude, key header and signed…",
+     "surface": {
+      "const": 5,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/backup/mod.rs",
+     "purpose": "The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact…",
+     "surface": {
+      "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactPrelude",
+      "BackupHead",
+      "RegistryMatch"
+     ],
+     "path": "src/backup/prelude.rs",
+     "purpose": "The fixed prelude every sealed artifact starts with, and the registry binding a version 2 prelude carries…",
+     "surface": {
+      "const": 7,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ArtifactKind",
+      "KeyHeader",
+      "KeyHeaderWrap",
+      "VaultKeyWrapInfo",
+      "VaultKeyWrapKind"
+     ],
+     "path": "src/backup/wire.rs",
+     "purpose": "The artifact kinds and the key header's wire form (moved from the engine's `recovery::checkpoint::artifact`…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 8,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/codec.rs",
      "purpose": "Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings…",
@@ -69672,9 +69763,10 @@
      "path": "src/envelope/mod.rs",
      "purpose": "The sealed envelope: its typed header, the canonical encoding and the strict parser",
      "surface": {
+      "const": 2,
       "crate-vis": 3,
       "enum": 4,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -69734,7 +69826,7 @@
      "surface": {
       "const": 11,
       "crate-vis": 11,
-      "fn": 10,
+      "fn": 11,
       "struct": 6
      }
     },
@@ -69754,7 +69846,7 @@
      "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
      "surface": {
       "const": 3,
-      "mod": 1,
+      "mod": 2,
       "re-export": 7
      }
     },
@@ -69891,6 +69983,13 @@
     }
    ],
    "modules": {
+    "backup": {
+     "files": 5,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact…"
+    },
     "codec": {
      "files": 1,
      "impl_vault": false,
@@ -69957,7 +70056,7 @@
    },
    "over_bar": 0,
    "purpose": "The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table…",
-   "source_files": 15,
+   "source_files": 20,
    "test_files": 8
   },
   "oneiron-docedit": {
@@ -86639,7 +86738,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -86660,6 +86759,16 @@
      "purpose": "The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/handoff.rs",
+     "purpose": "The prune pin (LC backup shipper rows, Engine 10-20)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -86917,7 +87026,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -88876,7 +88985,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 32,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88997,7 +89106,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 891,
+   "source_files": 892,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -92993,6 +93102,24 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BackupHandoffPolicy",
+      "BackupStageAck",
+      "HeldBackup",
+      "PrivateFile"
+     ],
+     "path": "src/lib/backup_handoff.rs",
+     "purpose": "The backup handoff between a managed vault's engine and its node's supervisor (LC backup shipper rows…",
+     "surface": {
+      "const": 3,
+      "enum": 1,
+      "fn": 8,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "QuotaWindow",
       "Schedule"
      ],
@@ -93250,7 +93377,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 12,
+      "mod": 13,
       "re-export": 8
      }
     },
@@ -93397,7 +93524,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93406,7 +93533,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 25,
+   "source_files": 26,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
