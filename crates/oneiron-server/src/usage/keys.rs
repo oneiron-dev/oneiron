@@ -12,6 +12,9 @@ pub(super) fn usage_event_key(owner: &str, vault: &str, id: &str) -> String {
 pub(super) fn vault_rollup_key(owner: &str, vault: &str) -> String {
     format!("usage:rollup:vault:{}:{}", key_part(owner), key_part(vault))
 }
+pub(super) fn usage_repair_receipt_key(id: &str) -> String {
+    format!("usage:repair:receipt:{id}")
+}
 pub(super) fn validate_key(key: &str) -> Result<(), UsageError> {
     if key.len() > 511 {
         return Err(UsageError::InvalidField {

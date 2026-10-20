@@ -1087,6 +1087,8 @@ class Oneiron:
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
         @property
+        def usage(self) -> "Oneiron._VaultUsageVerbs": ...
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
         def courtesy_delete(self) -> "Oneiron._VaultCourtesyDeleteVerbs": ...
@@ -2382,6 +2384,14 @@ class Oneiron:
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+    class _VaultUsageVerbs:
+        @property
+        def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...
+    class _VaultUsageEventsVerbs:
+        def undecodable(self, spec: Facade.UsageRepairListRequest) -> Facade.UndecodableUsageList:
+            """Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."""
+        def remove_undecodable(self, spec: Facade.UsageRepairRemoveRequest) -> Facade.UsageRepairReceipt:
+            """Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""

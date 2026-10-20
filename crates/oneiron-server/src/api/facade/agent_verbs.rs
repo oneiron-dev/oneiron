@@ -487,6 +487,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         .route("/vault.roots.requests.cancel", post(facade_route))
         .route("/vault.cleanup.run", post(facade_route))
+        .route("/vault.usage.events.undecodable", post(facade_route))
+        .route("/vault.usage.events.remove_undecodable", post(facade_route))
         .route("/vault.entities.mention", post(facade_route))
         .route("/vault.legal_holds.place", post(facade_route))
         .route("/vault.legal_holds.widen", post(facade_route))
