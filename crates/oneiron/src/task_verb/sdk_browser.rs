@@ -10,8 +10,9 @@ pub use oneiron_browser::{
     ProposeInput as BrowserLibraryProposeInput, Rebound as BrowserRebound,
     RowSplice as BrowserRowSplice, ScreenshotInput as BrowserScreenshotInput,
     SelectInput as BrowserSelectInput, StepRebound as BrowserStepRebound,
-    TypeInput as BrowserTypeInput, ViewInput as BrowserViewInput,
-    WaitForInput as BrowserWaitForInput, ZoomInput as BrowserZoomInput,
+    SwitchEngineInput as BrowserSwitchEngineInput, TypeInput as BrowserTypeInput,
+    ViewInput as BrowserViewInput, WaitForInput as BrowserWaitForInput,
+    ZoomInput as BrowserZoomInput,
 };
 
 // Each browser answer as the run's door gives it (CUA-001): the verb's own,
@@ -35,4 +36,6 @@ pub type BrowserLibraryRunOutput =
 pub type BrowserObservationPage = oneiron_browser::BrowserAnswer<oneiron_browser::ObservationPage>;
 pub type BrowserScreenshotOutput =
     oneiron_browser::BrowserAnswer<oneiron_browser::ScreenshotOutput>;
+pub type BrowserSwitchEngineOutput =
+    oneiron_browser::BrowserAnswer<oneiron_browser::SwitchEngineOutput>;
 pub type BrowserWaitForOutput = oneiron_browser::BrowserAnswer<oneiron_browser::WaitForOutput>;

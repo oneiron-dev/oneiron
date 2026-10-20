@@ -1199,6 +1199,7 @@ impl DesktopSession {
             screenshot_evidence: None,
             engine: None,
             fact: None,
+            engine_switch: None,
         };
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.

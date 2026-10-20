@@ -108,6 +108,25 @@ pub(crate) async fn self_browser_open(
     .await
 }
 
+pub(crate) async fn self_browser_switch_engine(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserSwitchEngineInput>,
+) -> Listed<sdk::BrowserSwitchEngineOutput> {
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserSwitchEngine,
+        input,
+    )
+    .await
+}
+
 pub(crate) async fn self_browser_observe(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

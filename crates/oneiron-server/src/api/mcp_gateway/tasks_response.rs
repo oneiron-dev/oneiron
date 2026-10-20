@@ -2065,6 +2065,7 @@ fn mcp_agent_verb_input(
         "self.browser.library.retired" => a.spec.clone().ok_or_else(invalid),
         "self.browser.library.run" => a.spec.clone().ok_or_else(invalid),
         "self.browser.handover" => a.spec.clone().ok_or_else(invalid),
+        "self.browser.switch_engine" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.supersede" => a.spec.clone().ok_or_else(invalid),
         "self.fold" => a.spec.clone().ok_or_else(invalid),
         "self.compact" => a.spec.clone().ok_or_else(invalid),
@@ -5388,6 +5389,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.browser.handover" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.browser.switch_engine" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.supersede" => {
@@ -20857,6 +20861,36 @@ async fn execute_agent_verb_row(
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(
                     &memory,
                     "self.browser.handover",
+                ),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.browser.switch_engine" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.browser.switch_engine", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::task_verb::sdk::BrowserSwitchEngineInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_browser_switch_engine(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                (actor.actor_ref, actor.actor_class),
+                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                    &memory,
+                    "self.browser.switch_engine",
                 ),
                 input,
             )

@@ -41,6 +41,7 @@ mod receipt_evidence;
 mod retention;
 #[cfg(feature = "driver")]
 mod session;
+mod switch;
 
 pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause};
 #[cfg(feature = "driver")]
@@ -61,7 +62,11 @@ pub use oneiron_container::{GuestLimits, ImageRef};
 pub use receipt_evidence::{ReceiptEvidence, ReceiptEvidenceSink};
 pub use retention::HandleRetention;
 #[cfg(feature = "driver")]
-pub use session::{BrowserGuest, BrowserSession};
+pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, StartedGuest};
+pub use switch::{
+    EngineSwitchRecord, SwitchCarried, SwitchComponent, SwitchEngineInput, SwitchEngineOutput,
+    SwitchLoss, SwitchNotCarried, SwitchOutcome, SwitchStage,
+};
 
 /// One element a program can read or act on.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -232,6 +237,9 @@ pub struct EffectReceipt {
     /// The act's own fact about its effect, as its observation carries it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<ActionFact>,
+    /// On a `switch_engine` receipt: the switch's record (FIX 6680).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine_switch: Option<EngineSwitchRecord>,
 }
 
 /// Observes the page: as an edit of `base`, or, with none named, of the last
@@ -1257,6 +1265,15 @@ pub trait BrowserDriver: Send {
     /// Asks a person to take a desktop or browser session over.
     fn handover(&mut self, _input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
         Err(BrowserError::Unsupported("handover".to_owned()))
+    }
+
+    /// Moves a run's browser to another engine, its page carried (FIX
+    /// 6680). Only a session its host can start guests for serves it.
+    fn switch_engine(
+        &mut self,
+        _input: SwitchEngineInput,
+    ) -> Result<SwitchEngineOutput, BrowserError> {
+        Err(BrowserError::Unsupported("switch_engine".to_owned()))
     }
 
     /// Runs one batched program for a subgoal; a routine step has no
