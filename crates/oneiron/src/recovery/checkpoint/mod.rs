@@ -51,7 +51,7 @@ pub(crate) use admission::{Rejected, because};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
 pub use commitment::CheckpointSigner;
 pub use custody_head::*;
-pub use host_holds::HostOrderHolds;
+pub use host_holds::{BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
 use serde::{Deserialize, Serialize};
 use std::{
