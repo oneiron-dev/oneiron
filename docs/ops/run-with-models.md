@@ -674,67 +674,146 @@ above. Any other run uses the table above. A long run never outgrows one
 summary's sources: each summary stands for the records the calls before it
 were served, so the next one names only the records served since.
 
-`compaction_backend = "self"` makes the agent its own compaction writer
-(FIX 4465). The key sets who writes, not which model: every epoch and fold
-summary of its window is written as the agent, under its byline, on the same
-cheap route, wearing its home. The home is read once per pass, through the
-existing doors, under the agent's own Grant at the place its caller sits:
-its voice (its PERSON's compiled persona), its lessons (its admitted, active
-`actor.lesson` and `actor.failure_mode` claims) and its diary (read through
-the diary door as its own reader). There is no self-model binding yet, so
-that part is reported absent. A part the agent has none of, or may not read,
-is absent; it is never filled from the owner's memory or another agent's
-diary. The home takes only the tokens the admitted model's context leaves
-once the window, its pins and the reply are counted; what does not fit is
-cut and reported as cut.
+`compaction_backend = "self"` makes the agent its own compaction writer (FIX
+4465). The key sets who writes, not which model: every epoch and fold summary
+of its window is written as the agent, under its byline, on the writer its
+flight resolves (below), wearing its home. The home is read once per pass,
+through the existing doors, under the agent's own Grant at the place its
+caller sits: its voice (its PERSON's compiled persona), its lessons (its
+admitted, active `actor.lesson` and `actor.failure_mode` claims) and its
+diary (read through the diary door as its own reader). There is no self-model
+binding yet, so that part is reported absent. A part the agent has none of,
+or may not read, is absent; it is never filled from the owner's memory or
+another agent's diary. The home takes only the tokens the admitted model's
+context leaves once the window, its pins and the reply are counted; what does
+not fit is cut and reported as cut.
 
-Which model and context a self-written pass uses is a per-wake policy row,
+Which model and context a self-written flight uses is a policy row,
 `self_compaction` in the inference defaults (`GET`/`PUT` with the purpose
-rows): `source` is `retained_turns` (the shipped default: the agent's own
-`compaction_model` when its definition names one, else the house compaction
-seat, reading the retained steps) or `live_fork` (a fork of the live
-context), and `locality` is the widest place the call may be served (shipped
+rows), read once per flight (FIX 6029; the default changed per the owner's
+ruling, #2969/#3131):
+
+```json
+"self_compaction": {
+  "source": "auto",
+  "cheap_model": "deepseek/deepseek-flash@1017",
+  "locality": "third_party"
+}
+```
+
+`source` is the flight's strategy. `auto`, the shipped default, decides per
+flight: while the live prefix is still warm in its provider's prompt cache,
+the agent's live model writes the summary by forking its warm request;
+outside that window the cheap writer writes it as the agent, wearing its
+home, from the retained steps, since the cache is cold anyway. `live_fork`
+always forks the live context, and `retained_turns` always uses the cheap
+writer; both stay explicit choices and answer as they always did. Both
+writers carry the same as-agent instruction and home.
+
+The cheap writer is the agent's own `compaction_model` when its definition
+names one, else the row's `cheap_model`: shipped as DeepSeek V4.1 Flash 1017,
+`deepseek/deepseek-flash@1017` (provider key `deepseek`, wire model
+`deepseek-flash` at `https://api.deepseek.com`, revision `1017`). A pack, or
+the owner, changes it by replacing the table, as with any other row. The
+model writes only where this host serves it: a `[models]` provider and a
+role's rung must name it, for instance
+
+```toml
+[models.providers.deepseek]
+kind = "openai-compat"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+revision = "1017"
+locality = "third_party"
+# context_tokens, max_output_tokens, capabilities: the provider's own figures
+```
+
+with `deepseek:deepseek-flash` on a role's ladder. When the cheap writer's
+model is not served here, or the row's `cheap_model` is served wider than
+`locality`, the house compaction model (the seat above) writes as the agent
+instead, so a flight that compacted before still compacts. An agent's own
+`compaction_model` served wider than `locality` is refused, as before.
+`locality` is the widest place the call may be served (shipped
 `third_party`; a delegated edit cannot widen it). The writer's model is
 admitted as exactly that model, on its own one-model ladder. Whether the
 agent runs on this device, on a hosted server or in the resident pump does
-not matter: the same run is served the same way.
+not matter: the same run is served the same way, and warmth never depends
+on where it runs.
 
-With `live_fork`, the step that crosses the threshold (or asks to compact)
-captures the run's live request as the rung that admits it sends it: the
-step's own admission on the chat role, bound to the rung its walk would send
-it to now, the rung's prompt first. That one copy rides the flight; each of
-its calls sends the prefix unchanged on that same rung, with no fallback to
-another rung or model, then the house compaction's instruction, the agent's
-home and the span's input after it. The span is sized on the live model,
-after the prefix and the reply's reserve, and the home takes what is left;
-the prefix is never cut and the home never goes into it. The prefix's end is
-marked as a prompt-cache boundary in the request's own `oneiron` provider
-options (`cache_boundaries`): an Anthropic rung sends it as `cache_control`
-`ephemeral` on that block, on the provider's own cache lifetime, and any
-other provider sends a plain call. The receipt names the live rung's model,
-and its cached-read and cache-write counters say whether the provider reused
-the prefix. The calls file, land and are checked as any other self-written
-pass, and the flight lets go of the capture when it ends.
+With `live_fork`, or `auto` while the prefix is warm, the step that crosses
+the threshold (or asks to compact) captures the run's live request as the
+rung that admits it sends it: the step's own admission on the chat role,
+bound to the rung its walk would send it to now, the rung's prompt first.
+That one copy rides the flight; each of its calls sends the prefix unchanged
+on that same rung, with no fallback to another rung or model, then the house
+compaction's instruction, the agent's home and the span's input after it. The
+span is sized on the live model, after the prefix and the reply's reserve,
+and the home takes what is left; the prefix is never cut and the home never
+goes into it. The prefix's end is marked as a prompt-cache boundary in the
+request's own `oneiron` provider options (`cache_boundaries`): an Anthropic
+rung sends it as `cache_control` `ephemeral` on that block, on the provider's
+own cache lifetime, and any other provider sends a plain call. The receipt
+names the live rung's model, and its cached-read and cache-write counters say
+whether the provider reused the prefix. The calls file, land and are checked
+as any other self-written pass, and the flight lets go of the capture when it
+ends.
+
+Under `auto` the host reads warmth from its own memory, never the vault:
+each call a rung answers notes the prefixes it marked (a step's or a chat
+turn's own end, FIX 4930) from the instant it was dispatched, under its
+route, offer, wire model and provider client. A prefix stays warm for the
+lifetime its provider keeps it, from one table:
+
+| Route | Lifetime |
+| --- | --- |
+| The Anthropic API's own (`anthropic-compat` at `https://api.anthropic.com`) | 5 minutes; 1 hour where the request's own `anthropic` options carry a `cache_control` with `ttl: "1h"` |
+| Every other route (OpenAI-compatible, Gemini, DeepSeek, any proxy) | unknown, so cold, until a row is added |
+
+The Anthropic wire marks every boundary at the tier the request asks for:
+with no such option it sends the bare `ephemeral` marker, as it always did,
+so no route newly pays the hour's cache-write price, and tiers that differ
+count as the shortest. A restart, a rebuilt provider client, or a matching
+prefix more than 20 content blocks before the request's end reads cold too.
+The breakpoint checks warmth when it captures the live request, and the
+flight checks it again right before its first call goes out, after its
+admission. Any stop before that call has gone out (a prefix gone cold, a live
+rung that rests, is on probation or is held on the device, a refused
+admission, a stale rung) sends nothing on the live rung, settles its permit
+unstarted, and the cheap writer writes the flight instead. Once the call has
+gone out, a provider's failure stays a failure, never read as cold. The
+flight keeps the source its first call ran on for every retry and fold. An `auto` flight's window is
+sized on the smaller of the live model's room and the cheap writer's, so a
+prefix that goes cold before the first call never leaves a window the cheap
+model cannot take. A self agent's chat turn (FIX 4465 D) follows the same
+row: under `auto` or `live_fork` its log is read from the retained ledger,
+and its flight forks the answer's warm call or, cold, is written by the
+cheap writer, its window cut to the whole turns that writer takes.
 
 A pass that cannot be written as the agent keeps its raw window for the turn
-and says why; it never falls back to the Dreamer or to the plain cheap
-writer. The run's `compaction` object carries `self_unavailable`:
-`live_fork_not_captured` (the row selects `live_fork` and the flight carries
-no capture from its breakpoint), `live_rung_unbound` (the live route refused
-the step's request, or no rung of its ladder could take it then),
-`live_prefix_too_long` (the live request and the reply leave the live model
-no room for the span), `live_fork_not_admitted` (the profile's writer is not
-`self`, or the capture is not the run's own), `live_fork_stale` (the live
-route no longer admits the captured rung), `no_identity` (the actor is not an
-agent anchored to a PERSON), `identity_unreadable`, `policy_unreadable`,
-`model_not_served`, or `route_wider_than_policy`. A run bound to a room is
-written as the agent too, on the route the run captured at entry.
+and says why; it never falls back to the Dreamer or to the plain house
+writer. Under `auto` a live fork that cannot be bound (no rung, a rung wider
+than `locality`, no room beside the prefix, a cold prefix) is not such a
+failure: the cheap writer writes the flight as the agent. A forced
+`live_fork` names every one of them. The run's `compaction` object carries
+`self_unavailable`: `live_fork_not_captured` (the row selects `live_fork` and
+the flight carries no capture from its breakpoint), `live_rung_unbound` (the
+live route refused the step's request, or no rung of its ladder could take it
+then), `live_prefix_too_long` (the live request and the reply leave the live
+model no room for the span), `live_fork_not_admitted` (the profile's writer
+is not `self`, or the capture is not the run's own), `live_fork_stale` (the
+live route no longer admits the captured rung), `no_identity` (the actor is
+not an agent anchored to a PERSON), `identity_unreadable`,
+`policy_unreadable`, `model_not_served` (neither the agent's own model,
+`cheap_model` nor the house model is served), or `route_wider_than_policy`. A
+run bound to a room is written as the agent too, on the route the run
+captured at entry.
 
 Each self-written summary lands only through its packet: a turn digest of
 its window, admitted through the packet door's host-log binding against the
 run's retained steps, with the snapshot the pass stamped when the gate
 accepted it. Its receipt records who wrote it (the agent) and what ran it:
-the admitted model, the provider and the model it reported, the
+the source its flight ran on (`retained_turns` or `live_fork`, never
+`auto`), the admitted model, the provider and the model it reported, the
 provider-reported input, cached-read, cache-write and output tokens (`null`
 when the provider reported none, never a guessed zero), each try the gate
 refused as its own line, the call's step hash and the home parts it wore.

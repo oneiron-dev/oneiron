@@ -1,16 +1,19 @@
 //! A conversation's self-written compaction (FIX 4465 D): a self agent's
-//! chat turn compacts on its own live fork. The agent's log is read from
-//! the retained ledger as its reader reads it ([`read_chat_log`]): landed
+//! chat turn compacts as the agent. The agent's log is read from the
+//! retained ledger as its reader reads it ([`read_chat_log`]): landed
 //! summaries stand in for the turns they cover, and each turn the log holds
 //! is pinned by its projection's fingerprint. At the answer's breakpoint
 //! its host captures the answer's own admitted request as the fork's
-//! prefix ([`capture_conversation_fork`]). Past the profile's threshold the
-//! oldest turns outside the hot tail seal one window in one SESSION; the
-//! flight runs off the answer's path on the captured rung, its paid tries
-//! filed in the model-step family, its summary minted as the session's next
-//! epoch with a durable receipt keyed by the SUMMARY and the Dreamer's check
+//! prefix ([`capture_conversation_fork`]), or, under a row on `auto` whose
+//! live prefix is cold, leaves the flight to the cheap writer as the agent
+//! (FIX 6029). Past the profile's threshold the oldest turns outside the hot
+//! tail seal one window in one SESSION, sized on the writer the flight was
+//! prepared on; the flight runs off the answer's path, its paid tries filed
+//! in the model-step family, its summary minted as the session's next epoch
+//! with a durable receipt keyed by the SUMMARY and the Dreamer's check
 //! declared in the same write. A flight that cannot run keeps the raw log
-//! and names why; it is never handed to the Dreamer or a cheap writer.
+//! and names why; it is never handed to the Dreamer or the plain house
+//! writer.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +22,7 @@ use super::{
     CompactHooks, CompactionBackend, CompactionCheck, CompactionDirective, CompactionDriver,
     CompactionEvidence, CompactionExecution, CompactionGateFailure, CompactionGatePolicy,
     CompactionOff, CompactionRefusal, CompactionRequest, CompactionSuppression, GatedCompaction,
-    SelfCompactionUnavailable, compact_invocation, gate_compaction,
+    SelfCompactionUnavailable, compact_invocation, compaction_input_tokens, gate_compaction,
 };
 use crate::code_run::{ExecutorStorage, LiveCompactionFork};
 use crate::edge::EdgeActorClass;
@@ -28,6 +31,7 @@ use crate::{EntityId, LlmRequest, Vault, WriteActor};
 mod log;
 mod storage;
 
+use log::ChatLogWindow;
 pub use log::{ChatLog, ChatLogLine, read_chat_log};
 pub(crate) use storage::{conversation_receipt_in, put_conversation_receipt_in_txn};
 
@@ -107,16 +111,18 @@ impl ConversationCompactionUnavailable {
 
 /// `capture_conversation_fork`: the answer's own `live` request, as its
 /// rung sends it, captured at its breakpoint for its flight, on its
-/// driver's backend; why none can be bound otherwise. Called before the
-/// answer is sent, so the rung is the one its walk takes now.
+/// driver's backend. `None` for a flight the cheap writer writes as the
+/// agent: a row on the retained turns, or a row on `auto` whose live prefix
+/// is cold here (FIX 6029). Why none can be bound, for a row that selects
+/// the live fork. Called before the answer is sent, so the rung is the one
+/// its walk takes now.
 pub fn capture_conversation_fork(
     driver: &CompactionDriver,
     live: &LlmRequest,
-) -> Result<LiveCompactionFork, SelfCompactionUnavailable> {
+) -> Option<Result<LiveCompactionFork, SelfCompactionUnavailable>> {
     driver
         .backend()
         .capture_live_fork(live, driver.summary_token_budget())
-        .unwrap_or(Err(SelfCompactionUnavailable::LiveForkNotCaptured))
 }
 
 /// One sealed conversation flight: the driver that sealed it, its window's
@@ -132,9 +138,13 @@ pub struct ConversationFlight {
     hooks: CompactHooks,
 }
 
-/// Seals `log`'s window for one flight past its driver's threshold and
-/// freezes the `captured` fork its backend sends (FIX 4465 D). `byline` is
-/// the answering agent, `job` the reply's MESSAGE. Off the answer's path.
+/// Seals `log`'s window for one flight past its driver's threshold, on the
+/// `captured` fork its backend sends (FIX 4465 D), or on the cheap writer as
+/// the agent when the breakpoint captured none (FIX 6029). The flight is
+/// prepared first, so its window is sized on the writer it runs on: the
+/// longest run of whole turns that writer takes, and its evidence names
+/// exactly those turns. `byline` is the answering agent, `job` the reply's
+/// MESSAGE. Off the answer's path.
 ///
 /// # Errors
 ///
@@ -144,7 +154,7 @@ pub fn seal_conversation_flight(
     mut driver: CompactionDriver,
     policy: CompactionGatePolicy,
     byline: WriteActor,
-    captured: Result<LiveCompactionFork, SelfCompactionUnavailable>,
+    captured: Option<Result<LiveCompactionFork, SelfCompactionUnavailable>>,
     log: &ChatLog,
     job: EntityId,
 ) -> Result<ConversationFlight, ConversationCompactionUnavailable> {
@@ -154,13 +164,33 @@ pub fn seal_conversation_flight(
         Ok(CompactionDirective::Quiet) => return Err(Why::Quiet),
         Err(_) => return Err(Why::LogUnreadable),
     }
-    let Some(window) = log.window.as_ref() else {
+    let Some(whole) = log.window.as_ref() else {
         driver.abandon();
         return Err(Why::NoWindow);
     };
+    let prepared = match captured {
+        None => driver.backend().prepare_flight(false),
+        Some(captured) => driver
+            .admit_self_live_binding(byline, captured)
+            .and_then(|fork| driver.backend().prepare_live_flight(false, fork)),
+    };
+    if let Err(why) = prepared {
+        driver.abandon();
+        return Err(Why::Writer(why));
+    }
     let budget = driver.summary_token_budget();
+    let room = driver.backend().input_token_limit(budget);
+    let Some(window) = window_within(whole, budget, room) else {
+        driver.backend().end_flight();
+        driver.abandon();
+        return Err(Why::NoWindow);
+    };
+    let turn_start = window.messages.first().map_or(0, |message| message.turn);
     let fits = |pins: &[String]| {
         crate::tokenizer::count_context_pack_tokens(&pins.join("\n")) as u64 <= budget
+            && room.is_none_or(|room| {
+                compaction_input_tokens(turn_start, &window.messages, pins, None, budget) <= room
+            })
     };
     // The agent's own pins the window holds word for word, while they fit,
     // then the lines a `host.compact` hook pins.
@@ -190,26 +220,20 @@ pub fn seal_conversation_flight(
     let Ok(request) = driver.seal_request(
         vault,
         &window.session,
-        window.messages.clone(),
+        window.messages,
         pins,
-        window.sources.clone(),
+        window.sources,
         WindowLog::Conversation,
     ) else {
+        driver.backend().end_flight();
         driver.abandon();
         return Err(Why::WindowNotSealed);
     };
-    let frozen = driver
-        .admit_self_live_binding(byline, captured)
-        .and_then(|fork| driver.backend().prepare_live_flight(false, fork));
-    if let Err(why) = frozen {
-        driver.abandon();
-        return Err(Why::Writer(why));
-    }
     let evidence = ConversationEvidence {
         session: window.session,
         conversation: log.conversation,
         branch: log.branch,
-        turns: window.spans.clone(),
+        turns: window.spans,
     };
     Ok(ConversationFlight {
         driver,
@@ -219,6 +243,47 @@ pub fn seal_conversation_flight(
         evidence,
         job,
         hooks,
+    })
+}
+
+/// The longest run of `window`'s first turns whose rendered input fits
+/// `room` beside a reply of `budget`, with those turns' own sources and
+/// spans: all of it when it fits whole or nothing bounds it. `None` when not
+/// even its first turn fits. The rest waits for a later flight.
+fn window_within(window: &ChatLogWindow, budget: u64, room: Option<u64>) -> Option<ChatLogWindow> {
+    let turn_start = window.messages.first()?.turn;
+    let fits = |turns: usize| {
+        room.is_none_or(|room| {
+            compaction_input_tokens(turn_start, &window.messages[..turns], &[], None, budget)
+                <= room
+        })
+    };
+    if fits(window.messages.len()) {
+        return Some(window.clone());
+    }
+    // Whole turns only: the largest count that fits, by halves.
+    let (mut held, mut over) = (0, window.messages.len());
+    while over - held > 1 {
+        let mid = held + (over - held) / 2;
+        if fits(mid) {
+            held = mid;
+        } else {
+            over = mid;
+        }
+    }
+    if held == 0 {
+        return None;
+    }
+    let spans = window.spans[..held].to_vec();
+    let sources = spans
+        .iter()
+        .flat_map(|span| std::iter::once(span.turn).chain(span.messages.iter().copied()))
+        .collect();
+    Some(ChatLogWindow {
+        session: window.session,
+        messages: window.messages[..held].to_vec(),
+        sources,
+        spans,
     })
 }
 

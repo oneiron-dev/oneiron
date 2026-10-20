@@ -2,13 +2,16 @@
 //! constructor of the shared writer factory, beside code mode's run seats.
 //! It uses the same self registry, gate policy and home logic: one writer,
 //! bound to the answering agent, wearing its home at the place its caller
-//! sits, on the house compaction route. Its flight forks the answer's own
+//! sits, on the house compaction route. A live flight forks the answer's own
 //! admitted call, captured at the answer's breakpoint through a per-answer
 //! admission that hands back exactly that call; it is never admitted again
-//! over a rendered transcript. The flight spends on its own guard on the
-//! chat actor's budget line and bills the payer the turn resolved: each
-//! call takes its own permit and settles once, and filing settles nothing.
-//! It runs off the answer's path, queued with every other pass.
+//! over a rendered transcript. Under a row on `auto` (FIX 6029, the
+//! default) a breakpoint whose prefix is cold leaves the flight to the
+//! cheap writer as the agent, over the retained ledger. The flight spends on
+//! its own guard on the chat actor's budget line and bills the payer the
+//! turn resolved: each call takes its own permit and settles once, and
+//! filing settles nothing. It runs off the answer's path, queued with every
+//! other pass.
 
 use std::sync::Arc;
 
@@ -31,17 +34,18 @@ use super::{CodeModeCompaction, CompactionMeter, LiveAdmission, ThreadSpawn};
 use crate::ai_host::AiHandle;
 use crate::models::{OfferLadder, RoleCall, RoleRefusal};
 
-/// `chat_compaction_entry`: a chat answer compacts on its own live fork
-/// only for an agent whose engine-owned profile names `self`, under a row
-/// that reads the live context. A row on the retained turns (the default)
-/// and every other agent keep the chat path as it was.
+/// `chat_compaction_entry`: a chat answer compacts as its agent only for an
+/// agent whose engine-owned profile names `self`, under a row that reads
+/// the live context: one that selects the live fork, or `auto` (FIX 6029),
+/// which forks the warm prefix or writes on the cheap writer. A row on the
+/// retained turns and every other agent keep the chat path as it was.
 fn chat_compaction_entry(profile: &MemoryProfile, row: &SelfCompactionDefault) -> bool {
     profile.compaction == CompactionOwnership::Engine
         && profile.writes_as_self()
-        && row.source == SelfCompactionSource::LiveFork
+        && matches!(row.source, SelfCompactionSource::Auto | SelfCompactionSource::LiveFork)
 }
 
-/// A self agent that compacts its chat on its own live fork.
+/// A self agent that compacts its chat as itself.
 pub(crate) struct ChatSelfMode {
     agent: EntityId,
     definition: AgentDefinition,
@@ -112,7 +116,8 @@ impl LiveAdmission for AnswerAdmission {
 impl AiHandle {
     /// The self mode `agent` answers chat in (FIX 4465 D), when its
     /// definition's profile names `self` and the vault's row reads the live
-    /// context. `None` keeps the chat path as it was. A host whose writer
+    /// context, on `live_fork` or `auto` (FIX 6029). `None` keeps the chat
+    /// path as it was. A host whose writer
     /// factory is off still reads the agent's log this way; its breakpoint
     /// names why no flight runs.
     pub(crate) fn chat_self_mode(&self, vault: &Vault, agent: EntityId) -> Option<ChatSelfMode> {
@@ -139,9 +144,10 @@ impl AiHandle {
     }
 
     /// Enters an answer's breakpoint: past its profile's threshold, the
-    /// answer's own `admitted` call is captured now, before it is sent, and
-    /// its flight is queued to run off the answer's path. Says why no
-    /// flight is queued when none is; the log then stays raw.
+    /// answer's own `admitted` call is captured now, before it is sent (none
+    /// under `auto` when its prefix is cold, FIX 6029), and its flight is
+    /// queued to run off the answer's path. Says why no flight is queued
+    /// when none is; the log then stays raw.
     pub(crate) fn enter_chat_breakpoint(
         &self,
         call: ChatBreakpointCall,

@@ -6606,24 +6606,25 @@
      "path": "src/blob_artifact/esign/delivery_capability.rs",
      "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 4,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignDeliveryEndReason",
-      "EsignDeliveryReceipt"
+      "EsignDeliveryReceipt",
+      "EsignDeliveryReceiptState"
      ],
      "path": "src/blob_artifact/esign/delivery_settlement.rs",
      "purpose": "An ended delivery settles (OF-415, FIX 6363, Engine ruling 10-20)",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 3,
+      "enum": 2,
       "fn": 2,
       "struct": 1
      }
@@ -15890,7 +15891,7 @@
       "ConversationTurnSpan"
      ],
      "path": "src/compaction/conversation.rs",
-     "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts on its own live fork",
+     "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts as the agent",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
@@ -26024,9 +26025,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/checkpoint/documents.rs",
-     "purpose": "The document rows of entity and NOTE documents (KS7-2): each slot's snapshot and pending updates, joined to…",
+     "purpose": "The document rows of entity and NOTE documents (KS7-2, FIX 6072): each slot's snapshot and pending updates…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/checkpoint/loro.rs",
+     "purpose": "The entity document's actor carriers in its Loro history (FIX 6072): its birth's actor and every engine…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -26074,7 +26085,7 @@
      "path": "src/entity_doc/document.rs",
      "purpose": "The common actor-stamped Loro document primitive",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 18,
       "fn": 9,
       "struct": 3
      }
@@ -40777,7 +40788,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 3
      }
     },
@@ -40798,7 +40809,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -51862,10 +51873,40 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/store/checkpoint_payload/loro.rs",
+     "purpose": "The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full…",
+     "surface": {
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/loro/frame.rs",
+     "purpose": "A Loro row's content as the shared projection frames it: the framing version, the family, the slice, each…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/checkpoint_payload/loro/proof.rs",
+     "purpose": "The typed equality of two Loro histories a join's proof compares (FIX 6072, Engine R1): change by change and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/checkpoint_payload/mod.rs",
      "purpose": "Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -51905,7 +51946,7 @@
      "path": "src/store/checkpoint_payload/rows/typed.rs",
      "purpose": "Reading a declared table's rows with its own codec, and splitting the actors a row names out of an owner's…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -65077,7 +65118,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 25,
+     "files": 26,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65805,7 +65846,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 119,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66031,7 +66072,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4117,
+   "source_files": 4121,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73720,6 +73761,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnthropicCacheTier",
       "AnthropicProviderOptions",
       "AnthropicThinkingOptions"
      ],
@@ -73727,7 +73769,8 @@
      "purpose": "Namespaced provider options and thinking controls with wire-field projection",
      "surface": {
       "const": 1,
-      "fn": 4,
+      "enum": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -78040,7 +78083,7 @@
      "path": "src/ai_host/compaction/live_fork.rs",
      "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -78060,7 +78103,7 @@
      "path": "src/ai_host/compaction/serve.rs",
      "purpose": "The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -87006,9 +87049,19 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/cache_warmth.rs",
+     "purpose": "Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -89700,7 +89753,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89842,7 +89895,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 903,
+   "source_files": 904,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -91182,6 +91235,8 @@
       "EsignCreateRequest",
       "EsignDeliveryEndReason",
       "EsignDeliveryReceipt",
+      "EsignDeliveryReceiptState",
+      "EsignDeliveryWait",
       "EsignDispatchRequest",
       "EsignDispatchView",
       "EsignDocument",
@@ -93703,7 +93758,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 879,
+      "enum": 881,
       "struct": 2781
      }
     },
