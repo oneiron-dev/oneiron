@@ -95,6 +95,10 @@ an error):
 
 - the document is quiescent: attached, no uncommitted transaction, nothing
   pending, not mid-import, no deleted root containers;
+- a shallow-root store either belongs to a trimmed history, or is the empty
+  version with empty maps over the full history (Loro trims nothing when a
+  shallow export finds no single-head critical version, as for a multi-head
+  window document); the second is captured as a full-history document;
 - every container in the retained history, the latest state and the shallow
   root is a root `Map` named in `fixed_roots` (no mergeable or reserved names);
 - every op is a map insert or delete, and no value holds a container

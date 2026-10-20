@@ -83,6 +83,15 @@ pub(super) fn read_raw(doc: &LoroDoc) -> Result<Raw, Unsupported> {
             frontiers: frontiers_list(oplog.shallow_since_frontiers()),
             maps,
         }),
+        // With no single-head critical version Loro trims nothing: the shallow
+        // root is the empty version with empty maps over the full history.
+        (false, Some(maps))
+            if maps
+                .iter()
+                .all(|map| map.entries.as_ref().is_some_and(Vec::is_empty)) =>
+        {
+            None
+        }
         (false, None) => None,
         _ => return Err(Unsupported::Shape),
     };
