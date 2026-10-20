@@ -78453,13 +78453,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer/unverifiable.rs",
-     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317)",
+     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
