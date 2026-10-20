@@ -91,6 +91,41 @@ impl FrozenGitArgv {
         Self::frozen(GitWireOperation::ReachableObjects, tail)
     }
 
+    /// `rev-list --objects --stdin` over the tips on stdin, with git leaving
+    /// out every blob of `below_bytes` or more: each commit, tree and tag the
+    /// tips' whole history reaches, and each smaller blob, once. A missing
+    /// object prints with a `?` prefix. Stdin carries the tips, so no ref
+    /// count is bounded by argv.
+    pub(super) fn reachable_objects_below(tips: &[GitOid], below_bytes: u64) -> Self {
+        let mut tail = os_args(&[
+            "rev-list",
+            "--objects",
+            "--no-object-names",
+            "--missing=print",
+        ]);
+        tail.push(OsString::from(format!("--filter=blob:limit={below_bytes}")));
+        tail.push(OsString::from("--stdin"));
+        let mut payload = Vec::new();
+        for oid in tips {
+            payload.extend_from_slice(oid.as_str().as_bytes());
+            payload.push(b'\n');
+        }
+        Self::frozen(GitWireOperation::ReachableObjects, tail).with_stdin(payload)
+    }
+
+    /// `cat-file --batch` over oids on stdin: per object a `<oid> <type>
+    /// <size>` line, its raw bytes and a newline; a missing one is reported
+    /// as `<oid> missing`.
+    pub(super) fn read_objects(oids: &[GitOid]) -> Self {
+        let tail = os_args(&["cat-file", "--batch", "--buffer"]);
+        let mut payload = Vec::new();
+        for oid in oids {
+            payload.extend_from_slice(oid.as_str().as_bytes());
+            payload.push(b'\n');
+        }
+        Self::frozen(GitWireOperation::ReadObject, tail).with_stdin(payload)
+    }
+
     /// `ls-tree -z`: the direct entries of one tree.
     pub(super) fn read_tree(tree: &GitOid) -> Self {
         let tail = os_args(&["ls-tree", "-z", tree.as_str()]);
