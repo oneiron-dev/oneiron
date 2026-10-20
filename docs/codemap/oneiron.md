@@ -1578,10 +1578,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/executor/merge_resolution.rs` | src | s | 5 crate-vis | — | A conflict set's resolution: the typed pack (how it resolves, and which candidate's identity a merge keeps)… |
 | `src/dreamer_consolidation/extracted_people.rs` | src | s | 1 crate-vis | — | Explicit PERSON outputs from the production extraction response |
 | `src/dreamer_consolidation/failure_rules.rs` | src | m | 1 fn · 13 crate-vis | — | Resident-owned v1 failure rules for the two Dreamer consolidation call sites |
-| `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 1 enum · 4 fn · 6 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind | — |
+| `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 1 enum · 4 fn · 7 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind | — |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 4 struct · 2 fn | KeptAnswer, KeptAsk, KeptRole, KeptRoute | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 20 re-export · 23 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 20 re-export · 24 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 15 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/nightly_merge.rs` | src | m | 6 crate-vis | — | Nightly fan-in over child proposals |
 | `src/dreamer_consolidation/note_parts.rs` | src | s | 1 crate-vis | — | A Dreamer-written text past the NOTE body bound, as the ordered parts it lands in: the split an imported… |
@@ -1594,6 +1594,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/person_about.rs` | src | m | 1 struct · 2 fn · 1 const · 5 crate-vis | PersonAboutExecutor | PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the… |
 | `src/dreamer_consolidation/provenance.rs` | src | L | 6 struct · 1 enum · 2 trait · 10 fn · 1 re-export · 9 crate-vis | ConsolidationEvidenceEnvelope, ConsolidationProvenanceHop, ConsolidationProvenanceHopKind, ConsolidationSink, KeptDecision, PeerAnswerLineage, PeerTrustDigestLine, PeerTrustDigestSink +1 | — |
 | `src/dreamer_consolidation/redirty.rs` | src | m | 15 crate-vis | — | The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again… |
+| `src/dreamer_consolidation/residency.rs` | src | s | 2 crate-vis | — | A read refused only because a TURN's tagged MESSAGE is away from this replica (a window demoted back to… |
 | `src/dreamer_consolidation/resident_dream.rs` | src | L | 3 struct · 3 fn · 1 const · 3 crate-vis | ResidentDreamModel, ResidentDreamPartial, ResidentDreamProgress | A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own… |
 | `src/dreamer_consolidation/resident_for_human.rs` | src | m | 1 fn | — | An agent's free time for its human (FIX 4453, `autonomy.for_human`) |
 | `src/dreamer_consolidation/resident_health.rs` | src | s | 2 crate-vis | — | A resident's own health cards as its dreaming's input (OF-490, FIX 1145/1146): the cards whose subject is… |
@@ -1742,7 +1743,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/program/read.rs` | src | m | 3 fn · 2 re-export | — | A turn program's reads (DOOR-141 PR3a, FIX 4382): what admitting a landed turn's wakes decided, where one… |
 | `src/dreamer_runner/program/read/checkpoint.rs` | src | s | 1 fn | — | A turn program's fourth read (DOOR-141 PR3b): the resume checkpoint its restarter reads, as the caller reads… |
 | `src/dreamer_runner/program/read/views.rs` | src | m | 18 struct · 5 enum | ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView, ProgramCheckpointWaitView, ProgramFrontierView, ProgramHeldView +15 | The wire shapes of a turn program's reads (DOOR-141 PR3a) |
-| `src/dreamer_runner/program/resume.rs` | src | s | 5 crate-vis | — | A turn program's holds and their resume (DOOR-141 PR3b, FIX 4382, FIX 5711) |
+| `src/dreamer_runner/program/resume.rs` | src | m | 1 fn · 6 crate-vis | — | A turn program's holds and their resume (DOOR-141 PR3b, FIX 4382, FIX 5711) |
 | `src/dreamer_runner/program/run.rs` | src | m | 25 crate-vis | — | Where a turn program's run stands (DOOR-141 PR2), as execution progress: CONTENT, never authority |
 | `src/dreamer_runner/program/types.rs` | src | m | 7 struct · 1 enum · 1 fn · 13 crate-vis | ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain, TurnProgramRegistration | The DOOR-141 vocabulary: the pinned program, its arming, the wake a landed turn owes it, and what admitting… |
 | `src/dreamer_runner/program/wake.rs` | src | s | 3 crate-vis | — | The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own… |
@@ -3547,7 +3548,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/scan_check.rs` | src | m | 1 struct · 1 enum · 4 fn · 4 const · 9 crate-vis | EngineScan, ScanCheck | Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520) |
 | `src/scan_check/table_tests.rs` | test | m | — | — | The code's own list of engine scans: none refuses for how many rows it reads (rule 5) |
 | `src/scope_summary/codec.rs` | src | m | 2 struct · 2 fn · 5 crate-vis | ScopeSummaryBody, SummarySourceMessage | Strict, versioned scope-summary MessagePack codec (distinct from epochs) |
-| `src/scope_summary/derivation.rs` | src | s | 3 struct · 1 fn · 8 crate-vis | ScopeSummaryMetadata, SummaryDerivation, SummarySourceVersion | Scope-summary derivation envelopes and change-driven re-derivation |
+| `src/scope_summary/derivation.rs` | src | m | 3 struct · 1 fn · 8 crate-vis | ScopeSummaryMetadata, SummaryDerivation, SummarySourceVersion | Scope-summary derivation envelopes and change-driven re-derivation |
 | `src/scope_summary/doors.rs` | src | L | 1 struct · 5 fn · 18 crate-vis | LandedHeader | Transactional spawn, summary mint, merge-header and drill doors |
 | `src/scope_summary/mod.rs` | src | s | 7 re-export · 4 crate-vis | — | Retained spawned sub-sessions and Dreamer-composed scope summaries |
 | `src/scope_summary/producer.rs` | src | s | 3 crate-vis | — | Private admission for locally minted scope-summary bodies |
