@@ -261,6 +261,16 @@ pub(super) fn rust_code_embedding_inputs(
     Ok(inputs)
 }
 
+/// Pushes `node`'s children so its first child pops first. Each walker below
+/// keeps its own explicit stack and visits nodes in the same pre-order a
+/// recursive walk would, so source nesting never becomes native stack depth.
+fn push_children<'tree>(node: tree_sitter::Node<'tree>, stack: &mut Vec<tree_sitter::Node<'tree>>) {
+    let first = stack.len();
+    let mut cursor = node.walk();
+    stack.extend(node.children(&mut cursor));
+    stack[first..].reverse();
+}
+
 fn collect_changed_rust_embedding_inputs(
     node: tree_sitter::Node<'_>,
     repo_ref: &RepoRef,
@@ -269,47 +279,46 @@ fn collect_changed_rust_embedding_inputs(
     changed_ranges: &[Range<usize>],
     inputs: &mut Vec<CodeEmbeddingInput>,
 ) -> Result<()> {
-    if let Some((name, kind)) = rust_definition_identity(node, source)? {
-        let definition = rust_definition_chunk(path, source, node)?;
-        if definition_has_uncovered_changed_lines(
-            node,
-            source,
-            definition.chunk.start_line,
-            definition.chunk.end_line,
-            changed_ranges,
-        )? {
-            let fingerprint = derive_symbol_fingerprint(
-                path,
-                &name,
-                kind,
-                std::slice::from_ref(&definition.chunk),
-            )?;
-            let revision =
-                CodeSymbolRevision::new(path, name.clone(), kind, fingerprint, vec![0], None, None);
-            let entity_id = code_symbol_entity_id(repo_ref, &revision)?;
-            inputs.push(CodeEmbeddingInput::new(
-                entity_id,
-                path,
-                name,
-                kind,
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if let Some((name, kind)) = rust_definition_identity(node, source)? {
+            let definition = rust_definition_chunk(path, source, node)?;
+            if definition_has_uncovered_changed_lines(
+                node,
+                source,
                 definition.chunk.start_line,
                 definition.chunk.end_line,
-                definition.chunk.content_hash,
-                definition.text,
-            ));
+                changed_ranges,
+            )? {
+                let fingerprint = derive_symbol_fingerprint(
+                    path,
+                    &name,
+                    kind,
+                    std::slice::from_ref(&definition.chunk),
+                )?;
+                let revision = CodeSymbolRevision::new(
+                    path,
+                    name.clone(),
+                    kind,
+                    fingerprint,
+                    vec![0],
+                    None,
+                    None,
+                );
+                let entity_id = code_symbol_entity_id(repo_ref, &revision)?;
+                inputs.push(CodeEmbeddingInput::new(
+                    entity_id,
+                    path,
+                    name,
+                    kind,
+                    definition.chunk.start_line,
+                    definition.chunk.end_line,
+                    definition.chunk.content_hash,
+                    definition.text,
+                ));
+            }
         }
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_changed_rust_embedding_inputs(
-            child,
-            repo_ref,
-            path,
-            source,
-            changed_ranges,
-            inputs,
-        )?;
+        push_children(node, &mut stack);
     }
     Ok(())
 }
@@ -322,46 +331,45 @@ fn collect_rust_definitions(
     symbols: &mut Vec<ExtractedCodeSymbol>,
     source_symbol_indexes: &mut Vec<usize>,
 ) -> Result<()> {
-    if let Some((name, kind)) = rust_definition_identity(node, source)? {
-        validate_text(&name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
-        let definition = rust_definition_chunk(path, source, node)?;
-        let chunk = definition.chunk;
-        let chunk_index = u32::try_from(chunks.len()).map_err(|_| {
-            Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-                "tree-sitter chunk index exceeds u32",
-            ))
-        })?;
-        let fingerprint =
-            derive_symbol_fingerprint(path, &name, kind, std::slice::from_ref(&chunk))?;
-        let start_line = chunk.start_line;
-        let end_line = chunk.end_line;
-        chunks.push(chunk);
-        let byte_range = node.byte_range();
-        let name_range = rust_definition_name_range(node).unwrap_or(byte_range.clone());
-        let symbol_index = symbols.len();
-        symbols.push(ExtractedCodeSymbol {
-            revision: CodeSymbolRevision::new(
-                path,
-                name,
-                kind,
-                fingerprint,
-                vec![chunk_index],
-                None,
-                None,
-            ),
-            start_byte: byte_range.start,
-            end_byte: byte_range.end,
-            name_start_byte: name_range.start,
-            name_end_byte: name_range.end,
-            start_line,
-            end_line,
-        });
-        source_symbol_indexes.push(symbol_index);
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_rust_definitions(child, path, source, chunks, symbols, source_symbol_indexes)?;
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if let Some((name, kind)) = rust_definition_identity(node, source)? {
+            validate_text(&name, CODE_SYMBOL_NAME_MAX_BYTES, "symbol name")?;
+            let definition = rust_definition_chunk(path, source, node)?;
+            let chunk = definition.chunk;
+            let chunk_index = u32::try_from(chunks.len()).map_err(|_| {
+                Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                    "tree-sitter chunk index exceeds u32",
+                ))
+            })?;
+            let fingerprint =
+                derive_symbol_fingerprint(path, &name, kind, std::slice::from_ref(&chunk))?;
+            let start_line = chunk.start_line;
+            let end_line = chunk.end_line;
+            chunks.push(chunk);
+            let byte_range = node.byte_range();
+            let name_range = rust_definition_name_range(node).unwrap_or(byte_range.clone());
+            let symbol_index = symbols.len();
+            symbols.push(ExtractedCodeSymbol {
+                revision: CodeSymbolRevision::new(
+                    path,
+                    name,
+                    kind,
+                    fingerprint,
+                    vec![chunk_index],
+                    None,
+                    None,
+                ),
+                start_byte: byte_range.start,
+                end_byte: byte_range.end,
+                name_start_byte: name_range.start,
+                name_end_byte: name_range.end,
+                start_line,
+                end_line,
+            });
+            source_symbol_indexes.push(symbol_index);
+        }
+        push_children(node, &mut stack);
     }
     Ok(())
 }
@@ -530,14 +538,15 @@ fn subtract_descendant_definition_lines(
     source: &str,
     uncovered: &mut Vec<Range<usize>>,
 ) -> Result<()> {
-    if rust_definition_identity(node, source)?.is_some() {
-        subtract_line_range(uncovered, rust_definition_line_range(source, node)?);
-        return Ok(());
-    }
-
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        subtract_descendant_definition_lines(child, source, uncovered)?;
+    // A definition is subtracted whole and not descended into; the walk ends
+    // as soon as nothing is left uncovered.
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if rust_definition_identity(node, source)?.is_some() {
+            subtract_line_range(uncovered, rust_definition_line_range(source, node)?);
+        } else {
+            push_children(node, &mut stack);
+        }
         if uncovered.is_empty() {
             break;
         }
@@ -553,36 +562,36 @@ fn collect_identifier_refs_in_range(
     source: &[u8],
     refs: &mut Vec<String>,
 ) -> Result<()> {
-    let range = node.byte_range();
-    if range.end <= start_byte || range.start >= end_byte {
-        return Ok(());
-    }
-    if let Some((skip_start, skip_end)) = skip_range
-        && range.start == skip_start
-        && range.end == skip_end
-    {
-        return Ok(());
-    }
-    if node.child_count() == 0 && is_reference_identifier_kind(node.kind()) {
-        let bytes =
-            source
-                .get(range)
-                .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-                    "tree-sitter identifier byte range is invalid",
-                )))?;
-        let text = std::str::from_utf8(bytes).map_err(|_| {
-            Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-                "tree-sitter identifier is not UTF-8",
-            ))
-        })?;
-        if !text.is_empty() {
-            refs.push(text.to_owned());
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        let range = node.byte_range();
+        if range.end <= start_byte || range.start >= end_byte {
+            continue;
         }
-        return Ok(());
-    }
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        collect_identifier_refs_in_range(child, start_byte, end_byte, skip_range, source, refs)?;
+        if let Some((skip_start, skip_end)) = skip_range
+            && range.start == skip_start
+            && range.end == skip_end
+        {
+            continue;
+        }
+        if node.child_count() == 0 && is_reference_identifier_kind(node.kind()) {
+            let bytes =
+                source
+                    .get(range)
+                    .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                        "tree-sitter identifier byte range is invalid",
+                    )))?;
+            let text = std::str::from_utf8(bytes).map_err(|_| {
+                Error::Code(CodeError::InvalidCodeSymbolManifestBody(
+                    "tree-sitter identifier is not UTF-8",
+                ))
+            })?;
+            if !text.is_empty() {
+                refs.push(text.to_owned());
+            }
+            continue;
+        }
+        push_children(node, &mut stack);
     }
     Ok(())
 }

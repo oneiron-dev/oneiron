@@ -153,8 +153,8 @@ async fn send_command(
 fn pane_line(wakes: &[WakeEnvelope]) -> String {
     let mut line = String::from(PANE_NUDGE_PREFIX);
     for wake in wakes {
-        let hex = !wake.task_ref.is_empty()
-            && wake.task_ref.bytes().all(|byte| byte.is_ascii_hexdigit());
+        let hex =
+            !wake.task_ref.is_empty() && wake.task_ref.bytes().all(|byte| byte.is_ascii_hexdigit());
         if hex {
             line.push(' ');
             line.push_str(&wake.task_ref);
