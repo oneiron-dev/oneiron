@@ -47576,6 +47576,12 @@ pub struct EsignDispatchView {
     pub gate_decision_ref: Option<String>,
     #[serde(rename = "gate_reason_codes")]
     pub gate_reason_codes: Vec<String>,
+    #[serde(
+        rename = "approval_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_digest: Option<String>,
 }
 
 /// `oneiron::blob_artifact::esign::notice_door::EsignNoticesDispatchRequest`.

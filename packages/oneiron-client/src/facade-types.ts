@@ -5861,7 +5861,7 @@ export type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL"
 /** `oneiron::memory::outbound::invite::CalendarInviteSurfaceInput` */
 export type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null }
 /** `oneiron::memory::outbound::types::OutboundIntentReceipt` */
-export type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean }
+export type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; approval_digest?: string | null; deduped: boolean }
 /** `oneiron::calendar::ingest::poll::IcsFeedPollConfig` */
 export type IcsFeedPollConfig = { secret_ref: string; system: string; cadence_min_seconds: number; cadence_max_seconds: number }
 /** `oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest` */
@@ -6173,7 +6173,7 @@ export type EsignLinksView = { document_ref: string; issued: EsignIssuedLink[]; 
 /** `oneiron::blob_artifact::esign::door::EsignDispatchRequest` */
 export type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null }
 /** `oneiron::blob_artifact::esign::door::EsignDispatchView` */
-export type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] }
+export type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[]; approval_digest?: string | null }
 /** `oneiron::blob_artifact::esign::notice_door::EsignNoticesDispatchRequest` */
 export type EsignNoticesDispatchRequest = { document_ref: string }
 /** `oneiron::blob_artifact::esign::notice_door::EsignNoticeOutcome` */

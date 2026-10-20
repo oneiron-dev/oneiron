@@ -506,6 +506,15 @@ pub struct OutboundDispatchResult {
     pub gate_decision_id: Option<String>,
     pub gate_outcome: String,
     pub gate_reason_codes: Vec<String>,
+    /// FIX 6424 (Engine 10-20 20:4x): while the Gate holds this send for the
+    /// owner (`gate_outcome` `pending`), the approve-once digest his one-time
+    /// press must name to release it, 64 lower-hex: the exact digest the
+    /// Gate's spend lookup composes for a send whose family pins its own
+    /// target (e-sign, the communications connectors, `calendar.invite`,
+    /// feedback and failure-signal bundles). `None` for every other result.
+    /// [`crate::outbound::outbound_approve_once_digest`] composes the same
+    /// digest for a prepared request.
+    pub approval_digest: Option<String>,
     pub receipt: ReceiptRecord,
     /// Ledger-owned logical delivery result, independent of the attempt receipt.
     pub(crate) resolution: Option<crate::outbound_intent_ledger::IntentResolution>,

@@ -14613,6 +14613,7 @@ class OutboundIntentReceipt(TypedDict):
     gate_outcome: NotRequired[str | None]
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
+    approval_digest: NotRequired[str | None]
     deduped: bool
 class IcsFeedPollConfig(TypedDict):
     secret_ref: str
@@ -15389,6 +15390,7 @@ class EsignDispatchView(TypedDict):
     gate_outcome: str
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
+    approval_digest: NotRequired[str | None]
 class EsignNoticesDispatchRequest(TypedDict):
     document_ref: str
 class EsignNoticeOutcome(TypedDict):

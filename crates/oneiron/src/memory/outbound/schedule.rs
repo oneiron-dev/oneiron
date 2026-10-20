@@ -188,6 +188,10 @@ impl Memory<'_> {
                                 .collect()
                         })
                         .unwrap_or_default(),
+                    approval_digest: receipt
+                        .fields
+                        .get(crate::outbound::APPROVAL_DIGEST_FIELD)
+                        .cloned(),
                     deduped: true,
                 },
                 receipt
@@ -320,6 +324,7 @@ impl Memory<'_> {
                     gate_outcome: Some(result.gate_outcome),
                     gate_decision_ref: result.gate_decision_id,
                     gate_reason_codes: result.gate_reason_codes,
+                    approval_digest: result.approval_digest,
                     deduped: false,
                 },
                 sender_ref,
@@ -387,6 +392,7 @@ impl Memory<'_> {
             &result.gate_outcome,
             result.gate_decision_id.as_deref(),
             &result.gate_reason_codes,
+            result.approval_digest.as_deref(),
         );
         Ok((
             OutboundIntentReceipt {
@@ -395,6 +401,7 @@ impl Memory<'_> {
                 gate_outcome: Some(result.gate_outcome),
                 gate_decision_ref: result.gate_decision_id,
                 gate_reason_codes: result.gate_reason_codes,
+                approval_digest: result.approval_digest,
                 deduped: false,
             },
             sender_ref,

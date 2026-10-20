@@ -2997,7 +2997,7 @@ declare namespace Sdk {
   type BookingPageTokenResponse = { page_token: string };
   type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL";
   type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null };
-  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; approval_digest?: string | null; deduped: boolean };
   type IcsFeedPollConfig = { secret_ref: string; system: string; cadence_min_seconds: number; cadence_max_seconds: number };
   type CalendarIcsFeedConfigureRequest = { config: IcsFeedPollConfig };
   type CalendarIcsPollResult = { state: "reenqueued"; next_not_before: number } | { state: "paused_needs_input"; inbox_exception_ref: string };
@@ -3153,7 +3153,7 @@ declare namespace Sdk {
   type EsignIssuedLink = { recipient: string; email: string; capability: string };
   type EsignLinksView = { document_ref: string; issued: EsignIssuedLink[]; unchanged: string[] };
   type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null };
-  type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] };
+  type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[]; approval_digest?: string | null };
   type EsignNoticesDispatchRequest = { document_ref: string };
   type EsignNoticeOutcome = { attempt_ref: string; recipient: string; transition: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; error_code?: string | null; error?: string | null };
   type EsignNoticesDispatchView = { document_ref: string; recovered: number; notices: EsignNoticeOutcome[] };

@@ -355,6 +355,12 @@ pub struct EsignDispatchView {
     /// The persisted gate decision, readable with `vault.receipts.get`.
     pub gate_decision_ref: Option<String>,
     pub gate_reason_codes: Vec<String>,
+    /// While the gate holds the act for the owner (`gate_outcome`
+    /// `pending`), the approve-once digest his one-time press must name to
+    /// release it, 64 lower-hex (FIX 6424): it pins this document, this
+    /// command and this act's send ref, so the retry that spends it carries
+    /// this view's retry key.
+    pub approval_digest: Option<String>,
 }
 
 impl Memory<'_> {
@@ -682,6 +688,7 @@ impl Memory<'_> {
             gate_outcome: result.gate_outcome,
             gate_decision_ref: result.gate_decision_id,
             gate_reason_codes: result.gate_reason_codes,
+            approval_digest: result.approval_digest,
         })
     }
 }
