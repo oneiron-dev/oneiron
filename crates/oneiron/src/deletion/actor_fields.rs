@@ -78,6 +78,24 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     Ok(())
 }
 
+/// A legal hold's release, in its own transaction (FIX 6280): the births a
+/// hold kept from an erased actor's scrub, and their window carriers, go
+/// once nothing holds their rows; no other scrub runs again. The `dt:`
+/// markers and the holds as they now stand say what is owed. A vault that
+/// keeps no hold row, standing or released, owes nothing: only a hold keeps
+/// a birth past its actor's scrub, and a released one keeps its row for 24
+/// months, well past the release pass that settles it.
+pub(super) fn rerun_birth_actor_scrubs_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    if crate::store::legal_hold::holds_in_txn(&vault.store, wtxn)?.is_empty() {
+        return Ok(());
+    }
+    let erased = hard_erased_ids_in_txn(vault, wtxn)?;
+    crate::provenance::birth::release_held_births_in_txn(vault, wtxn, &erased)
+}
+
 /// How two carrier copies of one row settle when they differ only in who
 /// they name (FIX 3878): a window's copy, a recovery artifact's or another
 /// machine's. It is never an authority or a replay check.
