@@ -2380,6 +2380,20 @@ The named tier's row sets `model_dir` and the identity keys. `oneiron init
 the first row. A vault whose manifest binds `extraction_encoder` at another
 tier's checkpoint stops tagging and names that tier in the log.
 
+`device = "cuda"` opens only in a server built with candle's CUDA kernels,
+and a named device never falls back to the CPU: a build without them refuses
+at startup (`oneironer engine candle/cuda does not run on this machine`).
+`oneiron-server` has no `cuda` feature, since `--all-features` would then
+build CUDA everywhere. On a host with the CUDA toolkit (`nvcc` on `PATH`),
+build with candle's own features:
+
+```sh
+cargo build --release -p oneiron-server --features candle-core/cuda,candle-nn/cuda
+```
+
+`deploy/install-oneiron-server.sh` adds the same features when
+`ONEIRON_CUDA=1` is set. Its default build, and every CI build, has none.
+
 The extraction teacher is offline by default. It runs the Dreamer's
 extraction passes and teaches the tagger, and the manifest refuses a served
 call through it (chat, checks, routing, voice). To route a seat to it, set
@@ -2399,3 +2413,45 @@ oneiron oneironer publish --manifest candidate.json --export export.json --check
 ```
 
 `publish` prints the configured tier that serves the student, if any.
+
+`publish` opens the vault itself, so it runs only with the server stopped,
+never on a managed vault. On a running server the owner binds the tagger it
+has loaded through `vault.models.oneironer.bind`:
+
+```http
+POST /v1/core/facade/vault.models.oneironer.bind
+Content-Type: application/json
+
+{"expected_checkpoint_sha16": "0123456789abcdef"}
+```
+
+- The binding is the tagger the server has loaded, never one the caller
+  names: its model, `oneironer/local@<checkpoint_sha16>`, in the `oneironer`
+  slot, at the section's named `tier`, else at the tier the row already
+  holds. That is the binding the tagger checks the vault against, so the
+  loaded tagger is the one selected.
+- Both input fields are optional and only compare. `expected_checkpoint_sha16`
+  and `expected_stack_sha16` must match the loaded checkpoint and stack, or
+  the call is refused. `{}` binds whatever is loaded.
+- One write sets `roles.extraction_encoder` and
+  `routes.oneironer = "on_device"` in the current manifest and keeps every
+  other role, route, the verdict and the seat policy. It is the guarded write
+  `vault.models.manifest.replace` runs: the owner's proof is checked again
+  inside it, the saved teacher approval must still pass under the live probe
+  policy, the manifest checks must pass, an encoder export the new binding
+  no longer matches is dropped, and every resident route override is
+  cleared. It publishes no encoder export. The answer is the manifest it
+  published.
+- A vault with no manifest is refused (`manifest not configured`): one row
+  cannot make a complete v2 manifest or its teacher approval. The door also
+  refuses when no Oneironer slot is loaded, when the slot is disabled, is not
+  `provider = "local"` or has no loaded model card, when a guard does not
+  match, and when the caller is not the vault's owner.
+
+A vault with no manifest tags with the host's `[oneironer]` section as its
+selection, and `vault.models.roles.invoke` serves `extraction_encoder` from
+that section for it. Its receipt names the loaded tagger: role
+`extraction_encoder`, slot `oneironer`, revision the configured
+`checkpoint_sha16`, route `on_device`, the section's provider, and the named
+tier, else `extraction_encoder`. Every other role, and every role of a vault
+with a manifest, is served from the manifest as before.

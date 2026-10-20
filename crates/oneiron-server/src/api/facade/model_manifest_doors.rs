@@ -5,16 +5,18 @@ use oneiron::embed::EmbedderLocality;
 use oneiron::llm::manifest::doors::{
     ModelManifestReplace, ModelRoleInput, ModelRoleInvocation, ModelRoleInvoke, ModelRoleOutput,
     ModelRoleRead, ModelRoleReceipt, ModelRouteRead, ModelRouteReplace, ModelRouteView,
+    OneironerBind,
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
 use oneiron::memory::extraction::{EncoderInput, EncoderMessage, ExtractionEncoder, infer_encoder};
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
-use oneiron::{EntityId, ModelLocality};
+use oneiron::{EntityId, ModelId, ModelLocality, ModelTierRef};
 
 use super::host_doors::{Listed, internal};
 use super::legal_hold_doors::{as_owner, as_owner_naming};
 use crate::auth::CoreAuth;
+use crate::config::{OneironerProvider, models::role_key};
 use crate::server::SyncServer;
 
 pub(crate) async fn vault_models_manifest_read(
@@ -49,6 +51,80 @@ pub(crate) async fn vault_models_manifest_replace(
         |_| Vec::new(),
     )
     .await
+}
+
+/// Binds the Oneironer this server has loaded into the current manifest. The
+/// identity is the loaded slot's, never the caller's: its guards only
+/// compare. Side tables list no vault record.
+pub(crate) async fn vault_models_oneironer_bind(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OneironerBind,
+) -> Listed<ModelManifest> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.models.oneironer.bind",
+        move |server, owner| {
+            let (model, tier) = loaded_oneironer(server, &input)?;
+            Ok(server
+                .vault()
+                .bind_oneironer_as_owner(owner, &model, tier.as_ref())?)
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+/// The Oneironer this server has loaded, as `TaggerSlot::selected_by`
+/// compares it: the local tagger's own model, whose revision is the
+/// configured checkpoint, and the named tier it serves, if any. A guard the
+/// caller names must match it.
+fn loaded_oneironer(
+    server: &SyncServer,
+    guards: &OneironerBind,
+) -> MemoryResult<(ModelId, Option<ModelTierRef>)> {
+    let slot = server
+        .tagger
+        .as_ref()
+        .ok_or_else(|| unavailable("no oneironer slot is loaded"))?;
+    let config = slot.config();
+    if !config.is_active() {
+        return Err(unavailable("the oneironer slot is disabled"));
+    }
+    if config.provider != OneironerProvider::Local {
+        return Err(unavailable("the oneironer slot is not provider local"));
+    }
+    let card = slot
+        .card()
+        .ok_or_else(|| unavailable("the oneironer slot has no loaded model card"))?;
+    let model = slot.tagger().model_id();
+    let checkpoint = config.checkpoint_sha16.as_deref().unwrap_or_default();
+    if model.revision() != checkpoint || card.checkpoint_sha16 != checkpoint {
+        return Err(unavailable(
+            "the loaded oneironer does not serve the configured checkpoint",
+        ));
+    }
+    if guards
+        .expected_checkpoint_sha16
+        .as_deref()
+        .is_some_and(|expected| expected != checkpoint)
+    {
+        return Err(MemoryError::bad_request(
+            "expected_checkpoint_sha16 does not match the loaded oneironer",
+        ));
+    }
+    let stack = card.stack_sha16.as_deref();
+    if guards
+        .expected_stack_sha16
+        .as_deref()
+        .is_some_and(|expected| Some(expected) != stack)
+    {
+        return Err(MemoryError::bad_request(
+            "expected_stack_sha16 does not match the loaded oneironer",
+        ));
+    }
+    Ok((model.clone(), config.tier.clone().map(ModelTierRef)))
 }
 
 pub(crate) async fn vault_models_routes_read(
@@ -119,6 +195,36 @@ fn locality(locality: EmbedderLocality) -> ModelLocality {
     }
 }
 
+/// Whether `role`, in a vault with no manifest, is served from the host's
+/// own section: the selection `TaggerSlot::selected_by` takes for such a
+/// vault (FIX 6840). Every other role needs a manifest.
+fn host_section_serves(role: ModelRole) -> bool {
+    role == ModelRole::ExtractionEncoder
+}
+
+/// The receipt of the encoder the host's `[oneironer]` section serves a vault
+/// with no manifest: the loaded tagger's own model, whose revision is the
+/// configured checkpoint, at its own route. The host alone attests it.
+fn host_section_receipt(server: &SyncServer, role: ModelRole) -> MemoryResult<ModelRoleReceipt> {
+    let slot = server
+        .tagger
+        .as_ref()
+        .ok_or_else(|| unavailable("no extraction encoder is configured"))?;
+    let config = slot.config();
+    let encoder = slot.tagger().as_ref();
+    let model = encoder.model_id().clone();
+    Ok(ModelRoleReceipt {
+        role,
+        revision: model.revision().to_owned(),
+        provider: config.provider.as_str().to_owned(),
+        model,
+        slot: ModelSlot::Oneironer,
+        tier: ModelTierRef(config.tier.clone().unwrap_or_else(|| role_key(role))),
+        route: locality(encoder.locality()),
+        catalog_revision: None,
+    })
+}
+
 async fn invoke(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -127,9 +233,11 @@ async fn invoke(
     const VERB: &str = "vault.models.roles.invoke";
     let role = input.role;
     let mut receipt = as_owner(server, auth, VERB, move |server, owner| {
-        Ok(server
-            .vault()
-            .model_role_as_owner(owner, ModelRoleRead { role })?)
+        let vault = server.vault();
+        if host_section_serves(role) && vault.model_manifest_as_owner(owner)?.is_none() {
+            return host_section_receipt(server, role);
+        }
+        Ok(vault.model_role_as_owner(owner, ModelRoleRead { role })?)
     })
     .await?;
     let output = match input.input {

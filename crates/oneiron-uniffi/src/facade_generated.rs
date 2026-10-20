@@ -3746,6 +3746,11 @@ export_facade! {
     let output = client.vault_models_manifest_replace(&input)?;
     crate::codec::lift_record("vault.models.manifest.replace", &output)
 };
+"vault.models.oneironer.bind" => fn vault_models_oneironer_bind(&self, input: OneironerBind) -> ModelManifest = |client| {
+    let input: oneiron::llm::manifest::doors::OneironerBind = crate::codec::lower_record("vault.models.oneironer.bind", input)?;
+    let output = client.vault_models_oneironer_bind(&input)?;
+    crate::codec::lift_record("vault.models.oneironer.bind", &output)
+};
 "vault.models.routes.read" => fn vault_models_routes_read(&self, input: ModelRouteRead) -> ModelRouteView = |client| {
     let input: oneiron::llm::manifest::doors::ModelRouteRead = crate::codec::lower_record("vault.models.routes.read", input)?;
     let output = client.vault_models_routes_read(&input)?;

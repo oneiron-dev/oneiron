@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1118 code-mode rows (1093 host rows, 25 run rows), 3770 declarations.
-// Replies: 998 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1119 code-mode rows (1094 host rows, 25 run rows), 3771 declarations.
+// Replies: 999 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2639,6 +2639,7 @@ declare namespace Sdk {
   type ModelManifest = { version: number; roles: Record<string, ModelBinding>; routes: Record<string, ModelLocality>; verdict?: VerdictBinding | null; seat_policy?: SeatPolicy | null };
   type TeacherProbeApproval = { probe_id: string; model: ModelId; binding_hash: string; f1_millionths: number; policy_hash: string; holder_ref?: string | null };
   type ModelManifestReplace = { manifest: ModelManifest; teacher_approval?: TeacherProbeApproval | null };
+  type OneironerBind = { expected_checkpoint_sha16?: string | null; expected_stack_sha16?: string | null };
   type ModelRouteRead = { slot: ModelSlot };
   type ModelRouteView = { slot: ModelSlot; pin?: ModelLocality | null; route?: ModelLocality | null };
   type ModelRouteReplace = { slot: ModelSlot; route: ModelLocality };
@@ -5499,6 +5500,10 @@ declare const vault: Sdk.VaultHost & {
       read(input: Sdk.EmptyRequest): Promise<Sdk.ModelManifest | null | StoredResult>;
       /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
       replace(input: Sdk.ModelManifestReplace): Promise<Sdk.ModelManifest | StoredResult>;
+    };
+    oneironer: {
+      /** Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides. */
+      bind(input: Sdk.OneironerBind): Promise<Sdk.ModelManifest | StoredResult>;
     };
     roles: {
       /** Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt. */

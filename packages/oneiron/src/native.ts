@@ -781,6 +781,7 @@ vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
 vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
+vaultModelsOneironerBind(input: unknown): unknown
 vaultModelsRoutesRead(input: unknown): unknown
 vaultModelsRoutesReplace(input: unknown): unknown
 vaultModelsRolesRead(input: unknown): unknown

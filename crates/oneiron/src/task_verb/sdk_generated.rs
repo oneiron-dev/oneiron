@@ -4105,6 +4105,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.models.oneironer.bind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::manifest::doors::OneironerBind,
+                >(),
+            ),
+            (
                 "vault.models.routes.read",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::manifest::doors::ModelRouteRead,
@@ -6597,6 +6603,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.propose_deck",
     "vault.models.manifest.read",
     "vault.models.manifest.replace",
+    "vault.models.oneironer.bind",
     "vault.models.routes.read",
     "vault.models.routes.replace",
     "vault.models.roles.read",
@@ -8327,6 +8334,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             Option<crate::llm::manifest::ModelManifest>,
         >(),
         "vault.models.manifest.replace" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
+        }
+        "vault.models.oneironer.bind" => {
             crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
         }
         "vault.models.routes.read" => crate::code_run::vault_read::request_schema::<
@@ -14378,6 +14388,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.models.oneironer.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.models.routes.read" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19197,6 +19214,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.models.manifest.replace" => {
             let _input: crate::llm::manifest::doors::ModelManifestReplace = decode(value.clone())?;
         }
+        "vault.models.oneironer.bind" => {
+            let _input: crate::llm::manifest::doors::OneironerBind = decode(value.clone())?;
+        }
         "vault.models.routes.read" => {
             let _input: crate::llm::manifest::doors::ModelRouteRead = decode(value.clone())?;
         }
@@ -21909,6 +21929,9 @@ pub fn invoke(
         "vault.models.manifest.read" => encode(vault_models_manifest_read(memory, decode(value)?)?),
         "vault.models.manifest.replace" => {
             encode(vault_models_manifest_replace(memory, decode(value)?)?)
+        }
+        "vault.models.oneironer.bind" => {
+            encode(vault_models_oneironer_bind(memory, decode(value)?)?)
         }
         "vault.models.routes.read" => encode(vault_models_routes_read(memory, decode(value)?)?),
         "vault.models.routes.replace" => {
@@ -28960,6 +28983,12 @@ pub fn vault_models_manifest_replace(
     input: crate::llm::manifest::doors::ModelManifestReplace,
 ) -> MemoryResult<crate::llm::manifest::ModelManifest> {
     crate::task_verb::sdk::replace_model_manifest(memory, input)
+}
+pub fn vault_models_oneironer_bind(
+    memory: &Memory<'_>,
+    input: crate::llm::manifest::doors::OneironerBind,
+) -> MemoryResult<crate::llm::manifest::ModelManifest> {
+    crate::task_verb::sdk::host_only(memory, "vault.models.oneironer.bind", &input)
 }
 pub fn vault_models_routes_read(
     memory: &Memory<'_>,

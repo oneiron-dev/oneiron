@@ -26,6 +26,10 @@ curl -fsSL https://raw.githubusercontent.com/oneiron-dev/oneiron/main/deploy/ins
 Set `ONEIRON_GIT_BRANCH`, `ONEIRON_GIT_TAG`, or `ONEIRON_GIT_REV` to install
 a specific branch, tag, or revision.
 
+On a Linux host with the CUDA toolkit, set `ONEIRON_CUDA=1` to add
+`--features candle-core/cuda,candle-nn/cuda` for an embedder or Oneironer
+`device = "cuda"`. The default install builds no CUDA.
+
 The local daemon convention is:
 
 ```text

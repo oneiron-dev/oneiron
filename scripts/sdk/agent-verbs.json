@@ -11779,6 +11779,21 @@
       "section": false
     },
     {
+      "name": "vault.models.oneironer.bind",
+      "description": "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides.",
+      "input": "crate::llm::manifest::doors::OneironerBind",
+      "output": "crate::llm::manifest::ModelManifest",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.oneironer.bind\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.models.routes.read",
       "description": "Reads one independent model slot route with its manifest pin and effective resident narrowing.",
       "input": "crate::llm::manifest::doors::ModelRouteRead",
