@@ -1881,6 +1881,7 @@ fn mcp_agent_verb_input(
         "vault.esign.get" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.links.issue" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.send_for_signature" => a.spec.clone().ok_or_else(invalid),
+        "vault.esign.notices.dispatch" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.remind" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.void" => a.spec.clone().ok_or_else(invalid),
         "vault.esign.signing.act" => a.spec.clone().ok_or_else(invalid),
@@ -4829,6 +4830,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.esign.send_for_signature" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.esign.notices.dispatch" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.esign.remind" => {
@@ -17987,6 +17991,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::blob_artifact::esign::EsignDispatchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_esign_send_for_signature(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.esign.notices.dispatch" => {
+            let input: oneiron::blob_artifact::esign::EsignNoticesDispatchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_esign_notices_dispatch(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
