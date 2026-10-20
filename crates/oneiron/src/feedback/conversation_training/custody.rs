@@ -95,6 +95,12 @@ pub(super) struct SubmissionCustody {
     pub(super) scope_seq: u64,
     /// Unix seconds, of its first preparation. A retry keeps it.
     pub(super) prepared_at: u64,
+    /// C, the piece's only handle on the anonymous training window (TL-6):
+    /// made once, at its first preparation, under K at its generation and
+    /// month (`link::piece_code`), and never made again. A retry keeps it,
+    /// and a restore that brings this row keeps it even after K is minted
+    /// afresh (FIX 5892). No log or error names it.
+    pub(super) piece: [u8; 32],
     /// When it was published; `None` while it never left.
     pub(super) published_at: Option<u64>,
     pub(super) state: SubmissionState,

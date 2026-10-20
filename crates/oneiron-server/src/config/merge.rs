@@ -478,6 +478,7 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     crate::conversation_training::validate_outbox_dir(
         config.publisher_training_outbox_dir.as_deref(),
     )?;
+    crate::conversation_training::validate_intake_origin(&config.publisher_training_intake_origin)?;
     if let Some(embedding) = &config.embedding {
         embedding.validate()?;
     }
@@ -771,6 +772,8 @@ impl From<FileServeConfig> for PartialServeConfig {
             device_class: value.device_class,
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,
+            publisher_training_self_host_shipper: None,
+            publisher_training_intake_origin: None,
         }
     }
 }
@@ -857,6 +860,10 @@ struct PartialServeConfig {
     esign_delivery_outbox_dir: Option<PathBuf>,
     /// `--publisher-training-outbox-dir` is argv-only: no file key, no env.
     publisher_training_outbox_dir: Option<PathBuf>,
+    /// `--publisher-training-self-host-shipper` is argv-only, as the outbox.
+    publisher_training_self_host_shipper: Option<bool>,
+    /// `--publisher-training-intake-origin` is argv-only, as the outbox.
+    publisher_training_intake_origin: Option<String>,
 }
 
 impl fmt::Debug for PartialServeConfig {
@@ -942,6 +949,14 @@ impl fmt::Debug for PartialServeConfig {
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
+            )
+            .field(
+                "publisher_training_self_host_shipper",
+                &self.publisher_training_self_host_shipper,
+            )
+            .field(
+                "publisher_training_intake_origin",
+                &self.publisher_training_intake_origin,
             )
             .finish()
     }
@@ -1158,6 +1173,12 @@ impl PartialServeConfig {
         if let Some(value) = self.publisher_training_outbox_dir {
             resolved.publisher_training_outbox_dir = Some(value);
         }
+        if let Some(value) = self.publisher_training_self_host_shipper {
+            resolved.publisher_training_self_host_shipper = value;
+        }
+        if let Some(value) = self.publisher_training_intake_origin {
+            resolved.publisher_training_intake_origin = value;
+        }
         Ok(())
     }
 }
@@ -1242,6 +1263,10 @@ impl From<&ServeArgs> for PartialServeConfig {
             device_class: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
             publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),
+            publisher_training_self_host_shipper: value
+                .publisher_training_self_host_shipper
+                .then_some(true),
+            publisher_training_intake_origin: value.publisher_training_intake_origin.clone(),
         }
     }
 }
