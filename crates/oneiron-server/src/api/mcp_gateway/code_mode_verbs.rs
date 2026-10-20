@@ -120,6 +120,9 @@ struct RunBrowser {
     /// browser an earlier door started takes this door's at its first call
     /// here, and spends it down after.
     policy_set: AtomicBool,
+    /// The host's retained line a browser this door starts charges its live
+    /// handles to (C013).
+    handles: crate::server::HandleLine,
 }
 
 impl Drop for RunBrowser {
@@ -546,6 +549,7 @@ impl RunBrowser {
             vault: Arc::clone(&server.vault),
             run_id,
             policy_set: AtomicBool::new(false),
+            handles: crate::server::HandleLine::of(server),
         })
     }
 
@@ -568,7 +572,8 @@ impl RunBrowser {
                 self.guest.fixture.as_ref(),
                 "/usr/local/bin/oneiron-browser-guest",
             )?;
-            let started = BrowserSession::attach(&self.guest, transport, relay)?;
+            let started =
+                BrowserSession::attach(&self.guest, transport, relay, self.handles.charge())?;
             *session = Some(started);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;

@@ -38,7 +38,7 @@ mod web_fetch;
 mod windows;
 
 pub(crate) use self::artifact_previews::ArtifactPreviews;
-pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats};
+pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats, HandleLine};
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::{SyncServer, TaskWorkTurn};
 pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};

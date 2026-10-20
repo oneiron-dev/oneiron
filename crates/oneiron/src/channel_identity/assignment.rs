@@ -156,8 +156,9 @@ pub(super) fn by_assignment(
 ) -> Result<Option<(EntityId, ChannelIdentity)>> {
     let slot = read_slot(store, txn, key)?;
     let occupant = match slot.occupant {
-        // A deleted self-held row's hold on its address routes nothing.
-        Some(id) if ERASED.get(store, txn, &id)?.is_some() => None,
+        // A deleted self-held row's hold on its address routes nothing:
+        // not to itself, and not to a retiring predecessor (FIX 5990).
+        Some(id) if ERASED.get(store, txn, &id)?.is_some() => return Ok(None),
         held => held
             .map(|id| read_indexed_row(store, txn, key, id).map(|(row, facts)| (id, row, facts)))
             .transpose()?,

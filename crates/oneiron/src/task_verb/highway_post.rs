@@ -1160,6 +1160,8 @@ pub(crate) fn settle_task_proposal_in_txn(
     if claim.approval != ClaimApprovalStatus::Approved {
         return Ok(());
     }
+    // FIX 5993: an approved commitment series projects from here.
+    vault.index_consented_commitment_series_in_txn(wtxn, &claim, &claim_id, now)?;
     if claim.predicate == TASK_CREATE_PROPOSAL_PREDICATE {
         settle_post(vault, wtxn, claim_id, &claim, approver, now)
     } else if claim.predicate == TASK_BRIEF_PROPOSAL_PREDICATE {
