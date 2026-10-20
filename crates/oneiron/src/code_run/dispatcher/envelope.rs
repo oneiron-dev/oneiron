@@ -95,7 +95,7 @@ impl HostSelfDispatcher<'_> {
         Ok((envelope, run_group))
     }
 
-    fn write_envelope_with(
+    pub(super) fn write_envelope_with(
         &self,
         effect: SelfEffect,
         admission: Option<&consent::CodeEmissionAdmission>,
@@ -137,6 +137,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::MemoryPutEdge
             | SelfEffect::AgentVerb
             | SelfEffect::Team
+            | SelfEffect::RepoSnapshotsIngest
+            | SelfEffect::RepoWorkOpen
                 if self.external_effect_seen.get() =>
             {
                 SourceLineage::of(self.source()).with(ClaimSource::ToolOutput)
@@ -365,6 +367,16 @@ const fn bridge_call_is_external_effect(effect: SelfEffect) -> bool {
         // A bound workflow run queues the vault's own agents under the
         // run's own lease and takes the vault's own TASK (FIX 5316).
         SelfEffect::WorkflowDispatch => false,
+        // The run repo rows read the vault's own repo rows and the owner's
+        // local object store, and write the vault's own rows (FIX 6867).
+        SelfEffect::RepoSnapshotsGet
+        | SelfEffect::RepoSnapshotsRead
+        | SelfEffect::RepoSymbolsDefinitions
+        | SelfEffect::RepoViewsGet
+        | SelfEffect::RepoViewsRead
+        | SelfEffect::RepoMergeQueueObserve
+        | SelfEffect::RepoSnapshotsIngest
+        | SelfEffect::RepoWorkOpen => false,
     }
 }
 

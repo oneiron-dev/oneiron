@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3791 declarations.
-// Replies: 1000 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1128 code-mode rows (1095 host rows, 33 run rows), 3810 declarations.
+// Replies: 1008 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2497,7 +2497,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team" | "WorkflowDispatch" | "RepoSnapshotsGet" | "RepoSnapshotsRead" | "RepoSymbolsDefinitions" | "RepoViewsGet" | "RepoViewsRead" | "RepoMergeQueueObserve" | "RepoSnapshotsIngest" | "RepoWorkOpen";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait } | { WorldPrivacyReady: WorldPrivacyWaitResult };
@@ -3780,6 +3780,25 @@ declare namespace Sdk {
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
   type WorkflowBoundDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId };
+  type RepoSnapshotsGetInput = { repo: EntityId; ref: string; snapshot: string };
+  type RepoSnapshotView = { repo: EntityId; ref: string; commit: string; snapshot: string; artifact: EntityId; files: CodeSnapshotFile[] };
+  type RepoSnapshotsGetOutput = RepoSnapshotView;
+  type RepoSnapshotsReadInput = { repo: EntityId; ref: string; snapshot: string; path: string };
+  type RepoSnapshotsReadOutput = { repo: EntityId; ref: string; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
+  type RepoSymbolsDefinitionsInput = { repo: EntityId; ref: string; snapshot: string; name: string };
+  type RepoSymbolsDefinitionsOutput = { repo: EntityId; ref: string; snapshot: string; definitions: CodeSnapshotDefinition[] };
+  type RepoViewsGetInput = { work: EntityId };
+  type RepoWorkFile = { path: string; content_hash_blake3: string };
+  type RepoWorkView = { work: EntityId; repo: EntityId; ref: string; base_green: string; base_snapshot: string; fork_hash: string; files: RepoWorkFile[] };
+  type RepoViewsGetOutput = RepoWorkView;
+  type RepoViewsReadInput = { work: EntityId; path: string };
+  type RepoViewsReadOutput = { work: EntityId; path: string; bytes: number[]; sha256: string };
+  type RepoMergeQueueObserveInput = { work: EntityId };
+  type RepoMergeQueueObserveOutput = { work: EntityId; repo: EntityId; ref: string; base_green: string; head_commit: string; green_commit: string; green_moved: boolean };
+  type RepoSnapshotsIngestInput = { repo: EntityId; ref: string };
+  type RepoSnapshotsIngestOutput = RepoSnapshotView;
+  type RepoWorkOpenInput = { repo: EntityId; ref: string };
+  type RepoWorkOpenOutput = RepoWorkView;
   type LeaderAdviceInput = { top?: number | null };
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };
@@ -4057,6 +4076,26 @@ declare namespace self {
   const budget: ((input: Sdk.SelfBudgetRequest) => Promise<Sdk.AgentBudgetView | StoredResult>) & {
     /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
     land(input: Sdk.BudgetLandRequest): Promise<Sdk.PartialResultHold | StoredResult>;
+  };
+  const code: {
+    merge_queue: {
+      observe(input: Sdk.RepoMergeQueueObserveInput): Promise<Sdk.RepoMergeQueueObserveOutput | StoredResult>;
+    };
+    snapshots: {
+      get(input: Sdk.RepoSnapshotsGetInput): Promise<Sdk.RepoSnapshotsGetOutput | StoredResult>;
+      ingest(input: Sdk.RepoSnapshotsIngestInput): Promise<Sdk.RepoSnapshotsIngestOutput | StoredResult>;
+      read(input: Sdk.RepoSnapshotsReadInput): Promise<Sdk.RepoSnapshotsReadOutput | StoredResult>;
+    };
+    symbols: {
+      definitions(input: Sdk.RepoSymbolsDefinitionsInput): Promise<Sdk.RepoSymbolsDefinitionsOutput | StoredResult>;
+    };
+    views: {
+      get(input: Sdk.RepoViewsGetInput): Promise<Sdk.RepoViewsGetOutput | StoredResult>;
+      read(input: Sdk.RepoViewsReadInput): Promise<Sdk.RepoViewsReadOutput | StoredResult>;
+    };
+    work: {
+      open(input: Sdk.RepoWorkOpenInput): Promise<Sdk.RepoWorkOpenOutput | StoredResult>;
+    };
   };
   const compact: (input: Sdk.FoldCompactInput) => Promise<Sdk.FoldReply<Sdk.FoldCompactAsked> | StoredResult>;
   const consent: {

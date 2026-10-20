@@ -10,7 +10,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 mod language_server;
+mod run;
 pub use language_server::{LanguageServer, SharedLanguageServer, StdioLanguageServer};
+pub(crate) use run::view_receipt_in_txn;
 
 /// One materialized view's receipt, keyed by view id.
 const VIEW_RECEIPTS: SideTable<EntityId, ViewReceipt, Named> =
@@ -51,6 +53,9 @@ pub struct ViewReceipt {
     pub fork_hash: [u8; 32],
     pub base: Option<(EntityId, EntityId)>,
     pub files: BTreeMap<String, [u8; 32]>,
+    /// The run this view is the work of (FIX 6867), bound in its first
+    /// write; `None` for an owner's or trusted caller's view.
+    pub run: Option<crate::memory::repo_doors::RepoRunStamp>,
 }
 /// Owns a private host directory. Working files never share writable inodes
 /// with canonical blobs or other views. Durable edits use the code document door.
@@ -122,68 +127,15 @@ impl<'a> CodeViewSet<'a> {
         contents: &BTreeMap<String, Vec<u8>>,
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<ViewReceipt> {
-        let _guard = self
-            .materialization
-            .lock()
-            .map_err(|_| Error::InvariantViolation("view lock poisoned"))?;
-        let view_id = EntityId::now();
-        let destination = self.root.join("views").join(view_id.to_hex());
-        std::fs::create_dir(&destination)?;
-        let mut files = BTreeMap::new();
-        for (path, bytes) in contents {
-            relative(path)?;
-            let content_hash = *blake3::hash(bytes).as_bytes();
-            let blob = self
-                .root
-                .join("blobs")
-                .join(crate::entity_id::bytes_to_hex_lower(&content_hash));
-            match std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&blob)
-            {
-                Ok(mut output) => {
-                    use std::io::Write;
-                    output.write_all(&bytes)?;
-                    output.sync_all()?;
-                    let mut permissions = output.metadata()?.permissions();
-                    permissions.set_readonly(true);
-                    output.set_permissions(permissions)?;
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if std::fs::symlink_metadata(&blob)?.file_type().is_symlink()
-                        || std::fs::read(&blob)?.as_slice() != bytes.as_slice()
-                    {
-                        return Err(Error::CorruptedIndex("view blob was modified"));
-                    }
-                }
-                Err(error) => return Err(error.into()),
-            }
-            let target = destination.join(path);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            // Same-user tools can chmod read-only files. Never share an inode
-            // with the canonical blob or another view. fs::copy may use CoW.
-            if target.try_exists()? {
-                return Err(Error::InvalidClaimBody("duplicate view path"));
-            }
-            std::fs::copy(&blob, &target)?;
-            files.insert(path.clone(), content_hash);
+        let materialized =
+            self.materialize_checked(actor, fork_hash, base, contents, |txn, _| {
+                admit(txn)?;
+                Ok(Ok::<_, std::convert::Infallible>(None))
+            })?;
+        match materialized {
+            Ok(receipt) => Ok(receipt),
+            Err(never) => match never {},
         }
-        let receipt = ViewReceipt {
-            view_id,
-            actor,
-            fork_hash,
-            base,
-            files,
-        };
-        self.vault.with_write_txn_grouped(|txn| {
-            admit(txn)?;
-            VIEW_RECEIPTS.put(&self.vault.store, txn, &view_id, &receipt)?;
-            Ok(())
-        })?;
-        Ok(receipt)
     }
     pub fn receipt(&self, id: EntityId) -> Result<Option<ViewReceipt>> {
         let txn = self.vault.store.env.read_txn()?;

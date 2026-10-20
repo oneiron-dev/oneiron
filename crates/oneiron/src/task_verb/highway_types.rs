@@ -115,16 +115,54 @@ impl HostBinding {
         &self,
         vault: &crate::Vault,
     ) -> crate::Result<crate::attempt_queue::AttemptRecord> {
-        crate::attempt_queue::AttemptQueue::new(vault)
-            .get(self.parent)?
+        let txn = vault.store.env.read_txn()?;
+        self.leased_record_in_txn(vault, &txn)?
+            .ok_or(crate::Error::InvalidClaimBody(
+                "the run's lease no longer holds",
+            ))
+    }
+
+    /// The try this binding sealed, read in the caller's snapshot `txn`, so
+    /// a writer judges the lease it commits under (FIX 6867): still leased,
+    /// by the same owner, at the same generation. `None` once it lapsed.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn leased_record_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::Result<Option<crate::attempt_queue::AttemptRecord>> {
+        Ok(crate::attempt_queue::AttemptQueue::new(vault)
+            .get_in_txn(txn, self.parent)?
             .filter(|record| {
                 record.state == crate::attempt_queue::AttemptState::Leased
                     && record.lease_owner.as_deref() == Some(self.lease_owner.as_str())
                     && record.attempt_count == self.attempt_count
-            })
-            .ok_or(crate::Error::InvalidClaimBody(
-                "the run's lease no longer holds",
-            ))
+            }))
+    }
+
+    /// The sealed try and the TASK it realizes, read in `txn`, while both
+    /// stand (FIX 6867): the lease holds, and the TASK is a live, uncancelled
+    /// standard task on a runner lane. `None` otherwise; a TASK whose record
+    /// does not read is one that does not stand.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn leased_task_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::Result<Option<(crate::attempt_queue::AttemptRecord, EntityId)>> {
+        let Some(record) = self.leased_record_in_txn(vault, txn)? else {
+            return Ok(None);
+        };
+        let task = super::highway_runner::runner_task_in(vault, txn, &record)
+            .ok()
+            .flatten();
+        Ok(task.map(|task| (record, task)))
     }
 }
 

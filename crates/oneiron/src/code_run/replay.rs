@@ -175,6 +175,9 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::WorkflowDispatch => {
                 Ok(())
             }
+            // A run repo row's answer is its door's output, as a verb answer
+            // (FIX 6867).
+            SelfDispatchOutcome::AgentVerb(_) if self.effect.is_repo() => Ok(()),
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),
@@ -817,7 +820,7 @@ pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<Enti
         matches!(
             call.effect,
             SelfEffect::AgentVerb | SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch
-        )
+        ) || call.effect.is_repo()
     });
     for call in verb_calls {
         if let SelfDispatchOutcome::AgentVerb(answer) =

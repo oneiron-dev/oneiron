@@ -10,6 +10,7 @@ mod leader;
 mod memory_verbs;
 mod program_step;
 mod reader_spawn;
+mod repo;
 mod session_verbs;
 mod summarize;
 mod team_submit;
@@ -618,6 +619,9 @@ impl<'a> HostSelfDispatcher<'a> {
             // The binding reads its TASK and workflow under the key its door
             // admitted it with.
             SelfCall::WorkflowDispatch(call) => self.dispatch_workflow_bound(*call, read_as),
+            // The run repo rows read on the lane their door admitted, under
+            // the run's lease, at its executor site (FIX 6867).
+            SelfCall::Repo(call) => self.dispatch_repo(call, site, read_as),
         }
     }
 }
