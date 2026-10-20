@@ -19,6 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use oneiron::feedback::TrainingTransport;
+
 use crate::feedback_redaction::OneironerFilter;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
@@ -140,8 +142,19 @@ fn tick(
         }
     };
     let filter = OneironerFilter::of_server(server);
-    let pass =
-        vault.offer_conversation_training(&outbox, &filter, &intake, OFFER_POLL.as_secs())?;
+    // TL-6: a self-hosted vault's offers leave through the anonymous training
+    // window, a managed vault's through its supervisor.
+    let transport = match placement {
+        Placement::SelfHost => TrainingTransport::Anonymous,
+        Placement::Managed => TrainingTransport::Hosted,
+    };
+    let pass = vault.offer_conversation_training(
+        &outbox,
+        &filter,
+        &intake,
+        transport,
+        OFFER_POLL.as_secs(),
+    )?;
     if let Some(reason) = &pass.unavailable {
         tracing::info!(%reason, "a publisher training offer pass stopped early");
     }
