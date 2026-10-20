@@ -86,6 +86,9 @@ pub use self::coreference::{
     COREFERENCE_LINK_WEIGHT, CoreferenceStatus, coreference_share_consent,
     coreference_shared_for_pact, put_coreference_link, unlink_coreference_link,
 };
+pub(crate) use self::coreference::{
+    coreference_share_consent_as_owner, put_coreference_link_as_owner,
+};
 pub use self::grant::{
     FEDERATION_GRANT_BODY_KEYS, FEDERATION_GRANT_SCHEMA_VERSION, FederationGrant,
     FederationGrantGuestPayload, FederationGrantPreset, FederationGrantRole, FederationGrantScope,

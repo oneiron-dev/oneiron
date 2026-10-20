@@ -13,7 +13,7 @@ use super::slip_vault::random_slip_id;
 use super::*;
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, RecordError, Result};
 use crate::federation::{Scope, ScopeAxis};
 
 impl Vault {
@@ -96,5 +96,22 @@ impl Vault {
         self.require_live_slip_grant_in_txn(txn, claims, now)?;
         self.require_live_slip_invitation_in_txn(txn, claims, now)?;
         self.require_live_delegation_in_txn(txn, claims)
+    }
+
+    /// [`Self::require_live_slip_refs_in_txn`] as a judgment, for a slip
+    /// verified earlier and checked again (FIX 5952): `false` once its grant,
+    /// invitation or delegation no longer stands, an error only when that
+    /// cannot be judged.
+    pub(super) fn slip_refs_stand_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claims: &SlipClaims,
+        now: u64,
+    ) -> Result<bool> {
+        match self.require_live_slip_refs_in_txn(txn, claims, now) {
+            Ok(()) => Ok(true),
+            Err(Error::Record(RecordError::InvalidAuthorityLogBody(_))) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 }
