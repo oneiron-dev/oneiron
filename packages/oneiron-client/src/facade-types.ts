@@ -665,7 +665,7 @@ export type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null }
 /** `oneiron::agent_dispatch::fanout_statement::ExceptionalWidthCheck` */
 export type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass }
 /** `oneiron::agent_dispatch::fanout_statement::FanoutStatement` */
-export type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number }
+export type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; priced_subtotal_usd_micros?: number | null; unpriced_parts: string[]; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number }
 /** `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchHold` */
 export type FanoutLaunchHold = { surface_ref: string; denied: boolean }
 /** `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchView` */
@@ -4519,7 +4519,7 @@ export type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref
 /** `oneiron::task_verb::sdk_workflows::WorkflowStepRun` */
 export type WorkflowStepRun = { ordinal: number; requested_agent_ref: EntityId; dispatched_agent_ref: EntityId; attempt_ref: EntityId; result_ref: string }
 /** `oneiron::task_verb::sdk_workflows::WorkflowRunView` */
-export type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] }
+export type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[]; task_ref?: EntityId | null }
 /** `oneiron::task_verb::sdk_workflows::WorkflowPersonDispatchRequest` */
 export type WorkflowPersonDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null; task_ref: EntityId; cap_units: number; unit: string; shown_at_ms: number }
 /** `oneiron::task_verb::sdk_workflows::WorkflowRunRequest` */

@@ -1,5 +1,7 @@
 //! Sync dispatch plus app-tier Rpc/Sub admission and bound-auth checks.
 
+use std::ops::ControlFlow;
+
 use loro::VersionVector;
 
 use super::conn_state::ConnState;
@@ -15,17 +17,23 @@ use crate::auth::CoreAuth;
 use crate::protocol::{self, ProtocolError, SyncMessage};
 use crate::server::SyncServer;
 
-/// Dispatches a parsed SyncMessage to the appropriate handler.
+/// Dispatches a parsed SyncMessage to the appropriate handler. `Break` when
+/// `session_gone` found the socket's caller gone once a window frame's
+/// window loaded (FIX 5438): that frame applies nothing, no later batch
+/// member runs, and the connection ends as the gate before dispatch ends it.
 pub(super) async fn handle_sync_message(
     server: &SyncServer,
     conn_id: u32,
     msg: SyncMessage,
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     conn_state: &mut ConnState,
-) -> Result<(), ProtocolError> {
+    session_gone: &(dyn Fn() -> bool + Sync),
+) -> Result<ControlFlow<()>, ProtocolError> {
     match msg {
         SyncMessage::LfsChunks(payload) => {
-            super::lfs_chunks::handle(server, payload, direct_tx, conn_state).await
+            super::lfs_chunks::handle(server, payload, direct_tx, conn_state)
+                .await
+                .map(ControlFlow::Continue)
         }
         SyncMessage::Doc {
             entity,
@@ -33,7 +41,8 @@ pub(super) async fn handle_sync_message(
             payload,
         } => super::documents::handle_document(
             server, conn_id, entity, kind, &payload, direct_tx, conn_state,
-        ),
+        )
+        .map(ControlFlow::Continue),
         SyncMessage::Batch(members) => {
             for member in members {
                 match member {
@@ -51,7 +60,7 @@ pub(super) async fn handle_sync_message(
                         sub_tag,
                         payload,
                     } => {
-                        handle_window_sync(
+                        let flow = handle_window_sync(
                             server,
                             conn_id,
                             &window_key,
@@ -59,13 +68,17 @@ pub(super) async fn handle_sync_message(
                             &payload,
                             direct_tx,
                             conn_state,
+                            session_gone,
                         )
                         .await?;
+                        if flow.is_break() {
+                            return Ok(flow);
+                        }
                     }
                     _ => return Err(ProtocolError::InvalidPayload("invalid node batch member")),
                 }
             }
-            Ok(())
+            Ok(ControlFlow::Continue(()))
         }
         // A socket's owner loop answers its own app-tier frames; a verb RPC
         // runs only off that loop, where its answer can queue.
@@ -77,7 +90,7 @@ pub(super) async fn handle_sync_message(
             direct_tx,
             None,
         )? {
-            None => Ok(()),
+            None => Ok(ControlFlow::Continue(())),
             Some(_) => Err(ProtocolError::InvalidPayload(
                 "a verb RPC is answered on its socket's loop",
             )),
@@ -90,14 +103,14 @@ pub(super) async fn handle_sync_message(
             direct_tx,
             None,
         )
-        .map(drop),
+        .map(|_| ControlFlow::Continue(())),
         SyncMessage::RootUpdate(_update_bytes) => {
             // Root doc is server-authoritative — reject client updates silently
             tracing::debug!(
                 conn_id,
                 "rejected client root update (server-authoritative)"
             );
-            Ok(())
+            Ok(ControlFlow::Continue(()))
         }
         SyncMessage::Ephemeral(payload) => {
             // One change to the hub at a time: read, checked, charged to the
@@ -112,7 +125,7 @@ pub(super) async fn handle_sync_message(
                     kind = "memory_floor",
                     "presence frame not kept: retained memory is full"
                 );
-                return Ok(());
+                return Ok(ControlFlow::Continue(()));
             }
             server
                 .ephemeral_store
@@ -122,7 +135,7 @@ pub(super) async fn handle_sync_message(
             for encoded in canonical_ephemeral_frames(server, &states)? {
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, encoded);
             }
-            Ok(())
+            Ok(ControlFlow::Continue(()))
         }
         SyncMessage::LeaseRequest {
             client_id,
@@ -167,7 +180,7 @@ pub(super) async fn handle_sync_message(
                 let msg = protocol::encode_root_update(&update);
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, 0, msg);
             }
-            Ok(())
+            Ok(ControlFlow::Continue(()))
         }
         SyncMessage::RootVersionVector(vv_bytes) => {
             // Client is requesting root doc updates since their VV (Loro
@@ -195,7 +208,7 @@ pub(super) async fn handle_sync_message(
                     }
                 }
             }
-            Ok(())
+            Ok(ControlFlow::Continue(()))
         }
         SyncMessage::WindowSync {
             window_key,
@@ -210,6 +223,7 @@ pub(super) async fn handle_sync_message(
                 &payload,
                 direct_tx,
                 conn_state,
+                session_gone,
             )
             .await
         }
