@@ -1086,6 +1086,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/owner-signing-keys",
+        summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live and whether a checkpoint policy may name it now. Empty before any enrollment.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/owner-signing-keys/challenge",
+        summary: "The bytes a device's new owner key signs to enrol (`machine`, 32 hex; `public_key`, 64 hex): the vault, the machine, the key and the owner this request proves. Answers `challenge` as hex.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/owner-signing-keys/enroll",
+        summary: "The owner enrols a device's own Ed25519 owner signing key (`machine`, 32 hex; `public_key`, 64 hex; `proof`, 128 hex: the key's signature over its challenge). This install carries and cosigns the act, this host's root signs it as the predecessor; answers the receipt only once the fold counted it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/owner-work/{request}",
         summary: "Where one owner work request stands, from this install's fold: the receipt (ids only), recorded and awaiting a holder until its executor's result arrives, then enacted or refused, with the engine's words.",
         row: None,
