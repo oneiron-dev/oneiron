@@ -6253,7 +6253,7 @@ export type OfficeBodyHead = { artifact: EntityId; kind: OfficeBodyKind; source_
 /** `oneiron::office_body::verbs::OfficeBodyArtifactRequest` */
 export type OfficeBodyArtifactRequest = { artifact_ref: string }
 /** `oneiron::office_body::verbs::OfficeBodyReadRequest` */
-export type OfficeBodyReadRequest = { artifact_ref: string; at?: number[] | null }
+export type OfficeBodyReadRequest = { artifact_ref: string; at?: number[] | null; why?: string | null }
 /** `oneiron::office_body::docx::BodyBlockKind` */
 export type BodyBlockKind = "paragraph" | { heading: number } | "table" | "opaque"
 /** `oneiron_docedit::docx_body::DocxMark` */
@@ -6493,7 +6493,7 @@ export type DeckGateView = { profile: string; projector: string; open: boolean; 
 /** `oneiron::office_body::pptx::verbs::DeckOracleRequest` */
 export type DeckOracleRequest = { receipt: OracleReceipt }
 /** `oneiron::office_body::pptx::preview::DeckPreviewRequest` */
-export type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[] }
+export type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[]; why?: string | null }
 /** `oneiron::office_body::pptx::preview::DeckPreviewSlide` */
 export type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string }
 /** `oneiron::office_body::pptx::preview::DeckPreview` */

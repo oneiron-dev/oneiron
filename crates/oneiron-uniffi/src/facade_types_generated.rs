@@ -48225,6 +48225,8 @@ pub struct OfficeBodyReadRequest {
     pub artifact_ref: String,
     #[serde(rename = "at", default, skip_serializing_if = "Option::is_none")]
     pub at: Option<Vec<u8>>,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::office_body::docx::BodyBlockKind`.
@@ -50505,6 +50507,8 @@ pub struct DeckPreviewRequest {
     pub fork_ref: Option<String>,
     #[serde(rename = "slides")]
     pub slides: Vec<u64>,
+    #[serde(rename = "why", default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// `oneiron::office_body::pptx::preview::DeckPreviewSlide`.

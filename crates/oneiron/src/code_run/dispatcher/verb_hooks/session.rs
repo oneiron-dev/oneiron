@@ -145,6 +145,19 @@ impl HostSelfDispatcher<'_> {
         }
         Ok(outcome)
     }
+
+    /// The pre chain's records of a room call whose dispatch erred: it made
+    /// no result, as a failed call, so they are kept as a failed call's are
+    /// (FIX 5428). The guest reads the call's own error, so a keep that
+    /// fails is logged, never raised. A canonical call keeps its own.
+    pub(super) fn keep_room_verb_hooks(&self, hooked: HookedCall) {
+        let (ExecutorStorage::Session(binding), Some(pre)) = (&self.storage, hooked.0) else {
+            return;
+        };
+        if let Err(error) = binding.session.keep_verb_hooks_in_room(&binding.route, pre) {
+            tracing::warn!(%error, "a failed room call's verb hook records were not kept");
+        }
+    }
 }
 
 /// `view`, the guest's view a hook changed, with what each hook did beside

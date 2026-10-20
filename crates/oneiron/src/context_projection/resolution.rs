@@ -104,8 +104,9 @@ impl ResolvedContextProjection {
 
     /// What a member's own read lane left out of this projection (FIX
     /// 5416), or the private-thread cut of the owner or agent who bound its
-    /// run (FIX 6412), as a gate system notice naming which of the two it
-    /// was (FIX 6485): how many memory and chat rows, never which. `None`
+    /// run (FIX 6412), rows that cut could not name or judge included (FIX
+    /// 6550), as a gate system notice naming which of the two it was (FIX
+    /// 6485): how many memory and chat rows, never which. `None`
     /// when it left nothing out, as for every projection not read so.
     #[must_use]
     pub fn narrowed_notice(&self) -> Option<GateSystemNoticeRecord> {
@@ -116,7 +117,8 @@ impl ResolvedContextProjection {
             .saturating_sub(self.memory_sections.len());
         let chat = bound.chat.len().saturating_sub(self.chat_sections.len());
         let why = if bound.binder {
-            "they sit in private threads the owner or agent who bound this run does not read"
+            "they sit in private threads the owner or agent who bound this run does not read, \
+             or could not be named or judged against those threads"
         } else {
             "the member whose run this is does not read them"
         };
