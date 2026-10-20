@@ -24,6 +24,18 @@ pub struct WireWindowReceipt {
     pub ended_at: u64,
     pub by_verb: BTreeMap<String, u64>,
     pub by_actor: BTreeMap<String, u64>,
+    /// Each MCP caller's tool calls by tool (`mcp:tools/call:<name>`), under
+    /// the caller the gateway resolved: who burst on which tool. Each call
+    /// counts once in `by_verb` and `by_actor` too (FIX 1085).
+    #[serde(default)]
+    pub by_actor_tool: BTreeMap<String, BTreeMap<String, u64>>,
+    /// MCP envelopes carried, by matched route: transport, never a call.
+    #[serde(default)]
+    pub mcp_envelopes: BTreeMap<String, u64>,
+    /// MCP replies refused with no tool call's receipt over them, by fixed
+    /// category and under no caller.
+    #[serde(default)]
+    pub mcp_errors: BTreeMap<String, u64>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -401,6 +413,28 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("wire observation"))
 }
+fn check_keys(verb: &str, actor: &str) -> Result<()> {
+    if verb.is_empty() || verb.len() > 256 || actor.is_empty() || actor.len() > 512 {
+        return Err(Error::InvalidConfig("invalid wire counter key".into()));
+    }
+    Ok(())
+}
+fn count_in(counts: &mut BTreeMap<String, u64>, key: &str) -> u64 {
+    let count = counts.entry(key.into()).or_default();
+    *count = count.saturating_add(1);
+    *count
+}
+/// Counts one call of `verb` by `actor`; whether either crossed its row.
+fn count_call(
+    window: &mut WireWindowReceipt,
+    thresholds: &WireThresholds,
+    verb: &str,
+    actor: &str,
+) -> bool {
+    let verb_crossed = count_in(&mut window.by_verb, verb) > thresholds.per_verb;
+    let actor_crossed = count_in(&mut window.by_actor, actor) > thresholds.per_actor;
+    verb_crossed || actor_crossed
+}
 impl WireTelemetry {
     pub fn new(vault: Arc<Vault>) -> Self {
         Self {
@@ -518,9 +552,44 @@ impl WireTelemetry {
     /// Records a host-authenticated actor and a route/method, never a raw URL or
     /// credential. A persistence error is telemetry loss, NOT a service denial.
     pub fn record(&self, verb: &str, actor: &str, now: u64) -> Result<()> {
-        if verb.is_empty() || verb.len() > 256 || actor.is_empty() || actor.len() > 512 {
-            return Err(Error::InvalidConfig("invalid wire counter key".into()));
-        }
+        check_keys(verb, actor)?;
+        self.observe(now, |window, thresholds| {
+            count_call(window, thresholds, verb, actor)
+        })
+    }
+    /// Records one MCP `tools/call` of a registered tool, under its logical
+    /// key and the caller the gateway resolved (FIX 1085): one call in the
+    /// totals the thresholds read, and in which tool that caller called.
+    pub(crate) fn record_mcp_call(&self, tool: &str, actor: &str, now: u64) -> Result<()> {
+        check_keys(tool, actor)?;
+        self.observe(now, |window, thresholds| {
+            count_in(window.by_actor_tool.entry(actor.into()).or_default(), tool);
+            count_call(window, thresholds, tool, actor)
+        })
+    }
+    /// Records one MCP envelope on its matched route: evidence beside the
+    /// calls, which no threshold counts.
+    pub(crate) fn record_mcp_envelope(&self, route: &str, now: u64) -> Result<()> {
+        self.observe(now, |window, _| {
+            count_in(&mut window.mcp_envelopes, route);
+            false
+        })
+    }
+    /// Records one MCP reply refused with no tool call's receipt over it,
+    /// under its fixed category and no caller: evidence no threshold counts.
+    pub(crate) fn record_mcp_error(&self, category: &str, now: u64) -> Result<()> {
+        self.observe(now, |window, _| {
+            count_in(&mut window.mcp_errors, category);
+            false
+        })
+    }
+    /// Counts in the window `now` falls in, kept and rolled over first;
+    /// `count` says whether a call crossed its row, which asks once a window.
+    fn observe(
+        &self,
+        now: u64,
+        count: impl FnOnce(&mut WireWindowReceipt, &WireThresholds) -> bool,
+    ) -> Result<()> {
         let mut active = self
             .active
             .lock()
@@ -546,12 +615,7 @@ impl WireTelemetry {
             }));
         }
         let window = active.window.as_mut().expect("installed above");
-        let verb_count = window.by_verb.entry(verb.into()).or_default();
-        *verb_count = verb_count.saturating_add(1);
-        let verb_crossed = *verb_count > thresholds.per_verb;
-        let actor_count = window.by_actor.entry(actor.into()).or_default();
-        *actor_count = actor_count.saturating_add(1);
-        let crossed = verb_crossed || *actor_count > thresholds.per_actor;
+        let crossed = count(window, &thresholds);
         active.persisted = false;
         if crossed && !active.asked {
             let question = WireQuestion {

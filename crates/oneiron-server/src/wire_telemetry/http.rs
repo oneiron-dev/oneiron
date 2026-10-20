@@ -12,6 +12,21 @@ pub(crate) async fn observe_http(
         .get::<axum::extract::MatchedPath>()
         .map_or("unmatched", axum::extract::MatchedPath::as_str);
     let verb = format!("{} {route}", request.method());
+    // An MCP envelope counts on its matched route alone, under no caller,
+    // whether it came over HTTP or a held socket: the call it carries counts
+    // once at the gateway, under the caller it resolves and the tool it
+    // names (FIX 1085).
+    let surfaces = [
+        crate::cli::McpSurface::Primary.path(),
+        crate::cli::McpSurface::ToolFirst.path(),
+    ];
+    if request.method() == axum::http::Method::POST && surfaces.contains(&route) {
+        start_window_receipts(&server);
+        let _ = server
+            .wire_telemetry
+            .record_mcp_envelope(&verb, oneiron_vault_contract::now_ts());
+        return next.run(request).await;
+    }
     // The request's one caller, as its door takes it: on a managed vault the
     // owner his supervisor attested counts as himself.
     let auth = crate::auth::CoreAuth::for_managed_request(
