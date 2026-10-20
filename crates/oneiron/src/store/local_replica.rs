@@ -5,7 +5,8 @@
 //! runs the tear's pure local leaves for each removable member, then drops
 //! the window's persisted document rows. Nothing replicated is written: no
 //! tombstone, deletion marker, audit row, Loro op, outbox row or receipt. An
-//! epoch summary's session floor is the one local row it raises.
+//! epoch summary's session floor is the one local row it raises, and a sealed
+//! window's landed mark the one it moves back (FIX 5506).
 //!
 //! Demotion drops what the home can give back, never local truth. A removed
 //! member's entity-document history (heads, forks, pins, citation floors),
@@ -214,6 +215,9 @@ pub(crate) fn remove_local_replica_window_in_txn(
     if keep.defer_on_queued_writes && queued_writes > 0 {
         return Ok(report);
     }
+    // The next take of a sealed window's mirror lands its rows again, from
+    // the first call that may remove one (FIX 5506).
+    crate::world_keys::unland_window_in_txn(store, txn, window)?;
     let doc = persisted_window_doc(store, txn, window)?;
     let census = Census::new(store, txn, window, &keep, &doc)?;
     let removable = census.sort(txn, &mut report)?;

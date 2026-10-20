@@ -335,4 +335,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // Sealing mirrors follow the live vault: an image never brings back a mirror
     // an erase purged.
     (&t::WORLD_KEY_SEALED_MIRROR, LIVE),
+    // What landed from a mirror describes rows: it comes back with the image's
+    // rows, never left from rows the restore replaced (FIX 5506).
+    (&t::WORLD_KEY_SEALED_MIRROR_LANDED, CONTENT),
 ];

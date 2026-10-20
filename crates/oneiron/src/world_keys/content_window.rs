@@ -9,13 +9,15 @@
 //! deletes here, so a row deleted here leaves every mirror that merges it (FIX
 //! 3360). A section carries each mirror whole; taking one in merges it into the
 //! mirror as more of the same history and materializes the mirror's rows here.
-//! The live window is not touched.
+//! The live window is not touched. A take of a mirror whose rows already
+//! landed at its version skips that pass (`content_landed`, FIX 5506).
 
 use std::sync::PoisonError;
 
 use loro::LoroDoc;
 
 use super::content::MIRROR;
+use super::content_landed::{landed_already, landed_mark, mark_landed_in_txn, repair_pending};
 use super::refused;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -68,6 +70,39 @@ fn store_mirror(vault: &Vault, world: EntityId, window: &WindowKey, doc: &LoroDo
     vault.with_write_txn_grouped(|wtxn| {
         MIRROR.put(&vault.store, wtxn, &mirror_key(world, window), &snapshot)
     })
+}
+
+impl WindowManager {
+    /// Lands the rows of `window`'s `mirror` here, unless they landed at its
+    /// version already and the merge `gained` nothing (FIX 5506): the
+    /// forward pass first, then, in one transaction, the mirror when it
+    /// gained, and the mark of its version when the pass left no repair
+    /// pending and no removal came since. Run under the sealing lock.
+    fn land_mirror(
+        &self,
+        world: EntityId,
+        window: &WindowKey,
+        mirror: &LoroDoc,
+        gained: bool,
+    ) -> Result<()> {
+        let vault = self.vault();
+        let before = landed_mark(vault, world, window)?;
+        if landed_already(vault, window, before.as_ref(), mirror, gained)? {
+            return Ok(());
+        }
+        forward_rematerialize(vault, mirror, self.materializer(), window)?;
+        let snapshot = gained.then(|| export_snapshot(mirror)).transpose()?;
+        let settled = !repair_pending(vault, window)?;
+        vault.with_write_txn_grouped(|wtxn| {
+            if let Some(snapshot) = &snapshot {
+                MIRROR.put(&vault.store, wtxn, &mirror_key(world, window), snapshot)?;
+            }
+            if settled {
+                mark_landed_in_txn(&vault.store, wtxn, (world, window), before.as_ref(), mirror)?;
+            }
+            Ok(())
+        })
+    }
 }
 
 /// Pushes each tombstone `doc` holds onto `deletes`, as its id and raw value.
@@ -136,7 +171,7 @@ impl WindowManager {
         if fresh {
             return Ok(false);
         }
-        forward_rematerialize(vault, &mirror, self.materializer(), window)?;
+        self.land_mirror(world, window, &mirror, false)?;
         Ok(true)
     }
 
@@ -188,8 +223,9 @@ impl WindowManager {
     /// mirror, on a machine that may read the world now: merged as more of the
     /// same history, never in place of it, so a mirror here that already holds
     /// all of it stays as it is. With `materialize` the mirror's rows land here
-    /// too, a mirror that held it all already included (FIX 4788); without,
-    /// they wait in the mirror for a promotion
+    /// too, a mirror that held it all already included (FIX 4788), unless they
+    /// landed at that version before and nothing removed them since (FIX
+    /// 5506); without, they wait in the mirror for a promotion
     /// ([`Self::materialize_sealed_mirror`]). Returns whether the mirror took
     /// anything new.
     pub(crate) fn merge_bundle_mirror(
@@ -212,21 +248,19 @@ impl WindowManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         let (mirror, fresh) = load_mirror(vault, world, window)?;
-        let mirror = if fresh {
-            incoming
+        let (mirror, gained) = if fresh {
+            (incoming, true)
         } else if mirror.oplog_vv().includes_vv(&incoming.oplog_vv()) {
-            if materialize {
-                forward_rematerialize(vault, &mirror, self.materializer(), window)?;
-            }
-            return Ok(false);
+            (mirror, false)
         } else {
             import_doc(&mirror, snapshot)?;
-            mirror
+            (mirror, true)
         };
         if materialize {
-            forward_rematerialize(vault, &mirror, self.materializer(), window)?;
+            self.land_mirror(world, window, &mirror, gained)?;
+        } else if gained {
+            store_mirror(vault, world, window, &mirror)?;
         }
-        store_mirror(vault, world, window, &mirror)?;
-        Ok(true)
+        Ok(gained)
     }
 }
