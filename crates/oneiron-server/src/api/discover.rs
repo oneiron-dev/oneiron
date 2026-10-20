@@ -26,6 +26,10 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+mod capabilities;
+
+pub(crate) use self::capabilities::{CapabilityGroup, CapabilitySummary, FeatureFlags};
+
 /// Capability-token prefix under which discovery states WHICH registered MCP
 /// endpoint a tool is callable on: `mcp.endpoint.<mode>.<tool>` (ONE-1704).
 ///
@@ -181,21 +185,6 @@ pub(crate) struct DiscoveredEntity {
     entity_type: u8,
 }
 
-/// Capability flags advertised by the HTTP API.
-#[derive(Serialize, ToSchema)]
-pub(crate) struct FeatureFlags {
-    /// Operation capabilities clients may rely on, including one
-    /// `mcp.tool.<name>` token per advertised MCP tool, one
-    /// `mcp.tool.<name>.<op>` token per closed tool operation, and one
-    /// `mcp.endpoint.<mode>.<name>` token per tool a registered MCP endpoint
-    /// actually accepts.
-    #[schema(value_type = Vec<String>, example = json!(["core.discover", "search.vector", "search.text", "mcp.tool.setup_oneiron", "mcp.endpoint.primary.setup_oneiron", "mcp.endpoint.tool_first.describe"]))]
-    capabilities: Vec<String>,
-    /// Model or runtime effort modes advertised by the API.
-    #[schema(value_type = Vec<String>, example = json!(["flash", "thinking", "pro", "ultra"]))]
-    modes: Vec<&'static str>,
-}
-
 /// Compact outbound capability discovery block.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct OutboundCapabilityDiscovery {
@@ -314,7 +303,15 @@ pub(crate) struct RateLimitStatus {
                     "entity_type": 2
                 }],
                 "feature_flags": {
-                    "capabilities": ["core.discover", "core.outbound_capabilities", "skills_pack.fetch", "search.vector", "search.text"],
+                    "total": 9,
+                    "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
+                    "groups": {
+                        "core": {"count": 2, "capabilities": ["core.discover", "core.outbound_capabilities"]},
+                        "mcp.endpoint.primary": {"count": 2, "capabilities": ["mcp.endpoint.primary.invoke_action", "mcp.endpoint.primary.setup_oneiron"]},
+                        "mcp.tool": {"count": 2, "capabilities": ["mcp.tool.invoke_action", "mcp.tool.setup_oneiron"]},
+                        "search": {"count": 2, "capabilities": ["search.text", "search.vector"]},
+                        "skills_pack": {"count": 1, "capabilities": ["skills_pack.fetch"]}
+                    },
                     "modes": ["flash", "thinking", "pro", "ultra"]
                 },
                 "outbound_capabilities": {
@@ -655,17 +652,18 @@ fn self_verb_capabilities() -> Vec<String> {
         .collect()
 }
 
+/// Every capability this server serves, grouped by family, sorted and deduped
+/// within each group, with the digest of the whole set (FIX 6692).
 pub(crate) fn feature_flags(server: &SyncServer) -> FeatureFlags {
-    FeatureFlags {
-        capabilities: CAPABILITIES
+    FeatureFlags::of(
+        CAPABILITIES
             .iter()
             .map(|capability| (*capability).to_owned())
             .chain(mcp_surface_capabilities(server))
             .chain(booking_agent_capabilities())
-            .chain(self_verb_capabilities())
-            .collect(),
-        modes: CAPABILITY_MODES.to_vec(),
-    }
+            .chain(self_verb_capabilities()),
+        CAPABILITY_MODES.to_vec(),
+    )
 }
 
 /// Advertises the versioned booking instructions document and its four HTTP
@@ -696,10 +694,10 @@ fn booking_agent_capabilities() -> Vec<String> {
 /// `tools/call`. A verified runtime adds `execute_code`; an unbound host never
 /// advertises it. No independent tool catalog is maintained here.
 ///
-/// Two tokens per registered tool, both deterministic and in registration
-/// order: the existing `mcp.tool.<name>` vocabulary, and one
-/// `mcp.endpoint.<mode>.<name>` token that states the endpoint the name is
-/// callable on. A client that must pick an endpoint reads the second; a client
+/// Two tokens per registered tool, both deterministic: the existing
+/// `mcp.tool.<name>` vocabulary, and one `mcp.endpoint.<mode>.<name>` token
+/// that states the endpoint the name is callable on. [`feature_flags`] sorts
+/// them into their families. A client that must pick an endpoint reads the second; a client
 /// that only asks whether a tool exists keeps reading the first.
 fn mcp_surface_capabilities(server: &SyncServer) -> Vec<String> {
     let mut advertised = BTreeSet::new();

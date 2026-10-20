@@ -90,6 +90,7 @@ use super::{
     __path_core_explain_gate, __path_core_explain_memory, ExplainGateNotice, ExplainGateResponse,
     ExplainMemoryResponse,
 };
+use super::{CapabilityGroup, CapabilitySummary};
 use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, ErrorCode};
 use crate::projection::View;
 use crate::protocol::{CountMode, PaginatedResponse, ResponseMeta};
@@ -252,6 +253,8 @@ use utoipa::OpenApi;
         BoundContext,
         DiscoveredEntity,
         FeatureFlags,
+        CapabilityGroup,
+        CapabilitySummary,
         OutboundCapabilityDiscovery,
         OutboundConnectorManifestSummary,
         RateLimitStatus,

@@ -602,8 +602,10 @@ Response fields:
 
 - `status`: `"ok"` when the server process is alive.
 - `service`: `"oneiron-server"`.
-- `capabilities.capabilities`: capability identifiers such as `search.vector`, `search.text`, `entity.get`, `edges.get`, `core.context_pack`, `core.context_board`, and `lease.revoke`.
-- `capabilities.modes`: supported mode names: `flash`, `thinking`, `pro`, `ultra`.
+- `modes`: supported mode names: `flash`, `thinking`, `pro`, `ultra`.
+- `capabilities.total`: how many capabilities this server serves.
+- `capabilities.digest`: `blake3:` digest of the full capability set, the same value as `feature_flags.digest` in `/api/core/discover`. Keep the full set from discovery and fetch it again only when this digest changes.
+- `capabilities.counts`: capability count per family, such as `core`, `search`, `booking`, `self`, `mcp.tool.vault`, and `mcp.endpoint.tool_first`. The tokens themselves are listed by authenticated discovery.
 - `formats`: `json`, `yaml`, `toon`, `markdown`, `plaintext`.
 - `rate_limit`: server-side rate-limit metadata for HTTP and websocket surfaces.
 - `artifact_port`: present when an artifact-only listener serves `/a/`; open artifacts at this server's scheme and host with this port.
@@ -614,9 +616,11 @@ Example response:
 {
   "status": "ok",
   "service": "oneiron-server",
+  "modes": ["flash", "thinking", "pro", "ultra"],
   "capabilities": {
-    "capabilities": ["skills_pack.fetch", "search.vector", "search.text", "entity.get"],
-    "modes": ["flash", "thinking", "pro", "ultra"]
+    "total": 2228,
+    "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
+    "counts": { "booking": 5, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10 }
   },
   "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
   "rate_limit": {
@@ -723,7 +727,7 @@ Response fields:
 - `bound`: placeholders for vault, persona, and conversation bindings.
 - `personas`: known person entities, each with `id` and numeric `entity_type`.
 - `conversations`: known conversation entities, each with `id` and numeric `entity_type`.
-- `feature_flags`: capability and mode metadata.
+- `feature_flags`: every capability this server serves, grouped by family, with `total`, `digest` (the same digest health carries) and `modes`. `groups.<family>.capabilities` lists that family sorted, each token once, and `groups.<family>.count` counts it. A family is the first segment of a token (`core`, `search`, `booking`, `self`, ...), or, for tokens under `mcp.tool.`, `mcp.endpoint.` and `mcp.surface_unavailable.`, that prefix plus the next segment: an MCP tool namespace such as `mcp.tool.memory` (`mcp.tool` for a tool name without one), or an endpoint mode such as `mcp.endpoint.primary`.
 - `outbound_capabilities`: schema-on-demand metadata for outbound connector manifests, including the manifest version, closed verb field contract, common verb list, connector summaries, and unsupported-capability recovery fields.
 - `counts`: entity counts keyed by numeric entity type.
 - `predicate_namespaces`: first path segment of known claim predicates.
@@ -749,7 +753,16 @@ Example response:
   "personas": [{ "id": "0123456789abcdef0123456789abcdef", "entity_type": 4 }],
   "conversations": [{ "id": "abcdef0123456789abcdef0123456789", "entity_type": 11 }],
   "feature_flags": {
-    "capabilities": ["core.discover", "core.outbound_capabilities", "health.capabilities", "skills_pack.fetch", "search.vector"],
+    "total": 7,
+    "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
+    "groups": {
+      "core": { "count": 2, "capabilities": ["core.discover", "core.outbound_capabilities"] },
+      "health": { "count": 1, "capabilities": ["health.capabilities"] },
+      "mcp.endpoint.primary": { "count": 1, "capabilities": ["mcp.endpoint.primary.setup_oneiron"] },
+      "mcp.tool": { "count": 1, "capabilities": ["mcp.tool.setup_oneiron"] },
+      "search": { "count": 1, "capabilities": ["search.vector"] },
+      "skills_pack": { "count": 1, "capabilities": ["skills_pack.fetch"] }
+    },
     "modes": ["flash", "thinking", "pro", "ultra"]
   },
   "outbound_capabilities": {
@@ -1366,16 +1379,18 @@ storage type byte is added.
 ```json
 {
   "type": "object",
-  "required": ["status", "service", "capabilities", "formats", "rate_limit"],
+  "required": ["status", "service", "modes", "capabilities", "formats", "rate_limit"],
   "properties": {
     "status": { "const": "ok" },
     "service": { "const": "oneiron-server" },
+    "modes": { "type": "array", "items": { "enum": ["flash", "thinking", "pro", "ultra"] } },
     "capabilities": {
       "type": "object",
-      "required": ["capabilities", "modes"],
+      "required": ["total", "digest", "counts"],
       "properties": {
-        "capabilities": { "type": "array", "items": { "type": "string" } },
-        "modes": { "type": "array", "items": { "enum": ["flash", "thinking", "pro", "ultra"] } }
+        "total": { "type": "integer", "minimum": 0 },
+        "digest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+        "counts": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 1 } }
       }
     },
     "formats": { "type": "array", "items": { "enum": ["json", "yaml", "toon", "markdown", "plaintext"] } },
@@ -1406,7 +1421,26 @@ storage type byte is added.
     },
     "personas": { "type": "array", "items": { "$ref": "#/schemas/discovered_entity" } },
     "conversations": { "type": "array", "items": { "$ref": "#/schemas/discovered_entity" } },
-    "feature_flags": { "$ref": "#/schemas/feature_flags" },
+    "feature_flags": {
+      "type": "object",
+      "required": ["total", "digest", "groups", "modes"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "digest": { "type": "string", "pattern": "^blake3:[0-9a-f]{64}$" },
+        "groups": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["count", "capabilities"],
+            "properties": {
+              "count": { "type": "integer", "minimum": 1 },
+              "capabilities": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+            }
+          }
+        },
+        "modes": { "type": "array", "items": { "enum": ["flash", "thinking", "pro", "ultra"] } }
+      }
+    },
     "outbound_capabilities": {
       "type": "object",
       "required": ["manifest_version", "schema_on_demand", "field_contract", "common_verbs", "connectors", "unsupported_error_code", "recovery_suggestions_field", "foreign_content_posture"],
