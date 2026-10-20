@@ -31,16 +31,18 @@ pub(super) fn doctor_report(args: DoctorArgs) -> anyhow::Result<serde_json::Valu
         }
     };
     // The shape `serve` and `import` open the vault in: the config's
-    // dimensions, map size and dictionaries, under the flags. The rest stays
+    // dimensions, map size and dictionaries, under the flags, and a sealed
+    // vault's page seal from this device's keystore (FIX 1944). The rest stays
     // the server default, so a configured embedder that disagrees with the
     // vault does not keep doctor from reporting it. Settings that do not
-    // resolve leave the flags over the defaults.
+    // resolve leave the flags over the defaults, and no seal.
     let mut vault_config = oneiron::VaultConfig::server();
     let serve_config = resolve_serve_config(&serve);
     let unresolved = serve_config.is_err();
     let mut embedder = None;
     let dict_search_paths = match serve_config {
         Ok(config) => {
+            vault_config.page_seal = config.device_page_seal();
             vault_config.dimensions = config.dimensions;
             vault_config.map_size = config.map_size;
             embedder = config.embedder;

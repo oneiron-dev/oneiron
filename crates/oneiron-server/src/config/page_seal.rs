@@ -7,8 +7,10 @@ impl ServeConfig {
     /// The page seal of a sealed vault (maximum tier), unlocked with this
     /// device's keystore. A failure is logged without any secret, and the
     /// open then refuses. A mirror whose vault's data is missing unlocks
-    /// nothing: no vault is created under another's seal.
-    pub(super) fn device_page_seal(&self) -> Option<oneiron::VaultPageSeal> {
+    /// nothing: no vault is created under another's seal. A door that opens
+    /// the vault under a config of its own (doctor, an import's dry run)
+    /// takes this seal alone, not the rest of [`Self::vault_config`].
+    pub(crate) fn device_page_seal(&self) -> Option<oneiron::VaultPageSeal> {
         match oneiron::world_keys::vault_is_sealed(&self.vault_path) {
             Ok(true) if !self.vault_path.join("data.mdb").exists() => {
                 tracing::warn!(
