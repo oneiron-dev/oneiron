@@ -394,6 +394,15 @@ impl Memory<'_> {
         }) else {
             return Ok(vault.export_blob_artifact_as(artifact, version, sight)?);
         };
+        // A marked file kept in its body file is judged by its stored digest,
+        // then read masked or whole as it streams, never held whole beside
+        // its copy (FIX 6507).
+        if let Some((pinned, hash)) = vault.marked_blob_version_file(artifact, version)? {
+            let asker = self.reveal_asker()?;
+            if let Some(sight) = vault.marked_file_sight(&asker, artifact, &hash, why)? {
+                return Ok(vault.export_blob_artifact_as(artifact, Some(pinned), sight)?);
+            }
+        }
         let Some(mut file) = vault.export_blob_artifact_raw(artifact, version)? else {
             return Ok(None);
         };

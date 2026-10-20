@@ -32,13 +32,15 @@
 //!   valid https one, or without the send's authority, the delivery stays
 //!   queued and unexported, its reason logged. So does one whose document
 //!   has an event awaiting its owner's answer (`document_awaits_owner`) or
-//!   whose trail no longer reads (`document_unreadable`), and one whose own
-//!   queued notice (`notice_unreadable`) or whose send's admitted call on
-//!   the ledger (`send_unreadable`) does not read. Each waits on its own,
-//!   logged with its attempt and its code, and the other deliveries are
-//!   still claimed and written (FIX 6423, 6455). The owner reads a
-//!   document's waits on `vault.esign.get`, as `delivery_receipts` whose
-//!   `state` is `waits`.
+//!   whose trail no longer reads (`document_unreadable`), one whose own
+//!   queued notice (`notice_unreadable`) or whose send's dispatch marker or
+//!   admitted call on the ledger (`send_unreadable`) does not read, and one
+//!   whose recipient's signing links do not read (`links_unreadable`). Each
+//!   waits on its own, logged with its attempt and its code, and the other
+//!   deliveries are still claimed and written (FIX 6423, 6455, 6482). The
+//!   owner reads a document's waits on `vault.esign.get`, as
+//!   `delivery_receipts` whose `state` is `waits`, even when the document's
+//!   own trail does not read (FIX 6481).
 //! - The sender answers with `esign-delivery-<key>.ack.json`. It carries
 //!   `schema_version` 2, the envelope's `dedupe_key`, `attempt_id`,
 //!   `lease_owner`, `attempt_count` and `payload_sha256`, a `status` of
@@ -500,7 +502,10 @@ impl Outbox {
         let path = self.envelope_path(&export.stem);
         let written = read_if_present(&path)?;
         let unlinked = if export.carries_link {
-            if let (Some(bytes), Some(delivered)) = (&written, vault.esign_delivery_digest(row)?)
+            // Links that do not read show no lease as held, so the mint
+            // below waits it with its code (FIX 6482).
+            if let (Some(bytes), Ok(Some(delivered))) =
+                (&written, vault.esign_delivery_digest(row)?)
                 && signing_links::holds_lease(bytes, row, &delivered)
             {
                 return Ok(Published::Done);
@@ -639,14 +644,15 @@ impl Outbox {
 
 /// The digest of the content `row`'s current lease delivered: its notice's
 /// bytes alone, or the digest the vault recorded with the link it minted
-/// for that lease. `None` before a link was minted for it.
+/// for that lease. `None` before a link was minted for it. Links that do
+/// not read err, so their ack is read again next tick.
 fn delivered(
     vault: &Vault,
     row: &AttemptRecord,
     export: &Export<'_>,
 ) -> oneiron::Result<Option<String>> {
     if export.carries_link {
-        vault.esign_delivery_digest(row)
+        vault.esign_delivery_digest(row)?
     } else {
         Ok(Some(hex(&delivered_digest(export.payload, None))))
     }

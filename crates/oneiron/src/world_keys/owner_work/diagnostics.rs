@@ -6,9 +6,14 @@
 //!   records name, what blocks the key there: its pad, a record or counted
 //!   wrap that opens it, or a frontier one record cannot name. The checks are
 //!   the holder's own read (`super::super::reassert`'s holder), never its
-//!   writer. Keys the fold holds that no record of the executor's own names
-//!   are listed as unknown history: the census reads its own records alone.
-//!   A world with many keys pages; nothing is cut.
+//!   writer; whether one record names a key's frontier is the writer's own
+//!   read-only plan of that key's missing wraps for this request, on this
+//!   install's durable state, so a restart changes no answer (FIX 5552).
+//!   Keys the fold holds that no record of the executor's own names are
+//!   listed as unknown history: the census reads its own records alone. A
+//!   world with many keys pages; nothing is cut. The ensure step that
+//!   follows, the world's current key or the first key it would mint, is
+//!   reported the same way, and so is an Ensure request's (FIX 5552).
 //! - A bundle publication reports whether its home keeps sealed copies by
 //!   its known profile, what this install's relay last saw when it tried to
 //!   reach that home and of the home's newest generation's outer capsules,
@@ -22,13 +27,14 @@
 
 use serde::Serialize;
 
-use super::super::reassert::HeldKey;
 use crate::authority::{
     AuthorityEntryHash, AuthorityFold, OwnerWorkBody, OwnerWorkKind, WorldKeyId, WorldKeyMode,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::{EntityId, Vault};
+
+mod key_plan;
 
 /// How many keys one page of a re-assertion's diagnostics lists. A page
 /// boundary, never a cap: `next_offset` names the rest.
@@ -113,9 +119,11 @@ pub enum ReassertKeyState {
     /// No record of this install's own, and no counted wrap to it, opens it
     /// here.
     NoOpeningRecordOrWrap,
-    /// It opens here, but a record wrapping it would name more rows than one
-    /// record may (OF-520, raised on this handle): the world's settings need
-    /// merging from one machine that sees every edit.
+    /// It opens here, but a record wrapping it to the recipients that lack a
+    /// wrap would name more rows than one record may (OF-520), by the
+    /// writer's own plan of this key for this request on this install's
+    /// durable state (FIX 5552): the world's settings need merging from one
+    /// machine that sees every edit.
     FrontierNeedsSplit,
     /// Counted records named other bytes or another owner for it: the
     /// re-assertion leaves it as it is.
@@ -146,6 +154,24 @@ pub enum ReassertUnread {
     NotMineReader,
 }
 
+/// The world's current key on the executor, as the ensure step finds it
+/// (FIX 5552): the step that follows once every key of a re-assertion is
+/// wrapped again, and all an Ensure request does. Recomputed from this
+/// install's durable state on every read; nothing is minted or wrapped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnsureView {
+    /// The world's current key here. `None` when it has none here and the
+    /// ensure mints its first key: then `WrapsPending` counts every recipient
+    /// its first records wrap to, and `FrontierNeedsSplit` says one record
+    /// cannot name them all, so its record wraps to this install and the
+    /// pinned root alone and the other readers wait for the world's settings
+    /// to merge.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<WorldKeyId>,
+    #[serde(flatten)]
+    pub state: ReassertKeyState,
+}
+
 /// One page of a re-assertion's keys on its executor (FIX 4686).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReassertDiagnostics {
@@ -156,24 +182,53 @@ pub struct ReassertDiagnostics {
     /// The world reads everywhere: it counts no key, and nothing blocks the
     /// re-assertion.
     pub reads_everywhere: bool,
+    /// A door on this handle raised OF-520's question for this world since
+    /// the handle opened: history. Each key's own state says whether its
+    /// frontier still needs a split (FIX 5552).
+    pub question_raised: bool,
     /// Every key in this page, ascending by id: the keys this install's own
     /// records name, with the keys of unknown history among them.
     pub keys: Vec<ReassertKey>,
     /// Where the next page starts; `None` on the last.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_offset: Option<usize>,
+    /// The ensure step after every key is wrapped again (FIX 5552); `None`
+    /// when the read checks did not run or the world reads everywhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ensure: Option<EnsureView>,
 }
 
 impl ReassertDiagnostics {
-    fn empty(world: EntityId) -> Self {
+    fn empty(world: EntityId, question_raised: bool) -> Self {
         Self {
             world,
             unread: None,
             reads_everywhere: false,
+            question_raised,
             keys: Vec::new(),
             next_offset: None,
+            ensure: None,
         }
     }
+}
+
+/// A world's key work in Ensure mode on its executor (FIX 5552).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EnsureDiagnostics {
+    pub world: EntityId,
+    /// Why the read checks did not run; `None` when they did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unread: Option<ReassertUnread>,
+    /// The world reads everywhere: it counts no key, and nothing blocks the
+    /// ensure.
+    pub reads_everywhere: bool,
+    /// A door on this handle raised OF-520's question for this world since
+    /// the handle opened: history, as a re-assertion's.
+    pub question_raised: bool,
+    /// The world's current key, or the first one the ensure would mint;
+    /// `None` when the read checks did not run or the world reads everywhere.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ensure: Option<EnsureView>,
 }
 
 /// What a relay pass found when it went for a publication's home (FIX
@@ -301,6 +356,8 @@ pub enum ExecutorObservation {
     Answered,
     /// A world's key work in Reassert mode.
     Reassert(ReassertDiagnostics),
+    /// A world's key work in Ensure mode (FIX 5552).
+    Ensure(EnsureDiagnostics),
     /// A bundle publication.
     BundlePublication(PublicationDiagnostics),
     /// Work of another kind or mode: no executor diagnostics are kept.
@@ -317,6 +374,10 @@ impl ExecutorObservation {
             Self::Reassert(_) => {
                 "the executor's own records name these keys; keys of unknown history are listed \
                  as such"
+            }
+            Self::Ensure(_) => {
+                "the world's current key on the executor, or the first key it would mint, and \
+                 what blocks wrapping it to every reader"
             }
             Self::BundlePublication(_) => {
                 "what the executor's relay last saw here; unknown until a pass observes it"
@@ -372,17 +433,22 @@ impl Vault {
             match asked.work {
                 OwnerWorkBody::WorldKey {
                     mode: WorldKeyMode::Reassert,
-                } => ExecutorObservation::Reassert(
-                    self.reassert_diagnostics(asked.act.target, offset)?,
-                ),
+                } => ExecutorObservation::Reassert(self.reassert_diagnostics(
+                    request,
+                    asked.act.target,
+                    offset,
+                )?),
+                OwnerWorkBody::WorldKey {
+                    mode: WorldKeyMode::Ensure,
+                } => {
+                    ExecutorObservation::Ensure(self.ensure_diagnostics(request, asked.act.target)?)
+                }
                 OwnerWorkBody::PublishBundle { home } => ExecutorObservation::BundlePublication(
                     self.publication_diagnostics(request, home)?,
                 ),
-                OwnerWorkBody::WorldKey {
-                    mode: WorldKeyMode::Ensure,
+                OwnerWorkBody::Root { .. } | OwnerWorkBody::Custody { .. } => {
+                    ExecutorObservation::NotReported
                 }
-                | OwnerWorkBody::Root { .. }
-                | OwnerWorkBody::Custody { .. } => ExecutorObservation::NotReported,
             }
         };
         Ok(Some(OwnerWorkDiagnostics {
@@ -391,62 +457,6 @@ impl Vault {
             executor: asked.executor,
             observation,
         }))
-    }
-
-    /// One page of `world`'s keys from `offset`, through the holder's own
-    /// read checks: the ids its records name, then the fold's other keys of
-    /// the world as unknown history, ascending by id.
-    fn reassert_diagnostics(&self, world: EntityId, offset: usize) -> Result<ReassertDiagnostics> {
-        let mut out = ReassertDiagnostics::empty(world);
-        let Ok(secret) = self.machine_secret_outside_txn() else {
-            out.unread = Some(ReassertUnread::NoMachineSecret);
-            return Ok(out);
-        };
-        let txn = self.store.env.read_txn()?;
-        let read = match self.holder_read_in_txn(&txn, world, &secret) {
-            Ok(Some(read)) => read,
-            Ok(None) => {
-                out.reads_everywhere = true;
-                return Ok(out);
-            }
-            Err(crate::Error::Secret(crate::error::SecretError::WorldKeyRefused(_))) => {
-                out.unread = Some(ReassertUnread::NotMineReader);
-                return Ok(out);
-            }
-            Err(error) => return Err(error),
-        };
-        let mut every: Vec<WorldKeyId> = read
-            .fold
-            .all_world_keys()
-            .map(|key| key.id)
-            .filter(|id| id.world == world)
-            .chain(read.ids.iter().copied())
-            .collect();
-        every.sort_unstable();
-        every.dedup();
-        let wide = self.world_keys.frontier_raised(world);
-        for id in every.iter().skip(offset).take(REASSERT_DIAGNOSTICS_PAGE) {
-            let state = if !read.ids.contains(id) {
-                ReassertKeyState::UnknownHistory
-            } else {
-                match read.check(&self.store, &txn, *id, &secret)? {
-                    HeldKey::Conflicted => ReassertKeyState::Conflicted,
-                    HeldKey::MissingPad => ReassertKeyState::MissingPad,
-                    HeldKey::NoOpening => ReassertKeyState::NoOpeningRecordOrWrap,
-                    HeldKey::Opened { missing, .. } if missing.is_empty() => {
-                        ReassertKeyState::Wrapped
-                    }
-                    HeldKey::Opened { .. } if wide => ReassertKeyState::FrontierNeedsSplit,
-                    HeldKey::Opened { missing, .. } => ReassertKeyState::WrapsPending {
-                        missing: missing.len(),
-                    },
-                }
-            };
-            out.keys.push(ReassertKey { key: *id, state });
-        }
-        let end = offset.saturating_add(REASSERT_DIAGNOSTICS_PAGE);
-        out.next_offset = (end < every.len()).then_some(end);
-        Ok(out)
     }
 
     /// A publication to `home` as this install's relay observed it.

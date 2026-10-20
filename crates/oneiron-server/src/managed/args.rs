@@ -115,6 +115,10 @@ pub enum ManagedError {
     #[error("custody anchor credentials fd rejected: {reason}")]
     CustodyAnchorCredentialsRejected { reason: String },
 
+    /// The cold restore start's flags, given where they do not apply.
+    #[error("cold restore start refused: {reason}")]
+    RestoreFlagsRejected { reason: &'static str },
+
     /// The real-tenant tripwire: `missing` names each isolation facility the
     /// probe did not find, so the operator knows what to provision.
     #[error(
@@ -202,6 +206,8 @@ pub struct ManagedArgs {
     /// start the supervisor hands one. Never in a vault VM, which inherits
     /// no descriptors.
     pub custody_anchor_credentials_fd: Option<RawFd>,
+    /// Whether this start opens its vault or restores it first (`--restore`).
+    pub start_mode: ManagedStartMode,
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
     pub vsock_guest: bool,
     /// Where this install keeps its this-device-only key slots, a place the
@@ -289,6 +295,11 @@ impl ManagedArgs {
                     reason: "organization flags require managed mode".into(),
                 });
             }
+            if args.restore || args.restore_input_fd.is_some() || args.restore_result_fd.is_some() {
+                return Err(ManagedError::RestoreFlagsRejected {
+                    reason: "a cold restore start is managed mode's (--managed-by-hypnos)",
+                });
+            }
             return Ok(None);
         }
 
@@ -353,6 +364,7 @@ impl ManagedArgs {
             .custody_anchor_credentials_fd
             .map(|fd| require_fd(Some(fd), "custody-anchor-credentials-fd"))
             .transpose()?;
+        let start_mode = ManagedStartMode::of(args)?;
         let managed = Self {
             vault_name,
             derivation_owner: DerivationOwner(owner),
@@ -369,6 +381,7 @@ impl ManagedArgs {
             ready_fd,
             credentials_fd,
             custody_anchor_credentials_fd,
+            start_mode,
             vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
             escrow_recipient: args.escrow_recipient_file.clone(),
@@ -470,6 +483,32 @@ impl ManagedArgs {
                     refuse_fd_alias(("--custody-anchor-credentials-fd", anchor), other)?;
                 }
             }
+            // A cold restore's two pipes are adopted the same way: each is
+            // refused when it names any descriptor before it.
+            if let ManagedStartMode::Restore {
+                input_fd,
+                result_fd,
+            } = managed.start_mode
+            {
+                let mut taken = vec![
+                    ("--ready-fd", managed.ready_fd),
+                    ("--credentials-fd", managed.credentials_fd),
+                ];
+                taken.extend(
+                    managed
+                        .custody_anchor_credentials_fd
+                        .map(|anchor| ("--custody-anchor-credentials-fd", anchor)),
+                );
+                for pipe in [
+                    ("--restore-input-fd", input_fd),
+                    ("--restore-result-fd", result_fd),
+                ] {
+                    for other in &taken {
+                        refuse_fd_alias(pipe, *other)?;
+                    }
+                    taken.push(pipe);
+                }
+            }
         }
         managed.vault_binding()?;
         Ok(Some(managed))
@@ -482,7 +521,8 @@ impl ManagedArgs {
     /// pipe. Each closes what it holds on drop, so a listener that is also
     /// `--credentials-fd` is read as a credential frame and closed under the
     /// listener, and one that is also `--ready-fd` has the ready byte written
-    /// into it. The custody anchor credentials pipe, when handed, is a fourth.
+    /// into it. The custody anchor credentials pipe, when handed, is a fourth,
+    /// and a cold restore's two pipes a fifth and a sixth.
     /// [`serve_managed`](crate::managed::serve_managed) calls this before any of them is
     /// consumed and before the vault is opened, so neither the frame nor
     /// storage is touched on the way to the refusal.
@@ -492,6 +532,20 @@ impl ManagedArgs {
             refuse_fd_alias(
                 (HYPNOS_LISTEN_FD, listen_fd),
                 ("--custody-anchor-credentials-fd", anchor),
+            )?;
+        }
+        if let ManagedStartMode::Restore {
+            input_fd,
+            result_fd,
+        } = self.start_mode
+        {
+            refuse_fd_alias(
+                (HYPNOS_LISTEN_FD, listen_fd),
+                ("--restore-input-fd", input_fd),
+            )?;
+            refuse_fd_alias(
+                (HYPNOS_LISTEN_FD, listen_fd),
+                ("--restore-result-fd", result_fd),
             )?;
         }
         refuse_fd_alias(
@@ -642,6 +696,42 @@ fn refuse_fd_alias(
 /// A vault VM inherits no descriptors: its vsock boot channel carries the
 /// credential frame in and the ready byte out.
 pub const NO_FD: RawFd = -1;
+
+/// How a managed process starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagedStartMode {
+    /// It opens the vault at `--data-dir`, as every start before restore did.
+    Open,
+    /// It restores the vault the plan on `input_fd` names into `--data-dir`
+    /// first, and reports on `result_fd` (`--restore`, LC FIX 5384/5385).
+    Restore { input_fd: RawFd, result_fd: RawFd },
+}
+
+impl ManagedStartMode {
+    /// The start mode argv names: a cold restore with both its pipes, or
+    /// the ordinary open. Its pipes alone, or a restore in a vault VM, which
+    /// inherits no descriptors, are refused.
+    fn of(args: &ServeArgs) -> Result<Self, ManagedError> {
+        if !args.restore {
+            if args.restore_input_fd.is_some() || args.restore_result_fd.is_some() {
+                return Err(ManagedError::RestoreFlagsRejected {
+                    reason: "--restore-input-fd and --restore-result-fd belong to a --restore start",
+                });
+            }
+            return Ok(Self::Open);
+        }
+        if args.vsock_guest {
+            return Err(ManagedError::ConflictingFlag {
+                flag: "restore",
+                reason: "a vault VM inherits no descriptors, and its vsock boot channel carries no restore pipes",
+            });
+        }
+        Ok(Self::Restore {
+            input_fd: require_fd(args.restore_input_fd, "restore-input-fd")?,
+            result_fd: require_fd(args.restore_result_fd, "restore-result-fd")?,
+        })
+    }
+}
 
 /// Whether a managed vault created without `--maximum-tier` seals its pages:
 /// no. Canon keeps managed vaults plain unless the supervisor opts in

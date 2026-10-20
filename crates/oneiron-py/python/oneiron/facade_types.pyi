@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1082 facade rows, 3701 declarations.
+Census: 1082 facade rows, 3708 declarations.
 Inputs: 1017 of 1082 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 971 of 1082 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 108; unread shapes: 0.
+Results: 970 of 1082 fully typed, 112 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -389,7 +389,7 @@ IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowD
 class InboxListRequest(TypedDict):
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
-NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed"]
+NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed", "thread_walk_in", "thread_history_opened", "thread_join_requested"]
 class NotificationSource(TypedDict):
     producer: str
     event: str
@@ -15218,6 +15218,16 @@ class EsignDraftView(TypedDict):
     fields: int
 class EsignGetRequest(TypedDict):
     document_ref: str
+EsignDeliveryEndReason = Literal["document_ended", "recipient_ended"]
+EsignDeliveryWait = Literal["document_awaits_owner", "document_unreadable", "notice_unreadable", "send_unreadable", "links_unreadable"]
+class EsignDeliveryReceiptStateEnded(TypedDict):
+    state: Literal["ended"]
+    reason: EsignDeliveryEndReason
+class EsignDeliveryReceiptStateWaits(TypedDict):
+    state: Literal["waits"]
+    reason: EsignDeliveryWait
+EsignDeliveryReceiptState = EsignDeliveryReceiptStateEnded | EsignDeliveryReceiptStateWaits
+EsignDeliveryReceipt = dict[str, Any]
 DeliveryStatus = Literal["unsent", "sent", "viewed"]
 SigningStatus = Literal["waiting", "ready", "completed", "rejected"]
 AccessStatus = Literal["unverified", "verified"]
@@ -15291,18 +15301,57 @@ class EsignEventRow(TypedDict):
     event: EsignEvent
     actor: EsignAuditActor
     at: int
-EsignDeliveryEndReason = Literal["document_ended", "recipient_ended"]
-EsignDeliveryWait = Literal["document_awaits_owner", "document_unreadable", "notice_unreadable", "send_unreadable"]
-class EsignDeliveryReceiptStateEnded(TypedDict):
-    state: Literal["ended"]
-    reason: EsignDeliveryEndReason
-class EsignDeliveryReceiptStateWaits(TypedDict):
-    state: Literal["waits"]
-    reason: EsignDeliveryWait
-EsignDeliveryReceiptState = EsignDeliveryReceiptStateEnded | EsignDeliveryReceiptStateWaits
-EsignDeliveryReceipt = dict[str, Any]
-class EsignDocumentView(TypedDict):
-    document_ref: str
+class MemoryGateDenial(TypedDict):
+    outcome: str
+    reason_codes: list[str]
+    ask_ref: NotRequired[str | None]
+class MemoryPolicyExceptionProposal(TypedDict):
+    action: str
+    row_ref: str
+    required_role: str
+class MemoryPolicyDenial(TypedDict):
+    level: str
+    row_ref: str
+    role: str
+    exception_proposal: MemoryPolicyExceptionProposal
+class MemoryWrongRoot(TypedDict):
+    attempted: str
+    replacement: str
+    schemaRef: str
+class VerbHookStopSkipped(TypedDict):
+    status: Literal["skipped"]
+    hook: str
+    reason: str
+class VerbHookStopPending(TypedDict):
+    status: Literal["pending"]
+    invocation: str
+    ask: str
+class VerbHookStopHidden(TypedDict):
+    status: Literal["hidden"]
+    hook: str
+class VerbHookStopCompleted(TypedDict):
+    status: Literal["completed"]
+    invocation: str
+    result: Any
+class VerbHookStopCompletedWithError(TypedDict):
+    status: Literal["completed_with_error"]
+    invocation: str
+    code: str
+    message: str
+    receipt_ref: NotRequired[str | None]
+VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
+class MemoryError(MemoryWrongRoot):
+    code: str
+    message: str
+    suggestions: list[str]
+    successor_short_id: NotRequired[str | None]
+    gate_denial: NotRequired[MemoryGateDenial | None]
+    narrowing: NotRequired[ScopedReadReceipt | None]
+    policy_denial: NotRequired[MemoryPolicyDenial | None]
+    hook: NotRequired[VerbHookStop | None]
+    retry_after: NotRequired[int | None]
+class EsignDocumentTrailReadable(TypedDict):
+    trail: Literal["readable"]
     status: DocumentStatus
     awaits_owner_answer: bool
     document: EsignDocument
@@ -15311,7 +15360,11 @@ class EsignDocumentView(TypedDict):
     rejection: NotRequired[str | None]
     sealed_sha256: list[str]
     audit: list[EsignEventRow]
-    delivery_receipts: list[EsignDeliveryReceipt]
+class EsignDocumentTrailUnreadable(TypedDict):
+    trail: Literal["unreadable"]
+    error: MemoryError
+EsignDocumentTrail = EsignDocumentTrailReadable | EsignDocumentTrailUnreadable
+EsignDocumentView = dict[str, Any]
 class EsignLinksIssueRequest(TypedDict):
     document_ref: str
     rotate: NotRequired[bool]

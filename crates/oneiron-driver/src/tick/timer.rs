@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::attempt_queue::{AttemptQueue, AttemptState};
+use oneiron::sync::residence::FreeTimeArming;
 use oneiron::{
     DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND, DreamerConsolidationScope, DreamerRunnerStore, Vault,
@@ -108,6 +109,16 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
     }
 
     fn next_deadline(&mut self) -> oneiron::Result<Option<CommitmentDeadline>> {
+        // FIX 5661 C2b (FIX 6211): a new home adopts the handoff its move
+        // carried, or records that none came, before this read arms any
+        // free-time cadence. Best effort: a failure is logged and the read
+        // goes on with today's opening.
+        if let Err(error) = oneiron::sync::residence::prepare_home_handoff(self.vault) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "home handoff not prepared before the deadline read"
+            );
+        }
         // The commitment lane runs FIRST (CMT-3, ONE-1540). Consuming a due
         // phase COMMITS a Dreamer attempt, so reading the attempt queue after
         // it is what makes that brand-new attempt visible in the same caller
@@ -119,6 +130,7 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
         .next_deadline()?;
         let queue = AttemptQueue::new(self.vault);
         let macro_ready = DreamerRunnerStore::new(self.vault).macro_schedulable_attempts()?;
+        let free_time = free_time_arming(self.vault);
         let mut macro_admissible = None;
         let mut macro_error = None;
         let mut next: Option<CommitmentDeadline> = None;
@@ -147,7 +159,9 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
             {
                 continue;
             }
-            if scope == DreamerConsolidationScope::Macro {
+            // FIX 5661 C2b (FIX 6212): a started free-time try the old home
+            // drains arms without the home gate, so it settles here.
+            if scope == DreamerConsolidationScope::Macro && !free_time.drain.contains(&attempt.id) {
                 let eligible = match macro_admissible {
                     Some(value) => value,
                     None => match self.macro_locally_admissible() {
@@ -162,7 +176,12 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                         }
                     },
                 };
-                if !eligible || !macro_ready.contains(&attempt.id) {
+                // The bucket rule is MACRO consolidation's: a free-time try
+                // admission takes here never reads it, on any node.
+                if !eligible
+                    || (!macro_ready.contains(&attempt.id)
+                        && !free_time.tries.contains(&attempt.id))
+                {
                     continue;
                 }
             }
@@ -194,7 +213,9 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                     if placed_elsewhere {
                         continue;
                     }
-                    if scope == DreamerConsolidationScope::Macro {
+                    if scope == DreamerConsolidationScope::Macro
+                        && !free_time.drain.contains(&attempt.id)
+                    {
                         let eligible = match macro_admissible {
                             Some(value) => value,
                             None => match self.macro_locally_admissible() {
@@ -464,6 +485,21 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
                 scope: DreamerConsolidationScope::Micro,
             }))
     }
+}
+
+/// FIX 5661 C2b (FIX 6212): the free-time tries this node's admission takes
+/// now, which the timer arms by the claim's own readiness, and the started
+/// ones the old home drains, which the host's own pass runs to their end
+/// without the home gate so the node can freeze its state for the move.
+/// Read-only and best-effort: an unreadable set arms nothing for it.
+fn free_time_arming(vault: &Vault) -> FreeTimeArming {
+    oneiron::sync::residence::free_time_arming(vault).unwrap_or_else(|error| {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "free-time arming unavailable; keeping independent deadlines"
+        );
+        FreeTimeArming::default()
+    })
 }
 
 /// Whether a queued turn program holds a park, so no pass is due for it.

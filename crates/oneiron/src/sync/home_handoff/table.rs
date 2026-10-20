@@ -15,7 +15,10 @@ use serde::de::DeserializeOwned;
 use super::{HomeFence, HomeMove, refused};
 use crate::Vault;
 use crate::error::Result;
-use crate::side_table::{Named, SideCodec, SideTableDecl};
+use crate::side_table::{Named, SideCodec, SideDb, SideTableDecl};
+
+/// A restore image's rows of one database, sorted by key.
+pub(crate) type ImageRows = [(Vec<u8>, Vec<u8>)];
 
 /// What one table's adopt did with the rows it was handed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +60,20 @@ pub(crate) trait HomeTable: Send + Sync + 'static {
     /// The full stored keys of every row this table manages now, deletion
     /// witnesses and new descendants included, for restore to keep live.
     fn live_keys(vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<Vec<u8>>>;
+
+    /// The full stored keys this table manages among `image`, a restore
+    /// image's rows of [`Self::TABLE`]'s database (FIX 5661 C2b): with
+    /// [`Self::live_keys`] they restore live, so this node's current row, or
+    /// its absence, wins over the image's. A table may read this node's rows
+    /// in `txn` to judge one, and may name keys only this node holds. By
+    /// default every key of the table's family.
+    fn manages(_vault: &Vault, _txn: &RoTxn<'_>, image: &ImageRows) -> Result<Vec<Vec<u8>>> {
+        Ok(image
+            .iter()
+            .filter(|(key, _)| key.starts_with(Self::TABLE.prefix))
+            .map(|(key, _)| key.clone())
+            .collect())
+    }
 }
 
 type QuiescentFn = fn(&Vault, &RoTxn<'_>, &HomeMove) -> Result<bool>;
@@ -64,6 +81,7 @@ type ExportFn = fn(&Vault, &RoTxn<'_>, &HomeFence) -> Result<Vec<u8>>;
 type CheckFn = fn(&[u8]) -> Result<()>;
 type AdoptFn = fn(&Vault, &mut RwTxn<'_>, &HomeFence, &[u8]) -> Result<TableAdopt>;
 type LiveKeysFn = fn(&Vault, &RoTxn<'_>) -> Result<Vec<Vec<u8>>>;
+type ManagesFn = fn(&Vault, &RoTxn<'_>, &ImageRows) -> Result<Vec<Vec<u8>>>;
 
 /// One registered [`HomeTable`], its row type erased: what the carrier walks.
 #[derive(Clone, Copy)]
@@ -75,6 +93,7 @@ pub(crate) struct HomeTableRegistration {
     check: CheckFn,
     adopt: AdoptFn,
     live_keys: LiveKeysFn,
+    manages: ManagesFn,
 }
 
 impl HomeTableRegistration {
@@ -88,6 +107,7 @@ impl HomeTableRegistration {
             check: check_rows::<T>,
             adopt: adopt_rows::<T>,
             live_keys: T::live_keys,
+            manages: T::manages,
         }
     }
 
@@ -103,6 +123,22 @@ impl HomeTableRegistration {
     /// The full stored keys of every row the table manages now.
     pub(crate) fn live_keys(&self, vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<Vec<u8>>> {
         (self.live_keys)(vault, txn)
+    }
+
+    /// The database the table's rows are in.
+    pub(crate) fn database(&self) -> SideDb {
+        self.table.db
+    }
+
+    /// The full stored keys the table manages among a restore image's rows
+    /// of its database ([`HomeTable::manages`]).
+    pub(crate) fn manages(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        image: &ImageRows,
+    ) -> Result<Vec<Vec<u8>>> {
+        (self.manages)(vault, txn, image)
     }
 
     pub(super) fn quiescent(

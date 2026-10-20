@@ -310,14 +310,12 @@ pub fn store_team_type_tree(
 
 /// The version a pin is stored at when its requested version names another
 /// structure in its lookup scope: the next free one, one past the highest
-/// version the scope uses. A next version a learning stamp's `u32` cannot
-/// hold keeps the requested one, as before. The one place a later ruling on
-/// clashing pins changes.
+/// version the scope uses, counted in `u64` past `u32::MAX` too (FIX 5216),
+/// so a clashing pin never reuses an occupied version. Only a scope already
+/// at `u64::MAX`, which has no next version, keeps the requested one. The
+/// one place a later ruling on clashing pins changes.
 fn version_on_clash(requested: u64, highest_used: u64) -> u64 {
-    highest_used
-        .checked_add(1)
-        .filter(|next| *next <= u64::from(u32::MAX))
-        .unwrap_or(requested)
+    highest_used.checked_add(1).unwrap_or(requested)
 }
 
 /// Whether two trees are one structure: the same node ids, parents and

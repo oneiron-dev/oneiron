@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1117 code-mode rows (1092 host rows, 25 run rows), 3754 declarations.
-// Replies: 999 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1117 code-mode rows (1092 host rows, 25 run rows), 3761 declarations.
+// Replies: 998 fully typed, 115 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -101,7 +101,7 @@ declare namespace Sdk {
   type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string };
   type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown };
   type InboxListRequest = { after?: string | null; limit?: number | null };
-  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed";
+  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed" | "thread_walk_in" | "thread_history_opened" | "thread_join_requested";
   type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean };
   type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
@@ -3128,6 +3128,10 @@ declare namespace Sdk {
   type DocumentStatus = "draft" | "pending" | "completed" | "rejected" | "voided" | "expired";
   type EsignDraftView = { document_ref: string; status: DocumentStatus; title: string; expires_at: number; project_ref?: string | null; recipients: string[]; fields: number };
   type EsignGetRequest = { document_ref: string };
+  type EsignDeliveryEndReason = "document_ended" | "recipient_ended";
+  type EsignDeliveryWait = "document_awaits_owner" | "document_unreadable" | "notice_unreadable" | "send_unreadable" | "links_unreadable";
+  type EsignDeliveryReceiptState = { state: "ended"; reason: EsignDeliveryEndReason } | { state: "waits"; reason: EsignDeliveryWait };
+  type EsignDeliveryReceipt = EsignDeliveryReceiptState & { attempt_ref: string; attempt_count: number; recipient: string; transition: string; at: number };
   type DeliveryStatus = "unsent" | "sent" | "viewed";
   type SigningStatus = "waiting" | "ready" | "completed" | "rejected";
   type AccessStatus = "unverified" | "verified";
@@ -3137,11 +3141,14 @@ declare namespace Sdk {
   type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
   type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
   type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
-  type EsignDeliveryEndReason = "document_ended" | "recipient_ended";
-  type EsignDeliveryWait = "document_awaits_owner" | "document_unreadable" | "notice_unreadable" | "send_unreadable";
-  type EsignDeliveryReceiptState = { state: "ended"; reason: EsignDeliveryEndReason } | { state: "waits"; reason: EsignDeliveryWait };
-  type EsignDeliveryReceipt = EsignDeliveryReceiptState & { attempt_ref: string; attempt_count: number; recipient: string; transition: string; at: number };
-  type EsignDocumentView = { document_ref: string; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[]; delivery_receipts: EsignDeliveryReceipt[] };
+  type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null };
+  type MemoryPolicyExceptionProposal = { action: string; row_ref: string; required_role: string };
+  type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
+  type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };
+  type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null };
+  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null };
+  type EsignDocumentTrail = { trail: "readable"; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] } | { trail: "unreadable"; error: MemoryError };
+  type EsignDocumentView = EsignDocumentTrail & { document_ref: string; delivery_receipts: EsignDeliveryReceipt[] };
   type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
   type EsignIssuedLink = { recipient: string; email: string; capability: string };
   type EsignLinksView = { document_ref: string; issued: EsignIssuedLink[]; unchanged: string[] };
@@ -5081,7 +5088,7 @@ declare const vault: Sdk.VaultHost & {
   esign: {
     /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
     create(input: Sdk.EsignCreateRequest): Promise<Sdk.EsignDraftView | StoredResult>;
-    /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail. */
+    /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail, with its delivery receipts. A trail that does not read answers trail unreadable with its error, its receipts still listed. */
     get(input: Sdk.EsignGetRequest): Promise<Sdk.EsignDocumentView | StoredResult>;
     links: {
       /** The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient. */

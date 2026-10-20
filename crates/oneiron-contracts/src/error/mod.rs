@@ -305,6 +305,8 @@ pub enum ErrorKind {
     MicroVmCredentialDestinationDenied,
     /// A code step was cancelled while it ran.
     CodeStepCancelled,
+    /// A code run's reply content was taken by an erase of its actor.
+    ResponseErased,
     RelayAttestationInvalidServiceIdentity,
     RelayAttestationClassMismatch,
     RelayAttestationEdgeServiceConflict,

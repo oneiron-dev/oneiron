@@ -54,7 +54,7 @@ pub(crate) fn guard_in_txn(vault: &Vault, txn: &RoTxn<'_>, mode: HomeWrite) -> R
 }
 
 /// Whether the last move this node's election recorded leaves this node.
-fn draining(vault: &Vault, txn: &RoTxn<'_>, head: &HandoffHead) -> Result<bool> {
+pub(super) fn draining(vault: &Vault, txn: &RoTxn<'_>, head: &HandoffHead) -> Result<bool> {
     let Some(request) = head.request else {
         return Ok(false);
     };
@@ -154,6 +154,7 @@ pub(super) fn freeze_in_txn(
         request: None,
         incomplete: None,
         route: None,
+        ..head
     };
     store::put_head_in_txn(vault, txn, &head)?;
     Ok(Some(sealed))
@@ -236,7 +237,8 @@ pub(crate) fn adopt(
         IncompleteReason::SourceGone
         | IncompleteReason::UnknownLineage
         | IncompleteReason::NoRoute
-        | IncompleteReason::Unresolved => AdoptOutcome::Pending,
+        | IncompleteReason::Unresolved
+        | IncompleteReason::NotArrived => AdoptOutcome::Pending,
     })
 }
 
@@ -265,6 +267,11 @@ fn adopt_in_txn(
         return Err(Abort::Pending(None));
     }
     let head = store::head_in_txn(vault, txn)?;
+    // FIX 5931: a handoff its source cancelled here never lands, in this
+    // writer or any later one.
+    if head.fenced(&handoff.id) {
+        return Err(Abort::Stale);
+    }
     if head
         .floor
         .is_some_and(|floor| movement.generation.serial <= floor.serial)
@@ -308,6 +315,8 @@ fn adopt_in_txn(
         request: None,
         incomplete: None,
         route: None,
+        staged: None,
+        ..head
     };
     store::put_head_in_txn(vault, txn, &head)?;
     Ok(AdoptOutcome::Adopted(ack))
@@ -354,6 +363,11 @@ pub(crate) fn ack_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, ack: &VerifiedHomeA
     }
     if transfer.status == HandoffStatus::Acked {
         return Ok(());
+    }
+    // FIX 5931: this node took its state back once its target fenced the
+    // handoff; an ack for it now names nothing that landed.
+    if transfer.status == HandoffStatus::Cancelled {
+        return Err(refused("this node cancelled the handoff"));
     }
     transfer.status = HandoffStatus::Acked;
     store::put_transfer_in_txn(vault, txn, &ack.id, &transfer)?;
