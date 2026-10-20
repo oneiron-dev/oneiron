@@ -38,7 +38,7 @@ pub(crate) use self::model_channel::{
     project_model_pack_in,
 };
 pub use self::room_party::RoomParty;
-pub(crate) use self::room_party::{is_vault_owner, room_party_in};
+pub(crate) use self::room_party::{bound_room_party_in, is_vault_owner, room_party_in};
 
 pub use self::scope_codec::{
     DISCLOSURE_SCOPE_BODY_KEYS, DISCLOSURE_SCOPE_SCHEMA_VERSION, DisclosureScope,
