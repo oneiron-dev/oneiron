@@ -6,18 +6,20 @@
 //! declared hosted holder once its adapter lands in KS-C4), then the anchor
 //! advances when the owner set one up: a mounted root (CALLS
 //! CUSTODY_ANCHOR_ROOT) or another install's door (CALLS CUSTODY_ANCHOR_URL,
-//! [`anchor_client`]), unset by default. A backup publishes right after it
-//! lands (FIX 5790); a running server also publishes at start and then
-//! whenever the status read shows a member behind, a step or a retirement
-//! pending, or a head without the data-key wrap the key now allows (FIX
-//! 5791). No backup or save waits on a pass or refuses for one: a step that
-//! does not go through stays pending by name on the owner's status read,
-//! and the next pass retries. A managed host ships each declared `outbox:`
-//! member through the Hypnos outbox its supervisor names (FIX 5899), in the
-//! admitted background pass only: a backup that lands wakes that pass, and
-//! its own pass leaves the member to it.
+//! [`anchor_client`], called with the owner credential handed to this process
+//! on a pipe, [`CustodyAnchorCredentials`]), unset by default. A backup
+//! publishes right after it lands (FIX 5790); a running server also publishes
+//! at start and then whenever the status read shows a member behind, a step
+//! or a retirement pending, or a head without the data-key wrap the key now
+//! allows (FIX 5791). No backup or save waits on a pass or refuses for one: a
+//! step that does not go through stays pending by name on the owner's status
+//! read, and the next pass retries. A managed host ships each declared
+//! `outbox:` member through the Hypnos outbox its supervisor names (FIX
+//! 5899), in the admitted background pass only: a backup that lands wakes
+//! that pass, and its own pass leaves the member to it.
 
 mod anchor_client;
+mod anchor_credentials;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,6 +34,7 @@ use oneiron::store::custody_protocol::{AnchorStore, HostedKind, TargetKind, Targ
 use serde::Serialize;
 
 use self::anchor_client::HttpAnchor;
+pub(crate) use self::anchor_credentials::CustodyAnchorCredentials;
 use super::{BackupOutcome, BackupPlan, take};
 use crate::config::BackupConfig;
 use crate::owner::schedule::OwnerHost;
@@ -47,6 +50,9 @@ pub(crate) struct CustodyPlan {
     pub(crate) anchor_root: Option<PathBuf>,
     /// Another install's anchor door (CALLS CUSTODY_ANCHOR_URL).
     anchor_url: Option<String>,
+    /// The owner credential the door is called with, handed to this process
+    /// on its pipe; shared, never copied.
+    anchor_credentials: Option<Arc<CustodyAnchorCredentials>>,
     /// The hosted members the config declares (CALLS
     /// CUSTODY_HOSTED_TARGETS), each pending until its adapter acks.
     declared: Vec<TargetSpec>,
@@ -59,10 +65,11 @@ pub(crate) struct CustodyPlan {
 }
 
 impl CustodyPlan {
-    fn of(backup: &BackupConfig) -> Self {
+    fn of(backup: &BackupConfig, credentials: Option<Arc<CustodyAnchorCredentials>>) -> Self {
         Self {
             anchor_root: backup.custody_anchor_root.clone(),
             anchor_url: backup.custody_anchor_url.clone(),
+            anchor_credentials: credentials,
             // The config's own check refused a target that does not parse.
             declared: backup
                 .custody_targets
@@ -84,30 +91,42 @@ impl CustodyPlan {
     }
 
     /// The anchor `vault` publishes to: the root, refused inside the vault
-    /// or its key custody, or the door.
+    /// or its key custody, or the door, called with the plan's credentials.
     fn anchor(&self, vault: &oneiron::Vault) -> oneiron::Result<Option<Box<dyn AnchorStore>>> {
         if let Some(root) = &self.anchor_root {
             return Ok(Some(Box::new(vault.custody_anchor_root(root)?)));
         }
-        Ok(self
-            .anchor_url
-            .as_deref()
-            .map(|url| Box::new(HttpAnchor::at(url)) as Box<dyn AnchorStore>))
+        Ok(self.anchor_url.as_deref().map(|url| {
+            Box::new(HttpAnchor::with_credentials(
+                url,
+                self.anchor_credentials.clone(),
+            )) as Box<dyn AnchorStore>
+        }))
     }
 }
 
 impl BackupPlan {
-    /// The plan with the custody anchor and hosted members `backup` names.
-    pub(crate) fn anchored_at(mut self, backup: &BackupConfig) -> Self {
-        self.custody = CustodyPlan::of(backup);
+    /// The plan with the custody anchor and hosted members `backup` names,
+    /// its door called with `credentials`, the ones this process was handed.
+    pub(crate) fn anchored_at(
+        mut self,
+        backup: &BackupConfig,
+        credentials: Option<Arc<CustodyAnchorCredentials>>,
+    ) -> Self {
+        self.custody = CustodyPlan::of(backup, credentials);
         self
     }
 }
 
 impl OwnerHost {
-    /// The host with its vault's custody anchored where `backup` names.
-    pub(crate) fn anchored_at(mut self, backup: &BackupConfig) -> Self {
-        self.backups.custody = CustodyPlan::of(backup);
+    /// The host with its vault's custody anchored where `backup` names, its
+    /// door called with `credentials`, the ones this process was handed.
+    pub(crate) fn anchored_at(
+        mut self,
+        backup: &BackupConfig,
+        credentials: Option<Arc<CustodyAnchorCredentials>>,
+    ) -> Self {
+        self.backups.custody = CustodyPlan::of(backup, credentials);
         self
     }
 
@@ -120,15 +139,18 @@ impl OwnerHost {
 }
 
 /// A restore's custody source beside `backup`, checked against the anchor
-/// `config` names: its root, or its door (FIX 5788).
+/// `config` names: its root, or its door (FIX 5788), called with
+/// `credentials`, the ones the restore was handed. A door with none is
+/// never called, and the restore is refused as at an unreachable anchor.
 pub(crate) fn custody_recovery(
     backup: &std::path::Path,
     config: &BackupConfig,
+    credentials: Option<Arc<CustodyAnchorCredentials>>,
 ) -> CustodyRecovery<'static> {
     let recovery = CustodyRecovery::beside(backup).anchored_at(config.custody_anchor_root.clone());
     match &config.custody_anchor_url {
         Some(url) if config.custody_anchor_root.is_none() => {
-            recovery.anchored_by(Box::new(HttpAnchor::at(url)))
+            recovery.anchored_by(Box::new(HttpAnchor::with_credentials(url, credentials)))
         }
         _ => recovery,
     }

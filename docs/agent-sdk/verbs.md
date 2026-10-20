@@ -712,6 +712,12 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.thread_audience.add`
 - `vault.rooms.thread_audience.open_full_history`
 - `vault.rooms.thread_audience.remove`
+- `vault.rooms.private_threads`
+- `vault.rooms.thread_delete`
+- `vault.rooms.thread_join.request`
+- `vault.rooms.thread_join.requests`
+- `vault.rooms.thread_join.approve`
+- `vault.rooms.thread_join.deny`
 - `vault.projects.propose`
 - `vault.projects.proposals`
 - `vault.projects.dismiss_card`

@@ -182,6 +182,11 @@ pub(crate) use rooms::{
     AUDIENCE_EDIT_BOUND, erase_audience_actor_in_txn, erase_audience_edit,
     reject_audience_edit_delete, reject_audience_edit_unlink, scrub_room_audience,
 };
+pub use rooms::{
+    PrivateThreadDeleteReceipt, PrivateThreadDeleteRequest, PrivateThreadMetadata,
+    RoomPrivateThreadsRequest, ThreadJoinDecisionRequest, ThreadJoinRequest,
+    ThreadJoinRequestState, ThreadJoinRequestView, ThreadJoinRequestsRequest,
+};
 pub(crate) use rooms::{
     ROOM_THREAD_AUDIENCE_KEY, ROOM_THREAD_KEY, ThreadBinding, ThreadPlace,
     audience_edit_erased_from, audience_edit_is_erased, audience_event_put_refusal, names_actor_in,
@@ -201,6 +206,7 @@ pub use rooms::{
     ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceOpenFullHistoryRequest,
     ThreadAudienceReceipt, ThreadAudienceRemoveRequest, ThreadNotice,
 };
+pub(crate) use rooms::{VaultStanding, private_root_of_room_in, vault_standing_in};
 #[cfg(feature = "sync")]
 pub(crate) use rooms::{
     audience_edit_unlink_refusal, carried_audience_edit_in_txn, scrub_audience_edits,

@@ -13,11 +13,11 @@ use crate::claim::ClaimReadStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::decision::Reversibility;
-use crate::write_envelope::WriteActor;
 
 use super::brief::StoredBrief;
 use super::decision_port::{PortAnswer, TaskDecisions, TaskQuestion, ask};
 use super::highway_report::done_question_inputs;
+use super::highway_runner::workflow_try::WorkflowRunEnd;
 use super::highway_runner::{runner_refusal, runner_task_in};
 use super::terminal_state::TaskExecutionState;
 use super::wire_decode::task_verb_body_in;
@@ -119,34 +119,125 @@ pub fn runner_done_question(
     done_question_in(vault, &txn, task_ref, result_ref, &[])
 }
 
-/// The question an ended workflow run's Done asks over its report NOTE
-/// `note` (FIX 4391), with each settled leaf's output in `leaves` as its
-/// evidence too, as far as `judge`'s lane reads it (FIX 5293): the NOTE
-/// holds only their handles. A leaf the lane does not read, or a lane that
-/// does not open, adds nothing.
+/// The question an ended workflow run `end`'s Done asks over its report
+/// NOTE `note` (FIX 4391), with each settled leaf's output as its evidence
+/// too, as far as its binder's lane reads it (FIX 5293): the NOTE holds
+/// only their handles. A leaf the lane does not read, or a lane that does
+/// not open, adds nothing.
+///
+/// The question's state also carries `leaf_results`, each leaf's
+/// `result_ref` and its whole text, unclipped, so a model rung that reads
+/// the state alone reads them (FIX 6325): a NOTE's markdown and an ordinary
+/// TURN's released words, both as the lane admits them, and the bytes of an
+/// output handle of the run's own steps, read by producer lineage for that
+/// binder alone. A leaf that does not read stays a ref only, an error
+/// reading one is no text, never a refusal, and with no text read the key
+/// is left out.
 pub(super) fn workflow_done_question(
     vault: &Vault,
-    task_ref: EntityId,
+    end: &WorkflowRunEnd,
     note: EntityId,
-    leaves: &[EntityId],
-    judge: WriteActor,
 ) -> Result<Option<RunnerDoneQuestion>> {
+    // The run's own steps' outputs, read whole before the question's
+    // snapshot opens: their reads open their own.
+    let mut texts: std::collections::HashMap<String, String> =
+        crate::agent_dispatch::AgentDispatcher::new(vault)
+            .workflow_done_output_refs(end.wrapper.id, end.bound_by)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|(handle, output)| {
+                let bytes = crate::compaction::output::restore_output(vault, output).ok()?;
+                Some((handle, String::from_utf8(bytes).ok()?))
+            })
+            .collect();
+    let judge = end.bound_by;
     let memory = vault.memory(judge.entity_ref(), judge.actor_class());
     // The lane verifies its actor in a snapshot of its own, closed before
     // the question's.
     let lane = memory.read_lane(ClaimReadStatus::Recorded).ok();
     let txn = vault.store.env.read_txn()?;
-    let readable: Vec<EntityId> = lane
-        .and_then(|lane| lane.get_entities_parts_in_txn(&txn, leaves).ok())
-        .map(|rows| {
-            leaves
-                .iter()
-                .zip(rows)
-                .filter_map(|(leaf, row)| row.map(|_| *leaf))
-                .collect()
+    let leaves: Vec<(&str, EntityId)> = end
+        .results
+        .iter()
+        .filter_map(|step| {
+            EntityId::from_hex(&step.result_ref)
+                .ok()
+                .map(|leaf| (step.result_ref.as_str(), leaf))
         })
-        .unwrap_or_default();
-    done_question_in(vault, &txn, task_ref, note, &readable)
+        .collect();
+    let ids: Vec<EntityId> = leaves.iter().map(|(_, leaf)| *leaf).collect();
+    let mut readable = Vec::new();
+    if let Some(lane) = &lane
+        && let Ok(rows) = lane.get_entities_parts_in_txn(&txn, &ids)
+    {
+        for ((result_ref, leaf), row) in leaves.iter().zip(rows) {
+            let Some((kind, _, body)) = row else {
+                continue;
+            };
+            readable.push(*leaf);
+            if let Some(text) = leaf_text(vault, lane, &txn, *leaf, kind, &body) {
+                texts.insert((*result_ref).to_owned(), text);
+            }
+        }
+    }
+    let mut question = done_question_in(vault, &txn, end.task, note, &readable)?;
+    let leaf_results: Vec<serde_json::Value> = end
+        .results
+        .iter()
+        .filter_map(|step| {
+            texts
+                .remove(&step.result_ref)
+                .map(|text| serde_json::json!({ "result_ref": step.result_ref, "text": text }))
+        })
+        .collect();
+    if let Some(question) = question.as_mut()
+        && !leaf_results.is_empty()
+        && let Some(state) = question.state.as_object_mut()
+    {
+        state.insert(
+            "leaf_results".to_owned(),
+            serde_json::Value::Array(leaf_results),
+        );
+    }
+    Ok(question)
+}
+
+/// The whole text of the leaf `leaf`, a `kind` row whose `body` `lane`
+/// admitted in `txn`: a NOTE's markdown, or an ordinary TURN's words its
+/// messages give, each message the same lane releases. `None` for any other
+/// kind, one with no text, or a read that fails.
+fn leaf_text(
+    vault: &Vault,
+    lane: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    leaf: EntityId,
+    kind: u8,
+    body: &[u8],
+) -> Option<String> {
+    match kind {
+        crate::registry::ENTITY_TYPE_NOTE => {
+            crate::note::decode_note_body_in_txn(&vault.store, txn, body)
+                .ok()
+                .map(|note| note.markdown)
+        }
+        crate::registry::ENTITY_TYPE_TURN => {
+            let policy = lane.policy_manifest_in(txn).ok()?;
+            let text = crate::vault::entity_revision::served_turn_text_in_txn(
+                vault,
+                &lane.store_read(),
+                txn,
+                &leaf,
+                crate::vault::ReadMode::Live,
+                true,
+            )
+            .ok()??;
+            let messages = text
+                .released(|message| lane.is_entity_readable_with_policy_in(txn, &policy, message))
+                .ok()?;
+            crate::embed::joined_turn_text(&messages)
+        }
+        _ => None,
+    }
 }
 
 /// The question a Done on `task_ref` with the durable `result_ref` asks, in
