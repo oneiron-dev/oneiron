@@ -29,11 +29,13 @@
 //!   [`TrainingReceiptV2`]), written by the intake's side. The vault applies
 //!   each one its intake signed for one of its own scopes, and removes it; a
 //!   receipt for a scope it never used stays where it is, unapplied.
-//! - [`TRAINING_SCOPES_FILE`]: the vault's scopes (a [`TrainingScopesV2`]),
-//!   unsigned and local: every scope it ever used, each with the highest
-//!   publisher sequence it applied there. The vault rewrites it whole
-//!   whenever its list of months or a cursor changes; the consumer pulls
-//!   receipts by these scopes.
+//! - [`TRAINING_SCOPES_FILE`], in [`SCOPES_DIR`]: the vault's scopes (a
+//!   [`TrainingScopesV2`]), unsigned and local: every scope it ever used,
+//!   each with the highest publisher sequence it applied there. The vault
+//!   rewrites it whole whenever its list of months or a cursor changes; the
+//!   consumer pulls receipts by these scopes. [`SCOPES_DIR`] is the vault
+//!   user's own directory, so the outbox root, which holds the intake's
+//!   keys, never has to be writable by the vault.
 //! - [`INTAKE_RECIPIENT_FILE`]: the intake's hybrid (X25519 + ML-KEM-1024)
 //!   public key, as raw bytes, that every chunk is sealed to. Without it no
 //!   offer is written; controls still are.
@@ -115,7 +117,12 @@ pub const OFFERS_DIR: &str = "offers";
 pub const CONTROLS_DIR: &str = "controls";
 /// The subdirectory the intake's receipts arrive in.
 pub const RECEIPTS_DIR: &str = "receipts";
-/// The vault's scopes, in the outbox directory: unsigned and local.
+/// The subdirectory holding [`TRAINING_SCOPES_FILE`], owned by the vault's
+/// own user. The outbox directory itself may not be writable by it (a
+/// managed node keeps it root-owned because it holds the intake's keys), and
+/// it must never be made so: the vault could then replace those keys.
+pub const SCOPES_DIR: &str = "scopes";
+/// The vault's scopes, in [`SCOPES_DIR`]: unsigned and local.
 pub const TRAINING_SCOPES_FILE: &str = "training-scopes.v2.json";
 /// The intake's hybrid public key, in the outbox directory.
 pub const INTAKE_RECIPIENT_FILE: &str = "intake-recipient.v1";

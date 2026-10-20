@@ -31,7 +31,7 @@ impl AudienceCache {
         id: EntityId,
         audience: &[EntityId],
     ) -> Result<bool> {
-        self.readable_at_depth(vault, txn, id, audience, 0)
+        self.readable_at_depth(vault, txn, id, audience, None, 0)
     }
     /// [`Self::readable`] over the exact revision being served, which for a
     /// pinned or indexed read may be older than the current row. With
@@ -39,6 +39,10 @@ impl AudienceCache {
     /// under the CURRENT rule, whether it is in the thread now, rather than
     /// per turn (FIX 5545): a member's own read of a room or thread checks
     /// its other members so ([`private_threads_readable_with_read_in`]).
+    /// `personal` is that member: in a room it holds a seat in now, the row
+    /// meets its own membership window alone, never another member's, so a
+    /// join from now on narrows no one else's own read (FIX 5667).
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn readable_raw(
         &mut self,
         vault: &Vault,
@@ -47,13 +51,14 @@ impl AudienceCache {
         raw: &[u8],
         audience: &[EntityId],
         current: bool,
+        personal: Option<EntityId>,
     ) -> Result<bool> {
         if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
             || vault.archive_tombstone_in_txn(txn, &id)?.is_some()
         {
             return Ok(false);
         }
-        self.readable_raw_at_depth(vault, txn, id, raw, audience, current, 0)
+        self.readable_raw_at_depth(vault, txn, id, raw, audience, current, personal, 0)
     }
     fn covers_readable(
         &mut self,
@@ -61,6 +66,7 @@ impl AudienceCache {
         txn: &heed::RoTxn<'_>,
         covers: Result<Option<Vec<EntityId>>>,
         audience: &[EntityId],
+        personal: Option<EntityId>,
         depth: usize,
     ) -> Result<bool> {
         let covers = match covers {
@@ -78,7 +84,7 @@ impl AudienceCache {
             return Ok(false);
         }
         for id in covers {
-            if !self.readable_at_depth(vault, txn, id, audience, depth + 1)? {
+            if !self.readable_at_depth(vault, txn, id, audience, personal, depth + 1)? {
                 return Ok(false);
             }
         }
@@ -90,6 +96,7 @@ impl AudienceCache {
         txn: &heed::RoTxn<'_>,
         id: EntityId,
         audience: &[EntityId],
+        personal: Option<EntityId>,
         depth: usize,
     ) -> Result<bool> {
         if depth > 64
@@ -103,8 +110,9 @@ impl AudienceCache {
             return Ok(false);
         };
         // `readable` meets each private thread turn by turn; a cover, at a
-        // later depth, walks none.
-        self.readable_raw_at_depth(vault, txn, id, &raw, audience, false, depth)
+        // later depth, walks none. A cover meets its room's windows as the
+        // row it covers does.
+        self.readable_raw_at_depth(vault, txn, id, &raw, audience, false, personal, depth)
     }
     #[expect(clippy::too_many_arguments)]
     fn readable_raw_at_depth(
@@ -115,6 +123,7 @@ impl AudienceCache {
         raw: &[u8],
         audience: &[EntityId],
         current: bool,
+        personal: Option<EntityId>,
         depth: usize,
     ) -> Result<bool> {
         let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("audience header"))?;
@@ -175,7 +184,24 @@ impl AudienceCache {
                     .rows
                     .get(&(room, revision))
                     .ok_or(Error::CorruptedIndex("audience snapshot"))?;
-                for person in audience {
+                // A seat's own read meets its own window alone (FIX 5667):
+                // another member's join from now on never narrows it. A
+                // reader with no seat here, a host or one on a Ready join,
+                // meets every member's, as a held turn does.
+                let mut seat = None;
+                if let Some(reader) = personal
+                    && membership::windows_rows(rows, reader)?
+                        .last()
+                        .is_some_and(|window| window.to.is_none())
+                {
+                    seat = Some(reader);
+                }
+                let checked = if seat.is_some() {
+                    seat.as_slice()
+                } else {
+                    audience
+                };
+                for person in checked {
                     // An unplaced speaker stays in the audience under the
                     // cut its entry fact froze (ILDF2 P5): never dropped,
                     // never wider than from its entry into this room. A live
@@ -204,20 +230,21 @@ impl AudienceCache {
             .get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("audience body"))?;
         let covers = crate::scope_summary::body_covers_in_txn(vault, txn, &id, h.entity_type, body);
-        if !self.covers_readable(vault, txn, covers, audience, depth)? {
+        if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
             return Ok(false);
         }
         if h.entity_type == ENTITY_TYPE_CLAIM {
             let claim = crate::claim::decode_claim_body(body, true)?;
             let covers = crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim);
-            if !self.covers_readable(vault, txn, covers, audience, depth)? {
+            if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
                 return Ok(false);
             }
             let covers = conversation_summary_covers(&claim);
-            if !self.covers_readable(vault, txn, covers, audience, depth)? {
+            if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
                 return Ok(false);
             }
-            if !self.covers_readable(vault, txn, reaction_covers(&claim), audience, depth)? {
+            let covers = reaction_covers(&claim);
+            if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
                 return Ok(false);
             }
             if let Some(relationship) = claim.rel {
@@ -348,7 +375,10 @@ pub(crate) fn conversation_summary_covers(
 /// The quoted words themselves are the target's own read. A TURN's `Parent`
 /// stays in its own thread or on the trunk, which names none, so it is not
 /// walked. A TASK also reaches the thread turns that bind it and the turns
-/// its thread and consult refs name (FIX 3124). A declared root that is gone
+/// its consult refs name (FIX 3124). The turn its spec's `thread_ref` names
+/// is its place, not a source of its words, read under the CURRENT rule
+/// (FIX 5872): a TASK pointing at a turn from before a viewer's add still
+/// reads to that viewer. A declared root that is gone
 /// or does not resolve denies, and with no viewers so does any private
 /// thread. No read is exempt: an owner's, a host's and an unbound one meet
 /// it too. With `current`, a turn read for its words is checked under the
@@ -443,11 +473,10 @@ pub(crate) fn private_threads_readable_with_read_in(
                 }
                 pending.push((turn, None, source));
             }
-            pending.extend(
-                crate::task_verb::room_thread_context_refs(body)
-                    .into_iter()
-                    .map(|id| (id, None, source)),
-            );
+            // FIX 5872: its `thread_ref` is a place.
+            let (place, refs) = crate::task_verb::room_thread_context_refs(body);
+            pending.extend(place.map(|id| (id, None, false)));
+            pending.extend(refs.into_iter().map(|id| (id, None, source)));
         }
         let kinds: &[EdgeKind] = if h.entity_type == ENTITY_TYPE_TURN {
             if let Some(binding) = crate::workspace_roster::thread_binding(body)? {
