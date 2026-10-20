@@ -3100,7 +3100,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.esign.signing.pdf": { description: "One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.esign.signing.image": { description: "Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.esign.signing.signature": { description: "Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.esign.seal.get": { description: "Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.esign.seal.get": { description: "Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.conversations.create": { description: "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.conversations.turns.create": { description: "Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.conversations.records.append": { description: "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -3108,7 +3108,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.put": { description: "Registers one blob artifact; its bytes ride vault.artifacts.append.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.import": { description: "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.head": { description: "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.artifacts.body.read": { description: "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.artifacts.body.read": { description: "Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history; an agent that gives why reads its lifted secrets whole once a grant covers their keys.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.commits": { description: "Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.edit": { description: "A person's typed DOCX, XLSX or deck operations on the live body, read against a base frontier (the head by default) and merged into the head.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.fork.open": { description: "Opens a fork of the live body at its head for machine work, in an optional run; a DOCX or XLSX fork joins the named proposal or opens its own.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -3125,7 +3125,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.artifacts.body.deck.export": { description: "Projects a deck at its head; with its profile's export gate open it lands as the artifact's next version, and with the gate closed the projection waits beside the artifact as a proposal for Keep.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.gate": { description: "The deck export gate for a profile: open only on the deck oracle's clean all-pass receipt for the current projector.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.deck.oracle": { description: "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened.", scope: "Write", proposes: false, hostDoor: false, section: false },
-  "vault.artifacts.body.deck.preview": { description: "The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.artifacts.body.deck.preview": { description: "The asked slides of a deck's head or open fork's merge candidate, as this host's review renderer draws its export now: provisional images; nothing lands. A lifted deck draws for an agent that gives why once a grant covers its keys.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.append": { description: "Appends one version of bytes to a blob artifact's append-only chain.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.read": { description: "Reads one version of a blob artifact's bytes.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.consolidation.enqueue": { description: "Enqueues one consolidation attempt and returns its durable job reference.", scope: "Write", proposes: false, hostDoor: false, section: false },
@@ -4833,7 +4833,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           import: (input: Facade.OfficeBodyImportRequest, options?: O): FacadeReturns<"vault.artifacts.body.import">[K] => invoke("vault.artifacts.body.import", input, options, newInvocation()),
           /** An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none. */
           head: (input: Facade.OfficeBodyArtifactRequest, options?: O): FacadeReturns<"vault.artifacts.body.head">[K] => invoke("vault.artifacts.body.head", input, options, newInvocation()),
-          /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history. */
+          /** Reads a live body as typed DOCX blocks, XLSX cells or deck nodes, at its head or at an earlier frontier of its history; an agent that gives why reads its lifted secrets whole once a grant covers their keys. */
           read: (input: Facade.OfficeBodyReadRequest, options?: O): FacadeReturns<"vault.artifacts.body.read">[K] => invoke("vault.artifacts.body.read", input, options, newInvocation()),
           /** Every commit receipt of a live body in commit order, each with its actor, operation span and made_by; a commit with no honoured receipt is listed with actor null and reason receipt_missing; with actor_ref, that actor's commits alone. */
           commits: (input: Facade.OfficeBodyCommitsRequest, options?: O): FacadeReturns<"vault.artifacts.body.commits">[K] => invoke("vault.artifacts.body.commits", input, options, newInvocation()),
@@ -4872,7 +4872,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
             gate: (input: Facade.DeckGateRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.gate">[K] => invoke("vault.artifacts.body.deck.gate", input, options, newInvocation()),
             /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
             oracle: (input: Facade.DeckOracleRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.oracle">[K] => invoke("vault.artifacts.body.deck.oracle", input, options, newInvocation()),
-            /** The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed. */
+            /** The asked slides of a deck's head or open fork's merge candidate, as this host's review renderer draws its export now: provisional images; nothing lands. A lifted deck draws for an agent that gives why once a grant covers its keys. */
             preview: (input: Facade.DeckPreviewRequest, options?: O): FacadeReturns<"vault.artifacts.body.deck.preview">[K] => invoke("vault.artifacts.body.deck.preview", input, options, newInvocation()),
           },
         },
@@ -5477,7 +5477,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           signature: (input: Facade.EsignSigningSignatureRequest, options?: O): FacadeReturns<"vault.esign.signing.signature">[K] => invoke("vault.esign.signing.signature", input, options, newInvocation()),
         },
         seal: {
-          /** Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it. */
+          /** Where one signing document seal task stands: its folded status, every seal attempt receipt, its sealed manifest once sealed, and its delivery receipts. A trail that does not read answers trail unreadable with its error. */
           get: (input: Facade.EsignSealGetRequest, options?: O): FacadeReturns<"vault.esign.seal.get">[K] => invoke("vault.esign.seal.get", input, options, newInvocation()),
         },
       },

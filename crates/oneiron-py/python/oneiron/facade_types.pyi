@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1082 facade rows, 3708 declarations.
+Census: 1082 facade rows, 3709 declarations.
 Inputs: 1017 of 1082 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 970 of 1082 fully typed, 112 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 969 of 1082 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -15515,11 +15515,14 @@ class EsignSealedView(TypedDict):
     audit_chain_sha256: str
     rejected: bool
     items: list[EsignSealedItemView]
-class EsignSealView(TypedDict):
-    document_ref: str
+class EsignSealTrailReadable(TypedDict):
+    trail: Literal["readable"]
     status: DocumentStatus
-    attempts: list[EsignSealAttemptView]
-    sealed: NotRequired[EsignSealedView | None]
+class EsignSealTrailUnreadable(TypedDict):
+    trail: Literal["unreadable"]
+    error: MemoryError
+EsignSealTrail = EsignSealTrailReadable | EsignSealTrailUnreadable
+EsignSealView = dict[str, Any]
 class CoreWriteTextField(TypedDict):
     field: str
     value: str
@@ -15607,6 +15610,7 @@ class OfficeBodyArtifactRequest(TypedDict):
 class OfficeBodyReadRequest(TypedDict):
     artifact_ref: str
     at: NotRequired[list[int] | None]
+    why: NotRequired[str | None]
 class BodyBlockKindHeading(TypedDict):
     heading: int
 BodyBlockKind = Literal["paragraph", "table", "opaque"] | BodyBlockKindHeading
@@ -16536,6 +16540,7 @@ class DeckPreviewRequest(TypedDict):
     artifact_ref: str
     fork_ref: NotRequired[str | None]
     slides: list[int]
+    why: NotRequired[str | None]
 class DeckPreviewSlide(TypedDict):
     slide: int
     media_type: str

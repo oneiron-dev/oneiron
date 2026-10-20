@@ -36,8 +36,9 @@ pub(crate) struct HardEraseSweepRun {
     /// Windows deferred because a `u:w:` row appeared/vanished or the
     /// `d:w:` snapshot changed between the read phase and the compaction
     /// write txn (anti-clobber re-read guard) — the run defers, no carrier
-    /// is overwritten, the obligation stays. SIBLING of
-    /// `windows_deferred_live`; never folded into it.
+    /// is overwritten, the obligation stays. A cut whose encoded root was
+    /// not the window's tip (FIX 6520) defers the same way and counts here.
+    /// SIBLING of `windows_deferred_live`; never folded into it.
     pub windows_deferred_raced: u64,
     /// Windows and documents left as they are because a legal hold names a
     /// row their compaction would destroy (OF-470); the obligation stays
