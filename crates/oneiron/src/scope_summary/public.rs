@@ -170,7 +170,7 @@ impl Memory<'_> {
                 &value,
             )?;
             self.produced_from([summary]);
-            self.lifted_view(view, || Ok(keys)).map(Some)
+            self.lifted_view_in_txn(txn, view, || Ok(keys)).map(Some)
         })
     }
 
