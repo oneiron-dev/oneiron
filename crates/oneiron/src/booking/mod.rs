@@ -70,8 +70,9 @@ pub use emergency_reschedule::{
     execute_emergency_plan, plan_emergency_reschedule, verify_logged_owner_instruction,
 };
 pub use invite_grant::{
-    BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,
-    booking_page_grant_covers_recipient, booking_page_invites_authorizes, enqueue_confirm_invite,
+    BookingPageInviteContext, ConfirmInviteOutcome, ConfirmedBookingInvite,
+    PublishBookingPageGrantRequest, booking_page_grant_covers_recipient,
+    booking_page_invites_authorizes, enqueue_confirm_invite, enqueue_confirm_invite_outcome,
     mint_publish_page_invite_grant,
 };
 pub use lifecycle::{

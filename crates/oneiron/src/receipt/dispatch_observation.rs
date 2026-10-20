@@ -73,6 +73,12 @@ impl DispatchObservation {
             gate_decision_id: self.gate_decision_id.clone(),
             gate_outcome: self.gate_outcome.clone(),
             gate_reason_codes: self.gate_reason_codes.clone(),
+            // FIX 6424: a held try's digest, as its receipt recorded it.
+            approval_digest: self
+                .receipt
+                .fields
+                .get(crate::outbound::APPROVAL_DIGEST_FIELD)
+                .cloned(),
             receipt: self.receipt.clone(),
             // The observation is not resend authority; terminal consumers
             // resolve the exact ledger row instead of trusting this echo.

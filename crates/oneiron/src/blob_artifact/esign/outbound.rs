@@ -67,6 +67,8 @@ fn admitted_owner_press_in(
         target: String,
         #[serde(default)]
         content_ref: Option<String>,
+        #[serde(default)]
+        approval_send_ref: Option<String>,
     }
     let attempt = crate::outbound::outbound_dispatch_attempt_id(request.intent_ref)
         .map_err(|_| invalid("dispatch attempt id"))?;
@@ -90,6 +92,8 @@ fn admitted_owner_press_in(
         || frozen.verb != verb
         || frozen.target != request.intent.target
         || frozen.content_ref.as_deref() != Some(binding)
+        // FIX 6424: the one send the press approved is this act's own.
+        || frozen.approval_send_ref.as_deref() != Some(request.intent_ref)
     {
         return Ok(None);
     }
@@ -396,14 +400,39 @@ impl Vault {
             None,
         )
     }
-    fn dispatch_esign_inner(
+    /// FIX 6424 (Engine 10-20 20:4x): the approve-once digest an owner's
+    /// one-time press must name to release the e-sign act `request` asks
+    /// for with `command` once the Gate holds it: the act's command binding,
+    /// as [`Self::dispatch_esign`] computes it, under
+    /// [`crate::outbound::outbound_approve_once_digest`]. The press pins
+    /// the document, that binding and the act's stable send ref (its
+    /// `ledger_identity_ref` when it names one, else its intent ref), so only
+    /// the act that keeps them spends it. A held act's dispatch result carries the same
+    /// digest as `approval_digest`. It reads and records nothing else.
+    /// `reminder` is the `(recipient, rung)` a reminder sweep binds
+    /// ([`Self::sweep_esign_reminders`]), `None` for every other act.
+    /// # Errors
+    /// The refusals [`Self::dispatch_esign`] makes before its gate.
+    pub fn esign_approve_once_digest(
         &self,
-        mut request: OutboundDispatchRequest,
+        request: &OutboundDispatchRequest,
         command: &EsignOutboundCommand,
-        (ip, user_agent): (Option<String>, Option<String>),
-        reminder: Option<(String, u32)>,
-        owner: Option<&AuthenticatedOwner>,
-    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        reminder: Option<(&str, u32)>,
+    ) -> std::result::Result<Option<crate::consent::EffectDigest>, OutboundDispatchError> {
+        let reminder = reminder.map(|(recipient, rung)| (recipient.to_owned(), rung));
+        let mut request = request.clone();
+        request.intent.content_ref =
+            Some(self.esign_command_binding(&request, command, &reminder)?);
+        crate::outbound::outbound_approve_once_digest(self, &request)
+    }
+    /// The immutable binding (`esign-command:<sha256>`) an e-sign act runs
+    /// under: its command, the document as it stands and the reminder.
+    fn esign_command_binding(
+        &self,
+        request: &OutboundDispatchRequest,
+        command: &EsignOutboundCommand,
+        reminder: &Option<(String, u32)>,
+    ) -> std::result::Result<String, OutboundDispatchError> {
         let document = EntityId::from_hex(&command.document)?;
         if request.intent.channel != "esign"
             || request.intent.verb != command.verb.as_str()
@@ -421,12 +450,23 @@ impl Vault {
         if state.document.recipients.len() != command.recipient_count {
             return Err(invalid("recipient count changed").into());
         }
-        let bytes = serde_json::to_vec(&(command, &state.document, &reminder))
+        let bytes = serde_json::to_vec(&(command, &state.document, reminder))
             .map_err(|_| invalid("command encoding"))?;
-        request.intent.content_ref = Some(format!(
+        Ok(format!(
             "esign-command:{}",
             crate::entity_id::bytes_to_hex_lower(&Sha256::digest(&bytes))
-        ));
+        ))
+    }
+    fn dispatch_esign_inner(
+        &self,
+        mut request: OutboundDispatchRequest,
+        command: &EsignOutboundCommand,
+        (ip, user_agent): (Option<String>, Option<String>),
+        reminder: Option<(String, u32)>,
+        owner: Option<&AuthenticatedOwner>,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        request.intent.content_ref =
+            Some(self.esign_command_binding(&request, command, &reminder)?);
         let actor = EsignAuditActor {
             actor: request.intent.actor.clone(),
             ip,
