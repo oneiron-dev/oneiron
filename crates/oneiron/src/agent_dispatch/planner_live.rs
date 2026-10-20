@@ -8,7 +8,8 @@
 //! AGENT_DEF's calibrated spend), reads the vault's model descriptions,
 //! solo's rate (the seat AGENT_DEF's own reliability on the type) and the
 //! planner card's read of every admitted bound pattern skill with its payoff
-//! rows' anchored outcomes per width, then runs the planner ladder. The
+//! rows' anchored outcomes per width (on a thin leaf of a project's own tree,
+//! with the vault tree's lent, `learning`), then runs the planner ladder. The
 //! rung that answers runs its configured workflow skill, loaded through the
 //! same door, and its executors ride the receipt. Planning never dispatches,
 //! never mints a TASK, and confers no authority.
@@ -20,6 +21,7 @@
 //! as one group, a team through its pattern skill.
 
 mod intent;
+mod learning;
 mod root_plan;
 mod team_launch;
 
@@ -29,19 +31,22 @@ use crate::agent_def::list_admits;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning::{LearningCell, LearningPredicate, LearningRead, TypeRef, read_learning};
+use crate::learning::read::read_learning_in_txn;
+use crate::learning::{LearningCell, LearningPredicate, TypeRef};
 use crate::llm::ModelId;
 use crate::llm::seat::DescriptionSource;
 use crate::skill::{LoadedSkillPack, skill_loadable};
 use crate::task_type::{PlacementDecisions, TaskTypeRef, TypeTree};
-use crate::team::{PAYOFF_AXIS, PatternSkill, PatternSkillRef, pattern_skills, planner_card};
+use crate::team::payoff::planner_card_in_txn;
+use crate::team::{PAYOFF_AXIS, PatternSkill, PatternSkillRef, pattern_skills};
 
+use self::learning::{Donor, admitted, measured, width_rows};
 use super::planner::{
-    AvailableModel, MeasuredRate, PatternCandidate, PlanBudget, PlannerDecisions, PlannerEvidence,
+    AvailableModel, PatternCandidate, PlanBudget, PlannerDecisions, PlannerEvidence,
     PlannerQuestionContext, PlannerRung, PlannerThresholds, ShapeQuote, SkillRevisionRef,
     SpawnPlanReceipt, plan_ranked, planned_rung, ranked_quotes,
 };
-use super::task_type_tree::{load_team_type_tree, place_in_tree};
+use super::task_type_tree::{load_team_type_tree, load_team_type_tree_in_txn, place_in_tree};
 use super::team_shape::{CoordinationPattern, team_shape_skill};
 use super::types::{AgentDispatchInput, AgentDispatchTarget, SpawnNeed};
 use super::widen_record::invalid;
@@ -319,7 +324,10 @@ impl AgentDispatcher<'_> {
 
     /// Everything one plan reads, from the vault, in the launch context the
     /// caller names: the project whose tree is in force, and the parent and
-    /// root spend the launch is stated under.
+    /// root spend the launch is stated under. The launch statement, the
+    /// model descriptions and the admitted pattern skills read first; the
+    /// tree in force and every measured read then share one snapshot, and
+    /// nothing that opens a snapshot of its own runs while it is held.
     fn planner_evidence_for(
         &self,
         project: Option<EntityId>,
@@ -332,11 +340,6 @@ impl AgentDispatcher<'_> {
         if seats.is_empty() {
             return Err(invalid("planner has no seats"));
         }
-        let tree = load_team_type_tree(self.vault, project)?;
-        tree.validate_current_ref(&need.type_ref)
-            .map_err(|_| invalid("spawn type stamp is not in the tree in force"))?;
-        let type_ref = TypeRef::from(&need.type_ref);
-        let parents = TypeTree::from(tree).ancestors(&type_ref);
 
         // Cost: the launch statement dispatch freezes, per seat AGENT_DEF,
         // under the caller's scope and the spawn's budget ask.
@@ -406,62 +409,65 @@ impl AgentDispatcher<'_> {
                 .unwrap_or_default();
         }
 
-        // Solo is a shape: its rate is the seat AGENT_DEF's own reliability
-        // on this type, read with the ordinary backoff.
-        let mut solo = BTreeMap::new();
-        for model in &models {
-            let cell = LearningCell::new(LearningPredicate::Reliability, model.agent_def)
-                .executor(model.model.as_str())
-                .type_ref(type_ref.clone())
-                .axis(PAYOFF_AXIS);
-            solo.insert(
-                model.model.clone(),
-                measured(&read_learning(self.vault, &cell, &parents)?),
-            );
-        }
-
-        // Teams: every admitted bound pattern skill, read off the planner card.
+        // Teams: every admitted bound pattern skill.
         let mut patterns: Vec<PatternCandidate> = Vec::new();
         for binding in pattern_skills(self.vault)? {
             if let Some(candidate) = self.pattern_candidate(&binding)? {
                 patterns.push(candidate);
             }
         }
+
+        // The tree in force and every measured read: one snapshot.
+        let txn = self.vault.store.env.read_txn()?;
+        let tree = load_team_type_tree_in_txn(self.vault, &txn, project)?;
+        tree.validate_current_ref(&need.type_ref)
+            .map_err(|_| invalid("spawn type stamp is not in the tree in force"))?;
+        let type_ref = TypeRef::from(&need.type_ref);
+        let donor = Donor::for_stamp(self.vault, &txn, &tree, &type_ref);
+        let parents = TypeTree::from(tree).ancestors(&type_ref);
+
+        // Solo is a shape: its rate is the seat AGENT_DEF's own reliability
+        // on this type, read with the ordinary backoff.
+        let mut reads = Vec::with_capacity(models.len());
+        for model in &models {
+            let cell = LearningCell::new(LearningPredicate::Reliability, model.agent_def)
+                .executor(model.model.as_str())
+                .type_ref(type_ref.clone())
+                .axis(PAYOFF_AXIS);
+            let read = read_learning_in_txn(self.vault, &txn, &cell, &parents)?;
+            reads.push((model.model.clone(), cell, read));
+        }
+        let mut solo: BTreeMap<_, _> = reads
+            .iter()
+            .map(|(model, _, read)| (model.clone(), measured(read)))
+            .collect();
+
+        // Teams: each admitted pattern skill read off the planner card, with
+        // its payoff rows' anchored outcomes per width.
         let skills: Vec<EntityId> = patterns
             .iter()
             .map(|candidate| candidate.skill.skill)
             .collect();
+        let mut cards = Vec::new();
         if !skills.is_empty() {
             for model in &models {
-                let card = planner_card(
+                let card = planner_card_in_txn(
                     self.vault,
+                    &txn,
                     &type_ref,
                     &parents,
                     &[model.model.as_str().to_owned()],
                     &skills,
                 )?;
                 for entry in &card.patterns {
-                    if let Some(candidate) = patterns
-                        .iter_mut()
-                        .find(|candidate| candidate.skill.skill == entry.skill)
-                    {
+                    if let Some(candidate) = admitted(&mut patterns, entry.skill) {
                         candidate
                             .rates
                             .insert(model.model.clone(), measured(&entry.read));
                     }
                 }
-                for row in &card.rows {
-                    let (Some(skill), Some(width)) = (row.pattern_skill, row_width(&row.shape))
-                    else {
-                        continue;
-                    };
-                    if row.models != card.executor_mix {
-                        continue;
-                    }
-                    if let Some(candidate) = patterns
-                        .iter_mut()
-                        .find(|candidate| candidate.skill.skill == skill)
-                    {
+                for (skill, width, row) in width_rows(&card.rows, &card.executor_mix) {
+                    if let Some(candidate) = admitted(&mut patterns, skill) {
                         let cell = candidate
                             .widths
                             .entry(width)
@@ -472,8 +478,25 @@ impl AgentDispatcher<'_> {
                         cell.1 = cell.1.saturating_add(row.losses);
                     }
                 }
+                cards.push((model.model.clone(), card));
             }
         }
+
+        // A thin leaf of a project's own tree borrows the vault tree's
+        // measured outcomes (FIX 5496). A donor read that fails lends
+        // nothing: the reads above stand as they are.
+        if let Some(donor) = &donor {
+            match donor.lend(self.vault, &txn, &reads, &cards, &patterns) {
+                Ok((lent_solo, lent_patterns)) => {
+                    solo = lent_solo;
+                    patterns = lent_patterns;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "a thin project leaf borrowed nothing");
+                }
+            }
+        }
+        drop(txn);
         Ok(PlannerEvidence {
             models,
             solo,
@@ -499,6 +522,7 @@ impl AgentDispatcher<'_> {
             works_well_for: binding.works_well_for.clone(),
             rates: BTreeMap::new(),
             widths: BTreeMap::new(),
+            borrowed_widths: BTreeMap::new(),
         }))
     }
 }
@@ -512,20 +536,6 @@ fn attempt_project(live: &AttemptRecord) -> Option<EntityId> {
     decode_agent_dispatch_input(&payload.input)
         .ok()
         .and_then(|input| input.project_ref)
-}
-
-/// A learning read as the planner weighs it.
-fn measured(read: &LearningRead) -> MeasuredRate {
-    MeasuredRate {
-        mean: read.estimate.mean(),
-        own_runs: if read.own { read.estimate.runs } else { 0.0 },
-        weight_runs: read.estimate.runs + read.estimate.prior.weight_runs,
-    }
-}
-
-/// The width a payoff row's shape signature (`width|roles`) names.
-fn row_width(signature: &str) -> Option<u32> {
-    signature.split('|').next()?.parse().ok()
 }
 
 /// The pack's instructions as loaded: its SKILL.md, else the record's text.

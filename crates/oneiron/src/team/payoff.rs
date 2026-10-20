@@ -15,10 +15,12 @@ use std::collections::BTreeMap;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::learning::{LearningRead, TypeRef, coordination_cost, read_learning};
+use crate::learning::coordination::coordination_cost_in_txn;
+use crate::learning::read::read_learning_in_txn;
+use crate::learning::{LearningRead, TypeRef};
 
-use super::pattern::{PatternSkill, TeamPattern, model_mix, pattern_cell, pattern_skill};
-use super::receipt::{TeamReceipt, team_receipts};
+use super::pattern::{PatternSkill, TeamPattern, model_mix, pattern_cell, pattern_skill_in_txn};
+use super::receipt::{TeamReceipt, team_receipts_in_txn};
 
 /// The exploration weight of the planner card's ranking, the same derivation
 /// the skill selector uses.
@@ -96,8 +98,35 @@ fn row_key(receipt: &TeamReceipt) -> RowKey {
 ///
 /// Storage errors.
 pub fn payoff_table(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<PayoffRow>> {
+    let rtxn = vault.store.env.read_txn()?;
+    payoff_rows_in_txn(vault, &rtxn, type_ref, true)
+}
+
+/// The payoff table's outcome counts in the caller's snapshot: the same
+/// rows, with no coordination-cost diagnostic read (its wait, reuse and
+/// duplicate columns stay empty).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn payoff_outcomes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    type_ref: Option<&TypeRef>,
+) -> Result<Vec<PayoffRow>> {
+    payoff_rows_in_txn(vault, txn, type_ref, false)
+}
+
+/// The payoff rows in `txn`, each team's coordination cost read beside its
+/// outcome when `costs` asks for it.
+fn payoff_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    type_ref: Option<&TypeRef>,
+    costs: bool,
+) -> Result<Vec<PayoffRow>> {
     let mut rows: BTreeMap<RowKey, Acc> = BTreeMap::new();
-    for receipt in team_receipts(vault, type_ref)? {
+    for receipt in team_receipts_in_txn(vault, txn, type_ref)? {
         let acc = rows.entry(row_key(&receipt)).or_default();
         acc.teams += 1;
         match receipt.outcome.as_ref().map(|o| o.success) {
@@ -125,7 +154,7 @@ pub fn payoff_table(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<Pay
             acc.coverage_n += 1;
         }
         acc.confessions += receipt.confessions.map_or(0, u64::from);
-        if let Some(cost) = coordination_cost(vault, &receipt.team_ref)? {
+        if costs && let Some(cost) = coordination_cost_in_txn(vault, txn, &receipt.team_ref)? {
             for (reason, secs) in cost.wait_by_reason {
                 *acc.wait.entry(reason).or_insert(0) += secs;
             }
@@ -206,14 +235,31 @@ pub fn planner_card(
     models: &[String],
     candidates: &[EntityId],
 ) -> Result<PlannerCard> {
+    let rtxn = vault.store.env.read_txn()?;
+    planner_card_in_txn(vault, &rtxn, type_ref, type_parents, models, candidates)
+}
+
+/// [`planner_card`] in the caller's snapshot.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn planner_card_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    type_ref: &TypeRef,
+    type_parents: &[TypeRef],
+    models: &[String],
+    candidates: &[EntityId],
+) -> Result<PlannerCard> {
     let executor_mix = model_mix(models);
     let mut entries = Vec::with_capacity(candidates.len());
     for skill in candidates {
         let cell = pattern_cell(*skill, &executor_mix, type_ref);
-        let read = read_learning(vault, &cell, type_parents)?;
+        let read = read_learning_in_txn(vault, txn, &cell, type_parents)?;
         entries.push(PatternCardEntry {
             skill: *skill,
-            binding: pattern_skill(vault, skill)?,
+            binding: pattern_skill_in_txn(vault, txn, skill)?,
             read,
             score: 0.0,
         });
@@ -233,7 +279,7 @@ pub fn planner_card(
     Ok(PlannerCard {
         type_ref: type_ref.clone(),
         executor_mix,
-        rows: payoff_table(vault, Some(type_ref))?,
+        rows: payoff_rows_in_txn(vault, txn, Some(type_ref), true)?,
         patterns: entries,
     })
 }

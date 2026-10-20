@@ -1168,7 +1168,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     // The owner's backups and restore rehearsals, on the tenant's own disk
     // beside the data directory, as plain serve keeps them beside its vault.
-    let owner_host = super::owner_storage::owner_host(&config, rehearsal_config);
+    let owner_host = super::owner_storage::owner_host(&config, rehearsal_config, &managed);
     // A direct `[linear]` mirror's response custody, private beside them.
     super::owner_storage::linear_responses(&config);
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes
