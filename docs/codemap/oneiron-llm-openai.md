@@ -11,7 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lib/backend.rs` | src | s | 2 struct · 7 fn · 2 crate-vis | OpenAiCompatBackend, OpenAiCompatConfig | Backend assembly: config, backend struct, LlmBackend impl, and capability gating |
+| `src/lib/backend.rs` | src | s | 2 struct · 8 fn · 3 crate-vis | OpenAiCompatBackend, OpenAiCompatConfig | Backend assembly: config, backend struct, LlmBackend impl, and capability gating |
 | `src/lib/image.rs` | src | s | 4 struct · 1 enum · 1 trait · 1 fn · 1 type · 4 crate-vis | DirectOpenAiImageBackend, OpenAiImageBody, OpenAiImageHttpRequest, OpenAiImageHttpResponse, OpenAiImagePart, OpenAiImageTransport | Direct OpenAI image generation and multi-reference edits; HTTP and authentication stay host-owned |
 | `src/lib/media.rs` | src | m | 3 struct · 2 enum · 1 trait · 1 fn · 1 type | OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod, OpenAiMediaTransport | OpenAI-compatible media wires for the `ai.*` calls past text: images (`/v1/images/generations`… |
 | `src/lib/mod.rs` | src | s | 8 re-export | — | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam |
