@@ -29302,7 +29302,7 @@
      "path": "src/git_wire/argv.rs",
      "purpose": "Frozen typed argv: one constructor per git verb plus the token validators",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 33
      }
     },
     {
@@ -29446,7 +29446,7 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)",
      "surface": {
       "crate-vis": 4,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -29508,13 +29508,16 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "GitPeeledTip"
+     ],
      "path": "src/git_wire/reachable_blobs.rs",
      "purpose": "The small blobs a set of tips reaches through its whole history, read in bounded batches: what a caller…",
      "surface": {
-      "fn": 1
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -29589,7 +29592,7 @@
      "path": "src/git_wire/wire_reads.rs",
      "purpose": "The `GitWire` handle, its constructors, the process seam, and the read path",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 16,
       "struct": 1
      }
@@ -39206,6 +39209,16 @@
       "enum": 2,
       "fn": 6,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/mirror_census.rs",
+     "purpose": "The Git-LFS census behind a mirror run's readiness (FIX 6052, FIX 6331)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -65074,7 +65087,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65713,7 +65726,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4093,
+   "source_files": 4094,
    "test_files": 902
   },
   "oneiron-android": {
