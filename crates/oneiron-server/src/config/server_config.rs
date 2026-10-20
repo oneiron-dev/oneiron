@@ -632,7 +632,20 @@ impl ServeConfig {
         sync
     }
 
+    /// [`Self::base_vault_config`], a sealed vault's page seal unlocked with
+    /// this device's keystore.
     pub fn vault_config(&self) -> oneiron::VaultConfig {
+        let mut config = self.base_vault_config();
+        config.page_seal = self.device_page_seal();
+        config
+    }
+
+    /// The vault config these settings name, with no page seal: this
+    /// device's keystore is not tried, so nothing is probed or logged for a
+    /// sealed vault. A caller that unlocks the vault its own way (a managed
+    /// node's delivered key, the seal a restore chose) sets that seal alone
+    /// (FIX 2544, 2709).
+    pub fn base_vault_config(&self) -> oneiron::VaultConfig {
         let mut config = oneiron::VaultConfig::server();
         config.dimensions = self.dimensions;
         config.fast_dims = self.fast_dims;
@@ -674,7 +687,6 @@ impl ServeConfig {
             .oneironer
             .as_ref()
             .and_then(OneironerConfig::marker_config);
-        config.page_seal = self.device_page_seal();
         config
     }
 

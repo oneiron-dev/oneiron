@@ -57,6 +57,16 @@ pub(super) fn vault_config(config: &ServeConfig) -> oneiron::VaultConfig {
     vault_config
 }
 
+/// [`vault_config`] with no page seal and no unlock tried on this device: a
+/// restore, rehearsal or activation sets the seal it chose for its path
+/// (FIX 2709).
+pub(super) fn base_vault_config(config: &ServeConfig) -> oneiron::VaultConfig {
+    let mut vault_config = config.base_vault_config();
+    vault_config.dict_search_paths =
+        super::resolve_dict_search_paths(&config.dict_search_paths).paths;
+    vault_config
+}
+
 /// Opens the configured, existing vault for one owner command. `route` names
 /// the `/v1/owner` route to use instead while a server holds the vault.
 fn open_vault(config: &ServeConfig, route: &str) -> anyhow::Result<oneiron::Vault> {
@@ -146,7 +156,7 @@ pub fn restore(args: RestoreArgs) -> anyhow::Result<()> {
     if let Some(previous) = &args.activate {
         // The archive keeps its own tier and opens with its own mirror; the
         // vault that replaced it reads with its own (OF-570).
-        let mut archive = vault_config(&config);
+        let mut archive = base_vault_config(&config);
         archive.page_seal = vault_key::page_seal_at(&config, previous, None)?;
         let live_seal = vault_key::page_seal_at(&config, &config.vault_path, None)?;
         return emit(&backup::activate(
@@ -218,12 +228,12 @@ fn restore_unlocked(
         let scratch = args.scratch.as_deref();
         return emit(&match key {
             Some(key) => {
-                backup::rehearse_keyed(backup, vault_config(config), scratch, &source, key)?
+                backup::rehearse_keyed(backup, base_vault_config(config), scratch, &source, key)?
             }
-            None => backup::rehearse(backup, vault_config(config), scratch, &source)?,
+            None => backup::rehearse(backup, base_vault_config(config), scratch, &source)?,
         });
     }
-    let mut live = vault_config(config);
+    let mut live = base_vault_config(config);
     live.page_seal = live_seal;
     emit(&match key {
         Some(key) => backup::restore_over_keyed(backup, &config.vault_path, live, key)?,
