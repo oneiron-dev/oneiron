@@ -78,6 +78,7 @@ mod peer_confidence_routes;
 mod proactivity_routes;
 mod recovery_kit_routes;
 mod recovery_kit_target_routes;
+mod room_thread_setting_routes;
 mod root_routes;
 mod secret_control_routes;
 mod secret_found_routes;
@@ -151,6 +152,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(learning_setting_routes::routes())
         .merge(machine_routes::routes())
         .merge(model_setting_routes::routes())
+        .merge(room_thread_setting_routes::routes())
         .merge(backup_setting_routes::routes())
         .merge(widen_proposal_routes::routes())
         .merge(craft_candidate_routes::routes())

@@ -52,6 +52,39 @@ pub struct RoomThread {
     pub result_header: Option<EntityId>,
     /// The origin card replaces this thread after conversion.
     pub converted_project: Option<EntityId>,
+    /// A private thread's audience now (FIX 6381), each 32-hex, for a
+    /// reader in it whom the thread's own view (`vault.rooms.get`) admits:
+    /// who is in the thread, a walk-in included, where `participants`
+    /// names who took part. Empty on every list row and on a public thread.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audience: Vec<String>,
+    /// Each walk-in that entered and each opened full history of a private
+    /// thread, in order (FIX 6381, 6383), for the same reader alone.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audience_events: Vec<RoomThreadAudienceEvent>,
+}
+/// What a private thread's audience event did (FIX 6381, 6383).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoomThreadAudienceOp {
+    /// Its person walked in, reading the thread from that event on.
+    WalkIn,
+    /// The Owner opened the thread's whole history to its person.
+    OpenFullHistory,
+}
+/// One walk-in or opened full history of a private thread: structure
+/// alone, never a name or a turn's words.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RoomThreadAudienceEvent {
+    /// The event's own TURN, 32-hex.
+    pub event_ref: String,
+    pub op: RoomThreadAudienceOp,
+    /// Whom it walked in or opened the history to, 32-hex; absent once
+    /// this vault erased them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_ref: Option<String>,
+    /// When the event was recorded: its TURN's time.
+    pub at: u64,
 }
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RoomThreadList {
@@ -387,6 +420,8 @@ fn project_inner(
                         .as_deref()
                         .map(EntityId::from_hex)
                         .transpose()?,
+                    audience: Vec::new(),
+                    audience_events: Vec::new(),
                 },
             );
         }

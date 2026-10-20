@@ -15,6 +15,7 @@ mod device_local;
 mod device_only;
 pub mod model_versioning;
 mod models;
+pub(crate) mod room_threads;
 
 pub use destination::{
     ReadDestination, RecipientChoice, RecipientLimit, RecipientWhy, ReleaseHold,
@@ -38,6 +39,7 @@ pub use model_versioning::{
     ModelStackRegistryError, ModelStackResolution, default_model_stack_registry,
     try_default_model_stack_registry,
 };
+pub use room_threads::RoomThreadAdminSettings;
 
 /// Version of the persisted customization settings record.
 pub const CUSTOMIZATION_SETTINGS_SCHEMA_VERSION: u16 = 1;
