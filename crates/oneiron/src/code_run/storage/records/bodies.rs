@@ -584,6 +584,19 @@ fn handle_digest(key: &[u8]) -> Option<[u8; 32]> {
     (hex.len() == 64).then_some(digest)
 }
 
+/// What [`drifted`] says.
+const DRIFTED: &str = "stored raw output bytes drifted from metadata";
+
 fn drifted() -> Error {
-    invalid_code_run_replay("stored raw output bytes drifted from metadata")
+    invalid_code_run_replay(DRIFTED)
+}
+
+/// Whether `error` says a stored body's bytes drifted from their length or
+/// digest ([`drifted`]), not that reading them failed (FIX 4194).
+pub(in crate::code_run::storage) fn body_drifted(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Artifact(crate::error::ArtifactError::InvalidCodeArtifactBody(message))
+            if *message == DRIFTED
+    )
 }

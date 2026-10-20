@@ -21,6 +21,7 @@ use super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::replay_capsule::{
     CapsuleRequest, CapsuleRungBinding, ReplayRoutePin, StepReplayCapsule,
 };
+use super::records::body_drifted;
 use crate::compaction::output::OutputRef;
 use crate::provenance::body::owned_body_in_txn;
 use crate::side_table::{self, Named, SideTable};
@@ -205,7 +206,13 @@ pub(crate) fn capsule_start_body(
     let Some(start) = &capsule.start else {
         return Ok(None);
     };
-    let Some(bytes) = held_body_in_txn(vault, rtxn, capsule.run, &start.path, start.body)? else {
+    let held = match held_body_in_txn(vault, rtxn, capsule.run, &start.path, start.body) {
+        // Bytes that drifted from their row are no start, as bytes no longer
+        // its digest are; a read that fails stays an error (FIX 4194).
+        Err(error) if body_drifted(&error) => return Ok(None),
+        held => held?,
+    };
+    let Some(bytes) = held else {
         return Ok(None);
     };
     Ok((*blake3::hash(&bytes).as_bytes() == start.digest).then_some(bytes))
