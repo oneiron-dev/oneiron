@@ -21,6 +21,17 @@ const TRUSTED_MANIFEST_ORIGIN: SideTable<HexId, Vec<u8>, Raw> =
 const SEEDED_MANIFEST_CONFIDENCE: SideTable<HexId, Vec<u8>, Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_SEEDED_CONFIDENCE);
 
+/// Whether a local delete door (the batch's, or the targeted one) refuses a
+/// row of `entity_type`: the registry's delete-protected engine records, and
+/// a credential, which leaves only through the local revoke door, as a
+/// replayed tombstone of one is already refused (FIX 5958). The custody arm
+/// stays out of the registry's set, which the sync doors also read to keep a
+/// protected row's carrier in a window; a credential never enters one.
+pub(crate) fn delete_door_protected(entity_type: u8) -> bool {
+    crate::registry::is_delete_protected_engine_record(entity_type)
+        || entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+}
+
 pub(super) fn reject_engine_authored_delete(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -47,8 +58,9 @@ pub(super) fn reject_engine_authored_delete(
     };
     // Single source of truth: the registry owns the delete-protected kind set
     // (ONE-1741 added the content anchor); the batch/bulk delete door and the
-    // deletion path both consult it, so the guards cannot drift out of sync.
-    if crate::registry::is_delete_protected_engine_record(header.entity_type) {
+    // deletion path both consult it through `delete_door_protected`, so the
+    // guards cannot drift out of sync.
+    if delete_door_protected(header.entity_type) {
         return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
             header.entity_type,
         )));

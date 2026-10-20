@@ -4,10 +4,10 @@ use crate::ports::EntityStoreRead;
 use rmpv::ValueRef;
 
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::error::{Error, Result, SideTableRowProblem};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -24,9 +24,48 @@ use crate::error::SecretError;
 // Name index
 // ---------------------------------------------------------------------------
 
-/// Live secret name -> custody `EntityId`, keyed by the name itself.
-const NAME_INDEX: SideTable<String, EntityId, Raw> =
+/// Live secret name -> custody `EntityId` and the name's generation
+/// high-water, keyed by the name itself.
+const NAME_INDEX: SideTable<String, NameEntry, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_NAME_INDEX);
+
+/// One name's index row: the custody record the name resolves to, and the
+/// highest `rotation_generation` a record has held under the name here. The
+/// high-water outlives its record: a name whose record is gone from the store
+/// starts its next life above it, never at the caller's number (FIX 5958).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NameEntry {
+    id: EntityId,
+    high_water: u32,
+}
+
+/// The record's id bytes, then the high-water as four big-endian bytes.
+impl RawValue for NameEntry {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut raw = self.id.as_bytes().to_vec();
+        raw.extend_from_slice(&self.high_water.to_be_bytes());
+        Ok(raw)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let undecodable = || CodecError::Row(SideTableRowProblem::Undecodable);
+        let (id, high_water) = bytes
+            .split_at_checked(ENTITY_ID_LEN)
+            .ok_or_else(undecodable)?;
+        let high_water = <[u8; 4]>::try_from(high_water).map_err(|_| undecodable())?;
+        Ok(Self {
+            id: <EntityId as RawValue>::from_raw(id)?,
+            high_water: u32::from_be_bytes(high_water),
+        })
+    }
+}
+
+/// One above `generation`, the generation a name's next life starts at.
+fn next_generation(generation: u32) -> Result<u32> {
+    generation
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("secret rotation generation"))
+}
 
 /// Resolves a live secret name to its custody `EntityId` inside an
 /// existing txn. `pub(crate)` for SECRET-02's lease doors (ONE-1920), which
@@ -36,7 +75,9 @@ pub(crate) fn resolve_secret_ref_in_txn(
     txn: &heed::RoTxn<'_>,
     name: &str,
 ) -> Result<Option<EntityId>> {
-    NAME_INDEX.get(store, txn, &name.to_owned())
+    Ok(NAME_INDEX
+        .get(store, txn, &name.to_owned())?
+        .map(|entry| entry.id))
 }
 
 /// Reads and decodes a custody record under either a read or write txn.
@@ -384,6 +425,19 @@ fn put_custody_body_in_txn(
         false,
         true,
     )?;
+    // A rotation raises its name's high-water with it (FIX 5958). Only the
+    // record the name resolves to moves it, so a superseded record never
+    // takes the name back.
+    if let Some(entry) = NAME_INDEX.get(write.store, wtxn, &rec.name)?
+        && entry.id == *id
+        && entry.high_water < rec.rotation_generation
+    {
+        let entry = NameEntry {
+            high_water: rec.rotation_generation,
+            ..entry
+        };
+        NAME_INDEX.put(write.store, wtxn, &rec.name, &entry)?;
+    }
     // Every custody write lands here, so the known-value index keys each
     // value a record holds, at each generation (OF-560 C).
     super::known_values::remember_in_txn(write.store, wtxn, id, rec)
@@ -545,13 +599,13 @@ pub(crate) fn register_custody_in_txn(
         }));
     }
 
-    if let Some(existing_id) = NAME_INDEX.get(write.store, wtxn, &rec.name)? {
+    let indexed = NAME_INDEX.get(write.store, wtxn, &rec.name)?;
+    if let Some(entry) = indexed {
         // A live name denies; a revoked or missing record frees the index.
         // The admission projection reads status and generation without
         // copying the existing value out of the store.
-        if let Some(existing) =
-            read_secret_custody_admission_in_txn(write.store, wtxn, &existing_id)?
-        {
+        let held = read_secret_custody_admission_in_txn(write.store, wtxn, &entry.id)?;
+        if let Some(existing) = held {
             if existing.status != SecretCustodyStatus::Revoked {
                 return Err(Error::Secret(SecretError::SecretNameInUse {
                     name: rec.name.clone(),
@@ -585,23 +639,34 @@ pub(crate) fn register_custody_in_txn(
                     "reclaimed name requires a generation above the revoked record",
                 ));
             }
-            rec.rotation_generation = existing
-                .rotation_generation
-                .checked_add(1)
-                .ok_or(Error::ArithmeticOverflow("secret rotation generation"))?;
+            rec.rotation_generation = next_generation(existing.rotation_generation)?;
+        } else if entry.id != *id {
+            // A record gone from the store frees its name as a revoked one
+            // does, and the reclaim starts above the high-water the index
+            // kept for it (FIX 5958), the same advance with no record left to
+            // read it from. The owner's archive restoring the very record the
+            // name names continues that record's own life.
+            rec.rotation_generation = next_generation(entry.high_water)?;
         }
     }
 
     // SECRET-01 dedicated door: the sealed type-77 put shape lives in
     // `put_secret_custody_in_txn`, shared with SECRET-04's rotate/revoke.
     put_custody_body_in_txn(write, wtxn, id, rec, rec.registered_at)?;
-    NAME_INDEX.put(write.store, wtxn, &rec.name, id)?;
+    let entry = NameEntry {
+        id: *id,
+        high_water: indexed.map_or(rec.rotation_generation, |entry| {
+            entry.high_water.max(rec.rotation_generation)
+        }),
+    };
+    NAME_INDEX.put(write.store, wtxn, &rec.name, &entry)?;
     Ok(())
 }
 
 /// The generation a registration under `name` starts at here, before it is
 /// written: zero, or one above the revoked record that held the name, its
-/// high-water (the reclaim rule [`register_custody_in_txn`] stamps). A live
+/// high-water, or above the high-water the index kept for a record gone from
+/// the store (the reclaim rule [`register_custody_in_txn`] stamps). A live
 /// name refuses: a door that hands the registration to another holder
 /// states this generation in the request.
 pub(crate) fn register_generation_in_txn(
@@ -609,20 +674,18 @@ pub(crate) fn register_generation_in_txn(
     txn: &heed::RoTxn<'_>,
     name: &str,
 ) -> Result<u32> {
-    let Some(existing) = NAME_INDEX.get(store, txn, &name.to_owned())? else {
+    let Some(entry) = NAME_INDEX.get(store, txn, &name.to_owned())? else {
         return Ok(0);
     };
-    let Some(held) = read_secret_custody_admission_in_txn(store, txn, &existing)? else {
-        return Ok(0);
+    let Some(held) = read_secret_custody_admission_in_txn(store, txn, &entry.id)? else {
+        return next_generation(entry.high_water);
     };
     if held.status != SecretCustodyStatus::Revoked {
         return Err(Error::Secret(SecretError::SecretNameInUse {
             name: name.to_owned(),
         }));
     }
-    held.rotation_generation
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("secret rotation generation"))
+    next_generation(held.rotation_generation)
 }
 
 /// Whether the name index may point `name` at record `id`, which a custody
@@ -641,9 +704,9 @@ pub(super) fn can_bind_synced_name_in_txn(
     if name.is_empty() || name.len() > SECRET_NAME_MAX_BYTES {
         return Ok(false);
     }
-    if let Some(existing) = NAME_INDEX.get(store, txn, &name.to_owned())?
-        && existing != *id
-        && read_secret_custody_admission_in_txn(store, txn, &existing)?.is_some_and(|held| {
+    if let Some(entry) = NAME_INDEX.get(store, txn, &name.to_owned())?
+        && entry.id != *id
+        && read_secret_custody_admission_in_txn(store, txn, &entry.id)?.is_some_and(|held| {
             held.status != SecretCustodyStatus::Revoked || held.rotation_generation >= generation
         })
     {
@@ -654,7 +717,7 @@ pub(super) fn can_bind_synced_name_in_txn(
 
 /// Points the name index at record `id`, which a custody transition writes
 /// (OF-422), when [`can_bind_synced_name_in_txn`] lets it. Returns whether
-/// the name is the record's.
+/// the name is the record's. The name's high-water never goes down.
 pub(super) fn bind_synced_name_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -665,7 +728,14 @@ pub(super) fn bind_synced_name_in_txn(
     if !can_bind_synced_name_in_txn(store, wtxn, name, id, generation)? {
         return Ok(false);
     }
-    NAME_INDEX.put(store, wtxn, &name.to_owned(), id)?;
+    let name = name.to_owned();
+    let entry = NameEntry {
+        id: *id,
+        high_water: NAME_INDEX
+            .get(store, wtxn, &name)?
+            .map_or(generation, |entry| entry.high_water.max(generation)),
+    };
+    NAME_INDEX.put(store, wtxn, &name, &entry)?;
     Ok(true)
 }
 

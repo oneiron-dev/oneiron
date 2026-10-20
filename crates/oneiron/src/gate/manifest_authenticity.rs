@@ -349,12 +349,13 @@ impl Vault {
     /// every axis (ARCH-0070), and what `read` finds once every install is in
     /// place and each of `retires` is quarantined at its current bytes. The
     /// writes go through the install and quarantine doors' own writes, in a
-    /// transaction that never commits. A manifest the door refuses, and every
-    /// one after it, reads as no narrowing; then, or when a retire names no
-    /// stored manifest, `read` does not run. `folded` sees this writer's
-    /// snapshot at each policy it resolves and once the retires are in
-    /// place, so a caller lists the stored manifests each one folds
-    /// (`host_door_lists`).
+    /// transaction that never commits. A manifest the door refuses, or whose
+    /// exact stored bytes the owner quarantined under its id (the install
+    /// refuses those too), and every one after it, reads as no narrowing;
+    /// then, or when a retire names no stored manifest, `read` does not run.
+    /// `folded` sees this writer's snapshot at each policy it resolves and
+    /// once the retires are in place, so a caller lists the stored manifests
+    /// each one folds (`host_door_lists`).
     ///
     /// # Errors
     /// A store failure, an unreadable manifest row, or `read`'s own.
@@ -372,9 +373,18 @@ impl Vault {
         folded(&txn);
         let mut placed = true;
         for ((id, data), step) in installs.iter().zip(&mut steps) {
-            if self
-                .write_policy_manifest_in_txn(&mut txn, *id, data.clone(), now)
-                .is_err()
+            // The shape install refuses bytes the owner quarantined under this
+            // id (`install_shape_manifest`), so they never land in the
+            // projection either (FIX 5956). Bytes that do not decode, the
+            // write below refuses itself.
+            let quarantined = match super::owner_policy_manifest_as_stored(data.clone()) {
+                Ok(stored) => manifest_is_quarantined(&self.store, &txn, id, &stored)?,
+                Err(_) => false,
+            };
+            if quarantined
+                || self
+                    .write_policy_manifest_in_txn(&mut txn, *id, data.clone(), now)
+                    .is_err()
             {
                 placed = false;
                 break;

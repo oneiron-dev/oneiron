@@ -488,7 +488,7 @@ fn enqueue_poll_attempt(
     })
     .map_err(|_| ingest("poll payload did not encode"))?;
     Ok(vault.with_write_txn_grouped(|txn| {
-        crate::ports::JobQueue::port_job_enqueue(
+        let outcome = crate::ports::JobQueue::port_job_enqueue(
             vault,
             txn,
             EnqueueAttempt {
@@ -498,7 +498,16 @@ fn enqueue_poll_attempt(
                 run_id: None,
                 now,
             },
-        )
+        )?;
+        // The feed's cadence holds at the queue (FIX 5957): a poll due later
+        // waits for `not_before`, so no claim runs it early, and it still
+        // runs then.
+        match outcome {
+            EnqueueOutcome::Enqueued(record) => Ok(EnqueueOutcome::Enqueued(
+                AttemptQueue::new(vault).defer_enqueued_in_txn(txn, record, not_before)?,
+            )),
+            existing => Ok(existing),
+        }
     })?)
 }
 

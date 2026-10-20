@@ -6,6 +6,7 @@
 //! types in [`super::types`], validators in [`super::validate`], key/row
 //! encoding in [`super::encoding`], counters in [`super::telemetry`], and the
 //! ONE-1896 graceful-cancel/landing doors in [`super::cancel`].
+mod defer;
 mod enqueue_claim;
 mod mutate;
 mod place;

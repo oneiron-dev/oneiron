@@ -273,7 +273,7 @@ impl Vault {
         let Some(header) = self.read_entity_header(id)? else {
             return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
         };
-        if crate::registry::is_delete_protected_engine_record(header.entity_type)
+        if crate::batch::delete_door_protected(header.entity_type)
             || crate::workspace_roster::is_project_revision_type(&self.store, header.entity_type)
         {
             return Err(Error::Registry(RegistryError::MaintenanceKindNotWritable(
