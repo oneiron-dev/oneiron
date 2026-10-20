@@ -7,10 +7,10 @@ set -euo pipefail
 : "${ONEIRON_HOUSE_EXL3_DRAFT:=/var/lib/oneiron-house/models/qwen3.8-27b-dflash2-exl3-5bpw}"
 : "${ONEIRON_HOUSE_DRAFT_DEPTH:=7}"
 : "${ONEIRON_HOUSE_CONTEXT:=32768}"
-# Requests in flight at once (1 to 4): 1, one at a time, until E5 and E1 pass
-# on INFER-BENCH. The KV pool they share: unset, the server sizes it to one
-# full request (the context plus draft and close room, page-rounded).
-: "${ONEIRON_HOUSE_EXL3_IN_FLIGHT:=1}"
+# Requests in flight at once (1 to 4): 4; a request that sets `oneiron_solo`
+# runs alone. The KV pool they share: unset, the server's own default,
+# DEFAULT_CACHE_TOKENS in exl3_server.py, never under one full request.
+: "${ONEIRON_HOUSE_EXL3_IN_FLIGHT:=4}"
 : "${ONEIRON_HOUSE_EXL3_CACHE_TOKENS:=}"
 : "${ONEIRON_HOUSE_EXL3_GPU:=0}"
 : "${ONEIRON_HOUSE_EXL3_PORT:=18091}"

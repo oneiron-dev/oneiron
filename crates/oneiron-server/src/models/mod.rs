@@ -674,8 +674,10 @@ fn build_provider(
                     )
                 })
                 .transpose()?;
+            // Only an own server reads the host's solo marker (INF 1).
+            let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
             let chat = OpenAiCompatBackend::new(
-                OpenAiCompatConfig::from_catalog(catalog),
+                OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo),
                 openai::OpenAiHttp {
                     http,
                     cap: output_cap(provider),
