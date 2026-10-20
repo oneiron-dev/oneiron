@@ -61517,6 +61517,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_carriers.rs",
+     "purpose": "Thread audience edit carriers under an erase (FIX 5640)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ThreadAudienceAddRequest",
       "ThreadAudienceReceipt",
@@ -61547,11 +61557,11 @@
      "path": "src/workspace_roster/rooms/audience_erase.rs",
      "purpose": "A privacy erase of a thread audience edit (FIX 5639)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 6
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ThreadAudienceHistory"
@@ -61559,7 +61569,7 @@
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 22,
       "enum": 1
      }
     },
@@ -61676,7 +61686,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "enum": 2,
       "fn": 6,
       "re-export": 13,
@@ -64832,7 +64842,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 102,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64855,7 +64865,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4022,
+   "source_files": 4023,
    "test_files": 902
   },
   "oneiron-android": {
