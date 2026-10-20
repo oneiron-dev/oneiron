@@ -6,19 +6,26 @@
 
 use crate::Vault;
 use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatcher, SpendPayer, SpendScopeId, agent_dispatch_actor,
-    decode_agent_dispatch_input,
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, AgentDispatcher, SpendPayer, SpendScopeId,
+    agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Error;
+use crate::error::{ArtifactError, Error};
 use crate::llm::run_admission::{DeclaredMaximum, MaximumShown};
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::task_verb::HostBinding;
 use crate::write_envelope::WriteActor;
+
+/// What a member reads when their lane does not read a ref the binding
+/// names.
+const MEMBER_UNREADABLE: &str = "vault.workflows.dispatch_bound reads its TASK, its workflow and \
+                                 each step's definition on your own credential's lane, and one \
+                                 is not readable there";
 
 /// The binding caller, with the proof its door checked.
 pub(crate) enum WorkflowBinder<'a> {
@@ -33,9 +40,12 @@ pub(crate) enum WorkflowBinder<'a> {
     },
     /// A member, by the proof their door bound to their own verified slip,
     /// rechecked as a person and never as the owner. Their run is a root
-    /// they pay for under `funding`, the terms they accepted.
+    /// they pay for under `funding`, the terms they accepted. `lane` builds
+    /// the key their credential reads through, only once no run an earlier
+    /// request started answers theirs (FIX 5415).
     Person {
         person: &'a AuthenticatedOwner,
+        lane: &'a dyn Fn() -> MemoryResult<ScopedReadActorKey>,
         funding: &'a WorkflowFunding,
     },
 }
@@ -124,6 +134,16 @@ impl WorkflowBinder<'_> {
         }
     }
 
+    /// The key a member's required reads run on, built after the read-side
+    /// dedupe lookup missed and before the writer opens, so its snapshots
+    /// never nest in that writer. `None` for the owner and an agent.
+    pub(super) fn member_lane(&self) -> MemoryResult<Option<ScopedReadActorKey>> {
+        match self {
+            Self::Person { lane, .. } => lane().map(Some),
+            Self::Owner(_) | Self::Agent { .. } => Ok(None),
+        }
+    }
+
     /// Opens a member's root spend scope in the admitting writer, before the
     /// launch reserves under it: their accepted cap, shown when they say, with
     /// them as its payer and the one who took that yes. The same terms
@@ -178,6 +198,61 @@ impl WorkflowBinder<'_> {
             ),
         })
     }
+}
+
+/// A member's required reads, in the admitting writer once both dedupe
+/// lookups missed (FIX 5415): the TASK, the workflow and each step's
+/// definition, bodies included, every one on `lane`, their own credential's.
+/// The writer observes the grant clock first, so grants are judged at its
+/// time. Every step is read, however many. Nothing for the owner or an
+/// agent, whose `lane` is `None`.
+pub(super) fn member_reads_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    lane: Option<&ScopedReadActorKey>,
+    task: EntityId,
+    target: &AgentDispatchTarget,
+) -> MemoryResult<()> {
+    let Some(lane) = lane else {
+        return Ok(());
+    };
+    let AgentDispatchTarget::Workflow(workflow) = *target else {
+        return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+            "workflow dispatch requires a workflow target",
+        ))
+        .into());
+    };
+    crate::ports::observe_clock_floor_in_txn(&vault.store, txn)?;
+    let read = vault
+        .scoped_read(lane.clone())
+        .with_claim_status(ClaimReadStatus::Recorded);
+    let unreadable = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            MEMBER_UNREADABLE,
+            &["Bind only a TASK and a workflow your Grant reads, whose steps it reads too."],
+        )
+    };
+    if !reads_all_in(&read, txn, &[task, workflow])? {
+        return Err(unreadable());
+    }
+    let steps = vault.get_workflow(&workflow)?.ok_or_else(unreadable)?.steps;
+    if !reads_all_in(&read, txn, &steps)? {
+        return Err(unreadable());
+    }
+    Ok(())
+}
+
+/// Whether `read` reads every one of `refs` in `txn`, bodies included.
+fn reads_all_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    refs: &[EntityId],
+) -> MemoryResult<bool> {
+    Ok(read
+        .get_entities_parts_in_txn(txn, refs)?
+        .iter()
+        .all(Option::is_some))
 }
 
 /// Whether `lease` still holds in `txn`: its try is leased to that owner at
