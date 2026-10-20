@@ -30,4 +30,8 @@ pub trait EgressRelay: Send + Sync + 'static {
     fn datagram(&self, target: SocketAddr, bytes: &[u8]) -> io::Result<Vec<u8>>;
     fn fetch(&self, request: HttpRequest) -> io::Result<HttpResponse>;
     fn transferred(&self, target: SocketAddr, content_hash: [u8; 32], bytes: u64);
+    /// The host floor this relay's guest network work is charged to: each
+    /// socket's entry and writer, and each relayed datagram (FIX 5978,
+    /// FIX 5979). A relay names its floor; none defaults to charging nothing.
+    fn host_net_floor(&self) -> &dyn crate::HostNetFloor;
 }
