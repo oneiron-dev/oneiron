@@ -382,6 +382,10 @@ side_tables! {
     /// Verified typed writer of a task at its current revision (u64be revision, id16 actor, class
     /// byte). Key: id16.
     LINEAR_TASK_WRITER: VaultMeta b"linear.task_writer.v1/" Raw;
+    /// A Linear webhook delivery id and its body, bound to each other for good at its first
+    /// verified preflight (OF-427 C4); the value is the other side's 32-byte digest. Key: tag
+    /// byte (1 delivery key's digest, 2 body digest) + 32-byte digest.
+    LINEAR_WEBHOOK_BINDING: VaultMeta b"linear.webhook_binding.v1/" Raw Engine;
     /// Digest of the Linear effect request an operation id was first authorized for. Key: 32-byte
     /// operation id.
     LINEAR_EFFECT_AUTHORIZED: VaultMeta b"linear:effect_authorized:v1/" Raw;
