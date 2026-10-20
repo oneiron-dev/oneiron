@@ -48392,6 +48392,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/share_travel/reader_prompts.rs",
+     "purpose": "Born-with prompt text for a reader who is not the owner (FIX 6054): a shared brief's recipient, and the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -65104,7 +65114,7 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -65407,7 +65417,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4070,
+   "source_files": 4071,
    "test_files": 902
   },
   "oneiron-android": {
