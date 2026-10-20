@@ -16,6 +16,7 @@ use crate::dreamer_runner::{EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome}
 use crate::error::Result;
 
 mod member_context;
+mod model_context;
 mod workflow_task;
 
 /// `input` and `spawn` as their admitted `intent` reads them (FIX 2314):
