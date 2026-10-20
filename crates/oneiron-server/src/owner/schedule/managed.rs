@@ -7,17 +7,22 @@
 //! lock, on a tick where the owner's schedule takes nothing: a backup when
 //! the vault's backup watermark differs from what its last accepted backup
 //! covered, or does not read, or none was accepted, and no backup of any
-//! cause was recorded in the last [`MANAGED_BACKUP_EVERY`]. Otherwise the
-//! pass prunes alone ([`backup::prune`]), so a backup the supervisor acked
-//! past `keep` goes on the next tick; legal holds and the stage-ack pin are
-//! checked inside it, and nothing unacked goes to make room. The pass runs
-//! only in a resident, admitted vault: it never wakes one, and a tick it
-//! misses is skipped.
+//! cause was recorded in the last [`MANAGED_BACKUP_EVERY`]. A backup that
+//! landed and was not recorded counts for that hour too (FIX 6731): one whose
+//! marker this run's pass did not write, or a failed attempt's guard, by when
+//! it went down. So a marker write that keeps failing is retried hourly,
+//! never each tick, while a backup that did not land is retried on the next
+//! tick. Otherwise the pass prunes alone ([`backup::prune`]), so a backup the
+//! supervisor acked past `keep` goes on the next tick; legal holds and the
+//! stage-ack pin are checked inside it, and nothing unacked goes to make
+//! room. The pass runs only in a resident, admitted vault: it never wakes
+//! one, and a tick it misses is skipped.
 //!
 //! Each pass says what it decided at INFO (FIX 6769): a backup it takes
 //! every time, and why, then that it failed and by which closed reason; a
-//! decision that takes none (no duty, unchanged, recent) once, until the
-//! pass decides otherwise, so a resident vault does not repeat it each tick.
+//! decision that takes none (no duty, unchanged, recent, unrecorded recent)
+//! once, until the pass decides otherwise, so a resident vault does not
+//! repeat it each tick.
 //!
 //! The backup before an idle reap ([`OwnerHost::back_up_before_idle`]) is the
 //! managed reap preparation's: it reuses the last accepted backup when that
@@ -104,7 +109,8 @@ impl OwnerHost {
             return Ok(None);
         };
         self.enter(PassStage::Deciding);
-        let decision = hourly(vault, plan, every);
+        let unrecorded = self.managed_unrecorded_ms.load(Ordering::SeqCst);
+        let decision = hourly(vault, plan, every, (unrecorded != 0).then_some(unrecorded));
         self.say(decision);
         if !decision.due() {
             self.enter(PassStage::Pruning);
@@ -132,11 +138,15 @@ impl OwnerHost {
         })?;
         self.enter(PassStage::Recording);
         if let Err(error) = produced.accept(plan) {
+            // It landed, so the next one waits the hour as after a recorded
+            // backup (FIX 6731).
+            self.managed_unrecorded_ms
+                .store(now_unix_ms(), Ordering::SeqCst);
             tracing::warn!(
                 reason = "backup_watermark_marker_failed",
                 error = %error,
                 "the managed backup landed; what it covered was not recorded, so the next check \
-                 reads changed"
+                 reads changed and takes one once the hour is up"
             );
         }
         Ok(Some(produced.maintain(vault, plan)))
@@ -223,6 +233,9 @@ enum Decision {
     Unchanged,
     /// The vault changed, and its last accepted backup is under the hour.
     Recent,
+    /// The vault changed or has no accepted backup, and a backup landed
+    /// under the hour that was not recorded (FIX 6731).
+    UnrecordedRecent,
 }
 
 impl Decision {
@@ -264,27 +277,49 @@ impl OwnerHost {
                 decision = "recent",
                 "managed backup not due: the last accepted backup is under the hour; pruning only"
             ),
+            Decision::UnrecordedRecent => tracing::info!(
+                decision = "unrecorded_recent",
+                "managed backup not due: a backup landed under the hour and was not recorded; \
+                 pruning only"
+            ),
         }
     }
 }
 
 /// What the managed duty decides now: a backup when the vault changed since
 /// its last accepted backup, or none was accepted, and none was recorded in
-/// the last `every`.
-fn hourly(vault: &oneiron::Vault, plan: &BackupPlan, every: Duration) -> Decision {
-    let Some(last) = finalize::accepted_marker(plan) else {
-        return Decision::NoAcceptedBackup;
-    };
-    let unchanged = vault
-        .backup_watermark()
-        .is_ok_and(|now| now == last.covered());
+/// the last `every`, nor landed unrecorded (FIX 6731): `unrecorded`, the last
+/// this run's pass could not record, or a failed attempt's guard, whichever
+/// went down later.
+fn hourly(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    every: Duration,
+    unrecorded: Option<u64>,
+) -> Decision {
     let every_ms = u64::try_from(every.as_millis()).unwrap_or(u64::MAX);
-    if unchanged {
-        Decision::Unchanged
-    } else if now_unix_ms().saturating_sub(last.landed_ms()) < every_ms {
-        Decision::Recent
-    } else {
+    let within = |landed_ms: u64| now_unix_ms().saturating_sub(landed_ms) < every_ms;
+    let last = finalize::accepted_marker(plan);
+    if let Some(last) = &last {
+        if vault
+            .backup_watermark()
+            .is_ok_and(|now| now == last.covered())
+        {
+            return Decision::Unchanged;
+        }
+        if within(last.landed_ms()) {
+            return Decision::Recent;
+        }
+    }
+    if unrecorded
+        .max(finalize::attempt_guard_ms(plan))
+        .is_some_and(within)
+    {
+        Decision::UnrecordedRecent
+    } else if last.is_some() {
         Decision::Changed
+    } else {
+        Decision::NoAcceptedBackup
     }
 }
 
