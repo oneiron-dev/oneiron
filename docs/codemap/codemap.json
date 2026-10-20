@@ -1389,7 +1389,7 @@
      "path": "src/agent_dispatch/workflow/member_context.rs",
      "purpose": "A member's bound run reads its context on that member's own lane (FIX 5416): the memory and chat a step…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -6606,24 +6606,25 @@
      "path": "src/blob_artifact/esign/delivery_capability.rs",
      "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 4,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignDeliveryEndReason",
-      "EsignDeliveryReceipt"
+      "EsignDeliveryReceipt",
+      "EsignDeliveryReceiptState"
      ],
      "path": "src/blob_artifact/esign/delivery_settlement.rs",
      "purpose": "An ended delivery settles (OF-415, FIX 6363, Engine ruling 10-20)",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 3,
+      "enum": 2,
       "fn": 2,
       "struct": 1
      }
@@ -11883,8 +11884,18 @@
      "path": "src/claim/scoped_read/admission.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/admission/room_ceiling.rs",
+     "purpose": "A room turn's ceiling as each row's snapshot refreshes it, and the peer reads a room or audience conjoins…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -12146,7 +12157,7 @@
      "path": "src/claim/scoped_read/visibility.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -15890,7 +15901,7 @@
       "ConversationTurnSpan"
      ],
      "path": "src/compaction/conversation.rs",
-     "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts on its own live fork",
+     "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts as the agent",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
@@ -19001,6 +19012,16 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/visibility/private_sources.rs",
+     "purpose": "The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -40787,7 +40808,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 3
      }
     },
@@ -40808,7 +40829,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -56936,6 +56957,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/highway_runner/workflow_try/settle.rs",
+     "purpose": "An ended run's TASK settlement, split from its parent",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/highway_status.rs",
      "purpose": "The highway's Status arm (OF-220): any handle's status, and a poll",
      "surface": {
@@ -57251,7 +57282,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunControl",
@@ -57263,7 +57294,7 @@
      "purpose": "Pause and resume of one run branch (DOOR-100, FIX 4501, Engine 10-20 on the C002 pattern)…",
      "surface": {
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -62761,7 +62792,7 @@
      "path": "src/workspace_roster/rooms/audience_notices.rs",
      "purpose": "What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1
      }
     },
@@ -62870,7 +62901,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "enum": 2,
       "fn": 6,
       "re-export": 16,
@@ -64746,7 +64777,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64942,7 +64973,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65901,7 +65932,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 200,
+     "files": 201,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66071,7 +66102,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4121,
+   "source_files": 4124,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73760,6 +73791,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnthropicCacheTier",
       "AnthropicProviderOptions",
       "AnthropicThinkingOptions"
      ],
@@ -73767,7 +73799,8 @@
      "purpose": "Namespaced provider options and thinking controls with wire-field projection",
      "surface": {
       "const": 1,
-      "fn": 4,
+      "enum": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -78080,7 +78113,7 @@
      "path": "src/ai_host/compaction/live_fork.rs",
      "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -78100,7 +78133,7 @@
      "path": "src/ai_host/compaction/serve.rs",
      "purpose": "The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -78497,9 +78530,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer/unverifiable.rs",
-     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406)",
+     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406, 6475, 6477)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -87046,9 +87079,19 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/cache_warmth.rs",
+     "purpose": "Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -89740,7 +89783,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89882,7 +89925,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 903,
+   "source_files": 904,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -91222,6 +91265,8 @@
       "EsignCreateRequest",
       "EsignDeliveryEndReason",
       "EsignDeliveryReceipt",
+      "EsignDeliveryReceiptState",
+      "EsignDeliveryWait",
       "EsignDispatchRequest",
       "EsignDispatchView",
       "EsignDocument",
@@ -93743,7 +93788,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 879,
+      "enum": 881,
       "struct": 2781
      }
     },

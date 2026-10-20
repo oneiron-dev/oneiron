@@ -9,16 +9,18 @@
 //! staged bytes against the head object id and position the machine named,
 //! refuses to replace a newer position (another writer moved it, or a newer
 //! commit: one commit of a lineage at a time, FIX 6394), switches the head
-//! in one rename, removes every superseded head, temporary and stale stage,
-//! lists the directory again, and persists its ack under
+//! in one rename, removes every superseded head, temporary and stale stage
+//! (a newer upload's stage stays, and no frame or part lands while the
+//! commit holds the lineage, FIX 6415), lists the directory again, and
+//! persists its ack under
 //! `acks/<namespace hex>.<vault hex>` before it replies. A commit retried
 //! after a lost reply answers the ack it already gave. Nothing here reads a
 //! key: heads and frames are sealed bytes the home cannot open.
 
 use std::ffi::OsString;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::EntityId;
 use crate::error::{Error, Result};
@@ -68,6 +70,16 @@ impl Store {
         Ok(dir)
     }
 
+    /// Holds the lock of `lineage` in the home `root` for the life of the
+    /// returned file: one commit of the lineage at a time (FIX 6394), and no
+    /// frame or stage part lands while a commit sweeps the lineage (FIX
+    /// 6415).
+    fn lineage_lock(root: &Path, lineage: Lineage) -> Result<File> {
+        let acks = root.join(ACKS);
+        open_dir(&acks, true, None)?;
+        platform::lock_at(&acks.join(format!("{}.lock", lineage_name(lineage))))
+    }
+
     /// The position of the head this home holds of `lineage`, read from its
     /// public structure only.
     pub(crate) fn residence_custody_held(
@@ -86,7 +98,9 @@ impl Store {
         seq: u64,
         frame: &[u8],
     ) -> Result<()> {
-        let dir = FolderTarget::at(self.residence_home()?).open_lineage(lineage)?;
+        let root = self.residence_home()?;
+        let _lock = Self::lineage_lock(&root, lineage)?;
+        let dir = FolderTarget::at(root).open_lineage(lineage)?;
         ship_frame(&dir, seq, frame)
     }
 
@@ -100,7 +114,9 @@ impl Store {
         offset: u64,
         part: &[u8],
     ) -> Result<u64> {
-        let dir = FolderTarget::at(self.residence_home()?).open_lineage(lineage)?;
+        let root = self.residence_home()?;
+        let _lock = Self::lineage_lock(&root, lineage)?;
+        let dir = FolderTarget::at(root).open_lineage(lineage)?;
         let path = dir.join(format!("{STAGE_PREFIX}{}", hex(&operation)));
         let mut options = OpenOptions::new();
         options.read(true).append(true).create(true);
@@ -140,13 +156,12 @@ impl Store {
         let target = TargetSpec::residence(home).id().as_str().to_owned();
         let lineage = Lineage::of(&commit.position);
         let root = self.residence_home()?;
-        let acks = root.join(ACKS);
-        open_dir(&acks, true, None)?;
-        let ack_name = lineage_name(lineage);
         // One commit of the lineage at a time, from the ack check through the
         // head switch and the ack it persists: an older commit never renames
         // its head over a newer one (FIX 6394).
-        let _lock = platform::lock_at(&acks.join(format!("{ack_name}.lock")))?;
+        let _lock = Self::lineage_lock(&root, lineage)?;
+        let acks = root.join(ACKS);
+        let ack_name = lineage_name(lineage);
         let operation = hex(&commit.operation_id);
         if let Some(bytes) = read_whole(&acks.join(&ack_name))? {
             let given: AckRecord =

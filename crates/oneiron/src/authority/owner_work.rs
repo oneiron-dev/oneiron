@@ -171,6 +171,20 @@ impl AuthorityFold {
         self.owner_work.results.get(request)
     }
 
+    /// Whether the root request signed as entry `hash` stands answered
+    /// refused here: its one terminal state, which closes it as the owner's
+    /// cancel or a newer request does (FIX 5696). A refusal is only ever
+    /// signed final; a root request that may still run (its root not stored
+    /// yet, its material or secret not held here) has no result and stays
+    /// open.
+    pub(crate) fn root_request_refused(&self, hash: &AuthorityEntryHash) -> bool {
+        self.owner_work_request(hash)
+            .is_some_and(|request| request.kind() == OwnerWorkKind::Root)
+            && self
+                .owner_work_result(hash)
+                .is_some_and(|answer| matches!(answer.outcome, OwnerWorkOutcome::Refused { .. }))
+    }
+
     /// The requests that name `executor`, count here and have no result yet,
     /// ascending by entry hash: the executor's work. A root request the
     /// owner cancelled, or a newer request on its target superseded, is not

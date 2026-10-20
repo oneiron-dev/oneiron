@@ -6,7 +6,10 @@
 //! input after it. A call is admitted on the live role as exactly that
 //! rung's model, sent on that rung alone with a permit of its own on the
 //! run's compaction meter, and files, lands and is checked as any other
-//! self-written pass.
+//! self-written pass. Under a row on `auto` (FIX 6029) the fork is bound
+//! only while the live prefix is still warm on its rung, and its flight's
+//! first call goes out only while it still is; otherwise the cheap writer
+//! writes as the agent.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,17 +27,30 @@ use oneiron::llm::{
 };
 
 use super::self_writer::SELF_WRITER_FRAME;
-use super::serve::{Served, admission_refused, request_input_tokens};
+use super::serve::{Dispatch, Served, admission_refused, request_input_tokens};
 use super::{LiveAdmission, ServedCompactionBackend, output_tokens};
 use crate::ai_host::CHAT_ROLE;
 use crate::models::RoleCall;
 
+/// How a breakpoint binds the live fork: forced, under a row that selects
+/// it, each failure typed; or, under a row on `auto` (FIX 6029), only while
+/// the live prefix is still warm on its rung, sized to no more than
+/// `cold_room`, what the cheap writer standing by takes, so its window
+/// still fits that writer if the prefix goes cold before the first call.
+pub(super) enum LiveBind {
+    Forced,
+    WhileWarm { cold_room: Option<u64> },
+}
+
 /// `bind_live_compaction_fork`: the run's `live` request at a breakpoint,
 /// admitted on the live role exactly as its host admits it, bound to the
-/// rung its walk would send it to now, for `writer` under `row`. A route
-/// that refuses it, or a ladder with no rung to take it now, binds none: no
-/// rung is guessed and nothing falls through to the cheap route. A prefix
-/// that leaves the live model no room for the window is refused, never cut.
+/// rung its walk would send it to now, for `writer` under `row`, as `how`
+/// says. A forced fork that a route refuses, or a ladder with no rung to
+/// take it now, binds none and says why: no rung is guessed and nothing
+/// falls through to the cheap route. A prefix that leaves the live model no
+/// room for the window is refused, never cut. Under `auto` every such
+/// failure, and a cold prefix, binds none and says nothing: `None`, so the
+/// cheap writer writes the flight as the agent.
 pub(super) fn bind_live_compaction_fork(
     route: &ServedCompactionBackend,
     admission: &dyn LiveAdmission,
@@ -42,28 +58,36 @@ pub(super) fn bind_live_compaction_fork(
     row: &SelfCompactionDefault,
     live: &LlmRequest,
     summary_token_budget: u64,
-) -> Result<LiveCompactionFork, SelfCompactionUnavailable> {
-    let call = admission
-        .admit_live(live.clone())
-        .map_err(|_| SelfCompactionUnavailable::LiveRungUnbound)?;
-    let (rung, request) = call
-        .ladder
-        .live_rung(&call.request)
-        .ok_or(SelfCompactionUnavailable::LiveRungUnbound)?;
+    how: LiveBind,
+) -> Option<Result<LiveCompactionFork, SelfCompactionUnavailable>> {
+    let forced = matches!(how, LiveBind::Forced);
+    let unbound = |why: SelfCompactionUnavailable| forced.then_some(Err(why));
+    let Ok(call) = admission.admit_live(live.clone()) else {
+        return unbound(SelfCompactionUnavailable::LiveRungUnbound);
+    };
+    let Some((rung, request)) = call.ladder.live_rung(&call.request) else {
+        return unbound(SelfCompactionUnavailable::LiveRungUnbound);
+    };
     // The row bounds where the fork may be served: an egress limit, never a
     // test of where the agent runs.
     if rung.offer.locality > row.locality {
-        return Err(SelfCompactionUnavailable::RouteWiderThanPolicy);
+        return unbound(SelfCompactionUnavailable::RouteWiderThanPolicy);
     }
-    let room = route
-        .live_compaction_room(&request, summary_token_budget)
-        .ok_or(SelfCompactionUnavailable::ModelNotServed)?;
+    let Some(mut room) = route.live_compaction_room(&request, summary_token_budget) else {
+        return unbound(SelfCompactionUnavailable::ModelNotServed);
+    };
+    if let LiveBind::WhileWarm { cold_room } = how {
+        // Warmth is the provider's cache on this rung, never where the
+        // agent runs.
+        if !call.ladder.live_prefix_warm(&rung, &request) {
+            return None;
+        }
+        room = cold_room.map_or(room, |cold| room.min(cold));
+    }
     if room == 0 {
-        return Err(SelfCompactionUnavailable::LivePrefixTooLong);
+        return unbound(SelfCompactionUnavailable::LivePrefixTooLong);
     }
-    Ok(LiveCompactionFork::capture(
-        request, rung, writer, row.source, room,
-    ))
+    Some(Ok(LiveCompactionFork::capture(request, rung, writer, room)))
 }
 
 impl ServedCompactionBackend {
@@ -124,32 +148,47 @@ impl ServedCompactionBackend {
     /// sent on the captured rung alone, waiting on its own offer but never
     /// falling back to another, then dressed in the agent's home in what the
     /// live model's context leaves. A rung the live route no longer admits
-    /// at the captured offer is stale, and nothing is sent.
+    /// at the captured offer is stale, and nothing is sent. `while_warm`
+    /// is the first call of a flight under a row on `auto` (FIX 6029): it
+    /// goes out only while the captured prefix is still warm, and `None`
+    /// says it went cold first, or could not be admitted or bound, before
+    /// anything was sent, so the cheap writer writes the flight instead.
     pub(super) fn serve_live_fork(
         &self,
         fork: &LiveCompactionFork,
         home: &CompactionHome,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
-    ) -> Result<Served<Vec<CompactionHomeRef>>, CompactionRefusal> {
+        while_warm: bool,
+    ) -> Result<Option<Served<Vec<CompactionHomeRef>>>, CompactionRefusal> {
         let started = Instant::now();
-        let llm = self.fork_request(fork, request, retry)?;
-        let admitted = self
-            .models
-            .admit_seat_bound(&self.vault, CHAT_ROLE, llm)
-            .map_err(admission_refused)?;
-        let ladder = admitted
-            .ladder
-            .live_fork_ladder(fork.rung())
-            .ok_or_else(|| SelfCompactionUnavailable::LiveForkStale.refusal())?;
+        let unsent = |refusal: CompactionRefusal| {
+            if while_warm { Ok(None) } else { Err(refusal) }
+        };
+        let llm = match self.fork_request(fork, request, retry) {
+            Ok(llm) => llm,
+            Err(refusal) => return unsent(refusal),
+        };
+        let admitted = match self.models.admit_seat_bound(&self.vault, CHAT_ROLE, llm) {
+            Ok(admitted) => admitted,
+            Err(refusal) => return unsent(admission_refused(refusal)),
+        };
+        let Some(ladder) = admitted.ladder.live_fork_ladder(fork.rung()) else {
+            return unsent(SelfCompactionUnavailable::LiveForkStale.refusal());
+        };
         let call = RoleCall {
             request: admitted.request,
             ladder: Arc::new(ladder),
         };
+        let dispatch = if while_warm {
+            Dispatch::WhileWarm(fork)
+        } else {
+            Dispatch::Exact
+        };
         self.send(
             started,
             call,
-            true,
+            dispatch,
             request.summary_token_budget,
             |call, room| {
                 let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;

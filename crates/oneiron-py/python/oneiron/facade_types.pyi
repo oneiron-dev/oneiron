@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1076 facade rows, 3688 declarations.
+Census: 1076 facade rows, 3690 declarations.
 Inputs: 1011 of 1076 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 965 of 1076 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -15263,13 +15263,15 @@ class EsignEventRow(TypedDict):
     actor: EsignAuditActor
     at: int
 EsignDeliveryEndReason = Literal["document_ended", "recipient_ended"]
-class EsignDeliveryReceipt(TypedDict):
-    attempt_ref: str
-    attempt_count: int
-    recipient: str
-    transition: str
+EsignDeliveryWait = Literal["document_awaits_owner", "document_unreadable", "notice_unreadable", "send_unreadable"]
+class EsignDeliveryReceiptStateEnded(TypedDict):
+    state: Literal["ended"]
     reason: EsignDeliveryEndReason
-    at: int
+class EsignDeliveryReceiptStateWaits(TypedDict):
+    state: Literal["waits"]
+    reason: EsignDeliveryWait
+EsignDeliveryReceiptState = EsignDeliveryReceiptStateEnded | EsignDeliveryReceiptStateWaits
+EsignDeliveryReceipt = dict[str, Any]
 class EsignDocumentView(TypedDict):
     document_ref: str
     status: DocumentStatus
