@@ -89,6 +89,17 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
                     .map_err(|_| invalid_code_run_replay("workflow dispatch does not encode"))?,
             ),
         )]),
+        // The run repo row and its closed input; the binding is the host's.
+        SelfCall::Repo(call) => request_map(vec![
+            ("row", Value::from(call.effect().as_str())),
+            (
+                "call",
+                Value::from(
+                    serde_json::to_string(call)
+                        .map_err(|_| invalid_code_run_replay("run repo call does not encode"))?,
+                ),
+            ),
+        ]),
         SelfCall::MemorySearch(call) => request_map(vec![
             ("query", Value::from(call.query.as_str())),
             ("limit", Value::from(call.limit as u64)),
@@ -711,7 +722,8 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "self.leader.split" => Ok(SelfEffect::LeaderSplit),
         "self.team" => Ok(SelfEffect::Team),
         "self.workflows.dispatch_bound" => Ok(SelfEffect::WorkflowDispatch),
-        _ => Err(invalid_code_run_replay("unknown self effect")),
+        other => SelfEffect::repo_from_label(other)
+            .ok_or_else(|| invalid_code_run_replay("unknown self effect")),
     }
 }
 

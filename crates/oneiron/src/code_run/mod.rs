@@ -28,6 +28,7 @@ mod reader;
 mod reader_fold;
 mod replay;
 mod replay_capsule;
+mod repo_calls;
 mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
@@ -101,6 +102,7 @@ pub use self::replay_capsule::{
     capture_workflow_step, finalize_step_captures, note_answering_route_pin, note_answering_rung,
 };
 pub(crate) use self::replay_capsule::{StepCapture, StepStartBody, StepStartCapture, capture_step};
+pub use self::repo_calls::RepoRunCall;
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,

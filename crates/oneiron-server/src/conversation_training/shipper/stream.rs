@@ -12,16 +12,17 @@
 //! read through once, its length and BLAKE3 checked against the manifest,
 //! and only the range's share of it kept. A file that is not what the
 //! manifest says, or is not there, ships nothing for its piece
-//! ([`Unreadable`]), and the piece is read again next pass. Released files
-//! are never written again, and the outbox's purge only removes them, so
-//! no lock is taken: a file purged mid-read reads as missing, and its piece
-//! leaves the next page.
+//! ([`Unreadable`]), and the piece is read again next pass; which of the two
+//! rides its row for the owner (FIX 6916). Released files are never written
+//! again, and the outbox's purge only removes them, so no lock is taken: a
+//! file purged mid-read reads as missing, and its piece leaves the next
+//! page.
 
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::Path;
 
-use oneiron::feedback::TrainingSubmissionId;
+use oneiron::feedback::{PieceFilesProblem, TrainingSubmissionId};
 use oneiron_vault_contract::conversation_training::{
     PieceChunkV1, PieceFactsHeadV1, PieceFinalV1, decode_training_offer, is_lower_hex,
     offer_manifest_file_name, piece_facts_digest,
@@ -40,6 +41,16 @@ pub(super) enum Unreadable {
     /// The manifest does not decode or names another submission, or a
     /// chunk file is not the length or the BLAKE3 the manifest gives.
     Mismatch,
+}
+
+impl Unreadable {
+    /// The problem the piece's row records for the owner (FIX 6916).
+    pub(super) const fn problem(self) -> PieceFilesProblem {
+        match self {
+            Self::Missing => PieceFilesProblem::Missing,
+            Self::Mismatch => PieceFilesProblem::Mismatched,
+        }
+    }
 }
 
 /// One released piece's facts, from its manifest.

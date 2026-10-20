@@ -34,6 +34,7 @@ mod change;
 mod handles;
 mod lightpanda;
 pub(crate) mod pages;
+mod row_metadata;
 pub(crate) mod state;
 pub(crate) mod storage;
 
@@ -429,6 +430,9 @@ impl CdpDriver {
         Ok(outline::lines(&self.ax_nodes()?))
     }
 
+    /// The outline's rows, hashed for a settle poll: their href, level,
+    /// datetimes and gaps stay empty until a capture fills them (FIX 6851),
+    /// so a poll hashes the fields it always did.
     fn fingerprint(&self) -> Result<blake3::Hash, BrowserError> {
         let mut hasher = blake3::Hasher::new();
         for line in self.lines()? {

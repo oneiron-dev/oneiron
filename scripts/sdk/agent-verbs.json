@@ -17682,6 +17682,70 @@
       "effect": "WorkflowDispatch"
     },
     {
+      "name": "self.code.snapshots.get",
+      "input": "crate::memory::repo_doors::RepoSnapshotsGetInput",
+      "output": "crate::memory::repo_doors::RepoSnapshotsGetOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoSnapshotsGet"
+    },
+    {
+      "name": "self.code.snapshots.read",
+      "input": "crate::memory::repo_doors::RepoSnapshotsReadInput",
+      "output": "crate::memory::repo_doors::RepoSnapshotsReadOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoSnapshotsRead"
+    },
+    {
+      "name": "self.code.symbols.definitions",
+      "input": "crate::memory::repo_doors::RepoSymbolsDefinitionsInput",
+      "output": "crate::memory::repo_doors::RepoSymbolsDefinitionsOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoSymbolsDefinitions"
+    },
+    {
+      "name": "self.code.views.get",
+      "input": "crate::memory::repo_doors::RepoViewsGetInput",
+      "output": "crate::memory::repo_doors::RepoViewsGetOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoViewsGet"
+    },
+    {
+      "name": "self.code.views.read",
+      "input": "crate::memory::repo_doors::RepoViewsReadInput",
+      "output": "crate::memory::repo_doors::RepoViewsReadOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoViewsRead"
+    },
+    {
+      "name": "self.code.merge_queue.observe",
+      "input": "crate::memory::repo_doors::RepoMergeQueueObserveInput",
+      "output": "crate::memory::repo_doors::RepoMergeQueueObserveOutput",
+      "scope": "Read",
+      "context": "run",
+      "effect": "RepoMergeQueueObserve"
+    },
+    {
+      "name": "self.code.snapshots.ingest",
+      "input": "crate::memory::repo_doors::RepoSnapshotsIngestInput",
+      "output": "crate::memory::repo_doors::RepoSnapshotsIngestOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoSnapshotsIngest"
+    },
+    {
+      "name": "self.code.work.open",
+      "input": "crate::memory::repo_doors::RepoWorkOpenInput",
+      "output": "crate::memory::repo_doors::RepoWorkOpenOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "RepoWorkOpen"
+    },
+    {
       "name": "self.leader.advice",
       "input": "crate::code_run::LeaderAdviceInput",
       "output": "serde_json::Value",
