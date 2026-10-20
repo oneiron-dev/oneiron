@@ -47417,7 +47417,7 @@
      "path": "src/secret_custody/reveal/file.rs",
      "purpose": "An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): \"Agent with a…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -58781,7 +58781,7 @@
      "path": "src/task_verb/sdk_secret.rs",
      "purpose": "`reveal`, `reveal.wait` and `reveal.describe`: an agent asks for a secret or person's value by its handle…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 7,
       "struct": 8
@@ -60431,7 +60431,7 @@
      "path": "src/typed_body/lift.rs",
      "purpose": "Typed bodies the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
