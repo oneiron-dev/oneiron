@@ -9566,6 +9566,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_browser_switch_engine(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.switch_engine", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_supersede(
         &self,
         input: serde_json::Value,

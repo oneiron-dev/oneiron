@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1083 facade rows, 3715 declarations.
-Inputs: 1018 of 1083 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 970 of 1083 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1084 facade rows, 3725 declarations.
+Inputs: 1019 of 1084 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 971 of 1084 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -18474,6 +18474,31 @@ class ActionFactNavigateNoEffect(TypedDict):
     reason: NoEffectReason
     window_ms: int
 ActionFact = ActionFactClickNoEffect | ActionFactTypeNoEffect | ActionFactNavigateNoEffect
+SwitchComponent = Literal["url", "cookies", "cookie", "local_storage", "session_storage", "storage", "scroll", "tab"]
+class SwitchCarried(TypedDict):
+    component: SwitchComponent
+    origin: NotRequired[str | None]
+    count: NotRequired[int | None]
+SwitchLoss = Literal["not_collected", "engine_refuses", "engine_ignores", "limit", "host_capacity", "read_failed", "seed_failed", "readback_mismatch", "redirected", "not_web_page", "other_tab"]
+class SwitchNotCarried(TypedDict):
+    component: SwitchComponent
+    origin: NotRequired[str | None]
+    cookies: NotRequired[list[str]]
+    attribute: NotRequired[str | None]
+    count: NotRequired[int | None]
+    reason: SwitchLoss
+SwitchStage = Literal["start", "attach", "cookies", "navigate"]
+class SwitchOutcomeSwitched(TypedDict):
+    state: Literal["switched"]
+class SwitchOutcomeUnchanged(TypedDict):
+    state: Literal["unchanged"]
+class SwitchOutcomeFailed(TypedDict):
+    state: Literal["failed"]
+    stage: SwitchStage
+    code: str
+    detail: str
+SwitchOutcome = SwitchOutcomeSwitched | SwitchOutcomeUnchanged | SwitchOutcomeFailed
+EngineSwitchRecord = TypedDict("EngineSwitchRecord", {"from": BrowserEngine, "to": BrowserEngine, "reason": str, "url": str, "carried": NotRequired[list[SwitchCarried]], "not_carried": NotRequired[list[SwitchNotCarried]], "outcome": SwitchOutcome})
 class EffectReceipt(TypedDict):
     seq: int
     verb: str
@@ -18490,6 +18515,7 @@ class EffectReceipt(TypedDict):
     screenshot_evidence: NotRequired[ReceiptEvidence | None]
     engine: NotRequired[BrowserEngine | None]
     fact: NotRequired[ActionFact | None]
+    engine_switch: NotRequired[EngineSwitchRecord | None]
 class LibraryCard(TypedDict):
     workflow: str
     site: str
@@ -18754,6 +18780,13 @@ class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
 BrowserHandoverOutput = BrowserAnswer[HandoverOutput]
+class SwitchEngineInput(TypedDict):
+    engine: BrowserEngine
+    reason: str
+class SwitchEngineOutput(TypedDict):
+    receipt: EffectReceipt
+    observation: NotRequired[ObservationPage | None]
+BrowserSwitchEngineOutput = BrowserAnswer[SwitchEngineOutput]
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

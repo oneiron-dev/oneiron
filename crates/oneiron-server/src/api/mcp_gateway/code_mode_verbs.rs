@@ -37,6 +37,7 @@
 //! blob artifact version when the receipt is made ([`ReceiptWriter`]), so it
 //! outlives the guest's image queue and the guest.
 
+mod browser_guest;
 mod receipt_evidence;
 mod session_write;
 
@@ -564,17 +565,13 @@ impl RunBrowser {
     ) -> Result<Value, BrowserError> {
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         if session.is_none() {
-            let (transport, relay) = start_run_guest(
+            // The session keeps the starter its engine switches take.
+            let started = browser_guest::start_run_browser(
                 &self.vault,
                 self.run_id,
-                &self.guest.runtime,
-                &self.guest.image,
-                self.guest.limits,
-                self.guest.fixture.as_ref(),
-                &self.guest.engine.guest_argv(),
+                &self.guest,
+                &self.handles,
             )?;
-            let started =
-                BrowserSession::attach(&self.guest, transport, relay, self.handles.charge())?;
             *session = Some(started);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;

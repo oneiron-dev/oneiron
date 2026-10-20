@@ -13339,6 +13339,23 @@
       }
     },
     {
+      "name": "self.browser.switch_engine",
+      "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
+      "input": "crate::task_verb::sdk::BrowserSwitchEngineInput",
+      "output": "crate::task_verb::sdk::BrowserSwitchEngineOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.switch_engine(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserSwitchEngineInput>",
+        "description": "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
       "name": "self.desktop.open",
       "description": "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::OpenInput",

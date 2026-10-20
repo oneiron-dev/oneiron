@@ -6,9 +6,14 @@
 //! DOM driver still polls for its observations and its tabs. Each page
 //! session's navigation events are counted, for the driver's change check
 //! (FIX 6680), and a JavaScript dialog a page opens is answered at once, as
-//! before its Page domain was on.
+//! before its Page domain was on. The pages' committed top-level origins
+//! and an engine switch's one-shot seed document ride the same routing
+//! (`state`).
 
+mod state;
 mod websocket;
+
+pub(crate) use state::{Visits, web_origin};
 
 use crate::{BrowserEngine, BrowserError};
 use serde_json::{Value, json};
@@ -65,16 +70,13 @@ pub(crate) struct Pipe {
     /// finding a page again) only lets it run.
     routed: Arc<Mutex<HashSet<String>>>,
     navigations: Navigations,
+    /// Each watched page's binding and committed top-level origins.
+    pages: Arc<Mutex<state::Pages>>,
+    /// The one-shot seed document an engine switch armed, if any.
+    seed: Arc<Mutex<Option<state::Seed>>>,
 }
 
 impl Pipe {
-    pub(crate) fn new(
-        reader: impl Read + Send + 'static,
-        writer: impl Write + Send + 'static,
-    ) -> Self {
-        Self::with_egress(reader, writer, None)
-    }
-
     pub(crate) fn with_egress(
         reader: impl Read + Send + 'static,
         writer: impl Write + Send + 'static,
@@ -113,6 +115,8 @@ impl Pipe {
             egress,
             routed: Arc::default(),
             navigations: Arc::default(),
+            pages: Arc::default(),
+            seed: Arc::default(),
         }
     }
 
@@ -137,12 +141,14 @@ impl Pipe {
             .unwrap_or(false)
     }
 
-    /// Counts page `session`'s navigation events from now on: its Page
+    /// Counts page `session`'s navigation events from now on, and keeps the
+    /// web origins its page `target` commits at its top level: its Page
     /// domain is enabled.
-    pub(crate) fn watch_navigations(&self, session: &str) {
+    pub(crate) fn watch_navigations(&self, session: &str, target: &str) {
         if let Ok(mut navigations) = self.navigations.lock() {
             navigations.entry(session.to_owned()).or_default();
         }
+        self.bind_page(session, target);
     }
 
     /// Page `session`'s navigation events so far; none for a session whose
@@ -227,6 +233,7 @@ fn route(
     };
     let Some(id) = message.get("id").and_then(Value::as_u64) else {
         count_navigation(&pipe.navigations, &message);
+        pipe.note_page(&message);
         answer_dialog(pipe, &message);
         if let Some(relay) = relay {
             network_event(pipe.clone(), Arc::clone(relay), message);
@@ -331,6 +338,11 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
         else {
             return;
         };
+        // An engine switch's seed document is answered here, never fetched.
+        if let Some(seed) = pipe.take_seed(&session, &event) {
+            state::fulfill_seed(pipe, session, id, seed, &event);
+            return;
+        }
         std::thread::spawn(move || {
             let request = &event["params"]["request"];
             let headers = request["headers"]

@@ -1094,6 +1094,7 @@ pub enum AgentVerb {
     SelfBrowserLibraryRetired,
     SelfBrowserLibraryRun,
     SelfBrowserHandover,
+    SelfBrowserSwitchEngine,
     VaultClaimsSupersede,
     SelfFold,
     SelfCompact,
@@ -2200,6 +2201,7 @@ impl AgentVerb {
         Self::SelfBrowserLibraryRetired,
         Self::SelfBrowserLibraryRun,
         Self::SelfBrowserHandover,
+        Self::SelfBrowserSwitchEngine,
         Self::VaultClaimsSupersede,
         Self::SelfFold,
         Self::SelfCompact,
@@ -3337,6 +3339,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfBrowserHandover => "self.browser.handover",
+            Self::SelfBrowserSwitchEngine => "self.browser.switch_engine",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
             Self::SelfCompact => "self.compact",
@@ -4425,6 +4428,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -4480,6 +4484,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -5558,6 +5563,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -6772,6 +6778,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -7420,6 +7427,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
+                | Self::SelfBrowserSwitchEngine
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -8572,6 +8580,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
+            Self::SelfBrowserSwitchEngine => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -9679,6 +9688,7 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
+            Self::SelfBrowserSwitchEngine => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -12872,6 +12882,9 @@ impl AgentVerb {
             }
             Self::SelfBrowserHandover => {
                 "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
+            }
+            Self::SelfBrowserSwitchEngine => {
+                "Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."
             }
             Self::VaultClaimsSupersede => {
                 "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."

@@ -1161,6 +1161,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.browser.library.retired", post(facade_route))
         .route("/self.browser.library.run", post(facade_route))
         .route("/self.browser.handover", post(facade_route))
+        .route("/self.browser.switch_engine", post(facade_route))
         .route("/vault.claims.supersede", post(facade_route))
         .route("/self.fold", post(facade_route))
         .route("/self.compact", post(facade_route))
