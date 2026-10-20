@@ -67,7 +67,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
-| `src/lib.rs` | src | s | 1 struct · 1 enum · 9 fn · 15 mod · 5 re-export | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
+| `src/lib.rs` | src | s | 1 struct · 1 enum · 11 fn · 15 mod · 5 re-export | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
 | `src/live/chart_labels.rs` | src | s | 1 crate-vis | — | A chart's data-label ranges (`c15:datalabelsRange`, Office 2013's "Value From Cells") unlinked when its data… |
 | `src/live/conversion.rs` | src | s | 1 enum · 2 fn | Conversion | What a deck edit or export did PowerPoint's way, named on its receipt (OF-510; the Office ruling of 10-18) |
 | `src/live/convert.rs` | src | m | 12 crate-vis | — | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
