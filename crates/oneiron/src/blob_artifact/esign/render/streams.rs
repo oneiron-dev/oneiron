@@ -3,10 +3,11 @@ use super::*;
 
 /// A stream's bytes as preparation reads them: an unfiltered stream whole (no
 /// codec runs, so no bound applies), a filtered one exactly decoded under the
-/// per-stream bound [`STREAM_DECODE_BYTES`].
-pub(super) fn decoded(stream: &Stream) -> Result<Vec<u8>> {
+/// per-stream bound, the `[limits] esign_stream_decode_bytes` row, or refused
+/// with that row named.
+pub(super) fn decoded(stream: &Stream, bound: StreamBound) -> Result<Vec<u8>> {
     if stream.dict.has(b"Filter") {
-        decode_stream(stream, STREAM_DECODE_BYTES)
+        decode_stream(stream, bound.0).map_err(past_stream_bound)
     } else {
         Ok(stream.content.clone())
     }
