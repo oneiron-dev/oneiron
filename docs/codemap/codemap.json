@@ -848,7 +848,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ExceptionalWidthCheck",
@@ -863,7 +863,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 4
      }
     },
@@ -5705,7 +5705,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "mod": 1,
       "re-export": 3
      }
@@ -6323,7 +6323,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -37673,9 +37673,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/note/citation_erase.rs",
-     "purpose": "Citation scrubs of deleted sources: a delete's default mode and the hard-erase dependency fences",
+     "purpose": "Hard-erase dependency fences",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 9
      }
     },
     {
@@ -37685,7 +37685,7 @@
      "path": "src/note/citation_scrub.rs",
      "purpose": "Pin-only live-state rebuild",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 2
      }
     },
     {
@@ -37764,7 +37764,7 @@
      "path": "src/note/document_store.rs",
      "purpose": "Actor-bound NOTE editor verbs and atomic entity-document persistence",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "fn": 9
      }
     },
@@ -48392,6 +48392,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/share_travel/reader_prompts.rs",
+     "purpose": "Born-with prompt text for a reader who is not the owner (FIX 6054): a shared brief's recipient, and the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -56299,7 +56309,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -65104,7 +65114,7 @@
      "purpose": "Revocable brief read grants"
     },
     "share_travel": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -65407,7 +65417,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4070,
+   "source_files": 4071,
    "test_files": 902
   },
   "oneiron-android": {
@@ -77691,6 +77701,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/training_offer/unverifiable.rs",
+     "purpose": "The check's outcome when the promise cannot be read (FIX 6265): `unverifiable_unpriced_cache`",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/training_pack.rs",
      "purpose": "An owner-authorized training run on the host (OF-577, OF-552)",
      "surface": {
@@ -86161,7 +86181,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 12,
       "struct": 1
      }
@@ -87777,6 +87797,7 @@
      "notable": [
       "CycleSettlements",
       "SeatUsage",
+      "UnpricedCache",
       "UsageLedger"
      ],
      "path": "src/usage/ledger.rs",
@@ -87784,7 +87805,7 @@
      "surface": {
       "crate-vis": 1,
       "fn": 6,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -87815,7 +87836,9 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CacheDimension",
       "Money",
+      "UnpricedReason",
       "UsageAllocation",
       "UsageCostInput",
       "UsageCostRates",
@@ -87832,8 +87855,8 @@
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
       "crate-vis": 3,
-      "enum": 2,
-      "fn": 7,
+      "enum": 4,
+      "fn": 9,
       "struct": 10
      }
     },
@@ -88517,7 +88540,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88974,7 +88997,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 890,
+   "source_files": 891,
    "test_files": 182
   },
   "oneiron-spawn": {

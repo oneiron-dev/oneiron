@@ -542,8 +542,8 @@ fn carry_drops(
     Ok(false)
 }
 
-/// `base` then each entry of `capsules` it does not hold, parents first either
-/// way: a world's side entry may ride both the base and its capsule.
+/// `base`, then capsule entries it does not hold, parents first. World wrap
+/// side entries arrive only through their world's capsule.
 fn with_world_authority(mut base: Vec<Vec<u8>>, capsules: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     let mut held: BTreeSet<[u8; 32]> = base
         .iter()

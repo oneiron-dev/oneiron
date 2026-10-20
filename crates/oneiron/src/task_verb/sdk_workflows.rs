@@ -227,6 +227,10 @@ pub struct WorkflowRunView {
     pub active_attempt_ref: EntityId,
     pub steps: Vec<WorkflowStepCapture>,
     pub results: Vec<WorkflowStepRun>,
+    /// The TASK a bound run realizes: its root is that TASK's try and
+    /// settles it when the run ends. `None` for a TASK-less run (FIX 5295).
+    #[serde(default)]
+    pub task_ref: Option<EntityId>,
 }
 
 fn attempt_ref(id: AttemptId) -> MemoryResult<EntityId> {
@@ -267,6 +271,12 @@ fn run_view(status: &WorkflowDispatchStatus) -> MemoryResult<WorkflowRunView> {
         active_attempt_ref: attempt_ref(status.active_step)?,
         steps,
         results,
+        task_ref: status
+            .attempt
+            .task_ref
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?,
     })
 }
 
