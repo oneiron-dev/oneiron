@@ -1,5 +1,6 @@
 //! Host custody of the seccomp listener and all network transports.
 
+use crate::cli_env::ApplyCliEnv as _;
 use crate::{EgressRelay, Error, FenceConfig, FenceProof, Result, linux, wire};
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -226,6 +227,7 @@ fn inspect(runtime: &Path, name: &str) -> io::Result<serde_json::Value> {
         .args(["inspect", name])
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
+        .apply_cli_env()
         .output()?;
     if !result.status.success() {
         return Err(io::Error::other("container inspect failed"));
@@ -273,6 +275,7 @@ fn remove(runtime: &Path, name: &str) {
         .args(["rm", "--force", name])
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
+        .apply_cli_env()
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

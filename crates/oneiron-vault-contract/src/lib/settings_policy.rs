@@ -15,14 +15,15 @@
 /// the voice loop's socket, the key directory, the publisher training
 /// outbox and the direct Linear mirror's response custody, which the host
 /// derives beside the data directory. The training outbox and the last
-/// six are reserved argv-only bindings the server's schema has no key for:
+/// eight are reserved argv-only bindings the server's schema has no key for:
 /// the guests' container CLIs, the pack organ directory, the mesh
-/// listener's bind and relays and the node's shared model root
-/// ([`crate::settings_paths::SharedModelRoot`]), which the supervisor passes
-/// as `--browser-runtime`, `--desktop-runtime`, `--organ-dir`,
-/// `--mesh-bind`, `--mesh-relays` and `--shared-model-root`. An owner's
-/// `[browser] runtime` and `[desktop] runtime` stay his, inside the vault's
-/// own storage.
+/// listener's bind and relays, the node's shared model root
+/// ([`crate::settings_paths::SharedModelRoot`]) and the container CLI's
+/// `HOME` and `XDG_RUNTIME_DIR`, which the supervisor passes as
+/// `--browser-runtime`, `--desktop-runtime`, `--organ-dir`, `--mesh-bind`,
+/// `--mesh-relays`, `--shared-model-root`, `--container-home` and
+/// `--container-runtime-dir`. An owner's `[browser] runtime` and
+/// `[desktop] runtime` stay his, inside the vault's own storage.
 pub const SUPERVISOR_OWNED: &[&str] = &[
     "vault_path",
     "host",
@@ -56,6 +57,8 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "mesh_bind",
     "mesh_relays",
     "shared_model_root",
+    "container_home",
+    "container_runtime_dir",
 ];
 
 /// The leaves that name a key by the environment variable holding it.

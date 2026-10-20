@@ -79,7 +79,7 @@ pub(super) struct RelayDeleteExecutor {
     /// Every job started, kept until it ends.
     jobs: Mutex<Jobs>,
     /// The counter `relay_delete_rechecks` follows: it moves with the vault's
-    /// hold rechecks and once per bind.
+    /// hold rechecks, once per bind and once per thaw from a reap freeze.
     rechecks: watch::Sender<u64>,
     /// The vault's own hold guard, made on first use.
     guard: OnceLock<VaultRelayHoldGuard>,
@@ -363,6 +363,12 @@ impl RelayDeleteExecutor {
         Ok(())
     }
 
+    /// Moves the recheck counter as the vault thaws from a reap freeze, so a
+    /// delete deferred `not_ready` while it was frozen asks again at once.
+    pub(super) fn thawed(&self) {
+        recheck(&self.rechecks);
+    }
+
     /// Opens `objects` as a directory, never through a link, recovers its
     /// claims and binds it; unbinds on a failure.
     fn open(&self, objects: &Path) -> Result<(), RelayLockerRefusal> {
@@ -387,7 +393,8 @@ impl RelayDeleteExecutor {
 
     /// The recheck counter now and whether it is past `after`, at once for
     /// a `pinned` boot of `None`; for this boot, once it moves past `after`
-    /// or `wait_ms` ends unmoved. Runs inside a Tokio runtime.
+    /// or `wait_ms` ends unmoved. A stopping executor answers `not_ready`,
+    /// a wait under way included. Runs inside a Tokio runtime.
     pub(super) async fn rechecks(
         &self,
         vault: &Arc<oneiron::Vault>,
@@ -396,11 +403,11 @@ impl RelayDeleteExecutor {
         wait_ms: u32,
     ) -> Result<(u64, bool), RelayDeleteUnknown> {
         self.follow(vault);
+        let mut counter = self.rechecks.subscribe();
+        let current = *counter.borrow_and_update();
         if self.jobs().stopped {
             return Err(RelayDeleteUnknown::NotReady);
         }
-        let mut counter = self.rechecks.subscribe();
-        let current = *counter.borrow_and_update();
         let Some(pinned) = pinned else {
             return Ok((current, current != after));
         };
@@ -412,6 +419,7 @@ impl RelayDeleteExecutor {
         }
         let wait = Duration::from_millis(u64::from(wait_ms));
         match tokio::time::timeout(wait, counter.changed()).await {
+            Ok(Ok(())) if self.jobs().stopped => Err(RelayDeleteUnknown::NotReady),
             Ok(Ok(())) => {
                 let moved = *counter.borrow_and_update();
                 Ok((moved, moved != after))
@@ -422,13 +430,14 @@ impl RelayDeleteExecutor {
     }
 
     /// Waits for every job started to end, on stop: none is cancelled, and
-    /// none starts after.
+    /// none starts after. A recheck waiting is woken to answer `not_ready`.
     pub(super) async fn stopped(&self) {
         let running = {
             let mut jobs = self.jobs();
             jobs.stopped = true;
             std::mem::take(&mut jobs.running)
         };
+        self.rechecks.send_modify(|_| {});
         for job in running {
             let _ = job.await;
         }

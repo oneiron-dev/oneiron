@@ -252,9 +252,10 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds six more settings on argv alone; a settings file that
+The supervisor binds eight more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
-`mesh_relays` or `shared_model_root` is refused `SupervisorOwned`:
+`mesh_relays`, `shared_model_root`, `container_home` or
+`container_runtime_dir` is refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
@@ -278,6 +279,23 @@ names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
   `shared_model_root_ignored` with its cause (and named in a settings refusal
   that ends the start before logging begins), never a refused start; a model
   directory only it would admit is then refused `OutsideVault`.
+- `--container-home <path>` and `--container-runtime-dir <path>` (managed
+  only, never a vault VM): the `HOME` and `XDG_RUNTIME_DIR` the guests'
+  container CLI runs with, so a rootless CLI under the vault's UID finds its
+  per-UID storage and runtime directory. Each must be an absolute path with
+  no `..` part and an existing directory owned by the vault's UID; the
+  supervisor makes both, the vault makes neither. One that fails its check
+  is ignored, logged `container_dir_ignored` with its `flag` and `cause`
+  (`not_absolute`, `parent_component`, `missing`, `not_directory`,
+  `not_owned`, `unreadable` or `unsupported`), never a refused start. An
+  engine from before these flags refuses them, so a supervisor passes them
+  only to engines at or after the merge that added them.
+
+The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
+alone. Every call the engine makes to it for a guest (run, inspect and
+removal) otherwise runs with `PATH=/usr/bin:/bin` and nothing else, as on a
+self-hosted server, and a flag that is absent or ignored leaves its variable
+out. The engine itself still reads no HOME or XDG directory.
 
 A vault VM reads the guest runtimes and the mesh settings from the one-line
 files `/config/browser-runtime`, `/config/desktop-runtime`, `/config/mesh-bind`

@@ -50,6 +50,8 @@ impl ManagedState {
             .unfreeze()
             .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
         self.frozen.store(false, Ordering::SeqCst);
+        // A relay delete deferred `not_ready` while frozen asks again now.
+        self.relay_delete.thawed();
         if self.background_waiting.swap(false, Ordering::SeqCst) {
             tracing::info!("the reap pause lifted; background passes run again");
         }

@@ -243,6 +243,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.shared_model_root.is_some(),
         ArgvUse::Read,
     ),
+    // The guests' container CLI's HOME and XDG_RUNTIME_DIR (FIX 6876).
+    (
+        "container-home",
+        |args| args.container_home.is_some(),
+        ArgvUse::Read,
+    ),
+    (
+        "container-runtime-dir",
+        |args| args.container_runtime_dir.is_some(),
+        ArgvUse::Read,
+    ),
     // The bind: the supervisor's socket, never a host:port.
     (
         "host",
