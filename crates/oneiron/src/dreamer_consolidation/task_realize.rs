@@ -343,7 +343,8 @@ pub(crate) fn seal_task_realize_confession_in_txn(
 /// A realization's answer as it was stored, whole: its result NOTE, then
 /// each continuation part its author linked `Mentions` to it, in the order
 /// they were written (ids ascend), beside the Dreamer that authored it.
-/// `None` when the result is no readable NOTE.
+/// `None` when the result is no readable NOTE, or its author was erased: no
+/// one is no Dreamer, so no answer is bound to them (FIX 6072).
 fn stored_answer(vault: &Vault, note: EntityId) -> Result<Option<(EntityId, String)>> {
     let Some(crate::note::NoteBody {
         kind,
@@ -352,6 +353,9 @@ fn stored_answer(vault: &Vault, note: EntityId) -> Result<Option<(EntityId, Stri
         ..
     }) = vault.read_note(&note)?
     else {
+        return Ok(None);
+    };
+    let Some(author_ref) = author_ref.id() else {
         return Ok(None);
     };
     for part in vault.sources(
@@ -363,7 +367,7 @@ fn stored_answer(vault: &Vault, note: EntityId) -> Result<Option<(EntityId, Stri
             continue;
         }
         if let Some(body) = vault.read_note(&part)?
-            && body.author_ref == author_ref
+            && body.author_ref.is(author_ref)
             && body.kind == kind
         {
             answer.push_str(&body.markdown);
