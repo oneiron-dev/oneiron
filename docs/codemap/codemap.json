@@ -51977,7 +51977,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 1,
       "re-export": 15
      }
@@ -52444,6 +52444,16 @@
      "purpose": "The training link key's custody client (TRAINING-LINK = C, TL-2): K, the one key the vault's publisher…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/turn_missing.rs",
+     "purpose": "The MESSAGE rows a kept TURN lacks after a window demotion (OF-534, FIX 3859)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -61983,7 +61993,7 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 1
      }
     },
@@ -62162,7 +62172,7 @@
       "crate-vis": 37,
       "enum": 2,
       "fn": 6,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 6
      }
     },
@@ -62285,7 +62295,7 @@
      "path": "src/workspace_roster/rooms/participation.rs",
      "purpose": "Thread participants (OF-529): one append-only stream of who took part in a room or one of its threads, how…",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 40,
       "enum": 1
      }
     },
@@ -62306,6 +62316,19 @@
      "path": "src/workspace_roster/rooms/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomMessagesRequest"
+     ],
+     "path": "src/workspace_roster/rooms/thread_history.rs",
+     "purpose": "One thread's page of a room's history (FIX 5638): `vault.rooms.messages` naming a thread by its root reads…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -65112,7 +65135,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 114,
+     "files": 115,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65315,7 +65338,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 103,
+     "files": 104,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65338,7 +65361,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4064,
+   "source_files": 4066,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91730,6 +91753,7 @@
       "RoomHostPin",
       "RoomHostRequest",
       "RoomHosting",
+      "RoomMessagesRequest",
       "RoomOriginCard",
       "RoomPage",
       "RoomQuote",
@@ -92641,7 +92665,7 @@
      "purpose": "—",
      "surface": {
       "enum": 874,
-      "struct": 2774
+      "struct": 2775
      }
     },
     {

@@ -96,6 +96,8 @@ pub(in crate::sync) fn first_promotion_open(vault: &Vault) -> bool {
 /// Owes the row `blob` an entity door wrote at `id` in `wtxn`, where no row
 /// was stored, under a promotion on this thread: a TURN its tag pass and
 /// sieve read ([`crate::store::local_replica::owe_promoted_turn_in_txn`]).
+/// A MESSAGE a kept turn lacked clears it once its row and `PartOf` edge are
+/// both here (FIX 3859, [`crate::store::turn_missing::reconcile_in_txn`]).
 pub(in crate::sync) fn owe_landed_turn_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -107,5 +109,6 @@ pub(in crate::sync) fn owe_landed_turn_in_txn(
     {
         crate::store::local_replica::owe_promoted_turn_in_txn(vault, wtxn, &id)?;
     }
+    crate::store::turn_missing::reconcile_in_txn(vault, wtxn, Some(&id))?;
     Ok(())
 }
