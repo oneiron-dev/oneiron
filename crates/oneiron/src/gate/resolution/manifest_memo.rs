@@ -1,4 +1,9 @@
-//! Decodes a store keeps between policy resolutions.
+//! Decodes a store keeps between policy resolutions: a byte-charged LRU
+//! (FIX 5987). Each kept decode is charged what it owns
+//! (`manifest_weight`); the least recently read go first until a new one
+//! fits, and one that alone outweighs the whole budget is used uncached. A
+//! decode the memo does not keep is still read in full: the memo only ever
+//! saves work, never a body's policy.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -10,9 +15,13 @@ use crate::gate::decode::{
 
 use super::manifest_types::SheetAnswerPrecedence;
 
-/// Bodies kept at most. A vault holds a handful of manifests, so past this
-/// the memo starts over rather than grow with a flood of distinct rows.
+/// Bodies kept at most, beside the byte budget. A vault holds a handful of
+/// manifests, so past this the least recently read goes.
 const MAX_ROWS: usize = 64;
+
+/// Decoded bytes kept at most (FIX 5987, CALLS "manifest memo byte
+/// budget"): a cache bound only, never a decode, request or body bound.
+const MAX_MANIFEST_MEMO_DECODED_BYTES: usize = 16 * 1024 * 1024;
 
 /// What a store keeps between policy resolutions. Each entry is a pure
 /// function of bytes: the shipped manifest is a constant of the build, and a
@@ -20,7 +29,68 @@ const MAX_ROWS: usize = 64;
 #[derive(Default)]
 pub(crate) struct ManifestDecodeMemo {
     shipped: OnceLock<ShippedPolicyRows>,
-    rows: Mutex<HashMap<[u8; 32], Arc<ManifestRow>>>,
+    rows: Mutex<KeptRows>,
+}
+
+/// The kept decodes under their bodies' BLAKE3, with what they weigh.
+#[derive(Default)]
+struct KeptRows {
+    rows: HashMap<[u8; 32], Kept>,
+    /// The kept decodes' weights, summed.
+    bytes: usize,
+    /// A read counter: each read stamps its row, and the lowest stamp is
+    /// the least recently read.
+    reads: u64,
+}
+
+struct Kept {
+    row: Arc<ManifestRow>,
+    weight: usize,
+    read: u64,
+}
+
+impl KeptRows {
+    fn get(&mut self, key: &[u8; 32]) -> Option<Arc<ManifestRow>> {
+        self.reads = self.reads.wrapping_add(1);
+        let read = self.reads;
+        self.rows.get_mut(key).map(|kept| {
+            kept.read = read;
+            Arc::clone(&kept.row)
+        })
+    }
+
+    /// Keeps `row` at `weight`, the least recently read going first until it
+    /// fits. One that alone outweighs the budget is not kept.
+    fn admit(&mut self, key: [u8; 32], row: &Arc<ManifestRow>, weight: usize) {
+        if weight > MAX_MANIFEST_MEMO_DECODED_BYTES || self.rows.contains_key(&key) {
+            return;
+        }
+        while self.rows.len() >= MAX_ROWS
+            || self.bytes.saturating_add(weight) > MAX_MANIFEST_MEMO_DECODED_BYTES
+        {
+            let Some(oldest) = self
+                .rows
+                .iter()
+                .min_by_key(|(_, kept)| kept.read)
+                .map(|(key, _)| *key)
+            else {
+                break;
+            };
+            if let Some(evicted) = self.rows.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(evicted.weight);
+            }
+        }
+        self.reads = self.reads.wrapping_add(1);
+        self.bytes = self.bytes.saturating_add(weight);
+        self.rows.insert(
+            key,
+            Kept {
+                row: Arc::clone(row),
+                weight,
+                read: self.reads,
+            },
+        );
+    }
 }
 
 /// What a resolution takes from the shipped manifest: its sheet-answer
@@ -31,10 +101,9 @@ pub(super) struct ShippedPolicyRows {
     pub(super) sheet_answer_precedence: SheetAnswerPrecedence,
 }
 
-/// One stored manifest body, decoded.
+/// One stored manifest body, decoded. Whether it is a project-depth
+/// contribution envelope its fold tells from its bytes, before it decodes.
 pub(super) struct ManifestRow {
-    /// The body is a project-depth contribution envelope.
-    pub(super) project_depth: bool,
     pub(super) carrier: Option<DecodedManifestCarrier>,
 }
 
@@ -67,27 +136,39 @@ impl ManifestDecodeMemo {
     }
 
     /// `body` decoded, kept under its BLAKE3 hash: the identity the manifest
-    /// trust and quarantine sidecars already judge a body by.
+    /// trust and quarantine sidecars already judge a body by. A caller keeps
+    /// only a body its fold reads past quarantine and trust, or a signed
+    /// project-depth carrier (FIX 5987).
     pub(super) fn row(&self, body: &[u8]) -> Arc<ManifestRow> {
         let key = *blake3::hash(body).as_bytes();
-        if let Some(row) = self
-            .rows
-            .lock()
-            .ok()
-            .and_then(|rows| rows.get(&key).cloned())
-        {
+        if let Some(row) = self.kept(&key) {
             return row;
         }
-        let row = Arc::new(ManifestRow {
-            project_depth: crate::gate::project_depth::is_project_depth_contribution(body),
-            carrier: decode_manifest_carrier(body),
-        });
+        let row = Arc::new(ManifestRow::decode(body));
+        let weight = super::manifest_weight::row_weight(body.len(), &row);
         if let Ok(mut rows) = self.rows.lock() {
-            if rows.len() >= MAX_ROWS {
-                rows.clear();
-            }
-            rows.insert(key, Arc::clone(&row));
+            rows.admit(key, &row, weight);
         }
         row
+    }
+
+    /// `body` decoded for this read alone: an untrusted ordinary pack's
+    /// (FIX 5987), read in full and never kept. A decode already kept serves.
+    pub(super) fn transient(&self, body: &[u8]) -> Arc<ManifestRow> {
+        let key = *blake3::hash(body).as_bytes();
+        self.kept(&key)
+            .unwrap_or_else(|| Arc::new(ManifestRow::decode(body)))
+    }
+
+    fn kept(&self, key: &[u8; 32]) -> Option<Arc<ManifestRow>> {
+        self.rows.lock().ok().and_then(|mut rows| rows.get(key))
+    }
+}
+
+impl ManifestRow {
+    fn decode(body: &[u8]) -> Self {
+        Self {
+            carrier: decode_manifest_carrier(body),
+        }
     }
 }

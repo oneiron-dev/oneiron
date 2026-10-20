@@ -173,6 +173,10 @@ pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_listing_as};
 pub(crate) use host_doors::ai_speech_for_run;
+pub(crate) use host_doors::{
+    ai_media_as_owner, ai_video_as_owner, ai_video_cancel_as_owner, ai_video_poll_as_owner,
+    vault_hooks_replay_as_owner,
+};
 pub(crate) use model_stream_doors::ModelStreams;
 pub(crate) use secret_use_doors::self_use_as;
 

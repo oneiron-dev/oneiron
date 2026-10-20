@@ -201,7 +201,10 @@ impl SessionOverlay {
         }
         let state = self.state.load_full();
         let next = Self::apply_preflighted_to_state(state, &segment.mutations, &segment.journal)?;
+        let bytes = next.bytes_used;
         self.state.store(next);
+        // A room stretch's charge follows what its overlay holds (FIX 5991).
+        self.charge_to(bytes);
         Ok(())
     }
 

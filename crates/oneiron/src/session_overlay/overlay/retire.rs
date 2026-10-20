@@ -146,8 +146,11 @@ impl SessionOverlay {
 
         Arc::make_mut(&mut next.journal).retain(|entry| !retired.contains(&entry.seq));
         next.recalculate_bytes();
+        let bytes = next.bytes_used;
         self.state.store(Arc::new(next));
         drop(lifecycle);
+        // A room stretch's charge follows what its overlay holds (FIX 5991).
+        self.charge_to(bytes);
         Ok(())
     }
 }

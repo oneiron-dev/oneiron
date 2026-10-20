@@ -572,10 +572,13 @@ impl ActionRegistry {
                 .bridge_calls
                 .first()
                 .and_then(|row| super::payload::refusal_words(&row.outcome));
+            // A replayed search keeps only the hits this caller reads now.
+            let key = principal.selected_read_key();
             return record
                 .replay_cursor()
                 .dispatch(call)
-                .map(|outcome| ActionDispatch {
+                .and_then(|outcome| replay_read::rescoped(vault, key, outcome, read_receipt))
+                .map(|(outcome, read_receipt)| ActionDispatch {
                     outcome,
                     read_receipt,
                     refusal,
@@ -777,5 +780,6 @@ mod ceiling_wire {
             .ok_or_else(|| serde::de::Error::custom("unknown action ceiling"))
     }
 }
+mod replay_read;
 #[cfg(test)]
 mod tests;

@@ -265,6 +265,9 @@ impl SessionOverlay {
                 attempted_bytes,
             }));
         }
+        // Charged before the copy is made, never refused or waited on; the
+        // publish settles it to what the overlay holds (FIX 5991).
+        self.charge_to(attempted_bytes);
         Ok(())
     }
 

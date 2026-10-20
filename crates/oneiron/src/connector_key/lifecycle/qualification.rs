@@ -342,12 +342,14 @@ impl Vault {
 
     /// The install a catalog connector's slate is bound to left the install
     /// catalog, in the caller's transaction: the owner removed the pack
-    /// (FIX 5941), or an update superseded it while
-    /// [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds. Every Active catalog key
-    /// whose slate names that exact source goes back to Pending, as a
-    /// revision change leaves it: its route stops, its per-grant keys are
-    /// held, and only a re-install that qualifies again through
-    /// [`Self::qualify_connector_key`] brings it back.
+    /// (FIX 5941), its source was erased or a restore did not bring the
+    /// install back (FIX 6034), or an update superseded it while
+    /// [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds. Every Active or
+    /// Suspended catalog key whose slate names that exact source goes back
+    /// to Pending, as a revision change leaves it: its route stops, its
+    /// per-grant keys are held, and only a re-install that qualifies again
+    /// through [`Self::qualify_connector_key`] brings it back; a resume
+    /// does not (FIX 6035).
     pub(crate) fn halt_pack_connector_routes_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -359,7 +361,11 @@ impl Vault {
             let Some(record) = read_connector_key_in_txn(&self.store, wtxn, &id)? else {
                 continue;
             };
-            if record.status != ConnectorKeyStatus::Active || record.catalog.is_none() {
+            let routable = matches!(
+                record.status,
+                ConnectorKeyStatus::Active | ConnectorKeyStatus::Suspended
+            );
+            if !routable || record.catalog.is_none() {
                 continue;
             }
             let Some(slate_id) = record.slate_ref else {

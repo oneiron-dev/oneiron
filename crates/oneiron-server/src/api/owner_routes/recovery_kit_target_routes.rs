@@ -27,17 +27,24 @@
 //! that target's own call. The target must be this install, proved by its
 //! machine proof, and a machine the worlds' privacy lets hold their keys, as
 //! the verified-destination judge reads it: one of the owner's own machines
-//! (marked mine) for one-machine and my-machines worlds, the host too on a
-//! hosted vault, and any proven machine where no world keeps its keys off
-//! it. An unproved or disallowed target gets a named refusal before any kit
-//! is parsed ([`kit_target`]).
+//! (marked mine) for one-machine and my-machines worlds, and any proven
+//! machine where no world keeps its keys off it. An unproved or disallowed
+//! target gets a named refusal before any kit is parsed ([`kit_target`]).
+//!
+//! The console never receives the recovery seed (DEC-0005, FIX 6028): while
+//! [`OWNER_DEVICE_ONLY_KIT_TARGETS`] holds, a hosted or managed install takes
+//! no kit material at all. Both calls refuse there with
+//! `kit_requires_owner_device` before their body is read ([`OwnerDevice`]);
+//! the owner still says so from any surface and the work runs on his own
+//! device.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::extract::{FromRequestParts, State};
+use axum::http::request::Parts;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::authority::{Destination, OwnerWorkRefusal, PeerMachine, RequestCode};
@@ -61,7 +68,7 @@ use super::{OwnerReply, blocking, owner};
 use crate::api::json_payload;
 use crate::api::pairing::MachineEnrolment;
 use crate::auth::CoreAuth;
-use crate::error::{ApiError, ApiErrorDetails};
+use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::recovery_kit::kit_id;
 use crate::owner::vault_key::{WrapView, hex};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -141,6 +148,48 @@ struct PadAccess {
 const KIT_TARGET_ELSEWHERE: &str = "kit_target_elsewhere";
 const KIT_TARGET_UNPROVED: &str = "kit_target_unproved";
 const KIT_TARGET_NOT_ALLOWED: &str = "kit_target_not_allowed";
+const KIT_REQUIRES_OWNER_DEVICE: &str = "kit_requires_owner_device";
+
+/// Canon (DEC-0005, FIX 6028): the console never receives the recovery seed.
+/// While this holds, a hosted or managed install is no kit target: both
+/// target calls refuse there before their body is read, and the target judge
+/// no longer admits the host of a hosted vault. False keeps the hosted
+/// target the recipient rule admitted before.
+const OWNER_DEVICE_ONLY_KIT_TARGETS: bool = true;
+
+/// Whether this install is hosted or managed, as it knows itself: a managed
+/// issuer, or the hosted posture it was opened under. Never read from the
+/// request.
+fn hosted_install(server: &SyncServer) -> bool {
+    server.managed_issuer.is_some()
+        || server.vault().privacy_posture() == HostingPrivacyPosture::Hosted
+}
+
+/// The guard both target calls extract before their body (FIX 6028): on a
+/// hosted or managed install, under [`OWNER_DEVICE_ONLY_KIT_TARGETS`], the
+/// call is refused as `kit_requires_owner_device` and no kit is parsed.
+struct OwnerDevice;
+
+impl FromRequestParts<Arc<SyncServer>> for OwnerDevice {
+    type Rejection = EnvelopedApiError;
+
+    async fn from_request_parts(
+        _: &mut Parts,
+        server: &Arc<SyncServer>,
+    ) -> Result<Self, Self::Rejection> {
+        if OWNER_DEVICE_ONLY_KIT_TARGETS && hosted_install(server) {
+            return Err(kit_target_refused(
+                KIT_REQUIRES_OWNER_DEVICE,
+                "this install is hosted: recovery kit work runs only on the owner's own device \
+                 (your own machine or a self-hosted install), so it takes no kit here",
+                "Run this from your own machine or self-hosted install; your say-so here still \
+                 reaches it.",
+            )
+            .into());
+        }
+        Ok(Self)
+    }
+}
 
 fn kit_target_refused(state: &str, message: &str, suggestion: &str) -> ApiError {
     ApiError::new(
@@ -161,7 +210,7 @@ fn kit_target_refused(state: &str, message: &str, suggestion: &str) -> ApiError 
 /// machine: one of the owner's own machines may hold the keys of every
 /// one-machine and my-machines world (a limit naming another of his machines,
 /// or his contended picks, still admits his own), the host of a hosted vault
-/// may too (this install, when the vault is hosted), and any other machine
+/// only while [`OWNER_DEVICE_ONLY_KIT_TARGETS`] is off, and any other machine
 /// only where no world limits it. Each refusal is named and comes before any
 /// kit is read.
 fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
@@ -199,7 +248,7 @@ fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
     if !matches!(peer, PeerMachine::Proven { .. }) {
         return Err(unproved());
     }
-    if vault.privacy_posture() == HostingPrivacyPosture::Hosted {
+    if !OWNER_DEVICE_ONLY_KIT_TARGETS && vault.privacy_posture() == HostingPrivacyPosture::Hosted {
         return Ok(named);
     }
     let destination = ReadDestination::toward(peer);
@@ -310,6 +359,7 @@ fn request_code(text: &str) -> OwnerResult<RequestCode> {
 async fn run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    _: OwnerDevice,
     payload: Result<Json<RunRootRequest>, JsonRejection>,
 ) -> OwnerReply<RootWorkAnswer> {
     let owner = owner(&auth, &server)?;
@@ -651,6 +701,7 @@ struct PadAccessAnswer {
 async fn pad_access(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    _: OwnerDevice,
     payload: Result<Json<PadAccess>, JsonRejection>,
 ) -> OwnerReply<PadAccessAnswer> {
     let owner = owner(&auth, &server)?;

@@ -65,6 +65,10 @@ impl Vault {
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+        // An erased pack source halts the catalog routes bound to it (FIX 6034).
+        if erase {
+            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
+        }
         // An erased world takes its keys with it (fix 7); a deleted one
         // keeps them, so it restores from old bundles.
         if erase {
@@ -164,6 +168,10 @@ impl Vault {
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
+        // An erased pack source halts the catalog routes bound to it (FIX 6034).
+        if erase {
+            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
+        }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
         // An erased message's turns stop matching its words (see the purge).

@@ -792,8 +792,8 @@ def mcp_input_dispatch(row):
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode +
                  (f'let (output, listed) = {door};\n'
-                  '// Derived from the rows its reads listed, when its path lists them.\n'
-                  'served.extend(crate::api::facade::host_doors::ListedRows::rows(listed).into_iter().flatten());\n'
+                  '// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\n'
+                  'served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));\n'
                   'let output = output.map_err(mcp_facade_error)?;\n' if row.get('host_door_lists') else
                   f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
@@ -875,7 +875,7 @@ async fn execute_mcp_agent_verb(
         server: &Arc<SyncServer>,
         args: &McpVerbToolArgs,
         actor: &McpCallContext,
-        served: &mut Vec<oneiron::EntityId>,
+        served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let input = mcp_agent_verb_input(args.tool.name, &args.payload.arguments)?;
@@ -906,7 +906,7 @@ pub(crate) async fn execute_agent_verb_input(
         input: Value,
         actor: &McpCallContext,
         run: Option<McpCodeRun>,
-        served: &mut Vec<oneiron::EntityId>,
+        served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
@@ -926,7 +926,7 @@ async fn execute_agent_verb_listing(
         actor: &McpCallContext,
         run: Option<McpCodeRun>,
         producers: &oneiron::memory::ProducerRows,
-        served: &mut Vec<oneiron::EntityId>,
+        served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''
@@ -1005,7 +1005,7 @@ async fn execute_agent_verb_row(
         actor: &McpCallContext,
         memory: oneiron::Memory<'_>,
         surface: McpRowSurface,
-        served: &mut Vec<oneiron::EntityId>,
+        served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
 '''

@@ -222,7 +222,7 @@ impl McpCallContext {
         };
         mcp_rewrite_admit(server, &call.verb, &context)(&call.verb, &call.args)
             .map_err(|_| VerbAskRefusal::ScopeRefused)?;
-        let mut served = Vec::new();
+        let mut served = super::McpServed::default();
         let mut board_hooks = None;
         let ran = super::tasks_response::execute_agent_verb_input(
             server,

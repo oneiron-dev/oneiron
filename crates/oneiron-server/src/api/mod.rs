@@ -157,6 +157,13 @@ mod operator_routes;
 mod owner_origin;
 mod owner_routes;
 pub(crate) use owner_routes::owner;
+// FIX 5911: an owner's own program proves its waking person the live
+// recorded owner, and takes the owner's media and hook-replay doors.
+pub(crate) use self::facade::{
+    ai_media_as_owner, ai_video_as_owner, ai_video_cancel_as_owner, ai_video_poll_as_owner,
+    vault_hooks_replay_as_owner,
+};
+pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;
 // ONE-1437: in-process local reactive read contract. No HTTP surface by design

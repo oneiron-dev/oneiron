@@ -5,6 +5,7 @@ mod manifest_fold;
 mod manifest_memo;
 mod manifest_narrowing;
 mod manifest_types;
+mod manifest_weight;
 mod weave_reach;
 
 pub(super) use self::frontier_hash::{hash_bool, hash_bytes, hash_opt_str, hash_str};

@@ -68,6 +68,7 @@ mod overlay_writes;
 mod participant;
 mod promotion;
 mod registry;
+mod retained;
 mod room;
 mod save_grant;
 mod saving;
@@ -79,6 +80,7 @@ mod vault_api;
 
 pub use self::creator::OffRecordCreator;
 pub(crate) use self::registry::OffRecordSessionRegistry;
+pub use self::retained::{RetainedCharge, room_entry_bytes};
 pub use self::room::{SavedTurns, room_session_key};
 pub(crate) use self::session::OverlayShellReservation;
 pub use self::session::{OffRecordSession, OffRecordSessionVault};

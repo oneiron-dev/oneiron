@@ -38,6 +38,9 @@ pub(crate) struct ByteLine {
 
 struct Line {
     free: usize,
+    /// Bytes charged past the free ones ([`ByteLine::charge`], FIX 5991):
+    /// freed bytes pay them back before anyone waiting is handed any.
+    owed: usize,
     /// Work waiting for bytes, oldest first.
     waiting: VecDeque<Arc<Turn>>,
 }
@@ -67,6 +70,7 @@ impl ByteLine {
         Self {
             line: Arc::new(Mutex::new(Line {
                 free: total,
+                owed: 0,
                 waiting: VecDeque::new(),
             })),
             total,
@@ -193,10 +197,9 @@ impl ByteLine {
         let crossing = past && !held.past_line;
         let mut line = lock(&self.line);
         if target <= held.bytes {
-            line.free += held.bytes - target;
+            line.release(held.bytes - target);
             held.bytes = target;
             held.past_line = past;
-            line.grant();
             drop(line);
             if crossing {
                 questions.ask(self.row, self.total as u64, bytes as u64);
@@ -218,6 +221,32 @@ impl ByteLine {
             questions.ask(self.row, self.total as u64, observed);
         }
         taken
+    }
+
+    /// Moves `held`, taken on this line, to `bytes` now, whatever the line
+    /// holds (FIX 5991): for state already made outside any wait, such as an
+    /// off-record room's overlay as it grows, which is charged and never
+    /// refused or made to wait. Past the free bytes the line owes the rest,
+    /// so those waiting wait until it is paid back, and owing asks the row.
+    pub(crate) fn charge(&self, held: &mut HeldBytes, bytes: usize, questions: &LimitQuestions) {
+        debug_assert!(Arc::ptr_eq(&held.line, &self.line));
+        let mut line = lock(&self.line);
+        if bytes <= held.bytes {
+            line.release(held.bytes - bytes);
+            held.bytes = bytes;
+            return;
+        }
+        let extra = bytes - held.bytes;
+        let taken = extra.min(line.free);
+        line.free -= taken;
+        let owed = extra - taken;
+        line.owed = line.owed.saturating_add(owed);
+        held.bytes = bytes;
+        let used = (self.total - line.free).saturating_add(line.owed);
+        drop(line);
+        if owed > 0 {
+            questions.ask(self.row, self.total as u64, used as u64);
+        }
     }
 
     fn held(&self, bytes: usize) -> HeldBytes {
@@ -248,6 +277,15 @@ impl ByteLine {
 }
 
 impl Line {
+    /// Takes back `bytes` a holder let go: what the line owes first, the
+    /// rest free, then handed to those waiting.
+    fn release(&mut self, bytes: usize) {
+        let paid = bytes.min(self.owed);
+        self.owed -= paid;
+        self.free += bytes - paid;
+        self.grant();
+    }
+
     /// Hands free bytes to the oldest waiters while theirs fit. The oldest
     /// that does not fit holds back those behind it, so large work is never
     /// passed over for ever by small work.
@@ -317,9 +355,7 @@ impl Turn {
 
 impl Drop for HeldBytes {
     fn drop(&mut self) {
-        let mut line = lock(&self.line);
-        line.free += self.bytes;
-        line.grant();
+        lock(&self.line).release(self.bytes);
     }
 }
 
