@@ -24,6 +24,7 @@
 //! ([`ShadowUnavailableReason`]), never a loss or a fix; `Err` is a runner
 //! or storage failure.
 
+mod admit;
 mod bridge;
 mod frames;
 mod source;
@@ -33,6 +34,7 @@ mod types;
 use std::future::Future;
 use std::pin::Pin;
 
+pub use self::admit::admit_published_inline;
 pub(crate) use self::bridge::{ArmReads, ShadowBridgeHost};
 pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
 pub use self::source::{PreparedShadowStep, prepare_shadow_step_source, shadow_source_gone};
