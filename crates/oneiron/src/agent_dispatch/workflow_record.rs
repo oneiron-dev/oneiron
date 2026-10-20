@@ -186,6 +186,47 @@ pub(super) fn reject_wrapper_parent(row: &AttemptRecord) -> Result<()> {
     Ok(())
 }
 
+/// The output handles of the wrapper `root`'s completed steps, by producer
+/// lineage: each result in order, its producer a completed step of `root`
+/// in this run whose own result it is. A result that is no output handle is
+/// passed over; a producer that does not match its result, or a malformed
+/// handle, refuses.
+fn output_refs_in(
+    queue: &AttemptQueue<'_>,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+    record: &WorkflowRecord,
+) -> Result<Vec<WorkflowOutputContextRef>> {
+    let mut refs = Vec::new();
+    for (ordinal, result) in record.results.iter().enumerate() {
+        if result.ordinal != ordinal {
+            return Err(invalid("workflow context result order is malformed"));
+        }
+        let producer = queue
+            .get_in_txn(txn, result.attempt_id)?
+            .ok_or_else(|| invalid("workflow context producer is missing"))?;
+        let producer_payload = decode_dreamer_attempt_payload(&producer.payload)?;
+        if producer.state != AttemptState::Completed
+            || producer_payload.parent_attempt != Some(root)
+            || producer.run_id != record.intent.run_id
+            || producer.result_ref.as_ref().map(AttemptResultRef::as_str)
+                != Some(result.result_ref.as_str())
+        {
+            return Err(invalid(
+                "workflow context producer does not match its result",
+            ));
+        }
+        if result.result_ref.starts_with("output:blake3:") {
+            refs.push(WorkflowOutputContextRef {
+                step_ordinal: ordinal,
+                producing_attempt: producer.id,
+                source: OutputRef::from_handle(&result.result_ref)?,
+            });
+        }
+    }
+    Ok(refs)
+}
+
 impl super::AgentDispatcher<'_> {
     /// Rebuild only the active workflow leaf's prior output handles from its
     /// durable report and the actual completed producer attempts. Arbitrary
@@ -251,34 +292,40 @@ impl super::AgentDispatcher<'_> {
         if payload.parent_attempt != Some(root) || current.run_id != record.intent.run_id {
             return Err(invalid("workflow context step has foreign lineage"));
         }
-        let mut refs = Vec::new();
-        for (ordinal, result) in record.results.iter().enumerate() {
-            if result.ordinal != ordinal {
-                return Err(invalid("workflow context result order is malformed"));
-            }
-            let producer = queue
-                .get_in_txn(&txn, result.attempt_id)?
-                .ok_or_else(|| invalid("workflow context producer is missing"))?;
-            let producer_payload = decode_dreamer_attempt_payload(&producer.payload)?;
-            if producer.state != AttemptState::Completed
-                || producer_payload.parent_attempt != Some(root)
-                || producer.run_id != record.intent.run_id
-                || producer.result_ref.as_ref().map(AttemptResultRef::as_str)
-                    != Some(result.result_ref.as_str())
-            {
-                return Err(invalid(
-                    "workflow context producer does not match its result",
-                ));
-            }
-            if result.result_ref.starts_with("output:blake3:") {
-                refs.push(WorkflowOutputContextRef {
-                    step_ordinal: ordinal,
-                    producing_attempt: producer.id,
-                    source: OutputRef::from_handle(&result.result_ref)?,
-                });
-            }
+        output_refs_in(&queue, &txn, root, &record)
+    }
+
+    /// The output handles of a completed TASK-bound run's own steps, read by
+    /// producer lineage as [`Self::workflow_output_refs_for_attempt`] reads
+    /// an active leaf's, for the "Done means met?" its settlement asks
+    /// (FIX 6325): only the wrapper `root`'s own completed steps, and only
+    /// while `binder` is the actor its TASK binding names. Each comes with
+    /// the handle its step result names. No other workflow's output is
+    /// reached, and a malformed handle refuses.
+    pub(crate) fn workflow_done_output_refs(
+        &self,
+        root: AttemptId,
+        binder: WriteActor,
+    ) -> Result<Vec<(String, OutputRef)>> {
+        let queue = AttemptQueue::new(self.vault);
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(wrapper) = queue.get_in_txn(&txn, root)? else {
+            return Err(invalid("workflow root is missing"));
+        };
+        if wrapper.state != AttemptState::Completed || !is_wrapper(&wrapper) {
+            return Ok(Vec::new());
         }
-        Ok(refs)
+        let record = self.read_workflow(&txn, &wrapper)?;
+        let Some(binding) = &record.intent.task else {
+            return Ok(Vec::new());
+        };
+        if binding.bind()?.bound_by != binder {
+            return Ok(Vec::new());
+        }
+        Ok(output_refs_in(&queue, &txn, root, &record)?
+            .into_iter()
+            .map(|output| (output.source.handle(), output.source))
+            .collect())
     }
 
     pub(super) fn read_workflow(

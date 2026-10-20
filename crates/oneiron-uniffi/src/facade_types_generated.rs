@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1076 facade rows, 3662 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1028.
+// UniFFI census: 1082 facade rows, 3671 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1034.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -38724,6 +38724,113 @@ pub struct ThreadAudienceRemoveRequest {
     pub thread_ref: String,
     #[serde(rename = "person_ref")]
     pub person_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::private_threads::RoomPrivateThreadsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RoomPrivateThreadsRequest {
+    #[serde(rename = "room_ref")]
+    pub room_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::private_threads::PrivateThreadMetadata`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateThreadMetadata {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "creator", default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<String>,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "last_active_at")]
+    pub last_active_at: u64,
+    #[serde(rename = "member_count")]
+    pub member_count: u64,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_delete::PrivateThreadDeleteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateThreadDeleteRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_delete::PrivateThreadDeleteReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PrivateThreadDeleteReceipt {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "existed")]
+    pub existed: bool,
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequestState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ThreadJoinRequestState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "approved")]
+    Approved,
+    #[serde(rename = "denied")]
+    Denied,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequestView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinRequestView {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "request_ref")]
+    pub request_ref: String,
+    #[serde(rename = "requester_ref")]
+    pub requester_ref: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "state")]
+    pub state: ThreadJoinRequestState,
+    #[serde(
+        rename = "decision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decision_ref: Option<String>,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinRequestsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinRequestsRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+}
+
+/// `oneiron::workspace_roster::rooms::thread_join::ThreadJoinDecisionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadJoinDecisionRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
+    #[serde(rename = "request_ref")]
+    pub request_ref: String,
 }
 
 /// `oneiron::genui::project_proposal::ProjectGoalDraft`.

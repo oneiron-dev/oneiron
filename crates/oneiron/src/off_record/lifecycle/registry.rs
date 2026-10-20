@@ -316,6 +316,21 @@ impl OffRecordSessionRegistry {
         Ok(None)
     }
 
+    /// The overlay of the live session that holds `id` as a row of its own,
+    /// for a read-only composed read of it (a private thread's members,
+    /// Engine 10-20 17:4x). Found as [`Self::owning_session_ref`] finds its
+    /// session, in the published snapshots, so it takes no registry or
+    /// entry lock.
+    pub(crate) fn overlay_holding(&self, id: &EntityId) -> Result<Option<Arc<SessionOverlay>>> {
+        let sessions = self.published.load();
+        for entry in sessions.values() {
+            if entry.published_record.load().is_some() && entry.overlay.contains_entity(id)? {
+                return Ok(Some(entry.overlay.clone()));
+            }
+        }
+        Ok(None)
+    }
+
     /// Whether any session is live, overlay rows or not.
     pub(crate) fn any_live(&self) -> bool {
         self.published

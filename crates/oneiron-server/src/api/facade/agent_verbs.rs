@@ -777,6 +777,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.rooms.thread_audience.remove", post(facade_route))
+        .route("/vault.rooms.private_threads", post(facade_route))
+        .route("/vault.rooms.thread_delete", post(facade_route))
+        .route("/vault.rooms.thread_join.request", post(facade_route))
+        .route("/vault.rooms.thread_join.requests", post(facade_route))
+        .route("/vault.rooms.thread_join.approve", post(facade_route))
+        .route("/vault.rooms.thread_join.deny", post(facade_route))
         .route("/vault.projects.propose", post(facade_route))
         .route("/vault.projects.proposals", post(facade_route))
         .route("/vault.projects.dismiss_card", post(facade_route))

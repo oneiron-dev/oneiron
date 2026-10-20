@@ -6281,6 +6281,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_private_threads(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.private_threads", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_thread_delete(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.thread_delete", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_thread_join_request(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.thread_join.request", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_thread_join_requests(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.thread_join.requests", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_thread_join_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.thread_join.approve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_rooms_thread_join_deny(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.rooms.thread_join.deny", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_projects_propose(
         &self,
         input: serde_json::Value,

@@ -391,8 +391,9 @@ fn owed_in(vault: &Vault, txn: &heed::RoTxn<'_>, end: &WorkflowRunEnd) -> Result
 /// The "Done means met?" an ended run's settlement asks, as a leased
 /// runner's Done asks it over its result: here over the run's report NOTE,
 /// landed first so the judge reads it, and each settled leaf's output its
-/// binder's lane reads (FIX 5293). `None` when the run did not complete,
-/// its TASK is no longer its to settle, or no question is owed.
+/// binder's lane reads (FIX 5293), with their texts (FIX 6325). `None` when
+/// the run did not complete, its TASK is no longer its to settle, or no
+/// question is owed.
 pub(crate) fn done_question(
     vault: &Vault,
     end: &WorkflowRunEnd,
@@ -410,12 +411,7 @@ pub(crate) fn done_question(
     if report_note_lost(vault, end, RunEnd::Completed, note)? {
         return Ok(None);
     }
-    let leaves: Vec<EntityId> = end
-        .results
-        .iter()
-        .filter_map(|step| EntityId::from_hex(&step.result_ref).ok())
-        .collect();
-    workflow_done_question(vault, end.task, note, &leaves, end.bound_by)
+    workflow_done_question(vault, end, note)
 }
 
 /// A completed or failed run's report on its TASK, in the settling writer:

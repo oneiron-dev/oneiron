@@ -25,15 +25,20 @@
 //!
 //! Owner ruling 2026-10-20 (FIX 6381, 6383, 6384). The Owner or an Admin,
 //! as a person, adding themselves walks in: from now on, whatever history
-//! the call asked for, and one already in the thread stays as they are. An
-//! Admin walks in only while the Owner's `rooms.private_threads.admin_walk_in`
-//! is on. Every member is told, and the walker shows in the thread's member
-//! list ([`super::audience_notices`]). An agent never walks in, a pen of the
-//! Owner or an Admin included: it asks to join. A member inside the thread
-//! adding anyone keeps their own pick. From outside the thread an Admin's
-//! add is from now on, and the Owner's add with full history opens the
-//! thread's full history to the person added ([`super::audience_history`]),
-//! logged, and its members told.
+//! the call asked for. An Admin walks in only while the Owner's
+//! `rooms.private_threads.admin_walk_in` is on. Every member is told, and
+//! the walker shows in the thread's member list
+//! ([`super::audience_notices`]). An agent never walks in, a pen of the
+//! Owner or an Admin included: it asks to join ([`super::thread_join`]).
+//! Anyone adding themselves when already in, a member or an agent alike,
+//! changes nothing, whatever history they ask: their own cut never moves
+//! (Engine ruling 10-20 17:3x). A member inside the thread adding anyone
+//! else keeps their own pick. From outside the thread an Admin's add is
+//! from now on, and changes nothing for someone already in; the Owner's add
+//! from now on moves the cut of someone already in forward, and the
+//! Owner's add with full history opens the thread's full history to the
+//! person added ([`super::audience_history`]), logged, and its members
+//! told.
 //!
 //! # Off record
 //!
@@ -72,7 +77,8 @@ pub struct ThreadAudienceAddRequest {
     pub person_ref: String,
     /// What the added person reads: the whole thread, or its turns from this
     /// add on. A walk-in reads from now on whatever this asks (FIX 6381), and
-    /// so does an Admin's add from outside the thread.
+    /// so does an Admin's add from outside the thread; a self re-add, and an
+    /// Admin's outside add for someone already in, change nothing.
     pub history: ThreadAudienceHistory,
 }
 
@@ -121,29 +127,50 @@ pub(super) fn vault_owner_or_admin_in(
     txn: &heed::RoTxn<'_>,
     actor: EntityId,
 ) -> Result<bool> {
+    Ok(vault_standing_in(vault, txn, actor)?.is_some())
+}
+
+/// What `actor` is to the vault, through the PERSON a pen is anchored to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VaultStanding {
+    /// A live PERSON among the vault's owners.
+    Owner,
+    /// A live PERSON holding an Admin grant over the shared vault, and no
+    /// owner.
+    Admin,
+}
+
+/// `actor`'s [`VaultStanding`] in `txn`, a pen through its PERSON; `None`
+/// for anyone neither the vault's Owner nor an Admin.
+pub(crate) fn vault_standing_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Option<VaultStanding>> {
     let at = crate::ports::job_recorded_at_in_txn(&vault.store, txn)?;
     let Some(person) = crate::workspace_roster::person_of_actor_in_txn(vault, txn, actor, at)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     if live_entity_row_in_txn(&vault.store, txn, &person)?.live_type() != Some(ENTITY_TYPE_PERSON) {
-        return Ok(false);
+        return Ok(None);
     }
     if crate::policy_model::owners_in_txn(vault, txn)?.contains(&person) {
-        return Ok(true);
+        return Ok(Some(VaultStanding::Owner));
     }
     let Some(creation) = vault.shared_vault_creation_in_txn(txn)? else {
-        return Ok(false);
+        return Ok(None);
     };
     Ok(matches!(
         vault.membership_standing_in_txn(txn, creation.vault_id, &person)?,
         Some(crate::federation::MembershipStanding::Member { role, .. }) if role.is_admin()
-    ))
+    )
+    .then_some(VaultStanding::Admin))
 }
 
 /// The refusal for a thread the caller may not edit, or that is no private
 /// thread: the one an unknown thread meets.
-fn unknown_thread() -> MemoryError {
+pub(super) fn unknown_thread() -> MemoryError {
     MemoryError::not_found("no private thread by that ref")
 }
 
@@ -308,13 +335,18 @@ impl Memory<'_> {
         })
     }
 
-    /// The edit an add of `person` to `thread` asking `history` writes: a
-    /// walk-in for the Owner or an Admin adding themselves, as a person
-    /// (FIX 6381), refused for an Admin entering while the Owner's setting
-    /// is off (FIX 6382); from outside the thread, an Admin's add from now
-    /// on (a full one for someone already in changes nothing), and the
-    /// Owner's with full history an opened history (FIX 6383);
-    /// else an add with the caller's pick. An agent adding itself, or its
+    /// The edit an add of `person` to `thread` asking `history` writes. A
+    /// self re-add, anyone adding themselves or their PERSON already in the
+    /// audience, member or agent alike, is a walk-in that folds as nothing,
+    /// whatever `history` asks: no one's own cut moves (Engine ruling 10-20
+    /// 17:3x (a)). Else a walk-in for the Owner or an Admin adding
+    /// themselves, as a person (FIX 6381), refused for an Admin while the
+    /// Owner's setting is off (FIX 6382). From outside the thread an
+    /// Admin's add is from now on, and for someone already in a walk-in
+    /// that changes nothing, `from_now` included (17:3x (b)); the Owner's
+    /// with full history is an opened history (FIX 6383), and the Owner's
+    /// from now on an add that moves the cut of someone already in forward.
+    /// Else an add with the caller's pick. An agent adding itself, or its
     /// PERSON, into a thread they are not in is refused (FIX 6384).
     fn added_event_in(
         &self,
@@ -351,17 +383,21 @@ impl Memory<'_> {
         let owner = (walk_in || outside)
             && human
             && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)?;
-        let (op, history) = if walk_in {
-            if entering && !owner && !room_thread_admin_settings_in_txn(vault, txn)?.admin_walk_in {
+        let (op, history) = if own && !entering {
+            // A self re-add never moves the caller's own cut: a walk-in
+            // folds as nothing for someone already in.
+            (AudienceOp::WalkIn, None)
+        } else if walk_in {
+            if !owner && !room_thread_admin_settings_in_txn(vault, txn)?.admin_walk_in {
                 return Err(admin_walk_in_off());
             }
             (AudienceOp::WalkIn, None)
         } else if outside {
             if owner && history == ThreadAudienceHistory::Full {
                 (AudienceOp::OpenFullHistory, None)
-            } else if history == ThreadAudienceHistory::Full && !entering {
-                // A full add held to from now never moves a member's cut:
-                // a walk-in folds as nothing for someone already in.
+            } else if !owner && !entering {
+                // An Admin's outside add changes nothing for someone
+                // already in, either way: a walk-in folds as nothing.
                 (AudienceOp::WalkIn, None)
             } else {
                 (AudienceOp::Add, Some(ThreadAudienceHistory::FromNow))
@@ -375,6 +411,7 @@ impl Memory<'_> {
             by: RosterActor::Actor(actor),
             op,
             history,
+            request: None,
         })
     }
 
@@ -398,10 +435,18 @@ impl Memory<'_> {
                 Some(history) => self.added_event_in(txn, &thread, person, history)?,
                 None => AudienceEvent {
                     root,
-                    person: removed_person_in(vault, txn, &thread.folded, root, person)?,
+                    person: removed_person_in(
+                        vault,
+                        txn,
+                        &thread.folded,
+                        thread.binding.room,
+                        root,
+                        person,
+                    )?,
                     by: RosterActor::Actor(actor),
                     op: AudienceOp::Remove,
                     history: None,
+                    request: None,
                 },
             };
             let id = put_audience_event_in(vault, txn, &thread.binding, &event)?;

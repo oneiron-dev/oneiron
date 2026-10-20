@@ -24,10 +24,13 @@ mod offer_settle;
 mod offers;
 mod participants;
 mod participation;
+mod private_threads;
 mod replica;
 #[cfg(test)]
 mod tests;
+mod thread_delete;
 mod thread_history;
+mod thread_join;
 mod thread_projection;
 mod thread_reads;
 mod upkeep;
@@ -51,6 +54,7 @@ pub(crate) use audience_carriers::{carried_audience_edit_in_txn, scrub_audience_
 pub use audience_doors::{
     ThreadAudienceAddRequest, ThreadAudienceReceipt, ThreadAudienceRemoveRequest,
 };
+pub(crate) use audience_doors::{VaultStanding, vault_standing_in};
 #[cfg(feature = "sync")]
 pub(crate) use audience_edit_guard::audience_edit_unlink_refusal;
 pub(crate) use audience_edit_guard::{
@@ -109,6 +113,7 @@ pub(crate) use participation::{
 use participation::{
     Claimant, agent_off_room_in_txn, require_reader, require_thread_reader, require_thread_standing,
 };
+pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
     merge_replicated_responses_in_txn, merge_replicated_shared_row_in_txn,
@@ -118,7 +123,13 @@ pub(crate) use replica::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub(crate) use thread_delete::private_root_of_room_in;
+pub use thread_delete::{PrivateThreadDeleteReceipt, PrivateThreadDeleteRequest};
 pub use thread_history::RoomMessagesRequest;
+pub use thread_join::{
+    ThreadJoinDecisionRequest, ThreadJoinRequest, ThreadJoinRequestState, ThreadJoinRequestView,
+    ThreadJoinRequestsRequest,
+};
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};

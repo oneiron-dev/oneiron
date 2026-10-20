@@ -3942,6 +3942,15 @@ class Oneiron:
         @property
         def thread_audience(self) -> "Oneiron._VaultRoomsThreadAudienceVerbs":
             return Oneiron._VaultRoomsThreadAudienceVerbs(self._client)
+        def private_threads(self, spec):
+            """That a room's private threads exist: id, creator, created and last-active times, member count; never a name, members or words. The vault's Owner or an Admin, seated or not, or the companion agent of either may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_private_threads(json.dumps(spec))))
+        def thread_delete(self, spec):
+            """Deletes a private thread's root and its own messages on the room's delete rail; legal holds keep what they name. The vault's Owner, or an Admin while rooms.private_threads.admin_delete is on, may call it, seated or not."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_delete(json.dumps(spec))))
+        @property
+        def thread_join(self) -> "Oneiron._VaultRoomsThreadJoinVerbs":
+            return Oneiron._VaultRoomsThreadJoinVerbs(self._client)
         def join(self, spec):
             """Files and decides a request to take part in a room or one of its threads."""
             return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
@@ -3967,7 +3976,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def add(self, spec):
-            """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
+            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told."""
             return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_add(json.dumps(spec))))
         def open_full_history(self, spec):
             """Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."""
@@ -3975,6 +3984,21 @@ class Oneiron:
         def remove(self, spec):
             """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
             return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_remove(json.dumps(spec))))
+    class _VaultRoomsThreadJoinVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def request(self, spec):
+            """Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_join_request(json.dumps(spec))))
+        def requests(self, spec):
+            """The requests to join a private thread pending now: each request, who asked and when; a member in its audience now may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_join_requests(json.dumps(spec))))
+        def approve(self, spec):
+            """Approves a pending request to join a private thread: the one who asked is added from now on, citing the request, and told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_join_approve(json.dumps(spec))))
+        def deny(self, spec):
+            """Denies a pending request to join a private thread, and the one who asked is told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_join_deny(json.dumps(spec))))
     class _VaultRoomsOfferVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

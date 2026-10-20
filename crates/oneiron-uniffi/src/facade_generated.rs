@@ -3531,6 +3531,36 @@ export_facade! {
     let output = client.vault_rooms_thread_audience_remove(&input)?;
     crate::codec::lift_record("vault.rooms.thread_audience.remove", &output)
 };
+"vault.rooms.private_threads" => fn vault_rooms_private_threads(&self, input: RoomPrivateThreadsRequest) -> Vec<PrivateThreadMetadata> = |client| {
+    let input: oneiron::workspace_roster::RoomPrivateThreadsRequest = crate::codec::lower_record("vault.rooms.private_threads", input)?;
+    let output = client.vault_rooms_private_threads(&input)?;
+    crate::codec::lift_record("vault.rooms.private_threads", &output)
+};
+"vault.rooms.thread_delete" => fn vault_rooms_thread_delete(&self, input: PrivateThreadDeleteRequest) -> PrivateThreadDeleteReceipt = |client| {
+    let input: oneiron::workspace_roster::PrivateThreadDeleteRequest = crate::codec::lower_record("vault.rooms.thread_delete", input)?;
+    let output = client.vault_rooms_thread_delete(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_delete", &output)
+};
+"vault.rooms.thread_join.request" => fn vault_rooms_thread_join_request(&self, input: ThreadJoinRequest) -> ThreadJoinRequestView = |client| {
+    let input: oneiron::workspace_roster::ThreadJoinRequest = crate::codec::lower_record("vault.rooms.thread_join.request", input)?;
+    let output = client.vault_rooms_thread_join_request(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_join.request", &output)
+};
+"vault.rooms.thread_join.requests" => fn vault_rooms_thread_join_requests(&self, input: ThreadJoinRequestsRequest) -> Vec<ThreadJoinRequestView> = |client| {
+    let input: oneiron::workspace_roster::ThreadJoinRequestsRequest = crate::codec::lower_record("vault.rooms.thread_join.requests", input)?;
+    let output = client.vault_rooms_thread_join_requests(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_join.requests", &output)
+};
+"vault.rooms.thread_join.approve" => fn vault_rooms_thread_join_approve(&self, input: ThreadJoinDecisionRequest) -> ThreadJoinRequestView = |client| {
+    let input: oneiron::workspace_roster::ThreadJoinDecisionRequest = crate::codec::lower_record("vault.rooms.thread_join.approve", input)?;
+    let output = client.vault_rooms_thread_join_approve(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_join.approve", &output)
+};
+"vault.rooms.thread_join.deny" => fn vault_rooms_thread_join_deny(&self, input: ThreadJoinDecisionRequest) -> ThreadJoinRequestView = |client| {
+    let input: oneiron::workspace_roster::ThreadJoinDecisionRequest = crate::codec::lower_record("vault.rooms.thread_join.deny", input)?;
+    let output = client.vault_rooms_thread_join_deny(&input)?;
+    crate::codec::lift_record("vault.rooms.thread_join.deny", &output)
+};
 "vault.projects.propose" => fn vault_projects_propose(&self, input: ProjectProposalRequest) -> ProjectProposalCard = |client| {
     let input: oneiron::workspace_roster::ProjectProposalRequest = crate::codec::lower_record("vault.projects.propose", input)?;
     let output = client.vault_projects_propose(&input)?;

@@ -56,7 +56,9 @@ fn carried_edit(blob: &[u8]) -> Option<(ThreadBinding, AudienceEvent)> {
 /// it no one. `None` when they differ in anything else, or name two
 /// different people in one slot.
 fn merged(held: &AudienceEvent, carried: &AudienceEvent) -> Option<AudienceEvent> {
-    if (held.root, held.op, held.history) != (carried.root, carried.op, carried.history) {
+    if (held.root, held.op, held.history, held.request)
+        != (carried.root, carried.op, carried.history, carried.request)
+    {
         return None;
     }
     let erased = held.person.stand_in(held.root);

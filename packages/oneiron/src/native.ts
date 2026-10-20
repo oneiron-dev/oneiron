@@ -738,6 +738,12 @@ vaultRoomsSpeak(input: unknown): unknown
 vaultRoomsThreadAudienceAdd(input: unknown): unknown
 vaultRoomsThreadAudienceOpenFullHistory(input: unknown): unknown
 vaultRoomsThreadAudienceRemove(input: unknown): unknown
+vaultRoomsPrivateThreads(input: unknown): unknown
+vaultRoomsThreadDelete(input: unknown): unknown
+vaultRoomsThreadJoinRequest(input: unknown): unknown
+vaultRoomsThreadJoinRequests(input: unknown): unknown
+vaultRoomsThreadJoinApprove(input: unknown): unknown
+vaultRoomsThreadJoinDeny(input: unknown): unknown
 vaultProjectsPropose(input: unknown): unknown
 vaultProjectsProposals(input: unknown): unknown
 vaultProjectsDismissCard(input: unknown): unknown
