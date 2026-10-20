@@ -247,6 +247,28 @@ pub(super) fn renderer_request_url(raw: &str) -> RendererResult<String> {
 /// free of them. An empty username or password is not a secret and is never
 /// substituted for.
 pub(super) fn redacted_transport_detail(error: reqwest::Error) -> String {
+    // A host's egress guard failed this connection (SCAN C447): the detail
+    // names it with the engine's own text, never the chain's.
+    let refused =
+        std::iter::successors(std::error::Error::source(&error), |&source| source.source()).any(
+            |source| {
+                source.is::<super::HostedInfrastructureRefusal>()
+                    || source
+                        .downcast_ref::<std::io::Error>()
+                        .and_then(std::io::Error::get_ref)
+                        .is_some_and(|inner| inner.is::<super::HostedInfrastructureRefusal>())
+            },
+        );
+    let detail = transport_detail(error);
+    if refused {
+        format!("{detail}: {}", super::HostedInfrastructureRefusal)
+    } else {
+        detail
+    }
+}
+
+/// [`redacted_transport_detail`]'s redaction of the error itself.
+fn transport_detail(error: reqwest::Error) -> String {
     let Some(url) = error.url().cloned() else {
         // No URL was ever attached, so there is none to disclose.
         return error.to_string();
