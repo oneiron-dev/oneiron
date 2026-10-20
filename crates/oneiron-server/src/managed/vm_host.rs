@@ -5,15 +5,20 @@
 //! host vm` runs one vault behind it. No deployment adopts it until the
 //! owner answers the wake-budget bench, and nothing here is tuned for it.
 //!
-//! The guest is the managed engine with `--vsock-guest`. The host hands it
+//! The guest is the managed engine with `--vsock-guest`, started by the
+//! image's root bootstrap as the vault's own non-root UID. On a cold boot the
+//! host first answers that bootstrap's provision connection with the vault's
+//! binding and fscrypt key (FIX 6308, [`provision`]), then hands the engine
 //! the credential frame on the boot port, waits for the ready byte, then
 //! drives its lifecycle connection. Sleep freezes the vault through ctl,
 //! asks the guest for its next wake, and snapshots RAM only when the guest
 //! says no off-record stretch is open (OFFREC-SNAPSHOT = A); otherwise the
 //! vault stops, as a reap does on a node. A snapshot is published by rename
 //! and consumed by rename before it is loaded, so one RAM image never resumes
-//! twice. Placement, the jailer, cgroups and per-vault UIDs stay with the
-//! supervisor that runs this driver.
+//! twice. Placement, the jailer and cgroups stay with the supervisor that
+//! runs this driver; the guest's UID is the one its provision binding names.
+
+mod provision;
 
 use super::listener::bind_unix_socket;
 use super::vault_gates::read_managed_credentials;
@@ -23,6 +28,7 @@ use oneiron_vault_contract::vm::{
     VM_LEDGER_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
     guest_initiated_socket, host_connect_line,
 };
+use oneiron_vault_contract::vm_provision::{VmFscryptKey, VmProvisionBinding};
 use oneiron_vault_contract::{
     CREDENTIALS_LEN, Credentials, CtlRequest, CtlResponse, DEK_LEN, LedgerAck, LedgerUpdate,
     MAX_CTL_LINE, READY_BYTE, TokenHex, UnixTs, now_ts, valid_vault_name,
@@ -59,7 +65,9 @@ pub struct VaultVmConfig {
     pub kernel: PathBuf,
     /// The engine image, read-only.
     pub rootfs: PathBuf,
-    /// This vault's own disk, read-write; the guest mounts its data dir here.
+    /// This vault's own disk, read-write: ext4 with its `encrypt` feature,
+    /// which the guest mounts at `/vault` and keeps its fscrypt storage, data
+    /// directory and key directory on.
     pub vault_disk: PathBuf,
     /// Owner-only directory for the API and vsock sockets and the snapshot.
     pub state_dir: PathBuf,
@@ -97,6 +105,11 @@ pub struct VaultVmConfig {
     /// Without it the guest runs with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
+    /// The vault's provision binding (FIX 6308): the UID its engine runs as,
+    /// its derivation owner, `vault_disk`'s filesystem UUID and its fscrypt
+    /// key's identifier. Required: a profile without a valid one never boots,
+    /// and a guest that finds it contradicted refuses its provisioning.
+    pub provision: VmProvisionBinding,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -133,6 +146,9 @@ impl VaultVm {
     /// before any VMM runs, so a guest never dials an unbound port.
     pub fn prepare(config: VaultVmConfig, vault: String) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_vault_name(&vault), "invalid vault name");
+        if let Err(fault) = config.provision.validate() {
+            anyhow::bail!("the VM profile's provision binding: {fault}");
+        }
         crate::web_client::parse_allowed_origins(&config.allowed_origins)?;
         std::fs::create_dir_all(&config.state_dir)?;
         std::fs::set_permissions(&config.state_dir, std::fs::Permissions::from_mode(0o700))?;
@@ -166,17 +182,19 @@ impl VaultVm {
         self.child.is_some()
     }
 
-    /// Restores the published snapshot if there is one, else boots cold.
-    /// Returns once the vault reported ready (cold) or rejoined (restore).
+    /// Restores the published snapshot if there is one, else boots cold,
+    /// provisioning the guest with `fscrypt_key` first. Returns once the
+    /// vault reported ready (cold) or rejoined (restore).
     pub async fn start(
         &mut self,
         credentials: &Credentials,
+        fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<()> {
         if self.has_snapshot() {
             self.restore(timeout).await
         } else {
-            self.cold_boot(credentials, timeout).await
+            self.cold_boot(credentials, fscrypt_key, timeout).await
         }
     }
 
@@ -255,6 +273,7 @@ impl VaultVm {
     async fn cold_boot(
         &mut self,
         credentials: &Credentials,
+        fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<()> {
         self.spawn_vmm().await?;
@@ -357,6 +376,7 @@ impl VaultVm {
         .await?;
         self.api("PUT", "/actions", json!({ "action_type": "InstanceStart" }))
             .await?;
+        self.provision(fscrypt_key, timeout).await?;
 
         // The credential connection: the frame, a half-close for the guest's
         // EOF check, then the ready byte back.
@@ -580,6 +600,9 @@ pub struct VaultVmRun {
     pub vault_name: String,
     pub listen: PathBuf,
     pub credentials_fd: std::os::fd::RawFd,
+    /// Carries exactly the vault's 64-byte fscrypt key; read once, and sent
+    /// to the guest on each cold boot.
+    pub fscrypt_key_fd: std::os::fd::RawFd,
     pub idle: Duration,
 }
 
@@ -622,7 +645,12 @@ async fn take_ledger_push(
 
 pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
     let config: VaultVmConfig = serde_json::from_slice(&std::fs::read(&run.config)?)?;
+    anyhow::ensure!(
+        run.fscrypt_key_fd != run.credentials_fd,
+        "--fscrypt-key-fd and --credentials-fd name one descriptor"
+    );
     let credentials = read_managed_credentials(run.credentials_fd)?;
+    let fscrypt_key = provision::read_fscrypt_key(run.fscrypt_key_fd)?;
     let token = TokenHex::from_token(&credentials.token);
     let mut vm = VaultVm::prepare(config, run.vault_name.clone())?;
     let front = bind_unix_socket(&run.listen)?;
@@ -637,7 +665,7 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
             accepted = front.accept() => {
                 let (mut client, _) = accepted?;
                 if !vm.is_running() {
-                    vm.start(&credentials, API_TIMEOUT).await?;
+                    vm.start(&credentials, &fscrypt_key, API_TIMEOUT).await?;
                 }
                 last_activity = Instant::now();
                 let mut guest = vm.http().await?;
@@ -656,7 +684,7 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
             }
             _ = tick.tick() => {
                 if !vm.is_running() && vm.schedule.has_due(now_ts()) {
-                    vm.start(&credentials, API_TIMEOUT).await?;
+                    vm.start(&credentials, &fscrypt_key, API_TIMEOUT).await?;
                     last_activity = Instant::now();
                 }
                 if vm.is_running() {
