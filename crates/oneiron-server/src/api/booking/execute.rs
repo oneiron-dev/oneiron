@@ -70,7 +70,10 @@ async fn execute(
     transport: BookingAdmissionContext,
 ) -> Result<(BookingOperationResponse, Option<Vec<EntityId>>), ApiError> {
     // ── 1. shape, keys, and the page subject ────────────────────────────
-    let (public_authority, mut listed) = if transport.transport != BookingTransport::PublicHttp {
+    // A request that books only a published page (an anonymous visitor, a
+    // credential caller, a stale owner sign-in: FIX 5327) never reaches the
+    // owner's own page resolver below.
+    let (public_authority, mut listed) = if transport.requires_publication {
         let (page_ref, publication, rows) =
             public::resolve_public_booking_page_listing(server, page_token)?;
         let authority = oneiron::booking::publication::PublicBookingAuthority {

@@ -56,6 +56,7 @@ pub(crate) mod redirty;
 mod residency;
 mod resident_dream;
 mod resident_for_human;
+mod resident_health;
 pub(crate) mod resources;
 mod retained_conflict;
 mod revert;

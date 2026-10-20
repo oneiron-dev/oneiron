@@ -1,6 +1,36 @@
 /// Same-origin prefix every advertised booking path is relative to.
 pub(crate) const BOOKING_ROUTE_PREFIX: &str = "/api/booking";
 
+/// The doors at which a managed vault's attested holder the vault no longer
+/// records as its live owner still books, as himself or as the public (FIX
+/// 5327): the legacy booking operations and the generated booking verbs,
+/// each by its exact route shape, `{page_token}` standing for one non-empty
+/// segment and nothing else a wildcard. The page-token mint, the agent
+/// instructions, `/v1/owner`, the action doors and code runs are none of
+/// them. A managed-MCP booking tool is the verb a facade door here names.
+pub(super) const BOOKING_PAYER_DOORS: &[&str] = &[
+    "/api/booking/{page_token}/availability",
+    "/api/booking/{page_token}/book",
+    "/api/booking/{page_token}/reschedule",
+    "/api/booking/{page_token}/cancel",
+    "/v1/core/facade/vault.booking.availability",
+    "/v1/core/facade/vault.booking.book",
+    "/v1/core/facade/vault.booking.reschedule",
+    "/v1/core/facade/vault.booking.cancel",
+    "/v1/core/facade/vault.booking.constraint_turn",
+];
+
+/// The root the generated booking verbs among [`BOOKING_PAYER_DOORS`] are
+/// served under: what follows it is the verb.
+pub(super) const BOOKING_PAYER_FACADE_ROOT: &str = "/v1/core/facade/";
+
+/// Whether a stale owner sign-in that books (FIX 5327) keeps the owner's
+/// exemption from the per-email cap on active bookings. `false` (owner
+/// 10-20: "If I don't have a grant, its a normie view"): only the live owner
+/// books for the owner; `true` would keep the exemption a credential built
+/// while he was the owner had.
+pub(super) const STALE_BOOKING_KEEPS_OWNER_GRADE: bool = false;
+
 /// Lease owner recorded on the attempt row while this node drains one booking
 /// verb. Named for the surface so a queue inspection says which door enqueued.
 pub(super) const BOOKING_LIFECYCLE_LEASE_OWNER: &str = "oneiron-server-booking-agent-api";

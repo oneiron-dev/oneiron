@@ -197,7 +197,7 @@ impl BlobStore for Vault {
         // FIX 5395: the stream is read against the values custody holds, as
         // this transaction holds them.
         let known = self.asset_stream_known_in_txn(txn)?;
-        let staged = self.stage_asset_body(body, None, known)?;
+        let staged = self.stage_asset_body(body, None, known, None)?;
         let hash = staged.facts().blake3;
         let id = blob_artifact_asset_entity_id(&hash)?;
         if id == *reference {

@@ -45,6 +45,11 @@ pub struct FreeTimeItemReceipt {
     pub attempt: Option<[u8; 16]>,
     /// The Proposed claim a for-human item landed.
     pub proposal: Option<EntityId>,
+    /// The code of a for-human item's read of its human's context that
+    /// failed (FIX 5663): the item ran on its own records, as before. `None`
+    /// when that context read, or there was none to read.
+    #[serde(default)]
+    pub context_unread: Option<String>,
     /// Vault clock seconds.
     pub at: u64,
 }
@@ -65,6 +70,7 @@ impl FreeTimeItemReceipt {
             outcome,
             attempt: Some(binding.attempt),
             proposal,
+            context_unread: None,
             at,
         }
     }
@@ -121,14 +127,19 @@ pub fn free_time_floor(
 }
 
 /// Records `receipt` unless its item already has one; the first stands.
-/// Returns whether it was recorded.
+/// Returns whether it was recorded. An agent an erase removed records
+/// nothing (FIX 5664): its erase took its free-time rows, and a writer that
+/// lands after it keeps no copy, so neither the receipt nor the note and
+/// cycle close each caller writes only after a recorded receipt land.
 pub(super) fn record_receipt_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     receipt: &FreeTimeItemReceipt,
 ) -> Result<bool> {
     let key = (receipt.agent, receipt.cycle, receipt.item);
-    if RECEIPT.contains(&vault.store, txn, &key)? {
+    if RECEIPT.contains(&vault.store, txn, &key)?
+        || crate::ports::removed_in_txn(&vault.store, txn, &receipt.agent)?
+    {
         return Ok(false);
     }
     RECEIPT.put(&vault.store, txn, &key, receipt)?;

@@ -426,8 +426,13 @@ async fn mcp_endpoint(
         None => None,
         Some(invocation) => {
             // A held socket's owner is judged before anything is claimed or
-            // replayed, and keys the claim (FIX 5128).
-            let owner = match super::owner_call::invocation_owner(&connection, &server) {
+            // replayed, and keys the claim (FIX 5128); a stale one's booking
+            // tool call is his to claim (FIX 5327).
+            let params = request.params.as_ref();
+            let owner_of = || {
+                super::booking_call::invocation_owner(mode, &headers, &connection, &server, params)
+            };
+            let owner = match owner_of() {
                 Ok(owner) => owner,
                 Err(error) => {
                     return mcp_connection_refusal(
@@ -452,7 +457,7 @@ async fn mcp_endpoint(
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
                     // And again once the wait is over, before a reply is his.
-                    if let Err(error) = super::owner_call::invocation_owner(&connection, &server) {
+                    if let Err(error) = owner_of() {
                         return mcp_connection_refusal(
                             &server,
                             &headers,
@@ -662,10 +667,18 @@ pub(crate) async fn handle_mcp_request(
             }))
         }
         "tools/call" => {
-            let actor =
-                resolve_mcp_caller(mode, &request_id, headers, connection, locality, server)
-                    .await?
-                    .toward(peer);
+            // A stale owner sign-in's booking tool call is his (FIX 5327).
+            let actor = super::booking_call::resolve_tool_caller(
+                mode,
+                &request_id,
+                headers,
+                connection,
+                locality,
+                server,
+                request.params.as_ref(),
+            )
+            .await?
+            .toward(peer);
             // OF-538: what the call's receipt states of its request, taken
             // before the params are consumed.
             let tool = request

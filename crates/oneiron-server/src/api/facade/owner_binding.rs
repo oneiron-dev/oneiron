@@ -55,7 +55,7 @@ pub(super) fn managed_owner_binding(
     let refused = || {
         FacadeApiError::forbidden(
             "the attested owner is not this vault's live owner",
-            ["Sign in again as this vault's owner, then retry."],
+            [crate::error::MANAGED_OWNER_SIGN_IN_AGAIN],
         )
     };
     let owner =
@@ -93,14 +93,22 @@ pub(super) fn host_preflight(server: &SyncServer, auth: &CoreAuth) -> MemoryResu
 
 /// The owner's own in-request proof for a facade owner door, as
 /// `/v1/owner` takes it, after [`host_preflight`]. Any other caller gets
-/// `refused`, the door's own owner refusal.
+/// `refused`, the door's own owner refusal; a managed vault's attested
+/// holder the vault no longer records as its live owner gets it told to
+/// sign in again (FIX 5327).
 pub(super) fn facade_owner_or(
     server: &SyncServer,
     auth: &CoreAuth,
     refused: impl FnOnce() -> MemoryError,
 ) -> MemoryResult<AuthenticatedOwner> {
     host_preflight(server, auth)?;
-    crate::api::owner_routes::owner(auth, server).map_err(|_| refused())
+    crate::api::owner_routes::owner(auth, server).map_err(|error| {
+        let mut refusal = refused();
+        if error == crate::error::ApiError::managed_owner_not_live() {
+            refusal.suggestions = vec![crate::error::MANAGED_OWNER_SIGN_IN_AGAIN.to_owned()];
+        }
+        refusal
+    })
 }
 
 /// [`facade_owner_or`] with the owner doors' common refusal: `verb` is the

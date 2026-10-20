@@ -1,11 +1,14 @@
 //! What this server lends one entry of a Dreamer turn program (DOOR-141 PR2):
 //! the engine-native code host's own runtime, backend, config and seat, on
 //! the program's code run, and the door a pumped agent run binds, under the
-//! program's waking agent. Its rows answer that agent alone, on this device;
-//! nothing here is the operator's or the Dreamer's.
+//! program's waking actor: an agent, or a person through a host surface
+//! (FIX 5717), the exact actor its turn sealed and under its own class. Its
+//! rows answer that actor alone, on this device, with the engine's own actor
+//! and Gate checks; nothing here is the operator's or the Dreamer's, and no
+//! owner, root or Dreamer proof is made up for it.
 //!
-//! A program this host cannot bind (its actor is no agent, serve has not
-//! bound the server, the host runs no engine-native code mode, or its run
+//! A program this host cannot bind (its actor is a System actor, serve has
+//! not bound the server, the host runs no engine-native code mode, or its run
 //! cannot be configured or seated) is lent nothing: that program parks, and
 //! nothing else changes. Once serve binds the server, each program held for
 //! want of this host whose waking agent it now lends to resumes as the same
@@ -43,12 +46,15 @@ impl ServerTurnPrograms {
 }
 
 /// Whether `server` lends `actor`'s turn programs on `vault` at all, before
-/// any run is configured or seated: the host's run door serves an agent's
-/// own rows, on the server's own vault, through its engine-native code mode.
-/// A program another actor wakes is lent nothing here.
+/// any run is configured or seated: the host's run door serves the waking
+/// actor's own rows under its own class, an agent's or a person's (FIX 5717),
+/// on the server's own vault, through its engine-native code mode. A program
+/// a System actor wakes is lent nothing here.
 fn lends_programs(server: &SyncServer, vault: &Vault, actor: WriteActor) -> bool {
-    matches!(actor.actor_class(), EdgeActorClass::Agent)
-        && std::ptr::eq(vault, server.vault().as_ref())
+    matches!(
+        actor.actor_class(),
+        EdgeActorClass::Agent | EdgeActorClass::Human
+    ) && std::ptr::eq(vault, server.vault().as_ref())
         && server
             .code_execution_host()
             .is_some_and(|host| host.engine_native().is_some())

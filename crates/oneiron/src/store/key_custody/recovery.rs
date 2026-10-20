@@ -96,7 +96,10 @@ impl CustodyRequirement {
 impl Store {
     /// What an image taken now needs of this vault's custody; `None` while
     /// nothing was ever published under it. The caller holds the custody
-    /// read guard across this and the image's snapshot.
+    /// read guard across this and the image's snapshot. Body instances are
+    /// not listed: an image names each one its rows need beside them, and a
+    /// restore requires each against the custody it lands (KS-2A), so the
+    /// sealed manifest stays one frame however many bodies a vault keeps.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -110,7 +113,9 @@ impl Store {
             position: position.to_bytes().to_vec(),
             required: census
                 .into_iter()
-                .filter(|(_, state)| *state == EntryState::Live)
+                .filter(|(id, state)| {
+                    *state == EntryState::Live && id.kind() != CustodyKind::BodyInstance
+                })
                 .map(|(id, _)| RequiredId {
                     kind: id.kind().tag(),
                     item: id.subject().item().to_vec(),
