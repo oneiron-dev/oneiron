@@ -215,7 +215,10 @@ names the field and never its value:
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
   every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
-  `[linear] response_dir`, which the vault derives itself.
+  `[linear] response_dir`, which the vault derives itself. A managed vault's
+  artifact origin answers on its internal authority alone
+  (`<vault_id>.artifact.invalid`); the edge checks public labels and composes
+  public URLs.
   The supervisor passes the voice loop's socket as `--voice-socket`, the key
   directory as `--keystore-dir`, the host's public https origin as
   `--oauth-resource-indicator <url>` and the URLs a recovery kit dials as
