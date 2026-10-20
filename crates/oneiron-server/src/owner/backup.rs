@@ -16,7 +16,9 @@
 //! the highest already there. Retention orders by that number, never by the
 //! clock, so a clock that steps back cannot make a new backup look oldest.
 //! A backup holds every record its image carries, so while any legal hold
-//! stands none expires (ARCH-0038 #legal-hold).
+//! stands none expires (ARCH-0038 #legal-hold). A label whose handoff policy
+//! a managed setup installed keeps each backup until its node's supervisor
+//! acks the stage copy (`handoff`).
 //!
 //! Once a backup lands, what it covered is recorded beside it
 //! (`.<label>.backup-watermark.json`), so a host can tell whether the vault
@@ -43,6 +45,7 @@ use super::stamp::{file_stamp, now_unix_ms, parse_file_stamp, rfc3339};
 use crate::machine::DiskFloor;
 
 mod custody;
+mod handoff;
 mod rehearse;
 mod restore;
 mod scratch;
@@ -86,6 +89,8 @@ pub(crate) struct BackupPlan {
     /// none (plain serve, the stopped CLI), and the backup says so; nothing
     /// is refused either way, and nothing of it is kept.
     pub(crate) registry: Option<String>,
+    /// When this label's handoff backlog last raised its check (`handoff`).
+    backlog_checked: handoff::BacklogChecked,
 }
 
 impl BackupPlan {
@@ -97,6 +102,7 @@ impl BackupPlan {
             custody: custody::CustodyPlan::default(),
             floor: None,
             registry: None,
+            backlog_checked: handoff::BacklogChecked::default(),
         }
     }
 }
@@ -222,11 +228,7 @@ pub(crate) fn take_as(
     }
     custody::publish_after_take(vault, plan);
     let bytes = std::fs::metadata(&path)?.len();
-    let pruned = if vault.legal_hold_keeps_backups()? {
-        Vec::new()
-    } else {
-        prune(plan, &file)?
-    };
+    let pruned = prune(vault, plan, Some(&file))?;
     Ok(BackupOutcome {
         backup: BackupRecord {
             file,
@@ -299,25 +301,58 @@ fn parse_sequence(field: &str) -> Option<u64> {
     field.parse().ok()
 }
 
-/// Deletes this vault's oldest backups beyond `plan.keep`, never `spared` (the
-/// backup a `take` just wrote, which counts as one kept); returns their names.
-fn prune(plan: &BackupPlan, spared: &str) -> anyhow::Result<Vec<String>> {
+/// Deletes this vault's oldest backups beyond `plan.keep`; returns their
+/// names. `spared`, the backup a `take` just wrote, is never deleted and
+/// counts as one kept; with none spared, the newest `keep` stay. Nothing
+/// goes while a legal hold stands. A label whose handoff policy is installed
+/// deletes only the ones its node's supervisor acked, and keeps the rest
+/// pending, an error included (`handoff`). The caller holds the backup lock.
+pub(crate) fn prune(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+    spared: Option<&str>,
+) -> anyhow::Result<Vec<String>> {
+    if vault.legal_hold_keeps_backups()? {
+        return Ok(Vec::new());
+    }
     let records: Vec<_> = list(plan)?
         .into_iter()
-        .filter(|record| record.file != spared)
+        .filter(|record| Some(record.file.as_str()) != spared)
         .collect();
-    let excess = records.len().saturating_sub(plan.keep.max(1) - 1);
+    let keep = plan.keep.max(1) - usize::from(spared.is_some());
+    let excess = records.len().saturating_sub(keep);
+    let excess: Vec<_> = records.into_iter().take(excess).collect();
+    let Some(handoff) = handoff::pinned(&plan.dir, &plan.label) else {
+        let mut pruned = Vec::new();
+        for record in excess {
+            match std::fs::remove_file(&record.path) {
+                Ok(()) => pruned.push(record.file),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if !pruned.is_empty() {
+            sync_dir(&plan.dir)?;
+        }
+        return Ok(pruned);
+    };
+    let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
     let mut pruned = Vec::new();
-    for record in records.into_iter().take(excess) {
+    for (record, ack) in released {
         match std::fs::remove_file(&record.path) {
-            Ok(()) => pruned.push(record.file),
+            Ok(()) => {
+                let _ = std::fs::remove_file(ack);
+                pruned.push(record.file);
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+            // Kept, and pending: a pinned backup is never lost to an error.
+            Err(_) => pending.push(record),
         }
     }
     if !pruned.is_empty() {
-        sync_dir(&plan.dir)?;
+        let _ = sync_dir(&plan.dir).and_then(|()| sync_dir(&handoff));
     }
+    handoff::check_backlog(vault, &plan.backlog_checked, &pending);
     Ok(pruned)
 }
 
