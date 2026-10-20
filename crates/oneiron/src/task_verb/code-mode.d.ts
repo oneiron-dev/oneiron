@@ -58,7 +58,7 @@ declare namespace Sdk {
   type FeedbackPreviewRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean };
   type FeedbackSubjectPreview = { issue_ref: string; subject_ref: string; publisher_ref: string; disclosure: ReportDisclosure; includes_text: boolean; digest: string; encoding: string; bundle: unknown; destination: string; approval: string; previewed_at: number };
   type FeedbackSendSubjectRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean; digest: string; approval: string; previewed_at: number };
-  type FeedbackSubjectSent = { issue_ref: string; subject_ref: string; publisher_ref: string; digest: string; outcome: string; gate_reasons: string[]; approval_receipt_ref: string; logical_send_ref: string };
+  type FeedbackSubjectSent = { issue_ref: string; subject_ref: string; publisher_ref: string; digest: string; outcome: string; gate_reasons: string[]; approval_receipt_ref: string; logical_send_ref: string; approval_digest?: string | null };
   type ReportDisclosureChoice = "approve_once" | "stop_asking_for_publisher" | "deny";
   type ReportDisclosureRequest = { issue_ref: string; choice: ReportDisclosureChoice };
   type ReportReview = { status: ReportStatus; quality_score?: number | null; duplicate_of?: string | null };
@@ -1317,7 +1317,7 @@ declare namespace Sdk {
   type TrustedContactConcernProposal = { action: string; fact?: TrustedContactConcernFact | null; gate_receipt_ref?: string | null; open_asks: TrustedContactAsk[]; system_notices: GateSystemNoticeRecord[] };
   type TrustedContactDeliverRequest = Record<string, never>;
   type TrustedContactNoticeAuthorization = { origin: "ask"; ask_ref: string } | { origin: "policy"; row_ref: string; tier: TrustedContactTier };
-  type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean };
+  type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean; approval_digest?: string | null };
   type GuestDocumentShareRequest = { grant_ref: EntityId; world_ref: EntityId; window_key: string; facets?: EntityId[]; bands?: SelectorRange[] };
   type GuestDocumentContext = { pact: string; epoch: number; ceiling: Scope; effective_scope: FederationDirectionScope };
   type AuthorityVaultId = number[];
@@ -3141,7 +3141,7 @@ declare namespace Sdk {
   type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
   type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
   type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
-  type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null };
+  type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null; approval_digest?: string | null };
   type MemoryPolicyExceptionProposal = { action: string; row_ref: string; required_role: string };
   type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
   type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };

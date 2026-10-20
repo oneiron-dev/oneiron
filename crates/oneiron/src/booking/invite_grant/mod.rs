@@ -34,7 +34,9 @@ mod types;
 pub use self::authorization::{
     booking_page_grant_covers_recipient, booking_page_invites_authorizes,
 };
-pub use self::dispatch::enqueue_confirm_invite;
+pub use self::dispatch::{
+    ConfirmInviteOutcome, enqueue_confirm_invite, enqueue_confirm_invite_outcome,
+};
 pub use self::mint::mint_publish_page_invite_grant;
 pub use self::types::{
     BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,

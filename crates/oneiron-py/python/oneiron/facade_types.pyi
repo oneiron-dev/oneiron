@@ -222,6 +222,7 @@ class FeedbackSubjectSent(TypedDict):
     gate_reasons: list[str]
     approval_receipt_ref: str
     logical_send_ref: str
+    approval_digest: NotRequired[str | None]
 ReportDisclosureChoice = Literal["approve_once", "stop_asking_for_publisher", "deny"]
 class ReportDisclosureRequest(TypedDict):
     issue_ref: str
@@ -6404,6 +6405,7 @@ class TrustedContactDeliveryReceipt(TypedDict):
     occurred_at: int
     provider_ref: NotRequired[str | None]
     delivery_may_have_occurred: bool
+    approval_digest: NotRequired[str | None]
 class GuestDocumentShareRequest(TypedDict):
     grant_ref: EntityId
     world_ref: EntityId
@@ -15306,6 +15308,7 @@ class MemoryGateDenial(TypedDict):
     outcome: str
     reason_codes: list[str]
     ask_ref: NotRequired[str | None]
+    approval_digest: NotRequired[str | None]
 class MemoryPolicyExceptionProposal(TypedDict):
     action: str
     row_ref: str

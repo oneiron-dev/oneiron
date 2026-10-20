@@ -201,6 +201,12 @@ pub struct TrustedContactDeliveryReceipt {
     pub occurred_at: u64,
     pub provider_ref: Option<String>,
     pub delivery_may_have_occurred: bool,
+    /// While the Gate holds the notice for the owner (`gate_outcome`
+    /// `pending`), the approve-once digest his one-time press must name to
+    /// release it, 64 lower-hex (FIX 6424), copied from the dispatch result.
+    /// Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_digest: Option<String>,
 }
 
 /// The one typed field `.concern.propose` reads from a message body.
@@ -433,6 +439,7 @@ pub fn deliver_trusted_contact_notice<S: OutboundExecutionSink>(
             gate_decision_id: result.gate_decision_id,
             gate_outcome: result.gate_outcome,
             gate_reason_codes: result.gate_reason_codes,
+            approval_digest: result.approval_digest,
             provider_ref: result.receipt.fields.get("provider_ref").cloned(),
             delivery_may_have_occurred: result
                 .receipt
