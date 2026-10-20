@@ -28,8 +28,8 @@ use crate::claim::history_store::{
     machine_history_shape_matches,
 };
 use crate::claim::{
-    ClaimBirth, ClaimBody, ClaimHistoryHandoff, ClaimHistoryHandoffPin, ClaimSubject,
-    ClaimTransition, HandoffKind, HandoffStanding, HandoffVerification,
+    ClaimBirth, ClaimBody, ClaimHistoryHandoff, ClaimHistoryHandoffPin, ClaimTransition,
+    HandoffKind, HandoffStanding, HandoffVerification, claim_initial_claim_of_weight,
     verify_claim_history_handoff,
 };
 use crate::edge::{EdgeActorClass, EdgeKind};
@@ -236,8 +236,8 @@ pub(crate) fn stage_machine_claim_transition(
     let event_id = machine_claim_transition_event_id(&event)?;
     let mut events = rows.events;
     events.push(event.clone());
-    let initial_weight = matches!(original.subject, ClaimSubject::Entity(_))
-        .then_some(EdgeKind::ClaimOf.default_weight().unwrap_or(1.0));
+    // The signed birth's own ClaimOf weight, as the history projection seeds it.
+    let initial_weight = claim_initial_claim_of_weight(&original).map_err(|_| invalid())?;
     let result = fold_machine_claim_transitions(
         &original,
         &vault_id,

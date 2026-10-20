@@ -517,11 +517,9 @@ fn machine_history(
         .copied()
         .collect();
     let original = super::decode_claim_body(&rows.birth.initial_body, true)?;
-    let initial_weight = matches!(original.subject, super::ClaimSubject::Entity(_)).then_some(
-        crate::edge::EdgeKind::ClaimOf
-            .default_weight()
-            .unwrap_or(1.0),
-    );
+    // The signed birth's own ClaimOf weight, the one the materializer gave
+    // the edge.
+    let initial_weight = super::claim_initial_claim_of_weight(&original).map_err(|_| bad())?;
     fold_machine_claim_transitions(
         &original,
         &rows.birth.vault_id,

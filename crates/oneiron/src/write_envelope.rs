@@ -440,6 +440,40 @@ impl ClaimCandidate {
         Ok(self)
     }
 
+    /// Sets the ClaimOf weight the claim is born with: ONE initial-weight
+    /// entry in the scope map, replacing any it carried. `None` drops the
+    /// entry, so the claim is born at the ClaimOf default. The entry is part
+    /// of the canonical body, so a MACHINE birth signs it, and the
+    /// materializer and the signed-history fold read the same value
+    /// ([`crate::claim::claim_initial_claim_of_weight`]).
+    pub(crate) fn with_initial_claim_of_weight(
+        mut self,
+        weight: Option<f32>,
+    ) -> crate::Result<Self> {
+        let key = crate::claim::CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY;
+        let mut entries = match self.scope.take() {
+            Some(Value::Map(entries)) => entries,
+            None => Vec::new(),
+            Some(_) => return Err(crate::Error::InvalidClaimBody("scope must be a map")),
+        };
+        entries.retain(|(entry, _)| entry.as_str() != Some(key));
+        if let Some(weight) = weight {
+            if !matches!(self.subject, ClaimSubject::Entity(_)) {
+                return Err(crate::Error::InvalidClaimBody(
+                    "initial ClaimOf weight requires an entity subject",
+                ));
+            }
+            if !weight.is_finite() || !(0.0..=1.0).contains(&weight) {
+                return Err(crate::Error::InvalidClaimBody(
+                    "malformed initial ClaimOf weight",
+                ));
+            }
+            entries.push((Value::from(key), Value::F32(weight)));
+        }
+        self.scope = (!entries.is_empty()).then_some(Value::Map(entries));
+        Ok(self)
+    }
+
     pub(crate) const fn subject(&self) -> ClaimSubject {
         self.subject
     }

@@ -86,6 +86,9 @@ impl SignedClaimBirth {
         if let Some(value) = &body.scope {
             reject_ambiguous_maps(value)?;
         }
+        // A signed initial ClaimOf weight is one finite weight in 0..1 on an
+        // entity subject; the fold seeds the claim's weight from it.
+        super::claim_initial_claim_of_weight(&body).map_err(|_| invalid())?;
         if body.lifecycle != ClaimLifecycleStatus::Active
             || body.stale
             || body.approval == ClaimApprovalStatus::Rejected
