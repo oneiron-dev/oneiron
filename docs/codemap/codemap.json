@@ -25816,7 +25816,7 @@
       "const": 5,
       "crate-vis": 4,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 4,
       "trait": 1
      }
@@ -58458,7 +58458,7 @@
      "purpose": "The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host…",
      "surface": {
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 12
      }
     },
@@ -90476,7 +90476,7 @@
      "path": "src/server/space_move.rs",
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
