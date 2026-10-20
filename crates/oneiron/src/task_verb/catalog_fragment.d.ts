@@ -101,7 +101,7 @@ declare namespace Sdk {
   type IdentityActNowRequest = { name: string; conversation?: string | null; effect: IdentityEffect; prompt: string; someone_new: string };
   type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown };
   type InboxListRequest = { after?: string | null; limit?: number | null };
-  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed";
+  type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask" | "world_privacy_changed" | "world_privacy_proposed" | "weave_digest_settings_changed" | "thread_walk_in" | "thread_history_opened" | "thread_join_requested";
   type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean };
   type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
