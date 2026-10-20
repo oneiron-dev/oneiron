@@ -22319,7 +22319,7 @@
      "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
      "surface": {
       "crate-vis": 13,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -23200,9 +23200,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "WakeDeferredJob",
+      "WakeOutcomeState",
+      "WakeOutcomeView",
+      "WakeParkedJob",
       "WakeRecipeJobView",
       "WakeSettlementRequest",
       "WakeSettlementView",
@@ -23212,8 +23216,9 @@
      "path": "src/dreamer_runner/observation.rs",
      "purpose": "Owner reads of recipe receipts and their Dreamer/Coach descendants",
      "surface": {
+      "enum": 1,
       "fn": 2,
-      "struct": 5
+      "struct": 8
      }
     },
     {
@@ -23711,9 +23716,23 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 1,
-      "re-export": 14
+      "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NightStepRequestId"
+     ],
+     "path": "src/dreamer_wake/night_step.rs",
+     "purpose": "The Dreamer's night step on the owner's say (FIX 6903): a Timer `host.wake` asks for what a Timer wake asks…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -23941,7 +23960,7 @@
      "path": "src/dreamer_wake/scheduling.rs",
      "purpose": "The host-facing enqueue doors; the engine owns no timer",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5
      }
@@ -65885,7 +65904,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66888,7 +66907,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4192,
+   "source_files": 4193,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95618,8 +95637,12 @@
       "WaitForOutput",
       "WakeCadenceReceipt",
       "WakeCadenceView",
+      "WakeDeferredJob",
       "WakeEnvelope",
       "WakeIdleState",
+      "WakeOutcomeState",
+      "WakeOutcomeView",
+      "WakeParkedJob",
       "WakePolicyDecision",
       "WakePolicySetRequest",
       "WakeRecipe",
@@ -95748,8 +95771,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 897,
-      "struct": 2809
+      "enum": 898,
+      "struct": 2812
      }
     },
     {
