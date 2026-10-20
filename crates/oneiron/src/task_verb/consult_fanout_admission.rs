@@ -378,7 +378,10 @@ impl Memory<'_> {
                         manifest_value(&controls)?,
                     )
                 })
-            })
+            })?;
+        // A floor this commit moved is judged again at once (FIX 5505).
+        self.vault().apply_pending_rebinds_after_commit();
+        Ok(())
     }
 
     /// A scoped holder may author one upward override, bounded by the vault
@@ -435,7 +438,10 @@ impl Memory<'_> {
                     rows.push(manifest_value(&row)?);
                     Ok(())
                 })
-            })
+            })?;
+        // A floor this commit moved is judged again at once (FIX 5505).
+        self.vault().apply_pending_rebinds_after_commit();
+        Ok(())
     }
 
     /// Effective manifest row at the vault level.

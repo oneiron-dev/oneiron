@@ -12,8 +12,8 @@
 //! marks a file's known value: its span in the stored bytes, the custody
 //! record that holds it, reason `gate.secret_scan.known_value`, the file's
 //! band; a value the owner ruled no secret in the record is left unmarked. A
-//! marked file keeps its row, as every marked file does, and the batch door
-//! keeps the mark and restricts the record. Nothing is refused or skipped
+//! marked file stays a file, and the batch door keeps the mark and restricts
+//! the record by the file's digest (FIX 5507). Nothing is refused or skipped
 //! for its size or its count of values: the carry holds up to the longest
 //! value, and the marks grow with what is found.
 

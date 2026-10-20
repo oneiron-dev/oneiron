@@ -136,7 +136,7 @@ pub fn configure_retrieval_weights_as_owner(
     input: RetrievalWeightsConfigureRequest,
 ) -> Result<RetrievalWeightsReceipt> {
     input.weights.validate()?;
-    vault.with_write_txn_grouped(|txn| {
+    let receipt = vault.with_write_txn_grouped(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
         let current = view(vault, txn)?;
         if current.body_hash != input.expected_body_hash {
@@ -176,5 +176,8 @@ pub fn configure_retrieval_weights_as_owner(
             configuration: view(vault, txn)?,
             receipt_ref,
         })
-    })
+    })?;
+    // A floor this commit moved is judged again at once (FIX 5505).
+    vault.apply_pending_rebinds_after_commit();
+    Ok(receipt)
 }

@@ -85,7 +85,7 @@ pub fn configure_owner_policy(
     owner: &AuthenticatedOwner,
     input: OwnerPolicyConfigureRequest,
 ) -> Result<OwnerPolicyConfigurationReceipt> {
-    vault.with_write_txn_grouped(|txn| {
+    let receipt = vault.with_write_txn_grouped(|txn| {
         let actor = owner.revalidate_in_txn(vault, txn)?;
         let id = gate::default_policy_manifest_id()?;
         let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
@@ -149,5 +149,8 @@ pub fn configure_owner_policy(
             configuration: view(vault, txn)?,
             receipt_ref,
         })
-    })
+    })?;
+    // A floor this commit moved is judged again at once (FIX 5505).
+    vault.apply_pending_rebinds_after_commit();
+    Ok(receipt)
 }
