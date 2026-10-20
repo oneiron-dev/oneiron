@@ -59,9 +59,9 @@ pub(crate) enum CompartmentScope {
     /// training link key): their compartment opens with the vault data key
     /// as well, so a restore that unlocked a backup opens it without the kit.
     HostReadable,
-    /// Kinds only the owner's own machines may read (a later client's, KS-5
-    /// world pads): wrapped to the recovery root alone, never to the
-    /// host-readable data key.
+    /// Kinds only the owner's own machines may read (a later client's):
+    /// wrapped to the recovery root alone, never to the host-readable data
+    /// key.
     OwnerOnly,
 }
 
@@ -73,10 +73,16 @@ impl CompartmentScope {
             // process, as a claim key is (KS-2A); so are the known-value
             // index's master and its history entries (KS-3), which no kit
             // need open.
+            //
+            // A world pad too (KS-5, CALLS WORLD_PAD_HEAD_SCOPE): a backup
+            // the data key unlocks restores its worlds' pads, as it did
+            // when the pads rode its rows. A pad alone opens nothing; its
+            // world's key wraps open only to a machine or root secret.
             CustodyKind::ClaimDecision
             | CustodyKind::BodyInstance
             | CustodyKind::KnownValueIndex
             | CustodyKind::KnownValueEntry
+            | CustodyKind::WorldPad
             | CustodyKind::CheckpointPayload
             | CustodyKind::TrainingLink => Self::HostReadable,
         }
