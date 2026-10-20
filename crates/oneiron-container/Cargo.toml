@@ -29,5 +29,11 @@ path = "src/bin/oneiron-fence.rs"
 test = false
 bench = false
 
+[[bin]]
+name = "oneiron-browser-relay"
+path = "src/bin/oneiron-browser-relay.rs"
+test = false
+bench = false
+
 [lints]
 workspace = true

@@ -52693,7 +52693,7 @@
      "path": "src/store/key_custody/log.rs",
      "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 3,
       "struct": 2
      }
@@ -69803,6 +69803,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/bin/oneiron-browser-relay.rs",
+     "purpose": "Fenced stdio carrier for a browser that speaks CDP only over TCP",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/bin/oneiron-fence.rs",
      "purpose": "Engine-mounted Linux fence launcher, not a development runner",
      "surface": {}
@@ -69813,12 +69821,17 @@
      "notable": [
       "EgressRelay",
       "HttpRequest",
-      "HttpResponse"
+      "HttpResponse",
+      "LoopbackOperation",
+      "LoopbackRefusal",
+      "LoopbackRefusalReason"
      ],
      "path": "src/egress.rs",
      "purpose": "Host-owned transport",
      "surface": {
-      "struct": 2,
+      "enum": 2,
+      "fn": 2,
+      "struct": 3,
       "trait": 1
      }
     },
@@ -69847,6 +69860,16 @@
      "purpose": "Unprivileged in-container launcher and syscall-argument broker",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/launcher/loopback.rs",
+     "purpose": "The launcher's half of the guest's virtual loopback (FIX 6680)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69934,6 +69957,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/loopback.rs",
+     "purpose": "The guest's virtual loopback (FIX 6680): stream listeners a guest binds on its own loopback, inside its own…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -69941,6 +69974,16 @@
      "purpose": "Bounded relay workers for a guest's datagrams (FIX 5979)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/sockets.rs",
+     "purpose": "A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix pair, which the notification's ADDFD…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69965,7 +70008,7 @@
      "path": "src/wire.rs",
      "purpose": "Private, bounded launcher/supervisor protocol",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     }
    ],
@@ -69985,10 +70028,10 @@
      "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
     },
     "launcher": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Unprivileged in-container launcher and syscall-argument broker"
     },
     "linux": {
@@ -70013,7 +70056,7 @@
      "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
     },
     "supervisor": {
-     "files": 3,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -70036,7 +70079,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 13,
+   "source_files": 17,
    "test_files": 0
   },
   "oneiron-contracts": {
