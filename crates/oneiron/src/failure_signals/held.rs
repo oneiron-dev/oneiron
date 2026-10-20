@@ -541,12 +541,21 @@ pub(crate) fn erase_held_batch_actor_in_txn(
         HELD.delete(&vault.store, wtxn, &())?;
         return Ok(());
     };
-    match settled_in(vault, &*wtxn, &held, false)? {
-        Some(delivered) => {
-            settle_in_txn(vault, wtxn, &held, delivered)?;
+    // The erase always lands: a settlement that cannot read its ledger row or
+    // its count rows lets the custody go unsettled, as an erase did before
+    // the custody kept anything (a crash after Done may then resend counts).
+    let settled = match settled_in(vault, &*wtxn, &held, false) {
+        Ok(Some(delivered)) => settle_in_txn(vault, wtxn, &held, delivered).map(|()| true),
+        Ok(None) => Ok(false),
+        Err(error) => Err(error),
+    };
+    match settled {
+        Ok(false) => HELD.put(&vault.store, wtxn, &(), &held.erased())?,
+        Ok(true) => HELD.delete(&vault.store, wtxn, &())?,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "an erased actor's held failure-signal batch went unsettled");
             HELD.delete(&vault.store, wtxn, &())?;
         }
-        None => HELD.put(&vault.store, wtxn, &(), &held.erased())?,
     }
     Ok(())
 }
