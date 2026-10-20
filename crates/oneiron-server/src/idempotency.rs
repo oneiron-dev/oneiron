@@ -129,6 +129,8 @@ impl IdempotencyStore {
 #[derive(Default)]
 struct IdempotencyLockTable {
     slots: tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Where the expiry reclaim's next page starts (FIX 5951).
+    sweep: reclaim::SweepCursor,
 }
 
 impl IdempotencyLockTable {
@@ -489,6 +491,8 @@ async fn idempotent(
     };
     let request_body = body.to_vec();
 
+    // Each keyed admission reclaims one page of expired entries (FIX 5951).
+    state.store.reclaim_expired_page().await;
     let _guard = state.store.lock_for(&store_key).await;
     match state.store.lookup(&store_key, &target, &request_body) {
         Ok(IdempotencyLookup::Replay(response)) => {
@@ -724,6 +728,8 @@ fn hex(bytes: &[u8]) -> String {
     }
     encoded
 }
+
+mod reclaim;
 
 #[cfg(test)]
 mod tests;

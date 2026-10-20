@@ -5,7 +5,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::federation::CoreferenceStatus;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::temporal::TimeRange;
-use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
+use crate::{EntityId, Vault};
 
 /// `vault.federation.coreference.link`: atomically write the link and its status.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -78,25 +78,18 @@ impl CoreferenceShareConsentRequest {
     }
 }
 
-/// The caller's own owner proof supplies the actor; requests never name one.
-fn owner_actor(vault: &Vault, owner: &AuthenticatedOwner) -> MemoryResult<WriteActor> {
-    Ok(WriteActor::new(
-        owner.revalidate(vault)?,
-        EdgeActorClass::Human,
-    ))
-}
-
-/// The engine's owning atomic link/status write, under the caller's owner proof.
+/// The engine's owning atomic link/status write, under the caller's owner
+/// proof: it supplies the actor (requests never name one) and is rechecked in
+/// the writer (FIX 5950).
 pub fn link_coreference_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: CoreferenceLinkRequest,
 ) -> MemoryResult<CoreferenceLinkReceipt> {
-    let actor = owner_actor(vault, owner)?;
     let now = vault.now_recorded_at();
-    let status_claim = crate::federation::put_coreference_link(
+    let status_claim = crate::federation::put_coreference_link_as_owner(
         vault,
-        &actor,
+        owner,
         input.local_person,
         input.other_person,
         input.status,
@@ -137,12 +130,11 @@ pub fn share_coreference_as_owner(
     owner: &AuthenticatedOwner,
     input: CoreferenceShareConsentRequest,
 ) -> MemoryResult<CoreferenceShareConsentReceipt> {
-    let actor = owner_actor(vault, owner)?;
     let pact = input.pact_id()?;
     let now = vault.now_recorded_at();
-    let consent_claim = crate::federation::coreference_share_consent(
+    let consent_claim = crate::federation::coreference_share_consent_as_owner(
         vault,
-        &actor,
+        owner,
         input.local_person,
         input.other_person,
         &pact,

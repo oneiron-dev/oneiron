@@ -481,4 +481,30 @@ impl OverlayStrDb {
             overlay.snapshot.clone(),
         ))))
     }
+
+    /// The rows whose keys, compared as bytes, fall in `range`, in key
+    /// order: the seek past a cursor a prefix scan cannot make (FIX 5951).
+    #[cfg(feature = "sync")]
+    pub(crate) fn range_bytes<'txn, R>(
+        &self,
+        txn: &'txn RoTxn<'_>,
+        range: &R,
+    ) -> Result<OverlayRange<'txn>>
+    where
+        R: RangeBounds<[u8]>,
+    {
+        let base = self.base.remap_key_type::<Bytes>();
+        let Some(overlay) = &self.overlay else {
+            return Ok(OverlayRange::Base(base.range(txn, range)?));
+        };
+        let plan = overlay
+            .snapshot
+            .merge_plan(overlay.keyspace, |key| key_in_range(key, range));
+        Ok(OverlayRange::Merged(Box::new(MergedRows::new(
+            Some(base.range(txn, range)?),
+            plan,
+            Direction::Forward,
+            overlay.snapshot.clone(),
+        ))))
+    }
 }

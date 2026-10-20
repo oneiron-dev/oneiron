@@ -722,5 +722,8 @@ impl Vault {
     }
 }
 
+#[cfg(feature = "sync")]
+mod sync_state_reclaim;
+
 #[cfg(all(test, feature = "sync"))]
 mod sync_scan_tests;
