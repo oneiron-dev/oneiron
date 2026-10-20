@@ -45,6 +45,8 @@ mod idle_backup;
 mod read_only;
 /// The reap freeze and `prepare_reap`'s freeze, drain and export.
 mod reap;
+/// The relay delete ctl requests (FIX 6826).
+mod relay_delete;
 
 /// Machine-readable tag on the refusals a frozen engine serves, so a client can
 /// match on it rather than parse prose.
@@ -180,6 +182,8 @@ pub struct ManagedState {
     restore: Option<Arc<super::restore::RestoreOutcome>>,
     /// The backup before an idle reap, one attempt at a time.
     idle_backup: Arc<idle_backup::IdleBackup>,
+    /// The relay locker deletes this engine executes (FIX 6826).
+    relay_delete: Arc<super::relay_delete::RelayDeleteExecutor>,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -420,6 +424,7 @@ impl ManagedState {
             vm_outbox_revision: None,
             restore: None,
             idle_backup: Arc::default(),
+            relay_delete: Arc::default(),
         }
     }
 
@@ -1430,6 +1435,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     // A backup before an idle reap ends before exit; none starts after.
     state.idle_backup.stopped().await;
+    // A relay delete in flight finishes its unlink and sync; none starts after.
+    state.relay_delete.stopped().await;
     // A hook pass in flight commits or fails whole before the runner stops.
     let _ = hooks_stop.send(true);
     if let Some(fact_hooks) = fact_hooks {
