@@ -381,7 +381,8 @@ pub(crate) async fn core_run_tree_observe(
         (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row.", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
         (status = 400, description = "Malformed intervention or invalid lifecycle transition.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write; or, for pause and resume, the caller is neither the vault owner, the host root, nor the owner of the TASK the job realizes.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "For pause and resume, no job names this id, or the job realizes a TASK the caller is no party to (`job`).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Run-tree intervention failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -471,7 +472,9 @@ pub(crate) async fn core_run_tree_intervene(
 /// 4501, the C002 pattern), on the caller's handle as its credential names
 /// it: the owner a host action acts as, else its principal under its class.
 /// The vault owner pauses and resumes any branch, his own credential that
-/// grants no read included; any other caller needs the TASK binding.
+/// grants no read included; so does a host credential that acts as no
+/// person, for these two controls alone, under its own label (FIX 6429).
+/// Any other caller needs the TASK binding.
 fn core_run_control(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -479,6 +482,10 @@ fn core_run_control(
     control: RunControl,
 ) -> Result<oneiron::attempt_queue::InterveneOutcome, EnvelopedApiError> {
     let (actor, class) = match super::host_action::host_action_of(&server.vault, auth) {
+        Some(Err(oneiron::Error::HostActionRequiresSupportGrant)) => {
+            return host_run_control(server, auth, input, control);
+        }
+        None if auth.is_host_holder() => return host_run_control(server, auth, input, control),
         Some(action) => {
             let actor = action
                 .map_err(super::host_action::host_action_refusal)?
@@ -503,6 +510,24 @@ fn core_run_control(
     super::credential_memory(&server.vault, Some(auth), actor, class)
         .at(auth.locality())
         .control_run(input.id, control, input.note)
+        .map_err(run_control_refusal)
+}
+
+/// A pause or resume for a host credential that acts as no person (FIX
+/// 6429): the host's root where it acts as nobody, or a slip cut from it,
+/// admitted by the engine on that slip; the event names its label.
+fn host_run_control(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    input: oneiron::InterveneAttempt,
+    control: RunControl,
+) -> Result<oneiron::attempt_queue::InterveneOutcome, EnvelopedApiError> {
+    let proof = auth
+        .verified_slip()
+        .ok_or_else(|| ApiError::forbidden_scope("principal_ref"))?;
+    server
+        .vault
+        .control_run_as_host(proof, input.id, control, &input.actor, input.note)
         .map_err(run_control_refusal)
 }
 

@@ -70,12 +70,17 @@ pub const fn locality_rank(locality: ModelLocality) -> u8 {
 }
 
 /// What an agent's own compaction reads (FIX 4465): its retained turns on
-/// the cheap compaction route wearing its home, or a fork of its live
-/// context. The row picks the model and context per wake; WHO writes is the
-/// agent's `memory_profile.compaction_backend`, never this row.
+/// the cheap writer wearing its home, or a fork of its live context. The row
+/// picks the model and context per flight; WHO writes is the agent's
+/// `memory_profile.compaction_backend`, never this row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SelfCompactionSource {
+    /// Resolved per flight (FIX 6029, the shipped default): the live fork
+    /// while the live prefix is still warm in its provider's prompt cache,
+    /// else the cheap writer on the retained turns. A receipt never names
+    /// it: it names the source the flight ran on.
+    Auto,
     RetainedTurns,
     LiveFork,
 }
@@ -85,20 +90,26 @@ impl SelfCompactionSource {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Auto => "auto",
             Self::RetainedTurns => "retained_turns",
             Self::LiveFork => "live_fork",
         }
     }
 }
 
-/// The self-compaction row: the context a self-written compaction reads and
-/// the widest destination its call may be served at. The model is the
-/// agent's own compaction model, else the house's. A delegated edit may not
-/// widen `locality`, as with every other row.
+/// The self-compaction row: the context a self-written compaction reads,
+/// the cheap writer's model and the widest destination its call may be
+/// served at. The cheap writer is the agent's own compaction model, else
+/// `cheap_model` (FIX 6029), else, when that route is not served here or is
+/// served wider than `locality`, the house's. A delegated edit may not widen
+/// `locality`, as with every other row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelfCompactionDefault {
     pub source: SelfCompactionSource,
+    /// The model the cheap writer runs on as the agent, when the agent names
+    /// none (FIX 6029; a pack replaces it with the whole table).
+    pub cheap_model: ModelId,
     pub locality: ModelLocality,
 }
 
