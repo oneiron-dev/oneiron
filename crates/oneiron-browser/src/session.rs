@@ -1,4 +1,4 @@
-//! A browser session: one Chromium guest in a container and the CDP driver
+//! A browser session: one browser guest in a container and the CDP driver
 //! attached to it, with the host's rules in front of the driver.
 //!
 //! The browser runs only inside the isolated guest, never as a process on
@@ -43,9 +43,12 @@
 //! many rows as fit one page, and `next` names the cursor `observe` reads
 //! the rest from.
 //!
-//! The session records the engine it attached (FIX 6680): today's pipe
-//! guest runs Chromium. Every receipt names it, with the act's fact when
-//! the page showed no change; such an act is receipted as every act is.
+//! The session runs the engine its guest names (FIX 6680): Lightpanda, the
+//! one an agent starts on, over the WebSocket its guest's relay carries, or
+//! Chromium over its debugging pipe; the fence proof, lease and retention
+//! are the same for both. Every receipt names the engine, with the act's
+//! fact when the page showed no change; such an act is receipted as every
+//! act is.
 
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
@@ -114,6 +117,8 @@ pub struct BrowserGuest {
     pub policy: SendPolicy,
     /// A host directory served read-only on the guest's loopback, for checks.
     pub fixture: Option<PathBuf>,
+    /// The engine the guest starts and the driver speaks to.
+    pub engine: BrowserEngine,
 }
 
 pub struct BrowserSession {
@@ -154,12 +159,8 @@ impl BrowserSession {
             manifest,
             lease,
         } = transport;
-        let driver = CdpDriver::attach(
-            Pipe::with_egress(reader, writer, Some(relay)),
-            BrowserEngine::Chromium,
-            config.wait_cap,
-            retention,
-        )?;
+        let pipe = Pipe::for_engine(config.engine, reader, writer, Some(relay))?;
+        let driver = CdpDriver::attach(pipe, config.engine, config.wait_cap, retention)?;
         Ok(Self {
             driver,
             guest: lease,
@@ -474,11 +475,14 @@ impl BrowserSession {
     /// Its verbs follow the tabs first: a tab opened since its last call
     /// (a popup a script opened late) comes to the front, and a front tab
     /// that closed gives way to its opener. A look at the tabs that fails
-    /// leaves the front where it was, for the verb's own answer.
+    /// leaves the front where it was, for the verb's own answer; a tab a
+    /// Lightpanda guest cannot follow is the verb's refusal.
     fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
         self.agent_has()?;
         self.guest_up()?;
-        let _ = self.driver.follow();
+        if let (_, Some(refused)) = self.driver.follow_or_refusal() {
+            return Err(refused);
+        }
         Ok(&mut self.driver)
     }
 

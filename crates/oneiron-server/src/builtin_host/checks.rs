@@ -1,11 +1,12 @@
 //! The served host's connection checks: the engine's provider checks, plus
 //! two that need this host's own config. `browser.session` is local
 //! readiness rather than a provider call: it starts this host's `[browser]`
-//! guest through the engine's sandbox selector, attaches the driver to a
-//! blank page, and closes the session. The check guest has no egress at all:
-//! it visits no site. `native_mail.jmap` connects to the `[native_mail]`
-//! server with the stored credential, as the native mail host does, and
-//! reads its domain; it sends no mail and changes no DNS.
+//! guest on the browser engine it names, through the engine's sandbox
+//! selector, attaches the driver to a blank page, and closes the session.
+//! The check guest has no egress at all: it visits no site.
+//! `native_mail.jmap` connects to the `[native_mail]` server with the stored
+//! credential, as the native mail host does, and reads its domain; it sends
+//! no mail and changes no DNS.
 
 use std::io;
 use std::net::{SocketAddr, TcpStream};
@@ -27,9 +28,6 @@ use oneiron_container::{
 
 use crate::config::NativeMailConfig;
 use crate::server::SyncServer;
-
-/// The guest binary the browser image runs, as a code run starts it.
-const BROWSER_GUEST_COMMAND: &str = "/usr/local/bin/oneiron-browser-guest";
 
 /// What the owner's setup doors check a connection with on this host.
 pub(crate) struct HostConnectionChecks {
@@ -154,7 +152,7 @@ fn browser_session_ready(
     };
     let relay: Arc<dyn EgressRelay> = Arc::new(NoEgress);
     let transport = backend
-        .start_session(&spec, &[BROWSER_GUEST_COMMAND.into()], Arc::clone(&relay))
+        .start_session(&spec, &guest.engine.guest_argv(), Arc::clone(&relay))
         .map_err(|error| format!("the browser guest did not start: {error}"))?;
     let session = BrowserSession::attach(guest, transport, relay, retention)
         .map_err(|error| format!("the browser driver did not open a page: {error}"))?;
