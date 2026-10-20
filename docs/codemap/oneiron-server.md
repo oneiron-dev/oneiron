@@ -824,6 +824,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/args/policy.rs` | src | m | 1 crate-vis | — | The managed argv allowlist: what managed mode does with each `ServeArgs` field, and the refusal of every… |
 | `src/managed/attested_routes.rs` | src | m | 5 crate-vis | — | The routes managed ingress verifies a supervisor's owner attestation on, past the facade, owner and console… |
 | `src/managed/backup_facts.rs` | src | s | 1 crate-vis | — | What a managed vault reports of its backups on every `Ping` (Engine 10-20 rows (a) and (b)): its managed… |
+| `src/managed/container_dirs.rs` | src | s | 1 crate-vis | — | The host directories the supervisor binds for the guests' container CLI (`--container-home` and… |
 | `src/managed/ctl_shed_tests.rs` | test | s | — | — | — |
 | `src/managed/host.rs` | src | s | 8 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
 | `src/managed/isolation.rs` | src | m | 14 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
@@ -845,7 +846,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/relay/deferred_delete.rs` | src | m | 5 crate-vis | — | Locker deletes a host hold guard defers (FIX 1488, Engine 10-20 20:3x) |
 | `src/managed/relay/hold_guard.rs` | src | s | 5 crate-vis | — | The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x) |
 | `src/managed/relay/installer.rs` | src | s | 1 crate-vis | — | The `host relay` installer (FIX 6826, Engine 10-21) |
-| `src/managed/relay_delete.rs` | src | m | 7 crate-vis | — | The relay locker delete this engine executes (FIX 6826, Engine 10-21) |
+| `src/managed/relay_delete.rs` | src | m | 8 crate-vis | — | The relay locker delete this engine executes (FIX 6826, Engine 10-21) |
 | `src/managed/restore.rs` | src | m | 6 crate-vis | — | The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md, its… |
 | `src/managed/restore/commit_marker.rs` | src | s | 1 crate-vis | — | The attempt-bound commit marker, written inside the destination once every keep is done (the restore's… |
 | `src/managed/restore/host_holds.rs` | src | s | 2 crate-vis | — | The host-order legal holds a cold restore installs (FIX 1485, FIX 6598) |

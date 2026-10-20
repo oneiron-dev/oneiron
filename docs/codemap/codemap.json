@@ -70188,6 +70188,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/cli_env.rs",
+     "purpose": "The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "EgressRelay",
       "HttpRequest",
@@ -70262,7 +70273,7 @@
      "surface": {
       "enum": 2,
       "fn": 12,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 8,
       "type": 1
      }
@@ -70383,6 +70394,13 @@
     }
    ],
    "modules": {
+    "cli_env": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the…"
+    },
     "egress": {
      "files": 1,
      "impl_vault": false,
@@ -70449,7 +70467,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -87661,6 +87679,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/container_dirs.rs",
+     "purpose": "The host directories the supervisor binds for the guests' container CLI (`--container-home` and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/managed/ctl_shed_tests.rs",
@@ -87915,7 +87943,7 @@
      "path": "src/managed/relay_delete.rs",
      "purpose": "The relay locker delete this engine executes (FIX 6826, Engine 10-21)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -91554,7 +91582,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 59,
+     "files": 60,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91710,7 +91738,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 952,
+   "source_files": 953,
    "test_files": 182
   },
   "oneiron-spawn": {
