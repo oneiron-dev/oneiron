@@ -24,6 +24,7 @@ pub mod host;
 pub mod host_adapters;
 mod ledger;
 mod limits;
+mod managed_backup;
 mod managed_holder;
 mod owner_signing_recovery;
 /// Private, lease-bound live process ports.
@@ -68,6 +69,10 @@ pub use self::ledger::{LedgerAck, LedgerUpdate, ManagedTrainingSetting};
 pub use self::limits::{
     CREDENTIALS_LEN, DEK_LEN, MAX_CTL_LINE, MAX_LEDGER_ENTRIES, MAX_REASON_TAG, MAX_WAKE_ID,
     READY_BYTE, TOKEN_LEN,
+};
+pub use self::managed_backup::{
+    CheckpointSignerObservation, CheckpointSignerUnavailable, MANAGED_BACKUP_SCHEMA_VERSION,
+    ManagedBackupFacts,
 };
 pub use self::managed_holder::{
     MANAGED_OWNER_ACTION_HEADER, MANAGED_OWNER_BOUND_HEADERS, MANAGED_VOICE_MAX_SKEW_SECS,

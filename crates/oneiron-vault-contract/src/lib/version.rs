@@ -20,8 +20,11 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// and the legal holds ctl request
 /// ([`CtlRequest::LegalHolds`](crate::CtlRequest::LegalHolds)), each with a
 /// build floor: a supervisor sends one only to vaults built at or after it,
-/// and a v3 vault built before it answers it as an unknown request.
-/// Supervisor and vault move to v3 together; no v2 reader is kept.
+/// and a v3 vault built before it answers it as an unknown request. The
+/// managed backup facts on `Ping`
+/// ([`ManagedBackupFacts`](crate::ManagedBackupFacts)) carry a build floor
+/// too: a v3 vault built before it sends none, which a supervisor reads as
+/// unknown. Supervisor and vault move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

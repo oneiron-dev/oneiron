@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::wake::validate_wake_fields;
-use super::{ManagedTrainingSetting, WakeEntry, valid_owner_signing_challenge};
+use super::{ManagedBackupFacts, ManagedTrainingSetting, WakeEntry, valid_owner_signing_challenge};
 
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
@@ -400,12 +400,23 @@ pub enum CtlResponse {
     },
     /// `readiness` is how the vault came up (contract v3,
     /// [`ManagedReadiness`]); a reply that carries none is no `Ping`.
+    /// `managed_backup` is what the vault reports of its backups (Engine
+    /// 10-20 row (b), [`ManagedBackupFacts`]), optional. Build floor: it
+    /// rides v3 with no version move, and a vault built before it sends
+    /// none. A block that does not parse or validate reads as `None` too:
+    /// unknown, nothing to pin, and never a failed `Ping`.
     Ping {
         ok: bool,
         vault: String,
         pid: u32,
         contract_version: u32,
         readiness: ManagedReadiness,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::managed_backup::observed"
+        )]
+        managed_backup: Option<ManagedBackupFacts>,
     },
     Ok {
         ok: bool,

@@ -27,6 +27,7 @@ impl ManagedState {
                 pid: std::process::id(),
                 contract_version: CONTRACT_VERSION,
                 readiness: self.readiness.clone(),
+                managed_backup: self.backup_facts.clone(),
             }),
             CtlRequest::Shed { cause, waited_secs } => {
                 self.guard_write()?;
