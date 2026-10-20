@@ -465,7 +465,7 @@ pub(crate) fn diary_entries_in_txn(
     )? {
         if let Some((note, learned_at)) = live_note_in_txn(vault, txn, &id)?
             && note.kind == NoteKind::Diary
-            && note.author_ref == agent
+            && note.author_ref.is(agent)
         {
             entries.push((id, note, learned_at));
         }
@@ -754,7 +754,7 @@ impl Memory<'_> {
                 for entry in entries {
                     let ours =
                         live_note_in_txn(self.vault, txn, entry)?.is_some_and(|(note, _)| {
-                            note.kind == NoteKind::Diary && note.author_ref == agent
+                            note.kind == NoteKind::Diary && note.author_ref.is(agent)
                         });
                     if !ours {
                         return Err(MemoryError::bad_request(format!(
@@ -896,7 +896,7 @@ impl Memory<'_> {
             for pad in self.vault.sealed_scratchpads_in_txn(txn, agent)? {
                 if let Some((note, learned_at)) = live_note_in_txn(self.vault, txn, &pad)?
                     && note.kind == kind
-                    && note.author_ref == agent
+                    && note.author_ref.is(agent)
                 {
                     entries.push(DiaryEntry {
                         id: pad,

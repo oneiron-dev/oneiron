@@ -8,13 +8,18 @@
 //! opens removes every runner directory no live runner holds, so a host
 //! that stopped leaves nothing behind past its next start. No arm has a
 //! vault of its own in PR-S1: its bodies are plain files, never the vault's.
+//!
+//! They are kept content of the arm's source run all the same (FIX 5718):
+//! each arm names the actor whose step it runs, and an erase or actor scrub
+//! of that actor releases it ([`ArmRegistry::release_gone`]), so no erased
+//! byte outlives the arm.
 
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use oneiron::code_run::shadow_runner::{ShadowArmLease, ShadowBodyStore};
+use oneiron::code_run::shadow_runner::{ShadowArmLease, ShadowBodyStore, ShadowSourceHold};
 use oneiron::{EntityId, Result};
 
 /// The directory under the host's temporary directory that runners keep
@@ -30,6 +35,9 @@ type Arms = HashMap<ShadowArmLease, Arc<ArmEntry>>;
 /// One arm's bodies, while its lease or a reader holds them.
 pub(super) struct ArmEntry {
     store: ShadowBodyStore,
+    /// The actor whose step the arm runs: its source run's content is this
+    /// actor's.
+    source_actor: EntityId,
 }
 
 impl ArmEntry {
@@ -76,12 +84,39 @@ impl ArmRegistry {
         })
     }
 
-    /// A new arm under `lease`, its store made.
-    pub(super) fn open_arm(&self, lease: ShadowArmLease) -> Result<Arc<ArmEntry>> {
-        let store = ShadowBodyStore::open(self.root.join(lease.to_hex()))?;
-        let entry = Arc::new(ArmEntry { store });
+    /// A new arm under `lease`, its store made, of a step `source_actor`'s
+    /// source run is for, each of its reads and publications asking `hold`.
+    pub(super) fn open_arm(
+        &self,
+        lease: ShadowArmLease,
+        source_actor: EntityId,
+        hold: ShadowSourceHold,
+    ) -> Result<Arc<ArmEntry>> {
+        let store = ShadowBodyStore::open(self.root.join(lease.to_hex()))?.held_by(hold);
+        let entry = Arc::new(ArmEntry {
+            store,
+            source_actor,
+        });
         self.arms().insert(lease, Arc::clone(&entry));
         Ok(entry)
+    }
+
+    /// Releases every arm whose source actor `gone` says is gone (FIX 5718):
+    /// each one's bodies go once no reader holds them. How many it released.
+    /// `gone` is asked with no lock held.
+    pub(super) fn release_gone(&self, gone: impl Fn(&EntityId) -> bool) -> usize {
+        let live: Vec<(ShadowArmLease, EntityId)> = self
+            .arms()
+            .iter()
+            .map(|(lease, entry)| (*lease, entry.source_actor))
+            .collect();
+        let mut released = 0;
+        for (lease, actor) in live {
+            if gone(&actor) && self.release(&lease) {
+                released += 1;
+            }
+        }
+        released
     }
 
     /// The arm `lease` holds, while it does.

@@ -6581,7 +6581,7 @@
      "path": "src/blob_artifact/esign/capability.rs",
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5,
       "struct": 1
      }
@@ -6640,13 +6640,27 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignDocumentTrail",
+      "EsignDocumentView"
+     ],
+     "path": "src/blob_artifact/esign/document_view.rs",
+     "purpose": "The owner's view of one signing document on `vault.esign.get` (FIX 6481): its delivery receipts always…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignCreateRequest",
       "EsignDispatchRequest",
       "EsignDispatchView",
-      "EsignDocumentView",
       "EsignDraftView",
       "EsignGetRequest",
       "EsignIssuedLink",
@@ -6670,7 +6684,7 @@
      "purpose": "The e-sign doors outside Rust (ARCH-0064 D3, D5, SGN-02)",
      "surface": {
       "fn": 11,
-      "struct": 22
+      "struct": 21
      }
     },
     {
@@ -6734,7 +6748,7 @@
      "purpose": "Claims are the document state machine",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -6762,7 +6776,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -13920,7 +13934,7 @@
      "purpose": "The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen…",
      "surface": {
       "crate-vis": 1,
-      "fn": 12,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -13928,14 +13942,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "ShadowBodyStore"
+      "ShadowBodyStore",
+      "ShadowSourceHold"
      ],
      "path": "src/code_run/shadow_runner/store.rs",
      "purpose": "A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named…",
      "surface": {
       "crate-vis": 6,
-      "fn": 4,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -14035,7 +14050,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "re-export": 4
      }
     },
@@ -14109,7 +14124,7 @@
      "path": "src/code_run/storage/replay_bodies.rs",
      "purpose": "A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -14119,7 +14134,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -14140,7 +14155,27 @@
      "path": "src/code_run/storage/replay_capsule/erase.rs",
      "purpose": "The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/response_erase.rs",
+     "purpose": "An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/response_owners.rs",
+     "purpose": "Whose reply content a code run's replay row holds (FIX 5718, KEY STORE = A): one row per replay record, a…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -14529,7 +14564,7 @@
      "path": "src/code_run/wait_rows.rs",
      "purpose": "The rows a parked call's delivered reply was derived from (FIX 5455)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -25891,7 +25926,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/shadow_step.rs",
@@ -25928,7 +25963,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 49
+      "crate-vis": 50
      }
     },
     {
@@ -26072,7 +26107,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/checkpoint/documents.rs",
@@ -30575,7 +30610,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "NotificationMark",
@@ -37982,7 +38017,17 @@
      "path": "src/note/checkpoint.rs",
      "purpose": "The checkpoint getter of NOTE rows (KS7-2): each NOTE's head, head documents, overrides and seal under its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/checkpoint/body.rs",
+     "purpose": "A NOTE core's author in its raw entity row (FIX 6072, Engine R2): the `author_ref` of the pinned four-key…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -37993,6 +38038,16 @@
      "purpose": "A NOTE review bundle (KS7-2), under the NOTEs its waiting forks and landings name",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/checkpoint/loro.rs",
+     "purpose": "A NOTE document's actor carriers in its Loro history (FIX 6072): every engine stamp's actor and every…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -38088,7 +38143,7 @@
      "path": "src/note/document.rs",
      "purpose": "NOTE entity-document operations, stable cursors and citation provenance",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 1,
       "struct": 3
@@ -38286,7 +38341,7 @@
      "path": "src/note/operations.rs",
      "purpose": "Authenticated semantic NOTE commands",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -38363,9 +38418,9 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 3,
-      "fn": 5,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -48958,6 +49013,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/side_table/classified.rs",
+     "purpose": "One row's read that tells its own value's damage from the store's failure (FIX 6482)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/side_table/codec.rs",
      "purpose": "The value codecs a side table may declare",
      "surface": {
@@ -49047,7 +49112,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 43
+      "crate-vis": 44
      }
     },
     {
@@ -51967,7 +52032,7 @@
      "path": "src/store/checkpoint_payload/loro.rs",
      "purpose": "The one Loro history projection the document families share (KS-7, FIX 6072): a group of Loro rows (a full…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -64793,7 +64858,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64947,7 +65012,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 116,
+     "files": 118,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65570,7 +65635,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 53,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -65934,7 +65999,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)"
     },
     "side_table": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66230,7 +66295,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4135,
+   "source_files": 4141,
    "test_files": 902
   },
   "oneiron-android": {
@@ -78549,7 +78614,7 @@
      "path": "src/ai_host/shadow_runner/arm_store.rs",
      "purpose": "A shadow arm's bodies at its host (PR-S1), kept for the caller under an opaque lease: one directory per arm…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -91489,6 +91554,7 @@
       "EsignDispatchRequest",
       "EsignDispatchView",
       "EsignDocument",
+      "EsignDocumentTrail",
       "EsignDocumentView",
       "EsignDraftView",
       "EsignEvent",
@@ -92198,10 +92264,15 @@
       "MemberRelationshipContext",
       "MemberVerdict",
       "MembershipConsent",
+      "MemoryError",
       "MemoryExport",
+      "MemoryGateDenial",
+      "MemoryPolicyDenial",
+      "MemoryPolicyExceptionProposal",
       "MemoryProjection",
       "MemorySupersedeInput",
       "MemoryWriteOutput",
+      "MemoryWrongRoot",
       "MentionLinkView",
       "MentionReferenceView",
       "MergeCrossover",
@@ -93857,6 +93928,7 @@
       "VectorSearchLane",
       "VectorSearchRequest",
       "VectorSearchResult",
+      "VerbHookStop",
       "VerdictBinding",
       "VerdictMode",
       "VersionReconciliation",
@@ -94019,8 +94091,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 883,
-      "struct": 2791
+      "enum": 885,
+      "struct": 2796
      }
     },
     {

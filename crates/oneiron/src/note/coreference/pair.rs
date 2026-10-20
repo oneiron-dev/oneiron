@@ -47,16 +47,14 @@ pub(super) fn author_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> R
             "coreference endpoint is not a diary NOTE",
         ));
     }
-    if !vault.port_edge_present(
-        txn,
-        &id,
-        EdgeDirection::Out,
-        EdgeKind::AuthoredBy,
-        &note.author_ref,
-    )? {
+    // An erased author is no one: no candidate, never a fallback author.
+    let Some(author) = note.author_ref.id() else {
+        return Err(Error::InvalidClaimBody("diary author is erased"));
+    };
+    if !vault.port_edge_present(txn, &id, EdgeDirection::Out, EdgeKind::AuthoredBy, &author)? {
         return Err(Error::InvalidClaimBody("diary author edge is missing"));
     }
-    Ok(note.author_ref)
+    Ok(author)
 }
 
 /// Invalid/absent candidates are not evidence. Storage failures still propagate.
