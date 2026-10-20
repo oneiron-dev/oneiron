@@ -7,7 +7,9 @@ use std::path::PathBuf;
 #[derive(Args, Clone, Debug)]
 pub struct HostVmArgs {
     /// JSON VM profile: firecracker, kernel, rootfs, vault_disk, state_dir,
-    /// vcpus, mem_mib and optional boot_args and allowed_origins.
+    /// vcpus, mem_mib, the provision binding (guest_uid, derivation_owner,
+    /// vault_disk_uuid, fscrypt_key_identifier) and optional boot_args and
+    /// allowed_origins.
     #[arg(long)]
     pub config: PathBuf,
     #[arg(long)]
@@ -19,6 +21,12 @@ pub struct HostVmArgs {
     /// Inherited descriptor carrying the 64-byte DEK and spawn-token frame.
     #[arg(long)]
     pub credentials_fd: i32,
+    /// Inherited descriptor carrying exactly the vault's 64-byte name-bound
+    /// fscrypt v2 master key (FIX 6308). It is read once and sent to the
+    /// guest on each cold boot; its owner keeps it, and the profile never
+    /// holds it.
+    #[arg(long)]
+    pub fscrypt_key_fd: i32,
     /// Seconds without traffic before the vault sleeps.
     #[arg(long, default_value_t = 300)]
     pub idle_secs: u64,
@@ -31,6 +39,7 @@ pub(super) async fn run(args: HostVmArgs) -> anyhow::Result<()> {
         vault_name: args.vault_name,
         listen: args.listen,
         credentials_fd: args.credentials_fd,
+        fscrypt_key_fd: args.fscrypt_key_fd,
         idle: std::time::Duration::from_secs(args.idle_secs),
     })
     .await
