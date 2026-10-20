@@ -159,6 +159,7 @@ mod support_grant_doors;
 pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
+mod usage_repair_doors;
 mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;

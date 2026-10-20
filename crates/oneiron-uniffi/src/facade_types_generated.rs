@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1092 facade rows, 3733 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1044.
+// UniFFI census: 1094 facade rows, 3741 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1046.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -24473,6 +24473,107 @@ pub struct CleanupRunView {
     pub archived: Vec<String>,
     #[serde(rename = "digest", default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+}
+
+/// `oneiron::memory::usage_repair::UndecodableUsageReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum UndecodableUsageReason {
+    #[serde(rename = "stored_event_decode_failed")]
+    StoredEventDecodeFailed,
+}
+
+/// `oneiron::memory::usage_repair::UndecodableUsageRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct UndecodableUsageRow {
+    #[serde(rename = "rowRef")]
+    pub row_ref: String,
+    #[serde(rename = "byteLength")]
+    pub byte_length: u64,
+    #[serde(rename = "hash")]
+    pub hash: String,
+    #[serde(rename = "decodeReason")]
+    pub decode_reason: UndecodableUsageReason,
+}
+
+/// `oneiron::memory::usage_repair::UndecodableUsageList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct UndecodableUsageList {
+    #[serde(rename = "events")]
+    pub events: Vec<UndecodableUsageRow>,
+}
+
+/// `oneiron::memory::usage_repair::UsageRepairRemoveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct UsageRepairRemoveRequest {
+    #[serde(rename = "rowRef")]
+    pub row_ref: String,
+    #[serde(rename = "expectedHash")]
+    pub expected_hash: String,
+}
+
+/// `oneiron::memory::usage_repair::UsageRepairReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum UsageRepairReason {
+    #[serde(rename = "undecodable_event_removed")]
+    UndecodableEventRemoved,
+}
+
+/// `oneiron::memory::usage_repair::UsageRepairAuthority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "ref")]
+pub enum UsageRepairAuthority {
+    #[serde(rename = "owner")]
+    Owner(String),
+    #[serde(rename = "grant")]
+    Grant(String),
+}
+
+/// `oneiron::memory::usage_repair::UsageRepairSurface`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum UsageRepairSurface {
+    #[serde(rename = "this_install")]
+    ThisInstall,
+    #[serde(rename = "linked_device")]
+    LinkedDevice {
+        #[serde(rename = "machine")]
+        machine: String,
+    },
+    #[serde(rename = "hosted_console")]
+    HostedConsole,
+}
+
+/// `oneiron::memory::usage_repair::UsageRepairReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct UsageRepairReceipt {
+    #[serde(rename = "receiptId")]
+    pub receipt_id: String,
+    #[serde(rename = "owner")]
+    pub owner: String,
+    #[serde(rename = "vaultId")]
+    pub vault_id: String,
+    #[serde(rename = "rowRef")]
+    pub row_ref: String,
+    #[serde(rename = "hash")]
+    pub hash: String,
+    #[serde(rename = "byteLength")]
+    pub byte_length: u64,
+    #[serde(rename = "reason")]
+    pub reason: UsageRepairReason,
+    #[serde(rename = "actorRef")]
+    pub actor_ref: String,
+    #[serde(rename = "actorClass")]
+    pub actor_class: String,
+    #[serde(rename = "authority")]
+    pub authority: UsageRepairAuthority,
+    #[serde(rename = "surface")]
+    pub surface: UsageRepairSurface,
+    #[serde(rename = "recordedAt")]
+    pub recorded_at: u64,
 }
 
 /// `oneiron::ingest::resolution::EntityMentionRequest`.

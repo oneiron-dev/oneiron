@@ -443,6 +443,8 @@ both bindings and their export-census tests in one change.
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.roots.requests.cancel`
 - `vault.cleanup.run`
+- `vault.usage.events.undecodable`
+- `vault.usage.events.remove_undecodable`
 - `vault.entities.mention`
 - `vault.legal_holds.place`
 - `vault.legal_holds.widen`

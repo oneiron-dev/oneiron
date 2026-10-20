@@ -53,6 +53,18 @@ pub(super) fn mark_rollup_behind_in_txn(
     Ok(())
 }
 
+/// Marks the cached rollup stale in the caller's write, so the next read
+/// rebuilds it from the stored events: a removed event leaves no trace in
+/// it, and a sum that overflowed is summed again (FIX 6476).
+pub(super) fn mark_rollup_stale_in_txn(
+    vault: &oneiron::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    rollup_key: &str,
+) -> Result<(), UsageError> {
+    vault.sync_state_put_in_write_txn(txn, rollup_key, &encode_rollup(&CachedRollup::Stale)?)?;
+    Ok(())
+}
+
 impl UsageLedger {
     /// Checks that `owner` and `vault_id` name a usage scope whose keys fit.
     pub(crate) fn validate_scope(owner: &str, vault_id: &str) -> Result<(), UsageError> {

@@ -7,14 +7,18 @@
 //! chat seat's route. The engine asks every judgment on the
 //! Coach's own seat (else the host's decision ladder) and decides what may
 //! leave. The Coach pays for the calls,
-//! on one budget per case.
+//! on one budget per case. A publisher's engine candidate runs as a matched
+//! pair on the host's shadow runner (`shadow`, FIX 1661/2144).
+mod shadow;
+
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::dreamer_runner::maintenance::coach_heal::HealRoute;
 use oneiron::dreamer_runner::maintenance::code_fix::{
-    CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, PublisherCandidate,
+    CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, CodeFixShadowHost, PublisherCandidate,
 };
 use oneiron::failure_signals::{ExactReplayRequest, InventedMessage, InventedRole};
 use oneiron::limit_ask::EngineLimit;
@@ -58,7 +62,7 @@ const DRAFT_SYSTEM: &str = "You are the Coach. An agent failed at its work. The 
 
 /// Runs the engine's code-fix door for one leased attempt.
 pub(super) fn run(
-    server: &SyncServer,
+    server: &Arc<SyncServer>,
     admitted: &DreamerAdmittedAttempt,
     principal: EntityId,
     publisher: &[PublisherCandidate],
@@ -80,9 +84,11 @@ pub(super) fn run(
         "coach-code-fix:{}",
         EntityId::from_bytes(*admitted.status.attempt.id.as_bytes())?.to_hex()
     );
+    let shadow = shadow::CoachShadow::open(server, &run_id, PURPOSE, BUDGET_UNITS, publisher);
     let models = CodeFixModels {
         models: HostModels::open(server, run_id, PURPOSE, BUDGET_UNITS)?,
         publisher,
+        shadow,
     };
     let settled = vault.run_coach_code_fix(admitted, &decisions, &models, now)?;
     tracing::debug!(
@@ -93,10 +99,12 @@ pub(super) fn run(
     Ok(())
 }
 
-/// The seat, with the publisher's pinned candidates beside the Coach's own.
+/// The seat, with the publisher's pinned candidates beside the Coach's own,
+/// and the shadow runner its engine candidates run on.
 struct CodeFixModels<'a> {
     models: HostModels<'a>,
     publisher: &'a [PublisherCandidate],
+    shadow: Option<shadow::CoachShadow>,
 }
 
 impl CodeFixHost for CodeFixModels<'_> {
@@ -118,6 +126,11 @@ impl CodeFixHost for CodeFixModels<'_> {
 
     fn publisher_candidates(&self) -> &[PublisherCandidate] {
         self.publisher
+    }
+
+    fn shadow_runner(&self) -> Option<&dyn CodeFixShadowHost> {
+        let shadow: &dyn CodeFixShadowHost = self.shadow.as_ref()?;
+        Some(shadow)
     }
 }
 
@@ -213,6 +226,22 @@ impl<'a> HostModels<'a> {
         messages: Vec<LlmMessage>,
     ) -> oneiron::Result<Option<(String, String)>> {
         self.served_on(&self.run, role, messages)
+    }
+
+    /// [`Self::generate_served`] for messages fixed code assembled from
+    /// `rows` (FIX 6935), as [`Self::generate_sourced`] carries them, with
+    /// the model of the rung that answered. `None` is unknown.
+    #[expect(
+        dead_code,
+        reason = "a Coach call that needs its served model switches to it with its own rows"
+    )]
+    pub(super) fn generate_served_sourced(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+        rows: Option<Vec<EntityId>>,
+    ) -> oneiron::Result<Option<(String, String)>> {
+        self.served_on(&self.run.sourced(rows), role, messages)
     }
 
     /// [`Self::generate_served`] admitted through `run`, this run or a

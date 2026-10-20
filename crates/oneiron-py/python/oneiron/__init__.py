@@ -622,6 +622,9 @@ class Oneiron:
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
             return Oneiron._VaultCleanupVerbs(self._client)
         @property
+        def usage(self) -> "Oneiron._VaultUsageVerbs":
+            return Oneiron._VaultUsageVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -2789,6 +2792,21 @@ class Oneiron:
         def run(self, spec):
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
             return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
+    class _VaultUsageVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def events(self) -> "Oneiron._VaultUsageEventsVerbs":
+            return Oneiron._VaultUsageEventsVerbs(self._client)
+    class _VaultUsageEventsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def undecodable(self, spec):
+            """Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb."""
+            return json.loads(_translate(lambda: self._client.vault_usage_events_undecodable(json.dumps(spec))))
+        def remove_undecodable(self, spec):
+            """Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."""
+            return json.loads(_translate(lambda: self._client.vault_usage_events_remove_undecodable(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

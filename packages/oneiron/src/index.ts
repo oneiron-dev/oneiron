@@ -1536,6 +1536,14 @@ export class Oneiron {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
     },
+    usage: {
+      events: {
+        /** Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb. */
+        undecodable: (input: Facade.UsageRepairListRequest): Facade.UndecodableUsageList => this.#call(() => this.#client.vaultUsageEventsUndecodable(input) as Facade.UndecodableUsageList),
+        /** Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb. */
+        remove_undecodable: (input: Facade.UsageRepairRemoveRequest): Facade.UsageRepairReceipt => this.#call(() => this.#client.vaultUsageEventsRemoveUndecodable(input) as Facade.UsageRepairReceipt),
+      },
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),

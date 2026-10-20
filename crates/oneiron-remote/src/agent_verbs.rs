@@ -1382,6 +1382,12 @@ impl OneironClient {
                 "vault.cleanup.run" => remote_agent_verb_output::<
                     oneiron::vault_cleanup::surface::CleanupRunView,
                 >(client, verb, &input),
+                "vault.usage.events.undecodable" => remote_agent_verb_output::<
+                    oneiron::memory::usage_repair::UndecodableUsageList,
+                >(client, verb, &input),
+                "vault.usage.events.remove_undecodable" => remote_agent_verb_output::<
+                    oneiron::memory::usage_repair::UsageRepairReceipt,
+                >(client, verb, &input),
                 "vault.entities.mention" => remote_agent_verb_output::<
                     oneiron::ingest::EntityResolutionWaterfallDecision,
                 >(client, verb, &input),
@@ -8806,6 +8812,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.cleanup.run", value)
+    }
+    pub fn vault_usage_events_undecodable(
+        &self,
+        input: &oneiron::memory::usage_repair::UsageRepairListRequest,
+    ) -> Result<oneiron::memory::usage_repair::UndecodableUsageList, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.usage.events.undecodable", value)
+    }
+    pub fn vault_usage_events_remove_undecodable(
+        &self,
+        input: &oneiron::memory::usage_repair::UsageRepairRemoveRequest,
+    ) -> Result<oneiron::memory::usage_repair::UsageRepairReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.usage.events.remove_undecodable", value)
     }
     pub fn vault_entities_mention(
         &self,

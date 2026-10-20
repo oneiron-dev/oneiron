@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1092 facade rows, 3758 declarations.
-Inputs: 1027 of 1092 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 979 of 1092 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1094 facade rows, 3767 declarations.
+Inputs: 1029 of 1094 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 981 of 1094 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -8006,6 +8006,48 @@ class CleanupRunView(TypedDict):
     proposal: NotRequired[EntityId | None]
     archived: list[EntityId]
     digest: NotRequired[EntityId | None]
+class UsageRepairListRequest(TypedDict):
+    ...
+UndecodableUsageReason = Literal["stored_event_decode_failed"]
+class UndecodableUsageRow(TypedDict):
+    rowRef: str
+    byteLength: int
+    hash: str
+    decodeReason: UndecodableUsageReason
+class UndecodableUsageList(TypedDict):
+    events: list[UndecodableUsageRow]
+class UsageRepairRemoveRequest(TypedDict):
+    rowRef: str
+    expectedHash: str
+UsageRepairReason = Literal["undecodable_event_removed"]
+class UsageRepairAuthorityOwner(TypedDict):
+    kind: Literal["owner"]
+    ref: str
+class UsageRepairAuthorityGrant(TypedDict):
+    kind: Literal["grant"]
+    ref: str
+UsageRepairAuthority = UsageRepairAuthorityOwner | UsageRepairAuthorityGrant
+class UsageRepairSurfaceThisInstall(TypedDict):
+    kind: Literal["this_install"]
+class UsageRepairSurfaceLinkedDevice(TypedDict):
+    kind: Literal["linked_device"]
+    machine: str
+class UsageRepairSurfaceHostedConsole(TypedDict):
+    kind: Literal["hosted_console"]
+UsageRepairSurface = UsageRepairSurfaceThisInstall | UsageRepairSurfaceLinkedDevice | UsageRepairSurfaceHostedConsole
+class UsageRepairReceipt(TypedDict):
+    receiptId: str
+    owner: str
+    vaultId: str
+    rowRef: str
+    hash: str
+    byteLength: int
+    reason: UsageRepairReason
+    actorRef: str
+    actorClass: str
+    authority: UsageRepairAuthority
+    surface: UsageRepairSurface
+    recordedAt: int
 class EntityMentionRequest(TypedDict):
     candidates: list[EntityResolutionCandidate]
     high_collision_mention: NotRequired[bool]
