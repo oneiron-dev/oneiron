@@ -1,8 +1,10 @@
 //! The host Coach's code fixes (DEC-0005 FIX6, OF-380). For each
 //! `coach.code_fix` attempt the Coach's heal worker leases, the generative
 //! seat drafts the invented example and the candidate fix, and replays the
-//! failing agent with no tools, under the Coach's fix and under each of the
-//! publisher's pinned candidates. The engine asks every judgment on the
+//! failing agent with no tool run, under the Coach's fix and under each of
+//! the publisher's pinned candidates. A replay of the request the failing
+//! call sent (FIX 1662) goes to that call's own model, never swapped for the
+//! chat seat's route. The engine asks every judgment on the
 //! Coach's own seat (else the host's decision ladder) and decides what may
 //! leave. The Coach pays for the calls,
 //! on one budget per case.
@@ -14,13 +16,15 @@ use oneiron::dreamer_runner::maintenance::coach_heal::HealRoute;
 use oneiron::dreamer_runner::maintenance::code_fix::{
     CodeFixDecisions, CodeFixDraft, CodeFixHost, CodeFixJob, PublisherCandidate,
 };
-use oneiron::failure_signals::{InventedMessage, InventedRole};
+use oneiron::failure_signals::{ExactReplayRequest, InventedMessage, InventedRole};
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::HeldLadder;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelTierRef, ResponseFormat,
+    TierPrecedence, Vault,
 };
 use serde::Deserialize;
 
@@ -36,8 +40,6 @@ const PURPOSE: &str = "coach_code_fix";
 const BUDGET_UNITS: u64 = 1 << 20;
 /// One question's budget.
 const DECIDE_BUDGET: Duration = Duration::from_secs(20);
-/// Most bytes of one text of the real failure the draft call reads.
-const SOURCE_BYTES: usize = 16 * 1024;
 /// The Coach's instruction for the draft. The failure goes as data.
 const DRAFT_SYSTEM: &str = "You are the Coach. An agent failed at its work. The data you get \
     is the real failure: the agent's instructions, what it was briefed on and asked, the \
@@ -107,6 +109,10 @@ impl CodeFixHost for CodeFixModels<'_> {
         conversation: &[InventedMessage],
     ) -> oneiron::Result<Option<String>> {
         self.models.reply(system, conversation)
+    }
+
+    fn reply_exact(&self, request: &ExactReplayRequest) -> oneiron::Result<Option<String>> {
+        self.models.reply_exact(request)
     }
 
     fn publisher_candidates(&self) -> &[PublisherCandidate] {
@@ -231,19 +237,78 @@ impl<'a> HostModels<'a> {
             .collect();
         Ok(Some((text, served.as_str().to_owned())))
     }
+
+    /// The kept request of a failing call sent again (FIX 1662), whole and
+    /// with its tool declarations, to its own model by its own route: the
+    /// rung that answered it, when one did, under the route prompt it
+    /// answered under. Its answer's text, and each tool call it names as
+    /// data; no tool runs. `None` when that model or prompt is not served
+    /// now, or the call fails: the replay then rebuilds the call.
+    fn send_exact(&self, exact: &ExactReplayRequest) -> Option<String> {
+        let mut request = exact.request.clone();
+        if let Some(rung) = &exact.rung {
+            request.model = rung.model.clone();
+            request.envelope.locality = rung.locality;
+        }
+        let call = self
+            .runtime
+            .admit_seat_bound(self.vault, CHAT_ROLE, request)
+            .ok()?;
+        if let Some(rung) = &exact.rung
+            && call.ladder.exact_prompt() != Some(rung.prompt.as_deref())
+        {
+            return None;
+        }
+        match self
+            .handle
+            .block_on(call.ladder.generate_exact(&self.run, call.request, None))
+        {
+            Ok(response) => Some(answer_text(&response)),
+            // Unquoted: a provider's error can quote the request.
+            Err(_) => {
+                tracing::debug!("an exact replay call failed; the replay rebuilds the call");
+                None
+            }
+        }
+    }
+}
+
+/// A replayed answer as the judge reads it: its text, then each tool call it
+/// names, as data.
+fn answer_text(response: &LlmResponse) -> String {
+    response
+        .message
+        .content
+        .iter()
+        .filter_map(|part| match part {
+            ContentPart::Text { text } => Some(text.clone()),
+            ContentPart::ToolCall { .. } => serde_json::to_string(part).ok(),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 impl CodeFixHost for HostModels<'_> {
     fn draft(&self, job: &CodeFixJob) -> oneiron::Result<Option<CodeFixDraft>> {
         let source = &job.source;
+        // Rule 5 (FIX 2343): the real failure's texts go whole, measured.
+        let longest = [source.briefing.as_deref(), source.task.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::len)
+            .fold(source.instructions.len(), usize::max);
+        let _ = self
+            .vault
+            .measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         let data = serde_json::json!({
             "failure_class": job.failure_class,
             "heal_route": job.route.as_str(),
             "wants_fix": matches!(job.route, HealRoute::SkillEdit | HealRoute::PromptInject),
             "reports": job.reports,
-            "agent_instructions": clip(&source.instructions, SOURCE_BYTES),
-            "briefing": source.briefing.as_deref().map(|text| clip(text, SOURCE_BYTES)),
-            "task": source.task.as_deref().map(|text| clip(text, SOURCE_BYTES)),
+            "agent_instructions": source.instructions,
+            "briefing": source.briefing,
+            "task": source.task,
         });
         let Some(text) = self.generate(
             self.coach(),
@@ -280,6 +345,10 @@ impl CodeFixHost for HostModels<'_> {
         }
         // The failing agent's replay stays on the agent's chat seat.
         self.generate(CHAT_ROLE, messages)
+    }
+
+    fn reply_exact(&self, request: &ExactReplayRequest) -> oneiron::Result<Option<String>> {
+        Ok(self.send_exact(request))
     }
 }
 

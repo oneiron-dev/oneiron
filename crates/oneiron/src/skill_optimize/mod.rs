@@ -159,8 +159,8 @@ pub(crate) use self::brief::optimize_brief_bound_at;
 pub use self::brief::{
     RejectedSkillEdit, RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME,
     SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft,
-    SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
-    skill_optimize_call_purpose,
+    SkillFailureContext, SkillFailureReport, SkillOptimizeAuthor, SkillOptimizeBrief,
+    optimize_brief, optimize_brief_for_principal_at, skill_optimize_call_purpose,
 };
 pub use self::decisions::{SkillOptimizeDecisions, SkillReplayPair, judgment_kind};
 pub use self::dials::{

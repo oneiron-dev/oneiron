@@ -39,3 +39,16 @@ and `src/edit_v4.rs`. `set_format` takes an optional 1-based `occurrence` that f
 repeated `expect`, counted the way the ambiguity check counts its matches. A copy the paragraph does not
 hold reads as an expect mismatch. Without `occurrence` a repeated `expect` still refuses. The suite's
 `EditStep::SetRunFormatting` literals do not carry the new field; the suite is outside the workspace.
+The DOCX parse-budget change (2026-10-20, scan C005) adds `src/parse_budget.rs` and touches `src/docx.rs`,
+`src/lib.rs`, `src/runtime.rs`, `src/import.rs`, `src/docx_validate.rs` and `src/redline_extract.rs`. Before any
+reader builds a tree, one pass streams every XML part of the package and charges what the tree builders keep:
+nodes (elements, attributes, namespace bindings, text runs, CDATA, comments, processing instructions) up to
+`MAX_DOCX_XML_NODES` = 10,000,000, and decoded bytes with each resolved namespace URI up to
+`MAX_DOCX_XML_EXPANDED_BYTES` = 500 MiB. The counters run across all parts. A package over either is refused as
+`DocxError::ParseLimitExceeded` and `ErrorCode::ParseLimitExceeded`, naming the bound; `validate_docx` reports
+it as I-PKG-000 and `extract_redline` as a ZIP error. Packages under both bounds read as before.
+The comment-anchor allocation change (2026-10-20, scan C060) touches `src/edit/verbs/comments.rs` only.
+`comment_create` tries the single-run fast path first and builds the per-visible-char map only when an
+`occurrence` is given or the fast path misses; the copies of the quote are counted as `match_indices`
+streams past (total, the chosen copy's start, the fast hit's copy number) instead of collected into a
+vector. Marker placement, the `RepeatedCommentQuote` note, refusals and their order are unchanged.

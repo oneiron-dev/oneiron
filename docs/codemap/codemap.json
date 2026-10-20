@@ -12150,7 +12150,7 @@
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "enum": 2,
       "struct": 1
      }
@@ -13079,7 +13079,7 @@
      "path": "src/code_run/dispatcher/human_speech.rs",
      "purpose": "Ask-human durable waits and executor speech witnessing",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -20352,7 +20352,7 @@
      "path": "src/dreamer_consolidation/evidence.rs",
      "purpose": "Parent-verified evidence is the sole scoped consolidation handoff",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -20474,9 +20474,9 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 4,
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -20680,7 +20680,7 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "re-export": 1
      }
     },
@@ -20738,6 +20738,21 @@
      "purpose": "The candidates an escalated consolidation round dropped, retained on its `conflict.open` marker (OF-023, FIX…",
      "surface": {
       "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConflictSettleOutcome",
+      "StagedKeep"
+     ],
+     "path": "src/dreamer_consolidation/retained_keep.rs",
+     "purpose": "Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of…",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
       "struct": 1
      }
     },
@@ -20866,7 +20881,7 @@
      "purpose": "Settling a parked contradiction (OF-023; ARCH-0003 `dr:H0636-4`)",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 3,
       "struct": 8
@@ -21076,7 +21091,7 @@
      "path": "src/dreamer_consolidation/turn_text.rs",
      "purpose": "The read-only text of one TURN as a consolidation branch sees it",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -21085,6 +21100,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
      "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/turn_text/projection.rs",
+     "purpose": "The exact projection a consolidation branch read of one witnessed TURN (FIX 5755)",
      "surface": {
       "crate-vis": 2
      }
@@ -21343,6 +21368,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_promotion/imported_keep.rs",
+     "purpose": "A kept alternative from imported words (FIX 5754): the selected landing's review route",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -21359,7 +21394,7 @@
      "path": "src/dreamer_promotion/settlement.rs",
      "purpose": "The selected landing (OF-023, FIX 496): a consolidation round's retained alternative that a conflict…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -21861,7 +21896,7 @@
      "purpose": "The Coach's heal and Issues jobs (ARCH-0066 #coach, OF-418)",
      "surface": {
       "const": 2,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -21880,13 +21915,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/coach_repair.rs",
      "purpose": "The Coach's draft-first skill repair (ARCH-0066 #healer, OF-418)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -22430,7 +22465,7 @@
      "purpose": "Durable Dreamer milestone claims: the index doors, the F4 binding check, and the pinned claim-value shape",
      "surface": {
       "crate-vis": 7,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -26075,7 +26110,7 @@
       "crate-vis": 3,
       "enum": 4,
       "fn": 10,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -26105,11 +26140,38 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 9,
       "fn": 5,
+      "re-export": 1,
       "struct": 6,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExactReplayRequest",
+      "ReplayFidelity"
+     ],
+     "path": "src/failure_signals/code_fix/exact.rs",
+     "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/code_fix/subject.rs",
+     "purpose": "What a code fix reads of the real failure behind its source: the text and every world it touched, a failure…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -26126,19 +26188,23 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 2,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "DispatchFailure"
+     ],
      "path": "src/failure_signals/live.rs",
-     "purpose": "Live tier-1 counting (OF-380)",
+     "purpose": "Live tier-1 counting (OF-380, FIX 2146)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -33822,7 +33888,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -39163,6 +39229,16 @@
      "path": "src/origin/smart_http/recreate_tests.rs",
      "purpose": "A ref deleted and pushed again at a tip it was already published at lands on that earlier publication: the…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/smart_http/retained_reasons.rs",
+     "purpose": "A push refusal's reasons, bounded where they are kept (FIX 5942)",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "s",
@@ -46079,7 +46155,7 @@
      "path": "src/scope_summary/request.rs",
      "purpose": "Scope-only declarations, exact-source fences and atomic Dreamer landings",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -46885,14 +46961,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/blocked_reports/source.rs",
+     "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -46904,17 +46990,19 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CentroidCorpus",
       "CentroidReplay"
      ],
      "path": "src/self_heal/centroid_evidence.rs",
      "purpose": "Immutable, content-addressed centroid inputs beside vault-local telemetry",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -46940,7 +47028,7 @@
      "purpose": "The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded…",
      "surface": {
       "const": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -46980,9 +47068,9 @@
      "path": "src/self_heal/distillation.rs",
      "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -47059,7 +47147,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 8,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -47175,6 +47263,20 @@
      "surface": {
       "const": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SessionLine",
+      "SessionText"
+     ],
+     "path": "src/self_heal/session_text.rs",
+     "purpose": "What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -49818,6 +49920,8 @@
       "RejectedSkillEdit",
       "RejectedSkillEditReason",
       "SkillEditDraft",
+      "SkillFailureContext",
+      "SkillFailureReport",
       "SkillOptimizeAuthor",
       "SkillOptimizeBrief"
      ],
@@ -49828,7 +49932,7 @@
       "crate-vis": 3,
       "enum": 2,
       "fn": 3,
-      "struct": 2,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -60341,7 +60445,7 @@
       "enum": 1,
       "fn": 9,
       "mod": 1,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 6,
       "trait": 1
      }
@@ -60368,6 +60472,20 @@
      "path": "src/voice_cascade/voxcpm2/http/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoxCpm2PcmBody"
+     ],
+     "path": "src/voice_cascade/voxcpm2/pcm.rs",
+     "purpose": "One render's PCM16LE result as it streams in from the worker (C058)",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -62496,7 +62614,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 24,
       "mod": 1,
       "re-export": 1,
@@ -63838,7 +63956,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 74,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63859,7 +63977,7 @@
      "purpose": "ORF-2 / OF-361 — the BudgetMem statistical PRE-FILTER: the cheap screen that decides what is worth…"
     },
     "dreamer_promotion": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63964,7 +64082,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 8,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -64244,7 +64362,7 @@
      "purpose": "Live office bodies (ARCH-0075; ARCH-0077, \"Multiplayer: the target body shape\"): an imported DOCX, XLSX or…"
     },
     "origin": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -64538,7 +64656,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 35,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64818,7 +64936,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "voice_cascade": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -64883,7 +65001,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4024,
+   "source_files": 4033,
    "test_files": 902
   },
   "oneiron-android": {
@@ -70176,7 +70294,7 @@
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "mod": 15,
       "re-export": 5,
       "struct": 1
@@ -79815,7 +79933,7 @@
      "path": "src/api/mcp_gateway/booking_call.rs",
      "purpose": "A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -83382,17 +83500,27 @@
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/device_sync/dial.rs",
+     "purpose": "What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/device_sync/enrolment.rs",
      "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -83400,9 +83528,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/device_sync/renewal.rs",
-     "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`…",
+     "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -86808,7 +86936,7 @@
      "path": "src/server/wave_door.rs",
      "purpose": "The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -87783,7 +87911,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -88065,7 +88193,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 873,
+   "source_files": 874,
    "test_files": 182
   },
   "oneiron-spawn": {

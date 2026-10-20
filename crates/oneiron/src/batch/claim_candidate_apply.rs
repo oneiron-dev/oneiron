@@ -75,6 +75,10 @@ pub(super) fn apply_claim_candidate(
     let default_facet = claim_candidate_birth_facet(store, wtxn, &id)?;
     let had_prior = crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &id)?;
     let body = candidate.into_claim_body(envelope, default_facet)?;
+    // The ClaimOf weight the claim is born with: a signed initial-weight
+    // entry, else the default. Both machine-history fold entry points seed
+    // from this same value.
+    let birth_weight = crate::claim::claim_initial_claim_of_weight(&body)?;
     let data = crate::claim::encode_claim_body(&body)?;
     if had_prior {
         crate::claim::history_store::close_machine_history_for_successor(
@@ -157,11 +161,9 @@ pub(super) fn apply_claim_candidate(
         });
     };
 
-    let weight = EdgeKind::ClaimOf
-        .default_weight()
-        .ok_or(Error::InvariantViolation(
-            "ClaimOf edge missing default weight",
-        ))?;
+    let weight = birth_weight.ok_or(Error::InvariantViolation(
+        "ClaimOf edge missing birth weight",
+    ))?;
     apply_edge(
         store,
         wtxn,

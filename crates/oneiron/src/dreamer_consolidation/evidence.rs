@@ -134,6 +134,9 @@ struct VerifiedCitation {
     trust: ClaimSource,
     /// The MESSAGE words a witnessed TURN locator covers; empty otherwise.
     messages: Vec<MessageSpan>,
+    /// The MESSAGEs the cited TURN text joined, in order, when it was read
+    /// from them (FIX 5755); empty otherwise. Ids only, never their words.
+    projection: Vec<EntityId>,
 }
 
 /// Private constructor; a bare ID or a caller-chosen meet cannot become a
@@ -163,6 +166,7 @@ impl VerifiedEvidenceSet {
                 version: resources.source_version(&locator.source_id())?,
                 trust: fact.trust_class,
                 messages: resources.message_spans(&locator.reference())?,
+                projection: resources.projection(&locator.reference()),
             });
         }
         Ok(Self::from_rows(rows, inherited_meet))
@@ -172,10 +176,14 @@ impl VerifiedEvidenceSet {
     /// hash to the words it cited and cover the same MESSAGE slices, a claim
     /// must still be admissible and hash the same, and each source's trust is
     /// read again. The meet folds onto `inherited_meet`, so it never rises.
+    /// A TURN range the TURN as read now no longer binds is bound once more
+    /// against the exact projection its branch read, when `projections`
+    /// keeps it (FIX 5755): the same MESSAGEs, rebuilt as they stand now.
     pub(super) fn reverify_in_txn(
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         stored: &[super::provenance::VerifiedLocator],
+        projections: &[(EntityId, Vec<EntityId>)],
         inherited_meet: ClaimSource,
     ) -> Result<Self> {
         if stored.is_empty() {
@@ -208,8 +216,27 @@ impl VerifiedEvidenceSet {
                 (super::provenance::evidence_source_from_claim(&claim), None)
             } else {
                 let trust = super::resources::native_turn_source(vault, &body)?;
-                let text =
-                    super::turn_text::collect_in(&read, txn, &reference.source_id, &body, &mut 0)?;
+                let live =
+                    super::turn_text::collect_in(&read, txn, &reference.source_id, &body, &mut 0);
+                let projection = projections
+                    .iter()
+                    .find(|(source, _)| *source == reference.source_id)
+                    .map(|(_, ids)| ids.as_slice());
+                let text = match (live, projection) {
+                    (Ok(text), _)
+                        if binds(*reference, kind, &body, &text, trust, hash, messages) =>
+                    {
+                        text
+                    }
+                    (_, Some(projection)) => super::turn_text::projection::rebuild_in(
+                        &read,
+                        txn,
+                        &reference.source_id,
+                        &body,
+                        projection,
+                    )?,
+                    (live, None) => live?,
+                };
                 (trust, Some(text))
             };
             let verified = super::conflict::verify_swarm_evidence_bytes(
@@ -232,6 +259,10 @@ impl VerifiedEvidenceSet {
                 version: super::resources::document_version(reference.source_id, &body),
                 trust,
                 messages: live,
+                projection: match &text {
+                    Some(text) => text.projection(),
+                    None => Vec::new(),
+                },
             });
         }
         Ok(Self::from_rows(rows, inherited_meet))
@@ -257,6 +288,7 @@ impl VerifiedEvidenceSet {
                     if row.locator < kept.locator {
                         kept.locator = row.locator;
                         kept.messages = row.messages;
+                        kept.projection = row.projection;
                     }
                 }
             }
@@ -336,6 +368,15 @@ impl VerifiedEvidenceSet {
             .map(|span| span.message)
             .collect()
     }
+    /// Each cited TURN's projection, by source, as its branch read it
+    /// (FIX 5755): what a retained alternative keeps beside its citations.
+    pub(super) fn projections(&self) -> BTreeMap<EntityId, Vec<EntityId>> {
+        self.rows
+            .iter()
+            .filter(|row| !row.projection.is_empty())
+            .map(|row| (row.locator.source_id(), row.projection.clone()))
+            .collect()
+    }
     pub(crate) fn verified_locators(&self) -> Vec<super::provenance::VerifiedLocator> {
         self.rows
             .iter()
@@ -395,6 +436,24 @@ impl VerifiedEvidenceSet {
             &self.verified_locators(),
         )
     }
+}
+
+/// Whether `text` still holds the words a stored TURN citation names: the
+/// same range hash over it and the same MESSAGE slices behind it.
+fn binds(
+    reference: SwarmEvidenceRef,
+    kind: u8,
+    body: &[u8],
+    text: &super::turn_text::TurnText,
+    trust: ClaimSource,
+    hash: &[u8; 32],
+    messages: &[MessageSpan],
+) -> bool {
+    super::conflict::verify_swarm_evidence_bytes(reference, kind, body, text.text(), trust)
+        .is_ok_and(|verified| verified.content_hash == *hash)
+        && text
+            .spans(reference.byte_range)
+            .is_ok_and(|live| live == messages)
 }
 
 #[derive(Debug, Clone)]

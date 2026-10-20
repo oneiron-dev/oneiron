@@ -19,8 +19,11 @@
 //! The vault reads the real failure itself, never from the caller: the
 //! failing agent's instructions, the briefing its dispatch carried and the
 //! task it ran ([`FailureSource`]), and every world those touched. A failure
-//! is a failure-ladder case or a blocked report its run filed
-//! ([`CodeFixSource`]).
+//! is a failure-ladder case or a blocked report ([`CodeFixSource`]). A report
+//! whose run is no agent dispatch's attempt reads the source its run's host
+//! kept with it (FIX 2343); one whose run never gave this engine a model
+//! request has no replay. The replay sends the request the failing call sent
+//! when the vault kept it (FIX 1662, `exact`).
 
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
@@ -36,6 +39,13 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::failure_ladder::{BlockedReportRef, HealerCase, failure_case_ref, healer_case_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
+
+mod exact;
+mod subject;
+pub(crate) use self::exact::exact_replay_request;
+pub use self::exact::{ExactReplayRequest, ReplayFidelity};
+pub(crate) use self::subject::dispatch_worlds_in;
+use self::subject::{SubjectFailure, blocked_source_failure_in};
 
 pub const CODE_FIX_RECORD_VERSION: u16 = 1;
 pub const CODE_FIX_MAX_NOTE_BYTES: usize = 1024;
@@ -86,9 +96,10 @@ pub struct CandidateFix {
 }
 
 /// The real failure as the vault holds it: the failing agent's
-/// instructions, the briefing its dispatch carried and the task it ran. No
-/// model request is kept, so a replay rebuilds the failing call from these.
-/// None of it leaves the vault.
+/// instructions, the briefing its dispatch carried and the task it ran. A
+/// replay sends the request the failing call sent when the vault kept it
+/// ([`ExactReplayRequest`], FIX 1662), and rebuilds the call from these when
+/// it did not. None of it leaves the vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailureSource {
     pub instructions: String,
@@ -104,9 +115,12 @@ pub struct FailureSource {
 pub enum CodeFixSource {
     /// A durable failed case, by its ref.
     Case { case_ref: String },
-    /// A blocked report, by its receipt, and the durable run that filed it.
-    /// A pumped agent's run id is its attempt's id.
-    Blocked { receipt: EntityId, run: EntityId },
+    /// A blocked report, by its receipt, and the durable run that filed it,
+    /// if it had one. A pumped agent's run id is its attempt's id.
+    Blocked {
+        receipt: EntityId,
+        run: Option<EntityId>,
+    },
 }
 
 /// What a code fix's source stands on.
@@ -116,9 +130,8 @@ pub(crate) struct CodeFixSubject {
     pub(crate) case: Option<HealerCase>,
     /// The failure's blocked reports.
     pub(crate) reports: Vec<BlockedReportRef>,
-    /// The real failure and every world it touched; `None` when the attempt
-    /// is no agent dispatch this can read, or a world cannot be proved.
-    pub(crate) failure: Option<(FailureSource, Vec<EntityId>)>,
+    /// The real failure, as far as the vault can read it.
+    pub(crate) failure: SubjectFailure,
 }
 
 impl FailureSource {
@@ -354,8 +367,9 @@ impl Vault {
         let Some(subject) = code_fix_subject_in(self, &txn, source)? else {
             return withheld(W::UnknownCase);
         };
-        let Some((failure, worlds)) = subject.failure else {
-            return withheld(W::PrivateWorld);
+        let (failure, worlds) = match subject.failure.read() {
+            Ok(read) => read,
+            Err(reason) => return withheld(reason),
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if !all_public(&fold, &worlds) {
@@ -438,8 +452,9 @@ impl Vault {
         let Some(subject) = code_fix_subject_in(self, &txn, source)? else {
             return withheld(W::UnknownCase);
         };
-        let Some((failure, worlds)) = subject.failure else {
-            return withheld(W::PrivateWorld);
+        let (failure, worlds) = match subject.failure.read() {
+            Ok(read) => read,
+            Err(reason) => return withheld(reason),
         };
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         if !all_public(&fold, &worlds) {
@@ -556,9 +571,10 @@ pub(crate) fn failed_case_in(
 
 /// What `source` stands on, while it stands: a case while its attempt
 /// stands failed; a blocked report while its run's filing of it is on record
-/// and the run's attempt is there, in whatever state, with the run's case
-/// and that case's reports joined on while the attempt stands failed.
-/// `None` once it does not.
+/// (or, with no durable run, while the Coach's heal of it is), with the
+/// run's case and that case's reports joined on while the run's attempt
+/// stands failed. A report whose run is no agent dispatch's attempt reads
+/// the source its host kept with it (FIX 2343). `None` once it does not.
 pub(crate) fn code_fix_subject_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -573,24 +589,46 @@ pub(crate) fn code_fix_subject_in(
             Ok(Some(CodeFixSubject {
                 reports: case.blocked_reports.clone(),
                 case: Some(case),
-                failure,
+                failure: failure.map_or(SubjectFailure::Unproved, |(failure, worlds)| {
+                    SubjectFailure::Read(failure, worlds)
+                }),
             }))
         }
         CodeFixSource::Blocked { receipt, run } => {
-            if !crate::self_heal::blocked_reports::filed_by_run_in(vault, txn, *run, *receipt)? {
+            let stands = match run {
+                Some(run) => {
+                    crate::self_heal::blocked_reports::filed_by_run_in(vault, txn, *run, *receipt)?
+                }
+                None => crate::self_heal::blocked_reports::settled_in_txn(vault, txn, receipt)?
+                    .is_some(),
+            };
+            if !stands {
                 return Ok(None);
             }
-            let id = AttemptId::from_bytes(run.as_bytes())?;
-            let Some(attempt) = AttemptQueue::new(vault).get_in_txn(txn, id)? else {
-                return Ok(None);
+            let attempt = match run {
+                Some(run) => AttemptQueue::new(vault)
+                    .get_in_txn(txn, AttemptId::from_bytes(run.as_bytes())?)?
+                    .filter(|attempt| dispatch_input(attempt).is_some()),
+                None => None,
             };
+            let reports = vec![BlockedReportRef {
+                receipt_ref: receipt.to_hex(),
+            }];
+            // A run that is no agent dispatch's attempt (none, a standalone
+            // run, an MCP run) replays from what its host kept (FIX 2343).
+            let Some(attempt) = attempt else {
+                return Ok(Some(CodeFixSubject {
+                    case: None,
+                    reports,
+                    failure: blocked_source_failure_in(vault, txn, receipt)?,
+                }));
+            };
+            let id = attempt.id;
             let failure = failure_source_in(vault, txn, attempt.task_ref.as_deref(), &attempt)?;
             // A failed case on the run left its own code fix to this report's
             // (OF-380): its ladder class and evidence join the report here.
             let case = failed_case_in(vault, txn, &failure_case_ref(id))?.map(|(case, _)| case);
-            let mut reports = vec![BlockedReportRef {
-                receipt_ref: receipt.to_hex(),
-            }];
+            let mut reports = reports;
             for report in case.iter().flat_map(|case| &case.blocked_reports) {
                 if !reports.contains(report) {
                     reports.push(report.clone());
@@ -599,7 +637,9 @@ pub(crate) fn code_fix_subject_in(
             Ok(Some(CodeFixSubject {
                 case,
                 reports,
-                failure,
+                failure: failure.map_or(SubjectFailure::Unproved, |(failure, worlds)| {
+                    SubjectFailure::Read(failure, worlds)
+                }),
             }))
         }
     }

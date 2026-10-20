@@ -506,7 +506,7 @@ pub(crate) async fn start_desktop_workers(
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
     workers.extend(crate::decision_host::spawn_person_threshold(&sync_server));
     // Failure signals reach the deployment's publisher (OF-380).
-    workers.extend(crate::ai_host::failure_signals::spawn(
+    workers.push(crate::ai_host::failure_signals::spawn(
         &sync_server,
         crate::ai_host::failure_signals::FailureSignalHost::new(
             &config.failure_signals,

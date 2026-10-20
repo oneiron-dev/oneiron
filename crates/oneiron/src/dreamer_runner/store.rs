@@ -659,6 +659,9 @@ impl<'a> DreamerRunnerStore<'a> {
                     record
                 }
             };
+            // FIX 1554: a report filed while a Coach Issues run held its
+            // lease gets its successor in the commit that settles the run.
+            self.redrive_coach_issues_in_txn(wtxn, record, input.now)?;
             if decode_dreamer_attempt_payload(&record.payload).is_ok_and(|payload| {
                 payload.attempt_type == crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE
             }) {
@@ -705,7 +708,18 @@ impl<'a> DreamerRunnerStore<'a> {
         policy: crate::failure_ladder::FailureScopePolicy,
     ) -> Result<crate::failure_ladder::FailureLadderOutcome> {
         self.ensure_terminal_transition_target(input.attempt_id)?;
-        crate::failure_ladder::FailureLadder::new(self.vault).handle_attempt_failure(input, policy)
+        let (attempt, lease, now) = (input.attempt_id, input.attempt_count, input.now);
+        let outcome = crate::failure_ladder::FailureLadder::new(self.vault)
+            .handle_attempt_failure(input, policy)?;
+        // FIX 2146: the lease-fenced failure counts once, for the agent the
+        // dispatch targets; a count that fails changes nothing here.
+        self.vault.count_dispatch_failure(
+            attempt,
+            lease,
+            crate::failure_signals::DispatchFailure::Settled,
+            now,
+        );
+        Ok(outcome)
     }
 
     /// Atomically retries a typed agent failure together with its runner tree
@@ -792,6 +806,9 @@ impl<'a> DreamerRunnerStore<'a> {
                         now: input.now,
                     },
                 )?;
+                // FIX 1554: as at completion, a failed Coach Issues run's
+                // successor is queued in the commit that settles it.
+                self.redrive_coach_issues_in_txn(wtxn, &record, input.now)?;
                 // A free-time item that fails settles its spend scope and
                 // ends Failed unless it already has its receipt (FIX 4453).
                 super::free_time::end_free_time_item_in_txn(

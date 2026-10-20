@@ -27,7 +27,7 @@ pub enum VoxCpm2Event {
         submission: u64,
         chunk_index: u64,
         target: Box<RenderTarget>,
-        bytes: Vec<u8>,
+        body: Arc<VoxCpm2PcmBody>,
     },
     Failed {
         generation: GenerationEpoch,
@@ -41,7 +41,7 @@ impl VoxCpm2Event {
             submission,
             chunk_index,
             target,
-            bytes,
+            body,
         } = self
         {
             Some(VoxCpm2Audio {
@@ -50,7 +50,7 @@ impl VoxCpm2Event {
                 chunk_index: *chunk_index,
                 target: *target.clone(),
                 channels: 1,
-                bytes,
+                body,
             })
         } else {
             None
@@ -176,13 +176,14 @@ fn target_json(target: &RenderTarget) -> Value {
             "limits": target.warm.limits}})
 }
 fn render(
+    vault: &Vault,
     client: &Client,
     url: &Url,
     credential: &str,
     target: &RenderTarget,
     ref_clip: &VoiceRegisterClip,
     text: &str,
-) -> Result<Vec<u8>> {
+) -> Result<VoxCpm2PcmBody> {
     let header = serde_json::to_vec(&json!({"target": target_json(target), "text": text,
         "transcript": ref_clip.transcript}))
     .map_err(|_| invalid("request encoding"))?;
@@ -206,41 +207,58 @@ fn render(
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|_| invalid("worker render failed"))?;
-    // Rule 5: a render's audio is read whole, however long it speaks; only
-    // its framing and metadata header are checked.
-    let mut received = Vec::new();
+    // The metadata header's length is checked against the serving policy
+    // before a byte of the header is held (C058).
+    let mut prefix = [0u8; 4];
     response
-        .read_to_end(&mut received)
-        .map_err(|_| invalid("worker response failed"))?;
-    if received.len() < 5 {
-        return Err(invalid("invalid worker response size"));
-    }
-    let n = u32::from_be_bytes(received[..4].try_into().map_err(|_| invalid("header"))?) as usize;
-    if n == 0 || n as u64 > target.limits.max_header_bytes || received.len() <= n + 4 {
+        .read_exact(&mut prefix)
+        .map_err(|_| invalid("invalid worker response size"))?;
+    let n = u32::from_be_bytes(prefix);
+    if n == 0 || u64::from(n) > target.limits.max_header_bytes {
         return Err(invalid("invalid worker metadata"));
     }
-    let meta: Value = serde_json::from_slice(&received[4..4 + n])
+    let mut header = vec![0; usize::try_from(n).map_err(|_| invalid("invalid worker metadata"))?];
+    response
+        .read_exact(&mut header)
         .map_err(|_| invalid("invalid worker metadata"))?;
+    let meta: Value =
+        serde_json::from_slice(&header).map_err(|_| invalid("invalid worker metadata"))?;
     if meta["target"] != target_json(target)
         || meta["sample_rate"].as_u64() != Some(u64::from(target.warm.sample_rate))
         || meta["channels"].as_u64() != Some(1)
     {
         return Err(invalid("worker target mismatch"));
     }
-    Ok(received.split_off(4 + n))
+    // Rule 5: a render's audio is taken whole, however long it speaks. It
+    // streams into a spool, in memory up to the result-body inline bound
+    // and spilled past it, never into one growing buffer.
+    let mut spool = super::pcm::PcmSpool::new(vault)?;
+    let mut frame = vec![0; PCM_WINDOW_BYTES];
+    loop {
+        let read = match response.read(&mut frame) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return Err(invalid("worker response failed")),
+        };
+        spool.write(&frame[..read])?;
+    }
+    let body = spool.finish(vault)?;
+    if body.is_empty() {
+        return Err(invalid("invalid worker metadata"));
+    }
+    Ok(body)
 }
 
-/// One render as one call on `seat`: its permit starts before the request
-/// leaves, and an answer settles on the characters it spoke.
+/// One render as one call on `seat`: its permit starts before `send`'s
+/// request leaves, and an answer settles on the characters it spoke.
 fn admitted_render(
     seat: &WireSeat,
-    client: &Client,
-    url: &Url,
-    credential: &str,
     target: &RenderTarget,
     reference: &VoiceRegisterClip,
     text: &str,
-) -> Result<Vec<u8>> {
+    send: impl FnOnce() -> Result<VoxCpm2PcmBody>,
+) -> Result<VoxCpm2PcmBody> {
     let request = seat.request(
         AiOperation::Speech,
         vec![MediaPart::Text {
@@ -256,14 +274,10 @@ fn admitted_render(
             transcript: reference.transcript.clone(),
         }),
     );
-    seat.call(
-        &request,
-        || render(client, url, credential, target, reference, text),
-        |_| MediaUsage {
-            characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
-            ..MediaUsage::default()
-        },
-    )
+    seat.call(&request, send, |_| MediaUsage {
+        characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
+        ..MediaUsage::default()
+    })
     .map_err(|error| match error {
         WireCallError::Refused(_) => invalid("run admission refused the render"),
         WireCallError::Failed(error) => error,
@@ -294,23 +308,17 @@ fn run_worker(
                 let event = match active.as_ref() {
                     Some((epoch, target)) if *epoch == item.generation => {
                         match target.with_current(&vault, |reference| {
-                            admitted_render(
-                                seat,
-                                &client,
-                                &url,
-                                &credential,
-                                target,
-                                reference,
-                                &text,
-                            )
+                            admitted_render(seat, target, reference, &text, || {
+                                render(&vault, &client, &url, &credential, target, reference, &text)
+                            })
                         }) {
-                            Ok(bytes) => {
+                            Ok(body) => {
                                 let event = VoxCpm2Event::Audio {
                                     generation: item.generation,
                                     submission: item.sequence,
                                     chunk_index,
                                     target: Box::new(target.clone()),
-                                    bytes,
+                                    body: Arc::new(body),
                                 };
                                 chunk_index += 1;
                                 event

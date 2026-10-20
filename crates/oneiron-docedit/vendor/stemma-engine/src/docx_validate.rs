@@ -221,6 +221,17 @@ pub fn validate_docx(bytes: &[u8]) -> DocxValidation {
         }
     };
 
+    // One XML budget across every part, charged before any part is parsed.
+    if let Err(bound) = crate::parse_budget::admit_zip(&mut zip) {
+        findings.push(ValidationFinding {
+            rule_id: "I-PKG-000",
+            severity: ValidationSeverity::Error,
+            message: crate::parse_budget::refusal(bound, bound.limit()),
+            location: "(package)".to_string(),
+        });
+        return DocxValidation { findings };
+    }
+
     // Build the package state once.
     let state = build_package_state(&mut zip, &mut findings);
 

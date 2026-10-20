@@ -525,6 +525,15 @@ impl<'a> BranchResources<'a> {
         }
     }
 
+    /// The MESSAGEs the frozen text a TURN citation is measured over joins,
+    /// in order (FIX 5755); none for a claim or inline text.
+    pub(super) fn projection(&self, entry: &SwarmEvidenceRef) -> Vec<EntityId> {
+        match self.texts.get(&entry.source_id) {
+            Some(text) if entry.claim_id.is_none() => text.projection(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Parent-only evidence accounting: one actor-scoped read transaction for
     /// every cited source, then content hash and source classification. Both
     /// the branch pins and the sink's live fence reject revision drift.

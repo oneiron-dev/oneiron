@@ -12,17 +12,33 @@
 //! row with no DOM node (generated text) keeps its handle by its locator
 //! within its document. The session keeps every handle's locator, so a
 //! handle whose node is gone still resolves by its locator, as a rebound.
+//!
+//! The node and locator bindings no lookup can reach again go as reads
+//! come (C013): a document's once a read shows its frame holding another
+//! (another loader or root), an earlier unsettled read's, and a node's once
+//! the page answers that it no longer has it. Handle records stay, so an old
+//! handle still rebinds by its locator. What the registry holds is charged
+//! to the host's memory floor before it grows ([`HandleRetention`]): a read
+//! whose new handles the floor will not admit mints none and fails
+//! `MemoryFloor`, and the session stays.
 
 use super::CdpDriver;
 use crate::observation::HandleInfo;
 use crate::outline::{self, Line};
+use crate::retention::HandleRetention;
 use crate::{BrowserError, Row};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::Hash;
 
 /// Samples of the page's documents one read takes before it stops waiting
 /// for the page to hold still between them.
 const SAMPLE_TRIES: u32 = 3;
+
+/// One slot of each map's table: its entry and its control byte.
+const NODE_SLOT: usize = std::mem::size_of::<((String, u64), String)>() + 1;
+const LOCATOR_SLOT: usize = std::mem::size_of::<((String, String), String)>() + 1;
+const RECORD_SLOT: usize = std::mem::size_of::<(String, HandleInfo)>() + 1;
 
 /// The session's live handles: by the node, or the row with no node, each
 /// names, and each one's locator and last scope.
@@ -35,6 +51,19 @@ pub(super) struct Handles {
     records: HashMap<String, HandleInfo>,
     /// Reads whose documents could not be pinned.
     unsettled: u64,
+    /// Bytes the strings the three maps hold take, kept as they come and go.
+    strings: usize,
+    /// The host's charge for what the registry holds, and its bytes now.
+    retention: Box<dyn HandleRetention>,
+    charged: usize,
+}
+
+/// What one row binds its handle by: its DOM node, or its locator when it
+/// has none, within its document.
+#[derive(PartialEq, Eq, Hash)]
+enum Key {
+    Node((String, u64)),
+    Locator((String, String)),
 }
 
 /// One read of the front tab, minted: its rows with their live handles, the
@@ -85,7 +114,7 @@ impl Documents {
 }
 
 impl Handles {
-    pub(super) fn new(token: String) -> Self {
+    pub(super) fn new(token: String, retention: Box<dyn HandleRetention>) -> Self {
         Self {
             token,
             next: 0,
@@ -93,6 +122,9 @@ impl Handles {
             by_locator: HashMap::new(),
             records: HashMap::new(),
             unsettled: 0,
+            strings: 0,
+            retention,
+            charged: 0,
         }
     }
 
@@ -101,48 +133,132 @@ impl Handles {
         self.records.get(handle).cloned()
     }
 
-    fn fresh(&mut self) -> String {
-        self.next = self.next.saturating_add(1);
-        format!("h{}:{}", self.token, self.next)
+    fn bound(&self, key: &Key) -> Option<&String> {
+        match key {
+            Key::Node(key) => self.by_node.get(key),
+            Key::Locator(key) => self.by_locator.get(key),
+        }
     }
 
-    fn of_node(&mut self, document: String, node: u64) -> String {
-        let key = (document, node);
-        if let Some(handle) = self.by_node.get(&key) {
-            return handle.clone();
-        }
-        let handle = self.fresh();
-        self.by_node.insert(key, handle.clone());
-        handle
+    /// The bytes the registry holds now: each map's room by its slot, and
+    /// the strings in them.
+    fn footprint(&self) -> usize {
+        slots(self.by_node.capacity(), NODE_SLOT)
+            .saturating_add(slots(self.by_locator.capacity(), LOCATOR_SLOT))
+            .saturating_add(slots(self.records.capacity(), RECORD_SLOT))
+            .saturating_add(self.strings)
     }
 
-    fn of_locator(&mut self, document: String, locator: String) -> String {
-        let key = (document, locator);
-        if let Some(handle) = self.by_locator.get(&key) {
-            return handle.clone();
+    /// Charges `bytes` before the registry grows to them. When the host's
+    /// floor will not admit them, nothing is charged and the read mints
+    /// nothing.
+    fn reserve(&mut self, bytes: usize) -> Result<(), BrowserError> {
+        if bytes > self.charged {
+            if !self.retention.resize(bytes) {
+                return Err(BrowserError::MemoryFloor);
+            }
+            self.charged = bytes;
         }
-        let handle = self.fresh();
-        self.by_locator.insert(key, handle.clone());
-        handle
+        Ok(())
+    }
+
+    /// Moves the charge to what the registry holds now, once it has pruned
+    /// or grown within what it reserved.
+    fn settle(&mut self) {
+        let bytes = self.footprint();
+        if bytes != self.charged && self.retention.resize(bytes) {
+            self.charged = bytes;
+        }
+    }
+
+    /// The nodes bound in a document this read shows that the read did not
+    /// find: hidden, or gone from the page. Only a settled read can tell.
+    fn missing(&self, target: &str, documents: Option<&Documents>, lines: &[Line]) -> Vec<u64> {
+        let Some(documents) = documents else {
+            return Vec::new();
+        };
+        let read: BTreeSet<String> = lines
+            .iter()
+            .map(|line| documents.of(target, line.frame.as_deref()))
+            .chain([documents.of(target, None)])
+            .collect();
+        let found: HashSet<u64> = lines.iter().filter_map(|line| line.backend_node).collect();
+        let missing: BTreeSet<u64> = self
+            .by_node
+            .keys()
+            .filter(|(document, node)| !found.contains(node) && read.contains(document))
+            .map(|(_, node)| *node)
+            .collect();
+        missing.into_iter().collect()
+    }
+
+    /// Drops the bindings no lookup can reach again: those of a document a
+    /// frame in this read (`read`, of tab `target`) no longer shows, those
+    /// of this tab's earlier unsettled reads, and those of the nodes of a
+    /// document in this read the page no longer has (`gone`). Another tab's
+    /// or frame's bindings stay, and so does every handle's record.
+    fn retire(&mut self, target: &str, read: &BTreeSet<&str>, gone: &BTreeSet<u64>) {
+        let frames: Vec<String> = read
+            .iter()
+            .filter_map(|document| frame_of(target, document))
+            .collect();
+        let unsettled = format!("{target}/unsettled.");
+        let superseded = |document: &str| {
+            !read.contains(document)
+                && (document.starts_with(unsettled.as_str())
+                    || frames
+                        .iter()
+                        .any(|frame| document.starts_with(frame.as_str())))
+        };
+        let mut freed = 0usize;
+        self.by_node.retain(|(document, node), handle| {
+            let stale = superseded(document.as_str())
+                || (gone.contains(node) && read.contains(document.as_str()));
+            if stale {
+                freed = freed.saturating_add(document.capacity() + handle.capacity());
+            }
+            !stale
+        });
+        self.by_locator.retain(|(document, locator), handle| {
+            let stale = superseded(document.as_str());
+            if stale {
+                freed = freed
+                    .saturating_add(document.capacity() + locator.capacity() + handle.capacity());
+            }
+            !stale
+        });
+        if freed > 0 {
+            self.strings = self.strings.saturating_sub(freed);
+            shrink(&mut self.by_node);
+            shrink(&mut self.by_locator);
+            self.settle();
+        }
     }
 
     /// `lines` of tab `target` as rows with their handles, each row's DOM
     /// node, and the read's scope: the session, the tab and every document
-    /// the rows came from, with the main one.
+    /// the rows came from, with the main one. The bindings this read shows
+    /// superseded go first (`gone`: nodes the page no longer has); the new
+    /// handles are charged before any is kept, and a refused charge mints
+    /// none.
     fn mint(
         &mut self,
         target: &str,
         documents: Option<&Documents>,
         lines: Vec<Line>,
-    ) -> (Vec<Row>, Vec<Option<u64>>, String) {
-        let unsettled = documents.is_none().then(|| {
-            self.unsettled += 1;
-            format!("{target}/unsettled.{}", self.unsettled)
-        });
-        let home = |frame: Option<&str>| match (documents, &unsettled) {
-            (Some(documents), _) => documents.of(target, frame),
-            (None, Some(unsettled)) => unsettled.clone(),
-            (None, None) => String::new(),
+        gone: &BTreeSet<u64>,
+    ) -> Result<(Vec<Row>, Vec<Option<u64>>, String), BrowserError> {
+        let unsettled = documents
+            .is_none()
+            .then(|| format!("{target}/unsettled.{}", self.unsettled.saturating_add(1)));
+        let home = |frame: Option<&str>| {
+            let mut home = match (documents, &unsettled) {
+                (Some(documents), _) => documents.of(target, frame),
+                (None, Some(unsettled)) => unsettled.clone(),
+                (None, None) => String::new(),
+            };
+            home.shrink_to_fit();
+            home
         };
         let homes: Vec<String> = lines
             .iter()
@@ -161,26 +277,162 @@ impl Handles {
             hasher.update(document.as_bytes());
         }
         let scope = format!("page:{}", &hasher.finalize().to_hex()[..16]);
+        self.retire(target, &read, gone);
+
+        // Each row's handle: the one its node or locator is bound to, else a
+        // new one, numbered in row order, that its key's later rows share.
+        let keys: Vec<Key> = lines
+            .iter()
+            .zip(homes)
+            .map(|(line, home)| match line.backend_node {
+                Some(node) => Key::Node((home, node)),
+                None => Key::Locator((home, line.row.locator.clone())),
+            })
+            .collect();
+        let mut next = self.next;
+        let mut handles: Vec<String> = Vec::with_capacity(keys.len());
+        let mut new = Vec::with_capacity(keys.len());
+        let mut fresh: HashMap<&Key, usize> = HashMap::new();
+        for key in &keys {
+            let (handle, first) = match (self.bound(key), fresh.get(key)) {
+                (Some(handle), _) => (handle.clone(), false),
+                (None, Some(&at)) => (handles[at].clone(), false),
+                (None, None) => {
+                    next = next.saturating_add(1);
+                    fresh.insert(key, handles.len());
+                    (format!("h{}:{}", self.token, next), true)
+                }
+            };
+            handles.push(handle);
+            new.push(first);
+        }
+
+        // What keeping them adds: the new bindings and records, each record
+        // as its last row in this read leaves it.
+        let (mut nodes_added, mut locators_added) = (0usize, 0usize);
+        let (mut added, mut freed) = (0usize, 0usize);
+        for (key, &at) in &fresh {
+            let handle = handles[at].len();
+            added = added.saturating_add(match key {
+                Key::Node((document, _)) => {
+                    nodes_added += 1;
+                    document.capacity() + handle
+                }
+                Key::Locator((document, locator)) => {
+                    locators_added += 1;
+                    document.capacity() + locator.capacity() + handle
+                }
+            });
+            // The record's own key.
+            added = added.saturating_add(handle);
+        }
+        let last: HashMap<&str, usize> = handles
+            .iter()
+            .enumerate()
+            .map(|(at, handle)| (handle.as_str(), at))
+            .collect();
+        for (handle, at) in &last {
+            added = added.saturating_add(lines[*at].row.locator.len() + scope.len());
+            if let Some(old) = self.records.get(*handle) {
+                freed = freed.saturating_add(old.locator.capacity() + old.scope.capacity());
+            }
+        }
+        drop(last);
+        let strings = self.strings.saturating_add(added).saturating_sub(freed);
+        let projected = slots(
+            grown(self.by_node.len(), self.by_node.capacity(), nodes_added),
+            NODE_SLOT,
+        )
+        .saturating_add(slots(
+            grown(
+                self.by_locator.len(),
+                self.by_locator.capacity(),
+                locators_added,
+            ),
+            LOCATOR_SLOT,
+        ))
+        .saturating_add(slots(
+            grown(self.records.len(), self.records.capacity(), fresh.len()),
+            RECORD_SLOT,
+        ))
+        .saturating_add(strings);
+        drop(fresh);
+        self.reserve(projected)?;
+
+        if documents.is_none() {
+            self.unsettled = self.unsettled.saturating_add(1);
+        }
+        self.next = next;
         let mut rows = Vec::with_capacity(lines.len());
         let mut nodes = Vec::with_capacity(lines.len());
-        for (line, home) in lines.into_iter().zip(homes) {
-            let mut row = line.row;
-            let handle = match line.backend_node {
-                Some(node) => self.of_node(home, node),
-                None => self.of_locator(home, row.locator.clone()),
+        for (((line, key), handle), first) in lines.into_iter().zip(keys).zip(handles).zip(new) {
+            if first {
+                match key {
+                    Key::Node(key) => {
+                        self.strings = self.strings.saturating_add(key.0.capacity() + handle.len());
+                        self.by_node.insert(key, handle.clone());
+                    }
+                    Key::Locator(key) => {
+                        self.strings = self
+                            .strings
+                            .saturating_add(key.0.capacity() + key.1.capacity() + handle.len());
+                        self.by_locator.insert(key, handle.clone());
+                    }
+                }
+            }
+            let info = HandleInfo {
+                locator: line.row.locator.clone(),
+                scope: scope.clone(),
             };
-            self.records.insert(
-                handle.clone(),
-                HandleInfo {
-                    locator: row.locator.clone(),
-                    scope: scope.clone(),
-                },
-            );
+            self.strings = self
+                .strings
+                .saturating_add(info.locator.capacity() + info.scope.capacity());
+            match self.records.insert(handle.clone(), info) {
+                Some(old) => {
+                    self.strings = self
+                        .strings
+                        .saturating_sub(old.locator.capacity() + old.scope.capacity());
+                }
+                None => self.strings = self.strings.saturating_add(handle.len()),
+            }
+            let mut row = line.row;
             row.target = handle;
             rows.push(row);
             nodes.push(line.backend_node);
         }
-        (rows, nodes, scope)
+        self.settle();
+        Ok((rows, nodes, scope))
+    }
+}
+
+/// `{target}/{frame}/`: what a settled document's identity shares with the
+/// later documents of its frame. An unsettled read's has none.
+fn frame_of(target: &str, document: &str) -> Option<String> {
+    let rest = document.strip_prefix(target)?.strip_prefix('/')?;
+    let (frame, _) = rest.split_once('/')?;
+    Some(format!("{target}/{frame}/"))
+}
+
+fn slots(capacity: usize, slot: usize) -> usize {
+    capacity.saturating_mul(slot)
+}
+
+/// A map's room once `added` more entries join its `len`, from its
+/// `capacity` now: the same room while they fit, else at most twice what
+/// it then holds (its table doubles as it fills).
+fn grown(len: usize, capacity: usize, added: usize) -> usize {
+    let len = len.saturating_add(added);
+    if len <= capacity {
+        capacity
+    } else {
+        len.saturating_mul(2).max(7)
+    }
+}
+
+/// Gives back a map's room once it holds under a quarter of it.
+fn shrink<K: Eq + Hash, V>(map: &mut HashMap<K, V>) {
+    if map.len() < map.capacity() / 4 {
+        map.shrink_to_fit();
     }
 }
 
@@ -230,6 +482,32 @@ impl CdpDriver {
         })
     }
 
+    /// Of `nodes`, those the page no longer has: one
+    /// `DOM.pushNodesByBackendIdsToFrontend` call answers 0 for a node it
+    /// cannot find in the tab's frames. A hidden node, or a detached one the
+    /// page still holds, answers an id and keeps its binding; a failed call
+    /// proves nothing.
+    fn gone_nodes(&self, nodes: &[u64]) -> BTreeSet<u64> {
+        if nodes.is_empty() {
+            return BTreeSet::new();
+        }
+        let Ok(reply) = self.page(
+            "DOM.pushNodesByBackendIdsToFrontend",
+            json!({ "backendNodeIds": nodes }),
+        ) else {
+            return BTreeSet::new();
+        };
+        match reply.get("nodeIds").and_then(Value::as_array) {
+            Some(ids) if ids.len() == nodes.len() => nodes
+                .iter()
+                .zip(ids)
+                .filter(|(_, id)| id.as_u64() == Some(0))
+                .map(|(node, _)| *node)
+                .collect(),
+            _ => BTreeSet::new(),
+        }
+    }
+
     /// Reads the front tab and mints its rows: the one place a row gets its
     /// live handle. The documents are sampled before and after the outline
     /// is read; a page that moved between them is read again, and one that
@@ -250,7 +528,11 @@ impl CdpDriver {
         };
         let lines = outline::lines(&ax);
         let target = self.target.clone();
-        let (rows, nodes, scope) = self.handles.mint(&target, documents.as_ref(), lines);
+        let missing = self.handles.missing(&target, documents.as_ref(), &lines);
+        let gone = self.gone_nodes(&missing);
+        let (rows, nodes, scope) = self
+            .handles
+            .mint(&target, documents.as_ref(), lines, &gone)?;
         Ok(Capture {
             rows,
             nodes,

@@ -20,18 +20,21 @@ mod witness;
 pub use code_fix::{
     CODE_FIX_MAX_CANDIDATE_ID_BYTES, CODE_FIX_MAX_MESSAGE_BYTES, CODE_FIX_MAX_MESSAGES,
     CODE_FIX_MAX_NOTE_BYTES, CODE_FIX_RECORD_VERSION, CandidateFix, CandidateFixResult,
-    CodeFixExport, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber,
-    FailureSource, FixOutcome, InventedExampleDraft, InventedFailureExample, InventedMessage,
-    InventedRole, ReplayRun, ScrubRun, ShadowRun,
+    CodeFixExport, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld,
+    ExactReplayRequest, ExportScrubber, FailureSource, FixOutcome, InventedExampleDraft,
+    InventedFailureExample, InventedMessage, InventedRole, ReplayFidelity, ReplayRun, ScrubRun,
+    ShadowRun,
 };
 pub(crate) use code_fix::{
-    SealedCodeFix, Sealing, code_fix_subject_in, failed_case_in, queue_sealed_in_txn,
+    SealedCodeFix, Sealing, code_fix_subject_in, dispatch_worlds_in, exact_replay_request,
+    failed_case_in, queue_sealed_in_txn,
 };
 pub use delivery::{
     FAILURE_SIGNAL_BATCH_VERSION, FAILURE_SIGNALS_CHANNEL, FAILURE_SIGNALS_SEND_VERB,
     FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport,
     FailureSignalTransportRequest,
 };
+pub use live::DispatchFailure;
 pub use verbatim::{CODE_FIX_LINE_WORDS, CODE_FIX_SPAN_WORDS};
 pub use witness::Tier1Observation;
 
@@ -405,6 +408,23 @@ fn component(
         version: counts.token(&version_domain, &value.version),
     }
 }
+/// Adds one to the aggregate row `key`, whose dimensions are `json`, in
+/// `txn`.
+fn add_count_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8; 32],
+    json: &[u8],
+) -> Result<()> {
+    let count = match COUNTS.get(&vault.store, &*txn, key)? {
+        Some(value) => decode_count(&value)?.count,
+        None => 0,
+    }
+    .checked_add(1)
+    .ok_or(Error::ArithmeticOverflow("failure signal count"))?;
+    COUNTS.put(&vault.store, txn, key, &count_value(count, json))
+}
+
 fn bucket_start(observed_at: i64, bucket_seconds: u64) -> Result<i64> {
     let width = i64::try_from(bucket_seconds)
         .map_err(|_| Error::ArithmeticOverflow("failure signal bucket width"))?;
@@ -428,8 +448,23 @@ impl crate::Vault {
         observation: &Tier1Observation<'_>,
         input: FailureSignalInput,
     ) -> Result<()> {
-        if !self.config.failure_signals.exports() {
+        let Some(dimensions) = self.failure_signal_dimensions(observation, input)? else {
             return Ok(());
+        };
+        let (key, json) = count_key(&dimensions)?;
+        self.with_write_txn_grouped(|txn| add_count_in_txn(self, txn, &key, &json))
+    }
+
+    /// [`Self::record_failure_signal`] short of its write: the aggregate row
+    /// the record adds one to, `None` when nothing is counted. The live
+    /// counter takes its dedupe mark in the write that adds it (FIX 2146).
+    fn failure_signal_dimensions(
+        &self,
+        observation: &Tier1Observation<'_>,
+        input: FailureSignalInput,
+    ) -> Result<Option<FailureSignalDimensions>> {
+        if !self.config.failure_signals.exports() {
+            return Ok(None);
         }
         if !std::ptr::eq(self, observation.vault) {
             return Err(Error::InvalidConfig(
@@ -522,7 +557,7 @@ impl crate::Vault {
             }
             policy::resolve(&manifest.failure_signal_policy, input.agent_ref)
         };
-        let Some(dimensions) = self.store.diagnostics.failure_signals.dimensions(
+        self.store.diagnostics.failure_signals.dimensions(
             self.config.failure_signals,
             input,
             VerifiedIdentity {
@@ -532,20 +567,7 @@ impl crate::Vault {
             policy,
             observed_at,
             &detector_id,
-        )?
-        else {
-            return Ok(());
-        };
-        let (key, json) = count_key(&dimensions)?;
-        self.with_write_txn_grouped(|txn| {
-            let count = match COUNTS.get(&self.store, &*txn, &key)? {
-                Some(value) => decode_count(&value)?.count,
-                None => 0,
-            }
-            .checked_add(1)
-            .ok_or(Error::ArithmeticOverflow("failure signal count"))?;
-            COUNTS.put(&self.store, txn, &key, &count_value(count, &json))
-        })
+        )
     }
 
     /// Export this vault's current content-free tier-1 aggregate: every
@@ -692,6 +714,18 @@ impl crate::Vault {
                     ));
                 }
                 Ok((Some(model.clone()), *observed_at, "llm.step.v1".to_owned()))
+            }
+            WitnessKind::AttemptFailure {
+                attempt_id,
+                lease,
+                observed_at,
+            } => {
+                live::verify_attempt_failure(self, rtxn, *attempt_id, *lease)?;
+                Ok((
+                    None,
+                    *observed_at,
+                    live::ATTEMPT_FAILURE_DETECTOR.to_owned(),
+                ))
             }
         }
     }
