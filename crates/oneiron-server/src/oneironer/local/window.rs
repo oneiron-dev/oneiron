@@ -341,7 +341,9 @@ impl Characters {
 /// its own char offsets: a byte inside a character falls in that character,
 /// and the text's length is its scalar count. `bytes` ends with that length.
 fn scalar_at(bytes: &[usize], byte: usize) -> usize {
-    bytes.partition_point(|&start| start <= byte).saturating_sub(1)
+    bytes
+        .partition_point(|&start| start <= byte)
+        .saturating_sub(1)
 }
 
 /// The character head's inputs over the observed window: every scalar up to
