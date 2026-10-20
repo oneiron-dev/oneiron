@@ -85042,12 +85042,13 @@
       "PublishArgs",
       "QualifyArgs",
       "QualifyDevice",
-      "QualifyLayers"
+      "QualifyLayers",
+      "QualifyWindow"
      ],
      "path": "src/commands/oneironer.rs",
      "purpose": "`oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 \"one base, two…",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 1,
       "struct": 4
      }
@@ -88720,7 +88721,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -88750,7 +88751,7 @@
      "path": "src/oneironer/local/window.rs",
      "purpose": "One causal window with byte-accurate message coordinates",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
