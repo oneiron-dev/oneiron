@@ -13,7 +13,7 @@ use serde::Serialize;
 use super::super::vault_config;
 use super::{HostUnlock, backup_key, view};
 use crate::config::ServeConfig;
-use crate::owner::backup::{self, RestoreTarget, RestoredFresh};
+use crate::owner::backup::{self, CustodyAnchorCredentials, RestoreTarget, RestoredFresh};
 
 /// What a restore where no vault was did.
 #[derive(Serialize)]
@@ -29,13 +29,16 @@ pub(crate) struct FreshRestore {
 /// Restores `backup` where no vault is yet, unlocks the new vault's data key
 /// the same way and wraps it to this install's keystore. The vault is sealed
 /// (OF-570 maximum tier) when the config asks for the tier, under the
-/// backup's own data key, and is kept only once its key is wrapped here.
+/// backup's own data key, and is kept only once its key is wrapped here. A
+/// custody anchor door is called with `anchor`, the owner credential the
+/// restore was handed on its pipe (`--custody-anchor-credentials-fd`).
 pub(crate) fn restore_fresh(
     backup: &Path,
     config: &ServeConfig,
     keystore: Option<Arc<dyn DeviceKeystore>>,
     unlock: &HostUnlock,
     pins: Option<Vec<CheckpointSigner>>,
+    anchor: Option<Arc<CustodyAnchorCredentials>>,
 ) -> anyhow::Result<FreshRestore> {
     let key = match backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
         Some(key) => key,
@@ -55,9 +58,10 @@ pub(crate) fn restore_fresh(
     })?;
     let path = &config.vault_path;
     // The custody head beside the backup, checked against the configured
-    // anchor (a root or another install's door) when there is one, and
-    // opened with the kit when the restore was unlocked with it (KS-4A1).
-    let mut custody = backup::custody_recovery(backup, &config.backup);
+    // anchor (a root or another install's door, called with the piped
+    // credential) when there is one, and opened with the kit when the
+    // restore was unlocked with it (KS-4A1).
+    let mut custody = backup::custody_recovery(backup, &config.backup, anchor);
     if let Some(root) = super::super::recovery_kit::kit_custody_root(unlock) {
         custody = custody.with_kit(root);
     }

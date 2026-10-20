@@ -1,15 +1,17 @@
 //! Managed process entry behind the shared six-verb Host contract.
 use super::{
-    args::ManagedArgs,
+    args::{ManagedArgs, ManagedError},
     listener::{ServeListener, signal_ready},
     state_serve::ManagedShutdown,
     vault_gates::read_managed_credentials,
 };
+use crate::owner::backup::CustodyAnchorCredentials;
 use oneiron_vault_contract::{
     Credentials,
     host::{Host, HostFuture, HostLimits},
     tenancy::VaultHost,
 };
+use std::sync::Arc;
 use std::time::SystemTime;
 use zeroize::Zeroizing;
 
@@ -60,6 +62,18 @@ impl ManagedHost {
             Self::Process(host) => host.adapter_mut().clear_secrets(),
             #[cfg(target_os = "linux")]
             Self::Vm(host) => host.adapter_mut().clear_secrets(),
+        }
+    }
+    /// The custody anchor door's owner credential the supervisor handed on
+    /// its own pipe, read once, before storage; `None` when it handed none.
+    /// A vault VM is handed none: its argv refuses the flag.
+    pub(super) fn custody_anchor_credentials(
+        &mut self,
+    ) -> Result<Option<Arc<CustodyAnchorCredentials>>, ManagedError> {
+        match self {
+            Self::Process(host) => host.adapter_mut().custody_anchor_credentials(),
+            #[cfg(target_os = "linux")]
+            Self::Vm(_) => Ok(None),
         }
     }
     /// The boot channel a vault VM answers sleep and stop requests on.
@@ -123,6 +137,7 @@ pub(super) struct ProcessHost {
     credentials_fd: Option<std::os::fd::RawFd>,
     credentials: Option<Credentials>,
     ready_fd: Option<std::os::fd::RawFd>,
+    anchor_credentials_fd: Option<std::os::fd::RawFd>,
     limits: HostLimits,
     shutdown: ManagedShutdown,
 }
@@ -137,12 +152,26 @@ impl ProcessHost {
             credentials_fd: Some(args.credentials_fd),
             credentials: None,
             ready_fd: Some(args.ready_fd),
+            anchor_credentials_fd: args.custody_anchor_credentials_fd,
             limits,
             shutdown,
         })
     }
     fn clear_secrets(&mut self) {
         self.credentials = None;
+    }
+    /// Fail-closed as the credential frame is: a descriptor that is not a
+    /// pipe, or bytes that are not the one credentials object, is a typed
+    /// refusal that names no byte read.
+    fn custody_anchor_credentials(
+        &mut self,
+    ) -> Result<Option<Arc<CustodyAnchorCredentials>>, ManagedError> {
+        let Some(fd) = self.anchor_credentials_fd.take() else {
+            return Ok(None);
+        };
+        CustodyAnchorCredentials::read_fd(fd)
+            .map(|credentials| Some(Arc::new(credentials)))
+            .map_err(|reason| ManagedError::CustodyAnchorCredentialsRejected { reason })
     }
 }
 impl Host for ProcessHost {

@@ -110,6 +110,11 @@ pub enum ManagedError {
     #[error("credentials fd rejected: {reason}")]
     CredentialsRejected { reason: String },
 
+    /// The custody anchor door's credentials pipe was refused: `reason` says
+    /// what was wrong with it, never what it carried.
+    #[error("custody anchor credentials fd rejected: {reason}")]
+    CustodyAnchorCredentialsRejected { reason: String },
+
     /// The real-tenant tripwire: `missing` names each isolation facility the
     /// probe did not find, so the operator knows what to provision.
     #[error(
@@ -192,6 +197,11 @@ pub struct ManagedArgs {
     pub ready_fd: RawFd,
     /// [`NO_FD`] in a vault VM, whose boot channel carries the frame.
     pub credentials_fd: RawFd,
+    /// The pipe the custody anchor door's owner credential arrives on
+    /// (`--custody-anchor-credentials-fd`), read before storage on each
+    /// start the supervisor hands one. Never in a vault VM, which inherits
+    /// no descriptors.
+    pub custody_anchor_credentials_fd: Option<RawFd>,
     /// The process is a Firecracker vault VM's engine (`--vsock-guest`).
     pub vsock_guest: bool,
     /// Where this install keeps its this-device-only key slots, a place the
@@ -333,6 +343,16 @@ impl ManagedArgs {
                 require_fd(args.credentials_fd, "credentials-fd")?,
             )
         };
+        if args.vsock_guest && args.custody_anchor_credentials_fd.is_some() {
+            return Err(ManagedError::ConflictingFlag {
+                flag: "custody-anchor-credentials-fd",
+                reason: VSOCK_NO_PIPE_REASON,
+            });
+        }
+        let custody_anchor_credentials_fd = args
+            .custody_anchor_credentials_fd
+            .map(|fd| require_fd(Some(fd), "custody-anchor-credentials-fd"))
+            .transpose()?;
         let managed = Self {
             vault_name,
             derivation_owner: DerivationOwner(owner),
@@ -348,6 +368,7 @@ impl ManagedArgs {
             hypnos_socket: require(args.hypnos_socket.clone(), "hypnos-socket")?,
             ready_fd,
             credentials_fd,
+            custody_anchor_credentials_fd,
             vsock_guest: args.vsock_guest,
             keystore_dir: args.keystore_dir.clone(),
             escrow_recipient: args.escrow_recipient_file.clone(),
@@ -434,29 +455,45 @@ impl ManagedArgs {
         // number on both flags is not a harmless duplicate: the credential
         // frame's descriptor is closed under the ready write, or the ready byte
         // lands in the number the supervisor is still reading credentials from.
-        // Refused here, before either is consumed.
+        // Refused here, before either is consumed. The custody anchor
+        // credentials pipe is adopted the same way, so it aliases neither.
         if !managed.vsock_guest {
             refuse_fd_alias(
                 ("--ready-fd", managed.ready_fd),
                 ("--credentials-fd", managed.credentials_fd),
             )?;
+            if let Some(anchor) = managed.custody_anchor_credentials_fd {
+                for other in [
+                    ("--ready-fd", managed.ready_fd),
+                    ("--credentials-fd", managed.credentials_fd),
+                ] {
+                    refuse_fd_alias(("--custody-anchor-credentials-fd", anchor), other)?;
+                }
+            }
         }
         managed.vault_binding()?;
         Ok(Some(managed))
     }
 
-    /// Refuses an inherited listening descriptor that aliases either argv fd.
+    /// Refuses an inherited listening descriptor that aliases any argv fd.
     ///
     /// Three inputs, three distinct owners: a `UnixListener` over the inherited
     /// socket, a `File` over the credential frame, a `File` over the ready
     /// pipe. Each closes what it holds on drop, so a listener that is also
     /// `--credentials-fd` is read as a credential frame and closed under the
     /// listener, and one that is also `--ready-fd` has the ready byte written
-    /// into it. [`serve_managed`](crate::managed::serve_managed) calls this before any of the three is
+    /// into it. The custody anchor credentials pipe, when handed, is a fourth.
+    /// [`serve_managed`](crate::managed::serve_managed) calls this before any of them is
     /// consumed and before the vault is opened, so neither the frame nor
     /// storage is touched on the way to the refusal.
     pub fn refuse_listen_fd_alias(&self, listen_fd: RawFd) -> Result<(), ManagedError> {
         refuse_fd_alias((HYPNOS_LISTEN_FD, listen_fd), ("--ready-fd", self.ready_fd))?;
+        if let Some(anchor) = self.custody_anchor_credentials_fd {
+            refuse_fd_alias(
+                (HYPNOS_LISTEN_FD, listen_fd),
+                ("--custody-anchor-credentials-fd", anchor),
+            )?;
+        }
         refuse_fd_alias(
             (HYPNOS_LISTEN_FD, listen_fd),
             ("--credentials-fd", self.credentials_fd),
@@ -613,6 +650,8 @@ pub(crate) const MANAGED_MAXIMUM_TIER_DEFAULT: bool = false;
 
 const VSOCK_BOOT_REASON: &str =
     "a vault VM reads its credentials and signals ready over the vsock boot channel";
+
+const VSOCK_NO_PIPE_REASON: &str = "a vault VM inherits no descriptors, and its vsock boot channel carries no custody anchor credentials";
 
 fn decode_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
     if value.len() != N * 2 {
