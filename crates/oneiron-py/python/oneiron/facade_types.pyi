@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1082 facade rows, 3709 declarations.
+Census: 1082 facade rows, 3714 declarations.
 Inputs: 1017 of 1082 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 969 of 1082 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -18393,6 +18393,7 @@ class TakeoverRecord(TypedDict):
     inputs: int
 TabSwitchCause = Literal["opened", "closed"]
 TabSwitch = TypedDict("TabSwitch", {"tab": str, "url": str, "title": str, "from": str, "why": TabSwitchCause})
+BrowserEngine = Literal["lightpanda", "chromium"]
 BrowserAnswerItem = dict[str, Any]
 BrowserAnswer = BrowserAnswerItem[T]
 class RowSplice(TypedDict):
@@ -18423,6 +18424,34 @@ class ReceiptEvidenceNotKept(TypedDict):
     state: Literal["not_kept"]
     code: str
 ReceiptEvidence = ReceiptEvidenceKept | ReceiptEvidenceNotKept
+class ViewportPoint(TypedDict):
+    x: float
+    y: float
+class ActionTarget(TypedDict):
+    ref: NotRequired[str | None]
+    name: NotRequired[str | None]
+    locator: NotRequired[str | None]
+    point: NotRequired[ViewportPoint | None]
+NoEffectReason = Literal["no_observable_change"]
+class ActionFactClickNoEffect(TypedDict):
+    kind: Literal["click_no_effect"]
+    engine: BrowserEngine
+    target: ActionTarget
+    reason: NoEffectReason
+    window_ms: int
+class ActionFactTypeNoEffect(TypedDict):
+    kind: Literal["type_no_effect"]
+    engine: BrowserEngine
+    target: ActionTarget
+    reason: NoEffectReason
+    window_ms: int
+class ActionFactNavigateNoEffect(TypedDict):
+    kind: Literal["navigate_no_effect"]
+    engine: BrowserEngine
+    url: str
+    reason: NoEffectReason
+    window_ms: int
+ActionFact = ActionFactClickNoEffect | ActionFactTypeNoEffect | ActionFactNavigateNoEffect
 class EffectReceipt(TypedDict):
     seq: int
     verb: str
@@ -18437,6 +18466,8 @@ class EffectReceipt(TypedDict):
     screenshot: NotRequired[str | None]
     capture_id: NotRequired[str | None]
     screenshot_evidence: NotRequired[ReceiptEvidence | None]
+    engine: NotRequired[BrowserEngine | None]
+    fact: NotRequired[ActionFact | None]
 class LibraryCard(TypedDict):
     workflow: str
     site: str
@@ -18465,6 +18496,7 @@ class Observation2(TypedDict):
     partial: NotRequired[PartialTree | None]
     walk_next: NotRequired[str | None]
     rebound: NotRequired[Rebound | None]
+    fact: NotRequired[ActionFact | None]
 class ObservationPage(Observation2):
     next: NotRequired[str | None]
 BrowserObservationPage = BrowserAnswer[ObservationPage]

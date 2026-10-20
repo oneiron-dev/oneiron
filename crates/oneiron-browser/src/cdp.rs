@@ -2,7 +2,8 @@
 //! JSON messages, each ended by a NUL byte, on one reader and one writer.
 //! Replies are matched to calls by id. Network events cross the host proxy,
 //! for every page the guest opens; the DOM driver still polls for its
-//! observations and its tabs.
+//! observations and its tabs. Each page session's navigation events are
+//! counted, for the driver's change check (FIX 6680).
 
 use crate::BrowserError;
 use serde_json::{Value, json};
@@ -17,8 +18,20 @@ use std::time::Instant;
 /// is a few MiB; a message past this closes the pipe.
 const MAX_MESSAGE: u64 = 32 << 20;
 
+/// The Page events that start or make a navigation, of any frame of a
+/// page: the main frame's and every in-page frame's. Each one moves its
+/// session's navigation count.
+const NAVIGATION_EVENTS: [&str; 4] = [
+    "Page.frameRequestedNavigation",
+    "Page.frameStartedLoading",
+    "Page.frameNavigated",
+    "Page.navigatedWithinDocument",
+];
+
 type Reply = Result<Value, String>;
 type Pending = Arc<Mutex<Option<HashMap<u64, Sender<Reply>>>>>;
+/// Each watched page session's navigation events so far.
+type Navigations = Arc<Mutex<HashMap<String, u64>>>;
 
 #[derive(Clone)]
 pub(crate) struct Pipe {
@@ -30,6 +43,7 @@ pub(crate) struct Pipe {
     /// session on one of them (the driver's own, or the browser's auto-attach
     /// finding a page again) only lets it run.
     routed: Arc<Mutex<HashSet<String>>>,
+    navigations: Navigations,
 }
 
 impl Pipe {
@@ -52,6 +66,7 @@ impl Pipe {
             next: Arc::new(AtomicU64::new(1)),
             egress: relay.is_some(),
             routed: Arc::default(),
+            navigations: Arc::default(),
         };
         let handle = pipe.clone();
         std::thread::spawn(move || {
@@ -74,6 +89,20 @@ impl Pipe {
             .lock()
             .map(|mut routed| routed.insert(target.to_owned()))
             .unwrap_or(false)
+    }
+
+    /// Counts page `session`'s navigation events from now on: its Page
+    /// domain is enabled.
+    pub(crate) fn watch_navigations(&self, session: &str) {
+        if let Ok(mut navigations) = self.navigations.lock() {
+            navigations.entry(session.to_owned()).or_default();
+        }
+    }
+
+    /// Page `session`'s navigation events so far; none for a session whose
+    /// events are not counted.
+    pub(crate) fn navigations(&self, session: &str) -> Option<u64> {
+        self.navigations.lock().ok()?.get(session).copied()
     }
 
     /// Sends one command and waits for its reply until `deadline`.
@@ -143,6 +172,7 @@ fn read_replies(
             continue;
         };
         let Some(id) = message.get("id").and_then(Value::as_u64) else {
+            count_navigation(&pipe.navigations, &message);
             if let Some(relay) = &relay {
                 network_event(pipe.clone(), Arc::clone(relay), message);
             }
@@ -162,6 +192,23 @@ fn read_replies(
         if let Some(tx) = routes.as_mut().and_then(|routes| routes.remove(&id)) {
             let _ = tx.send(reply);
         }
+    }
+}
+
+/// Counts `event` for its page session when it is a navigation event of a
+/// session whose events are counted.
+fn count_navigation(navigations: &Navigations, event: &Value) {
+    let method = event["method"].as_str().unwrap_or("");
+    if !NAVIGATION_EVENTS.contains(&method) {
+        return;
+    }
+    let Some(session) = event["sessionId"].as_str() else {
+        return;
+    };
+    if let Ok(mut navigations) = navigations.lock()
+        && let Some(count) = navigations.get_mut(session)
+    {
+        *count += 1;
     }
 }
 

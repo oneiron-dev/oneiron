@@ -160,6 +160,7 @@ impl Observations {
             partial: read.partial,
             walk_next: None,
             rebound: None,
+            fact: None,
         };
         self.history.push_back(Snapshot {
             seq: read.seq,
@@ -189,6 +190,7 @@ impl Observations {
             partial: None,
             walk_next: None,
             rebound: None,
+            fact: None,
         };
         // AB-003: the two forms say the same; the answer takes the one
         // whose pages are fewer bytes, the whole one on a tie.
@@ -245,6 +247,7 @@ impl Observations {
         page.observation.receipt = observation.receipt.take();
         page.observation.library = std::mem::take(&mut observation.library);
         page.observation.rebound = observation.rebound.take();
+        page.observation.fact = observation.fact.take();
         let seq = observation.seq;
         self.paged.retain(|held| held.seq != seq);
         self.paged.push_back(observation);
@@ -419,7 +422,7 @@ impl Observations {
 
 /// `whole` with `rows` of its own: its scope, base and splice, `offset`
 /// where the rows start among its own, and, when `last`, its `walk_next`
-/// if it is partial. The receipt and library stay on the first page.
+/// if it is partial. The receipt, library and fact stay on the first page.
 fn part(whole: &Observation, rows: Vec<Row>, offset: Option<usize>, last: bool) -> Observation {
     Observation {
         seq: whole.seq,
@@ -441,6 +444,7 @@ fn part(whole: &Observation, rows: Vec<Row>, offset: Option<usize>, last: bool) 
             .filter(|_| last)
             .map(|_| walk_cursor(whole.seq)),
         rebound: None,
+        fact: None,
     }
 }
 
