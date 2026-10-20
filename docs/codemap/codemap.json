@@ -25816,7 +25816,7 @@
       "const": 5,
       "crate-vis": 4,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 4,
       "trait": 1
      }
@@ -32047,7 +32047,7 @@
      "purpose": "Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers)",
      "surface": {
       "crate-vis": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -34492,17 +34492,29 @@
       "RunAdmission",
       "RunAttribution",
       "RunCall",
-      "RunCallError",
-      "RunDenied"
+      "RunCallError"
      ],
      "path": "src/llm/run_admission/admission.rs",
      "purpose": "One run admission: each paid call of a run, to a model or to a paid connector, is admitted against the run's…",
      "surface": {
       "const": 1,
       "crate-vis": 9,
-      "enum": 2,
-      "fn": 23,
+      "enum": 1,
+      "fn": 24,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunDenied"
+     ],
+     "path": "src/llm/run_admission/admission/denied.rs",
+     "purpose": "Why the run admission refuses a call or an edit, and the model error each refusal reads as",
+     "surface": {
+      "enum": 1
      }
     },
     {
@@ -51349,9 +51361,9 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 4,
-      "fn": 7,
+      "fn": 8,
       "mod": 1,
       "re-export": 4,
       "struct": 4
@@ -51425,7 +51437,7 @@
      "surface": {
       "crate-vis": 10,
       "enum": 1,
-      "fn": 6,
+      "fn": 8,
       "struct": 5
      }
     },
@@ -51872,7 +51884,7 @@
      "purpose": "Per-seat candidate pins and externally measured pilot evidence for OF-577",
      "surface": {
       "crate-vis": 1,
-      "fn": 11,
+      "fn": 14,
       "struct": 9
      }
     },
@@ -58458,7 +58470,7 @@
      "purpose": "The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host…",
      "surface": {
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 12
      }
     },
@@ -66174,7 +66186,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 114,
+     "files": 115,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66876,7 +66888,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4191,
+   "source_files": 4192,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79394,7 +79406,7 @@
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -79820,6 +79832,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/training_offer/check.rs",
+     "purpose": "The check of one approved offer's promise against the seat's metered calls: fixed code, no model call",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/training_offer/cost.rs",
      "purpose": "Fixed-code projection on the same dated workload, with each tokenizer",
      "surface": {
@@ -79843,7 +79865,7 @@
      "path": "src/ai_host/training_offer/sources.rs",
      "purpose": "The rows a Coach brief or check is gathered from (FIX 5482), ids only",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -86393,7 +86415,7 @@
      "path": "src/conversation_training/http.rs",
      "purpose": "The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -86424,6 +86446,56 @@
      "purpose": "The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper.rs",
+     "purpose": "The self-host training shipper (TL-6, FIX 5813): the loop that carries a self-hosted vault's released offers…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/stream.rs",
+     "purpose": "A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/tally.rs",
+     "purpose": "The self-host shipper's counts (TL-6): what a pass did, logged once at its end in counts and classes only…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/walks.rs",
+     "purpose": "The self-host shipper's three walks over the vault's anonymous custody (TL-6): the withdrawals, the uploads…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/window.rs",
+     "purpose": "The self-host shipper's requests, planned to the intake's bounds (TL-6): a window per piece packed into…",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -89957,7 +90029,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultUsage"
@@ -90426,7 +90498,7 @@
      "path": "src/server/space_move.rs",
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -90554,7 +90626,7 @@
      "path": "src/usage/ledger.rs",
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 4
      }
@@ -91291,7 +91363,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 63,
+     "files": 64,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -91417,7 +91489,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "conversation_training": {
-     "files": 6,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91748,7 +91820,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 954,
+   "source_files": 960,
    "test_files": 182
   },
   "oneiron-spawn": {

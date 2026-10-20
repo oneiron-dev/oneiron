@@ -24,6 +24,8 @@ struct SplitBytes {
     held_out: Vec<u8>,
     rows: Vec<SplitRow>,
     overlaps: u64,
+    /// Each exported pair's artifact, its skill and its TURN (FIX 5760).
+    sources: Vec<EntityId>,
 }
 
 fn split_bytes(
@@ -37,6 +39,7 @@ fn split_bytes(
         held_out: Vec::new(),
         rows: Vec::new(),
         overlaps: 0,
+        sources: Vec::new(),
     };
     let mut train_hashes = BTreeSet::new();
     let mut held_hashes = BTreeSet::new();
@@ -51,6 +54,13 @@ fn split_bytes(
                 .as_str()
                 .ok_or_else(|| invalid("reservoir pair has no receipt"))?,
         )?;
+        // The pair's texts are its artifact's, on the skill it rode.
+        split.sources.push(id);
+        split.sources.extend(
+            pair["skill"]
+                .as_str()
+                .and_then(|hex| EntityId::from_hex(hex).ok()),
+        );
         let receipt = amendment_receipt_id(id);
         let family = vault
             .eval_family_of_root(&draft.plan.seat, &receipt)?
@@ -61,6 +71,7 @@ fn split_bytes(
         if let Some(proposal) = finalized_proposal_text(vault, ProposalArtifactRef::new(id))?
             && let Some(turn) = proposal.source_turn_ref
         {
+            split.sources.push(turn);
             let source = format!("source_turn:{}", turn.to_hex());
             let roots = BTreeSet::from([receipt.clone(), source]);
             vault.assign_eval_family(
@@ -140,7 +151,23 @@ impl Vault {
             .ok_or_else(|| invalid("training split needs a live sealed cohort for its seat"))?;
         let mut body = Vec::new();
         let manifest = export_reservoir(self, scope, &mut body)?;
-        let split = split_bytes(self, draft, &body, &cohort)?;
+        let mut split = split_bytes(self, draft, &body, &cohort)?;
+        // The export's pairs, the pinned files and the held-out cohort's
+        // cases and labels (FIX 5760); a lineage read that fails leaves them
+        // unknown and never fails the run.
+        let mut pinned = std::mem::take(&mut split.sources);
+        pinned.extend(
+            draft
+                .plan
+                .starting_checkpoint
+                .files
+                .iter()
+                .map(|file| file.content.artifact),
+        );
+        let source_rows = crate::skill_optimize::union_source_rows([
+            Some(pinned),
+            self.eval_cohort_source_rows(&cohort.id).ok().flatten(),
+        ]);
         self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             draft.plan.starting_checkpoint.verify(self, txn)?;
@@ -181,6 +208,7 @@ impl Vault {
                 eval_exposure: None,
                 authorization: None,
                 hold: None,
+                source_rows,
             };
             RUNS.put(&self.store, txn, &id, &run)?;
             Ok(run)

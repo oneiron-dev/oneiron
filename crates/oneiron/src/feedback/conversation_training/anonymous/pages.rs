@@ -88,10 +88,13 @@ impl Vault {
     }
 
     /// One page of the anonymous pieces to withdraw, past `after`, at most
-    /// `page` of them: each with its withdrawal intent set and no signed
-    /// `removed` yet, never-accepted and never-published ones included (the
-    /// intake fences a code it never saw). With its C. It runs whatever the
-    /// vault's setting.
+    /// `page` of them: each with its withdrawal intent set and its
+    /// withdrawal not yet acknowledged (no signed `removal_pending` or
+    /// `removed`), never-accepted and never-published ones included (the
+    /// intake fences a code it never saw). With its C. A piece whose removal
+    /// is pending is polled through [`Vault::anonymous_status_page`] until
+    /// it reads `removed`, never sent again. It runs whatever the vault's
+    /// setting.
     ///
     /// # Errors
     /// Storage faults.
@@ -215,7 +218,11 @@ fn withdrawal_work(
     row: &SubmissionCustody,
 ) -> Option<AnonymousWithdrawalWork> {
     let piece = &row.anonymous;
-    let due = piece.withdraw && piece.state != Some(TrainingPieceState::Removed);
+    let acknowledged = matches!(
+        piece.state,
+        Some(TrainingPieceState::RemovalPending | TrainingPieceState::Removed)
+    );
+    let due = piece.withdraw && !acknowledged;
     due.then(|| AnonymousWithdrawalWork {
         id,
         code: oneiron_vault_contract::hex(&row.piece),
