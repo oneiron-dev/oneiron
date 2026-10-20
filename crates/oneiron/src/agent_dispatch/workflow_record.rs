@@ -10,7 +10,7 @@ use crate::context_projection::ContextSpec;
 use crate::context_projection::WorkflowOutputContextRef;
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::edge::EdgeActorClass;
-use crate::error::Result;
+use crate::error::{Error, GateError, Result};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::task_verb::highway_runner::workflow_try::WorkflowTaskBind;
@@ -167,6 +167,13 @@ pub(super) struct WorkflowRecord {
     /// pass over ended runs settles each once. A TASK-less run never sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_settled: Option<String>,
+}
+
+/// A frozen step's dispatch input, as a release reads it.
+fn decode_step(bytes: &[u8]) -> Result<super::AgentDispatchInput> {
+    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
+        .map_err(|_| invalid("workflow step is malformed"))?;
+    super::decode_agent_dispatch_input(&value)
 }
 
 pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
@@ -353,6 +360,43 @@ impl super::AgentDispatcher<'_> {
         };
         RECORD.admit(self.vault, txn, &unplaced, &mut record)?;
         Ok(record.intent)
+    }
+
+    /// One frozen step as [`RECORD`] keeps it (FIX 6637): the dispatch input
+    /// `bytes` encodes, read through the side-row wall in `txn` as a body of
+    /// the wrapper `root`'s row, under that row's structural references. A
+    /// secret a spawn field carries outside the intent (its scope, healer
+    /// case, team or plan) reads as its custody handle; the step's target,
+    /// frozen definition, type stamp, team and launch ids, origin and context
+    /// domains stay as frozen (FIX 6634). The masked step, with the input it
+    /// decodes to, when the wall placed a handle. `None` keeps `bytes` as
+    /// frozen: nothing placed, a masked copy that no longer decodes as a
+    /// dispatch input, or a hit the wall would refuse or could not mask, so
+    /// a step that dispatched before still dispatches. A storage error still
+    /// fails the write, as the record's own admission would.
+    pub(super) fn admitted_workflow_step_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        root: &AttemptId,
+        bytes: &[u8],
+    ) -> Result<Option<(Vec<u8>, super::AgentDispatchInput)>> {
+        let admitted = crate::batch::secret_scan::admit_side_row(
+            self.vault,
+            txn,
+            RECORD.decl(),
+            &RECORD.key_bytes(root),
+            bytes,
+            |copy| decode_step(copy).is_ok(),
+        );
+        let masked = match admitted {
+            Ok(Some(masked)) => masked,
+            Ok(None)
+            | Err(
+                Error::Gate(GateError::GateWriteRejected { .. }) | Error::InvariantViolation(_),
+            ) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        Ok(decode_step(&masked).ok().map(|input| (masked, input)))
     }
 
     /// [`Self::admitted_workflow_intent_in`] in a writer of its own that

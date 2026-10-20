@@ -36,13 +36,15 @@ side_tables! {
     AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson;
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
-    AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson Authored;
+    AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson Authored
+        [refs: WIDEN_INTENT_REFS];
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw;
     /// Dedupe index from a caller-supplied dedupe key to the workflow root attempt id. Key: hash32.
     AGENT_WORKFLOW_DEDUPE: VaultMeta b"agent.workflow.dedupe.v1\0" Raw;
     /// Durable saved-composition record for one inert multi-step workflow wrapper attempt. Key: id16.
-    AGENT_WORKFLOW_RECORD: VaultMeta b"agent.workflow.record.v1\0" LegacyJson Authored;
+    AGENT_WORKFLOW_RECORD: VaultMeta b"agent.workflow.record.v1\0" LegacyJson Authored
+        [refs: WORKFLOW_RECORD_REFS];
     /// Binds a captured-source ASSET id back to the child agent it was birthed for. Key: id16.
     AGENT_DEF_BIRTH_ASSET_BINDING: VaultMeta b"agent_def/birth-asset-binding/v1\0" Raw;
     /// Which asset entity currently holds custody of a birthed agent's captured source. Key: id16.

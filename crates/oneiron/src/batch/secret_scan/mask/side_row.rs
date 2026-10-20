@@ -14,6 +14,12 @@
 //! the catalog does not class as authored, so nothing here reads them again.
 //! [`admit_seeded_parts`] is the one core a record's own parts admit through
 //! too (`admit`): a stream's text, a NOTE's body.
+//!
+//! A table's declaration may name the fields its rows keep structural
+//! references in (FIX 6634, [`RefPath`]): the value there is read with no
+//! known-value sweep, so a run id, a context domain or a type node equal to a
+//! value custody holds still resolves; every shape the door's rules place is
+//! placed there as anywhere else.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -26,11 +32,11 @@ use serde::de::DeserializeOwned;
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
-use super::{HANDLE_OPEN, Masker, STAND_IN};
+use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
 use crate::secret_custody::KnownValues;
-use crate::side_table::{CodecName, SideTableDbs, SideTableDecl};
+use crate::side_table::{CodecName, RefPath, RefStep, SideTableDbs, SideTableDecl};
 
 /// One part of a row the wall reads.
 #[derive(Debug, Clone)]
@@ -56,10 +62,11 @@ impl SidePart {
     }
 
     /// Replaces each secret `masker` places with its handle; whether it
-    /// placed one.
-    fn mask(&mut self, masker: &mut Masker) -> Result<bool> {
+    /// placed one. A value at a path in `refs` is read with no known-value
+    /// sweep ([`mask_referenced`]); a text has no fields to name.
+    fn mask(&mut self, masker: &mut Masker, refs: &[RefPath]) -> Result<bool> {
         Ok(match self {
-            Self::Body(bytes) => mask_body(masker, bytes)?.is_some_and(|masked| {
+            Self::Body(bytes) => mask_body(masker, bytes, refs)?.is_some_and(|masked| {
                 *bytes = masked;
                 true
             }),
@@ -67,20 +74,34 @@ impl SidePart {
                 *text = masked;
                 true
             }),
-            Self::Value(value) => mask_tree(masker, value)?,
+            Self::Value(value) => mask_referenced(masker, value, refs, true)?,
         })
     }
 }
 
 /// A body read as the batch door reads one, and each body a member carries
 /// as bytes (a stored model response, an encoded definition) read as a body
-/// too, so a key inside it is placed rather than refused.
-fn mask_body(masker: &mut Masker, bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+/// too, so a key inside it is placed rather than refused. A value at a path
+/// in `refs` is read with no known-value sweep.
+fn mask_body(masker: &mut Masker, bytes: &[u8], refs: &[RefPath]) -> Result<Option<Vec<u8>>> {
     let json = serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok();
+    // A JSON body with references, read member by member as
+    // `Masker::mask_body` reads one, its references aside.
+    if json
+        && !refs.is_empty()
+        && let Ok(mut tree) = serde_json::from_slice::<Value>(bytes)
+    {
+        if !mask_referenced(masker, &mut tree, refs, false)? {
+            return Ok(None);
+        }
+        return serde_json::to_vec(&tree)
+            .map(Some)
+            .map_err(|_| Error::InvariantViolation("a masked JSON body did not encode"));
+    }
     let Some(mut tree) = whole_messagepack(bytes).filter(|_| !json) else {
         return masker.mask_body(bytes);
     };
-    if !mask_tree(masker, &mut tree)? {
+    if !mask_referenced(masker, &mut tree, refs, true)? {
         return Ok(None);
     }
     encoded(&tree).map(Some)
@@ -93,13 +114,100 @@ fn mask_tree(masker: &mut Masker, tree: &mut Value) -> Result<bool> {
     Ok(masker.mask_value(tree)? | nested)
 }
 
+/// `tree` read as [`mask_tree`] reads it, or, unless `nested`, by the door's
+/// field rule alone, as `Masker::mask_body` reads a JSON body; but each value
+/// a path in `refs` ends at is read with no known-value sweep (FIX 6634): a
+/// structural reference that equals or holds a value custody holds stays as
+/// written, while a shape the door's rules place in it is placed, or
+/// refused, as anywhere else. With no path this is that reading exactly.
+fn mask_referenced(
+    masker: &mut Masker,
+    tree: &mut Value,
+    refs: &[RefPath],
+    nested: bool,
+) -> Result<bool> {
+    if refs.iter().any(|path| path.is_empty()) {
+        let known = masker.known.take();
+        let placed = mask_plain(masker, tree, nested);
+        masker.known = known;
+        return placed;
+    }
+    if refs.is_empty() {
+        return mask_plain(masker, tree, nested);
+    }
+    if let Value::Map(fields) = tree {
+        let mut changed = false;
+        for (key, member) in fields.iter_mut() {
+            let under = beneath(refs, key);
+            changed |= masker.mask_value(key)?;
+            // A value under a credential name is read whole, path or none.
+            if under.is_empty() || credential_member(key, member) {
+                if nested {
+                    changed |= mask_nested(masker, member)?;
+                }
+                changed |= masker.mask_member(key, member)?;
+            } else {
+                changed |= mask_referenced(masker, member, &under, nested)?;
+            }
+        }
+        return Ok(changed);
+    }
+    // A path into the JSON a string member spells: that tree, read the same
+    // way, and spelled again only where something was placed.
+    let within: Vec<RefPath> = refs
+        .iter()
+        .copied()
+        .filter_map(|path| match path {
+            [RefStep::Json, rest @ ..] => Some(rest),
+            _ => None,
+        })
+        .collect();
+    let descriptor = match &*tree {
+        Value::String(text) if !within.is_empty() => text
+            .as_str()
+            .and_then(|text| serde_json::from_str::<Value>(text).ok()),
+        _ => None,
+    };
+    let Some(mut descriptor) = descriptor else {
+        return mask_plain(masker, tree, nested);
+    };
+    if !mask_referenced(masker, &mut descriptor, &within, nested)? {
+        return Ok(false);
+    }
+    let spelled = serde_json::to_string(&descriptor)
+        .map_err(|_| Error::InvariantViolation("a masked descriptor did not encode"))?;
+    *tree = Value::from(spelled);
+    Ok(true)
+}
+
+/// A value no path names a reference in: [`mask_tree`]'s reading, or the
+/// field rule alone unless `nested`.
+fn mask_plain(masker: &mut Masker, value: &mut Value, nested: bool) -> Result<bool> {
+    if nested {
+        return mask_tree(masker, value);
+    }
+    masker.mask_value(value)
+}
+
+/// What is left of each path in `refs` that steps into the member under
+/// `key`.
+fn beneath(refs: &[RefPath], key: &Value) -> Vec<RefPath> {
+    refs.iter()
+        .copied()
+        .filter_map(|path| match path {
+            [RefStep::Field(name), rest @ ..] if key.as_str() == Some(*name) => Some(rest),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Each member of `value` that carries bytes, binary or an array of byte
 /// values (how JSON spells them), read as a body of its own, as the door's
 /// scan reads it.
 fn mask_nested(masker: &mut Masker, value: &mut Value) -> Result<bool> {
     match value {
         Value::Binary(bytes) => {
-            let Some(masked) = mask_body(masker, bytes)? else {
+            let Some(masked) = mask_body(masker, bytes, &[])? else {
                 return Ok(false);
             };
             *bytes = masked;
@@ -107,7 +215,7 @@ fn mask_nested(masker: &mut Masker, value: &mut Value) -> Result<bool> {
         }
         Value::Array(items) => {
             if let Some(bytes) = byte_values(items) {
-                let Some(masked) = mask_body(masker, &bytes)? else {
+                let Some(masked) = mask_body(masker, &bytes, &[])? else {
                     return Ok(false);
                 };
                 *items = masked.into_iter().map(Value::from).collect();
@@ -170,8 +278,8 @@ pub(crate) fn admit_side_parts(
     parts: &mut [SidePart],
     accepts: impl Fn(&[SidePart]) -> bool,
 ) -> Result<bool> {
-    let origins = vec![(origin(place, key)?, place); parts.len()];
-    admit_seeded_parts(dbs, wtxn, &origins, parts, &mut Lifted::default(), accepts)
+    let reading = Reading::default();
+    Ok(admit_read_parts(dbs, wtxn, (place, key), parts, accepts, reading)?.is_some())
 }
 
 /// [`admit_side_parts`], tracked (FIX 6144): the same pass, which also keeps
@@ -185,6 +293,23 @@ pub(crate) fn admit_tracked_side_parts(
     parts: &mut [SidePart],
     accepts: impl Fn(&[SidePart]) -> bool,
 ) -> Result<Option<TextReplacements>> {
+    let reading = Reading {
+        tracked: true,
+        ..Reading::default()
+    };
+    admit_read_parts(dbs, wtxn, (place, key), parts, accepts, reading)
+}
+
+/// One row's `parts`, each naming the row at `place` and `key` on the custody
+/// records minted from it, admitted as `reading` says.
+fn admit_read_parts(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    (place, key): (&str, &[u8]),
+    parts: &mut [SidePart],
+    accepts: impl Fn(&[SidePart]) -> bool,
+    reading: Reading,
+) -> Result<Option<TextReplacements>> {
     let origins = vec![(origin(place, key)?, place); parts.len()];
     admitted(
         dbs,
@@ -193,8 +318,18 @@ pub(crate) fn admit_tracked_side_parts(
         parts,
         &mut Lifted::default(),
         accepts,
-        true,
+        reading,
     )
+}
+
+/// How one admission reads its parts.
+#[derive(Clone, Copy, Default)]
+struct Reading {
+    /// The fields the row keeps structural references in (FIX 6634).
+    refs: &'static [RefPath],
+    /// Whether the pass keeps where each handle went in each text it masked
+    /// (FIX 6144).
+    tracked: bool,
 }
 
 /// The wall's one admission, for a side row and for a record's own parts
@@ -220,11 +355,12 @@ pub(crate) fn admit_seeded_parts(
     seed: &mut Lifted,
     accepts: impl Fn(&[SidePart]) -> bool,
 ) -> Result<bool> {
-    Ok(admitted(dbs, wtxn, origins, parts, seed, accepts, false)?.is_some())
+    Ok(admitted(dbs, wtxn, origins, parts, seed, accepts, Reading::default())?.is_some())
 }
 
 /// [`admit_seeded_parts`]' pass: `None` when the parts are written as given,
-/// else, with `tracked`, where each handle went in each text it masked.
+/// else, with `reading.tracked`, where each handle went in each text it
+/// masked. Both the plan and the minted pass read `reading.refs`.
 fn admitted(
     dbs: &impl SideTableDbs,
     wtxn: &mut RwTxn<'_>,
@@ -232,7 +368,7 @@ fn admitted(
     parts: &mut [SidePart],
     seed: &mut Lifted,
     accepts: impl Fn(&[SidePart]) -> bool,
-    tracked: bool,
+    reading: Reading,
 ) -> Result<Option<TextReplacements>> {
     if secret_scan_mode_in_txn(dbs, &*wtxn)? == SecretScanMode::Off {
         return Ok(None);
@@ -268,7 +404,7 @@ fn admitted(
     let mut placed = false;
     for (part, (record, place)) in planned.iter_mut().zip(origins) {
         plan.at = Some((*record, (*place).to_owned()));
-        placed |= part.mask(&mut plan)?;
+        placed |= part.mask(&mut plan, reading.refs)?;
     }
     // Nothing placed, not even a value the seed holds: the hit is the
     // door's.
@@ -296,11 +432,11 @@ fn admitted(
         handles: seed.0.clone(),
         minted: true,
         known,
-        traced: tracked.then(TextReplacements::default),
+        traced: reading.tracked.then(TextReplacements::default),
         ..Masker::default()
     };
     for part in parts.iter_mut() {
-        part.mask(&mut minted)?;
+        part.mask(&mut minted, reading.refs)?;
     }
     if !accepts(parts) {
         return Err(Error::InvariantViolation(
@@ -313,7 +449,10 @@ fn admitted(
 /// One row of an authored side table, admitted at its write: `None` to
 /// write `row` as given, or the row as masked. The row is read as its codec
 /// lays it out (past a version byte, as JSON or MessagePack, or as text), and
-/// `decodes` is the table's codec over the masked copy.
+/// `decodes` is the table's codec over the masked copy. Each value at one of
+/// the table's declared references is read with no known-value sweep (FIX
+/// 6634); a writer that admits a body its row keeps (a frozen step, FIX
+/// 6637) passes that body as `row`, and `decodes` reads it.
 pub(crate) fn admit_side_row(
     dbs: &impl SideTableDbs,
     wtxn: &mut RwTxn<'_>,
@@ -335,7 +474,20 @@ pub(crate) fn admit_side_row(
     };
     let mut parts = [SidePart::Body(body.to_vec())];
     let place = format!("side:{}", decl.name);
-    if !admit_side_parts(dbs, wtxn, (place.as_str(), key), &mut parts, accepts)? {
+    let reading = Reading {
+        refs: decl.references,
+        ..Reading::default()
+    };
+    if admit_read_parts(
+        dbs,
+        wtxn,
+        (place.as_str(), key),
+        &mut parts,
+        accepts,
+        reading,
+    )?
+    .is_none()
+    {
         return Ok(None);
     }
     match &parts {

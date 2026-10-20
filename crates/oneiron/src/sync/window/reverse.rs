@@ -466,7 +466,7 @@ fn reverse_rematerialize_scan(
                 && EntityMetadataHeader::parse(&raw)
                     .is_some_and(|header| header.entity_type == ENTITY_TYPE_TURN)
                 && map_contains_binary(&entities_map, &hex_id)
-                && crate::sync::room_turns::mirror_room_turn(vault, doc, id)?
+                && crate::sync::room_turns::mirror_room_turn(vault, doc, window_key, id)?
             {
                 wrote_any = true;
             }

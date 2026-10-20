@@ -13,13 +13,18 @@
 //! `Authored` is admitted at every write by the side-row wall; an entry with no class is written
 //! as given. The class changes no stored byte.
 //!
+//! An `Authored` entry whose rows keep structural references names them after its class, in
+//! `[refs: LIST]`, a list of [`RefPath`]s the side-row wall reads with no known-value sweep (FIX
+//! 6634); an entry that names none keeps every field under the sweep.
+//!
 //! An entry whose rows record an actor ends with `=> scrub`, the [`ActorScrub`] an actor's erase
 //! runs over its rows (FIX 3520); the erase walks every entry that names one.
 
-use super::{ActorScrub, CodecName, SideDb, SidePayload, SideTableDecl};
+use super::RefStep::{Field, Json};
+use super::{ActorScrub, CodecName, RefPath, SideDb, SidePayload, SideTableDecl};
 
 macro_rules! side_tables {
-    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $(=> $scrub:path)?;)+) => {
+    ($list:ident; $($(#[$doc:meta])* $name:ident: $db:ident $prefix:literal $codec:ident $($payload:ident)? $([refs: $refs:expr])? $(=> $scrub:path)?;)+) => {
         $(
             $(#[$doc])*
             pub(crate) static $name: SideTableDecl = SideTableDecl {
@@ -28,6 +33,7 @@ macro_rules! side_tables {
                 prefix: $prefix,
                 codec: CodecName::$codec,
                 payload: side_payload!($($payload)?),
+                references: side_references!($($refs)?),
                 actor: side_actor!($($scrub)?),
             };
         )+
@@ -57,6 +63,16 @@ macro_rules! side_actor {
     };
 }
 
+/// An entry's structural references: none when it names none.
+macro_rules! side_references {
+    () => {
+        &[]
+    };
+    ($refs:expr) => {
+        $refs
+    };
+}
+
 include!("sync_state.rs");
 include!("vault_meta_a_c.rs");
 include!("vault_meta_d_e.rs");
@@ -64,6 +80,80 @@ include!("vault_meta_f_l.rs");
 include!("vault_meta_m_r.rs");
 include!("vault_meta_s.rs");
 include!("vault_meta_t_z.rs");
+
+/// The structural references an inert workflow's record keeps (FIX 6634), read from the top of
+/// the row and of each frozen step its writer admits as a body of the row (FIX 6637). In the
+/// row: the intent's run id, context domains, type node and root launch id, and the launch
+/// statement's scopes. In a step (a dispatch input's pinned-key MessagePack map): its target,
+/// agent, frozen definition (its composition), type stamp, team, launch scopes, origin
+/// conversation and context domains. The two shapes share only `launch`, an object in the row
+/// and JSON text in a step, so neither's paths name anything in the other.
+const WORKFLOW_RECORD_REFS: &[RefPath] = &[
+    &[Field("intent"), Field("run_id")],
+    &[
+        Field("intent"),
+        Field("context_spec"),
+        Field("memory"),
+        Field("domains"),
+    ],
+    &[Field("intent"), Field("type_ref"), Field("node_id")],
+    &[Field("intent"), Field("spend")],
+    &[Field("launch"), Field("scope")],
+    &[Field("launch"), Field("parent_scope")],
+    &[Field("target")],
+    &[Field("agent_def")],
+    &[Field("definition")],
+    &[Field("task_type_ref")],
+    &[Field("team"), Json, Field("team_ref")],
+    &[Field("launch"), Json, Field("scope")],
+    &[Field("launch"), Json, Field("parent_scope")],
+    &[Field("origin_conversation")],
+    &[
+        Field("context_spec"),
+        Json,
+        Field("memory"),
+        Field("domains"),
+    ],
+];
+
+/// The structural references a context-widen proposal keeps (FIX 6634): its intent's run id,
+/// context domains, type node and team, and the domains of the parent slice and the widened
+/// slice its request names, which approval compares with the parent's live slice and narrows
+/// the board's by.
+const WIDEN_INTENT_REFS: &[RefPath] = &[
+    &[Field("request"), Field("intent"), Field("run_id")],
+    &[
+        Field("request"),
+        Field("intent"),
+        Field("spec"),
+        Field("memory"),
+        Field("domains"),
+    ],
+    &[
+        Field("request"),
+        Field("intent"),
+        Field("type_ref"),
+        Field("node_id"),
+    ],
+    &[
+        Field("request"),
+        Field("intent"),
+        Field("team"),
+        Field("team_ref"),
+    ],
+    &[
+        Field("request"),
+        Field("parent_spec"),
+        Field("memory"),
+        Field("domains"),
+    ],
+    &[
+        Field("request"),
+        Field("widened_spec"),
+        Field("memory"),
+        Field("domains"),
+    ],
+];
 
 /// Every declared table: the restore-class census walks it, and so does a
 /// left shared vault's purge (`store::local_replica`, `sync`-only).
