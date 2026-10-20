@@ -1927,7 +1927,9 @@ the tab that opened it, else the newest. The next answer names the move as
 `closed`). Lightpanda serves one page per guest and follows no popup: a
 verb that meets a second tab, or a new tab once its only page closed,
 refuses `browser_unsupported`, as `click_at` does there, and the refusal's
-detail names `self.browser.switch_engine` as the way to Chromium.
+words name `self.browser.switch_engine` as the way to Chromium: as its
+detail at the facade's browser door, and as its `reasonCodes` in a
+code-mode program (an agent run's or an MCP `execute_code`'s).
 
 A run's browser starts on the engine the `[browser]` section's `engine`
 names: `lightpanda`, the default and the engine agents start on, or
@@ -2011,6 +2013,37 @@ library) stores locators only: a proposal's handles are put back to their
 locators before the program is checked, and each step resolves its
 locators as it runs. A desktop row has no live handle: its `ref` is its
 locator.
+
+A page row also carries what the page shows of it beyond its role and name.
+A `link` row carries `href`, where it goes: its whole destination, resolved
+against its document's base, in whatever scheme it names (`http`, `https`,
+`mailto`, `tel`, `data`, `javascript`, which is never run, or another), and
+never clipped; a link with no destination carries none. A `heading` row
+carries `level`, its semantic heading level (1 the highest) as the
+engine's accessibility tree reads it; `depth` stays the row's nesting among
+named scopes. A row carries `datetimes`: the raw text of each `datetime`
+attribute its element carries, as written and never parsed, its own, else
+its nearest DOM ancestor's, and on a link or control row every one inside
+it too, in document order. The accessibility tree gives `href` and `level`
+where it can. One DOM read per page read (`DOM.getDocument` of the whole
+tree, inside that read's document samples, so a page that moves reads both
+again) gives the datetimes, a link Chromium's tree cuts at 10,000 bytes,
+Lightpanda's empty or non-native links, and a Lightpanda heading's
+`aria-level` or `h1` to `h6` tag. A destination resolved from the DOM is
+resolved in UTF-8, so a page in a legacy charset may spell a query apart
+from its engine. A field the read could not fill is listed in the row's
+`unavailable` as `{field, reason}`, `field` being `href`, `level` or
+`datetime`, so an absent field means no such datum. The reasons:
+`no_dom_node` (the row has no DOM node), `stale_node` (the page moved
+between the reads), `outside_dom_read` (a frame the engine's DOM read does
+not cover: on Lightpanda, any but the main document), `read_failed` (the
+DOM read failed, past the message bound, on an engine error or out of
+time, and the rest of the answer stands) and `unresolvable` (a relative
+href with no usable base, or one that does not parse). A paged answer's
+later pages carry the fields as its first read gave them. They live in the
+answers only: never in a locator, a receipt, a fact or a switch record. A
+CDP message past the 32 MiB bound, on either engine, fails only its own
+call, or is dropped if it is an event; the browser stays up.
 
 An observation names its `seq` and its `scope` (`page:` and the documents
 it read, or `window:` and the desktop window). It is whole (`full: true`),
@@ -2614,3 +2647,96 @@ tagger probe succeeded provider=local label_count=53 links=false checkpoint_sha1
 `decode_revision` is the native decoder this build runs, `-` for an
 endpoint, whose card names none. `stack_pinned` says whether the section
 pins `stack_sha16` too.
+
+### Fetch a shipped release (`oneiron oneironer fetch`)
+
+The engine carries a catalogue of shipped tagger bundles. Each one is pinned
+file by file, by size and SHA-256, under its `stack_sha16`. One release ships
+today: stack `fde950a412728a86`, checkpoint `eeeaf8bea4e8d166`, 53 labels,
+licence Apache-2.0. It has five files, about 1.2 GB in all: `oneironer.json`,
+`config.json`, `char_config.json`, `tokenizer.json` and `trunk.safetensors`.
+
+```sh
+oneiron oneironer fetch [--stack <stack_sha16>] [--into <models-root>] \
+  [--repo <org/name>] [--token-file <path>]
+```
+
+- `--stack` picks a release. Without it, the fetch takes the default. An
+  unknown stack is refused, and the refusal lists the known ones.
+- `--into` is the models root. The bundle lands at
+  `<root>/oneironer/<stack_sha16>/`, the layout the shared model root uses.
+  Without `--into`, the root is the embedder's:
+  `$XDG_DATA_HOME/oneiron/models`, else `$HOME/.local/share/oneiron/models`.
+  With it, the fetch reads no environment variable.
+- `--repo` is the Hugging Face model repo, `oneiron-dev/oneironer` by
+  default. Each release sits at a git ref named by its `stack_sha16`, and each
+  file is read from `https://huggingface.co/<repo>/resolve/<stack_sha16>/<file>`.
+- `--token-file` names a file holding a Hugging Face read token. The repo
+  stays private until the model is final, and then goes public under
+  Apache-2.0. Until then, a fetch needs the token. The fetch sends the token
+  to `huggingface.co` only, never on a redirect to its CDN, and never prints
+  or logs it. Pass a file, such as a systemd credential at
+  `$CREDENTIALS_DIRECTORY/<name>`. There is no way to pass the token itself.
+
+The fetch stages files in `<root>/oneironer/.staging-<stack_sha16>/`, under
+the lock file `<root>/oneironer/.staging-<stack_sha16>.lock`. A second fetch
+of the same stack waits for the first, then reuses its bundle. Each file
+downloads to `<file>.partial`. After an interrupted run, the next run resumes
+the partial with an HTTP `Range` request. Every file is checked for size, then
+for SHA-256. When a file's size or digest is wrong, the fetch deletes its
+partial and fails. Once all five files pass, the staging directory is renamed
+into place in one step, with directories at `0755` and files at `0644`.
+
+A bundle already in place is checked the same way and reused. If it fails the
+check, the fetch fails and leaves the directory as it is. Look at it, then
+remove it yourself.
+
+The command prints one JSON object:
+
+```json
+{"outcome": "downloaded", "stack_sha16": "fde950a412728a86",
+ "repo": "oneiron-dev/oneironer", "licence": "Apache-2.0",
+ "model_dir": "/srv/oneiron/models/oneironer/fde950a412728a86",
+ "bytes": 1243862518, "resumed_bytes": 0, "file": null, "message": null,
+ "oneironer_block": "[oneironer]\nprovider = \"local\"\n..."}
+```
+
+- `outcome` is one of four values. `reused` and `downloaded` mean the bundle
+  is in place. `not_published` means a file answered 404: the release is not
+  uploaded yet. `unauthorized` means a file answered 401 or 403: the release
+  is private and the fetch had no token, or its token has no access.
+- `bytes` and `resumed_bytes` are set on a download only. `bytes` came over
+  the network on this run. `resumed_bytes` were already on disk from an
+  earlier run.
+- `file` and `message` are set on `not_published` and `unauthorized` only.
+  For these two outcomes the command prints the object, then exits non-zero.
+- `oneironer_block` is the `[oneironer]` section that serves the bundle, ready
+  to paste into a settings file. It is null until the bundle is in place.
+
+```toml
+[oneironer]
+provider = "local"
+model_dir = "/srv/oneiron/models/oneironer/fde950a412728a86"
+checkpoint_sha16 = "eeeaf8bea4e8d166"
+stack_sha16 = "fde950a412728a86"
+label_count = 53
+```
+
+A managed engine never downloads a bundle, and a managed vault has no fetch
+setting or flag. Hypnos places the bundle: it runs this command as root once
+per node, with `--into <shared_model_root>`. Each vault's `[oneironer]
+model_dir` then names `<shared_model_root>/oneironer/<stack_sha16>/`, which
+the shared-root check in section 2 admits.
+
+### Where the engine rows live
+
+With `device = "auto"`, the engine measures each engine on this machine
+against the bundle's `parity.json`. It keeps the results as rows in
+`engines.json`, so a later start skips the measurement. A self-hosted server
+and `oneiron init` keep the rows at
+`$XDG_DATA_HOME/oneiron/oneironer/engines.json`, else at
+`$HOME/.local/share/oneiron/oneironer/engines.json`. A managed vault keeps
+them at `<data_dir>/oneironer/engines.json` and reads no HOME or XDG. Rows
+never go into the shared model root or into a bundle directory. If the rows
+file cannot be written, the server logs a warning, and the next start
+measures again.

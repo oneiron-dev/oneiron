@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3783 declarations.
+// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3791 declarations.
 // Replies: 1000 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -71,7 +71,7 @@ declare namespace Sdk {
   type ReportOutboundView = { issue_ref: string; payload?: ReportPayloadView | null };
   type LiveRunRequest<T> = { live_run: string; spec: T };
   type BoardWakeRequest = Record<string, never>;
-  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string };
+  type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null };
   type BoardWakeReply = { wakes: WakeEnvelope[] };
   type ScratchpadRecallRequest = { session_id: string; query: string };
   type EntityId = string;
@@ -1987,7 +1987,8 @@ declare namespace Sdk {
   type HostCompactResult = { epoch: number; summary: EntityId; text: string; keep_list: string[]; first_turn: number; last_turn: number };
   type HostWakeKind = "compaction" | "session_end" | "event" | "timer";
   type HostWakeRequest = { wake_kind: HostWakeKind; queue_head: EntityId[] };
-  type HostWakeResult = { wake_kind: HostWakeKind; queue_head: EntityId[]; attempt: string; already_queued: boolean };
+  type NightStepRequestId = string;
+  type HostWakeResult = { wake_kind: HostWakeKind; queue_head: EntityId[]; attempt: string; already_queued: boolean; request_id?: NightStepRequestId | null };
   type BudgetExhaustionPolicy = { kind: "suspend" } | { kind: "continue_on_local" } | { kind: "overdraft"; cap: number };
   type HostBudgetHitRequest = { seat: string; policy: BudgetExhaustionPolicy };
   type HostBudgetAccounting = { line: SpendScope; root: SpendScope; spend: SpendRead };
@@ -2919,7 +2920,10 @@ declare namespace Sdk {
   type WindowSwitch = { window: string; app: string; title: string; from: string; why: WindowSwitchCause };
   type DesktopAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: WindowSwitch | null };
   type RowSplice = { start: number; delete_count: number };
-  type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number };
+  type RowGapField = "href" | "level" | "datetime";
+  type RowGapReason = "no_dom_node" | "stale_node" | "outside_dom_read" | "read_failed" | "unresolvable";
+  type RowFieldGap = { field: RowGapField; reason: RowGapReason };
+  type Row = { ref: string; locator: string; role: string; name: string; value?: string | null; states?: string[]; depth: number; href?: string | null; level?: number | null; datetimes?: string[]; unavailable?: RowFieldGap[] };
   type Rebound = { old: string; new: string; old_scope?: string | null; new_scope: string; locator: string; ambiguous?: boolean; candidates?: string[] };
   type ReceiptEvidence = { state: "kept"; artifact_ref: string; version: number; content_hash: string } | { state: "not_kept"; code: string };
   type BrowserEngine = "lightpanda" | "chromium";
@@ -3439,8 +3443,12 @@ declare namespace Sdk {
   type WakeRecipeInputView = { recipe: WakeRecipe; turn_count: number; record_count: number; nightly_count: number; after_turn?: number[] | null; after_record?: number[] | null; after_nightly?: number[] | null; through: number[]; observed_at: number };
   type WakeCadenceView = { policy: DreamerWakePolicy; receipt?: WakeCadenceReceipt | null; pending: WakeRecipeInputView[] };
   type WakeSettlementsRequest = { after?: EntityId | null; limit: number };
-  type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] };
-  type WakeSettlementView = { wake: EntityId; input?: WakeRecipeInputView | null; settled: boolean; jobs: WakeRecipeJobView[] };
+  type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; retry_of?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] };
+  type WakeOutcomeState = "running" | "succeeded" | "partial" | "failed";
+  type WakeParkedJob = { attempt: EntityId; cause?: DreamerParkCauseView | null };
+  type WakeDeferredJob = { attempt: EntityId; due?: number | null };
+  type WakeOutcomeView = { state: WakeOutcomeState; waiting_on: EntityId[]; parked: WakeParkedJob[]; failed: EntityId[]; stopped: EntityId[]; deferred: WakeDeferredJob[]; result_refs: string[]; conclusions: EntityId[] };
+  type WakeSettlementView = { wake: EntityId; input?: WakeRecipeInputView | null; settled: boolean; jobs: WakeRecipeJobView[]; request_id?: NightStepRequestId | null; outcome: WakeOutcomeView };
   type WakeSettlementsPage = { wakes: WakeSettlementView[]; next?: EntityId | null };
   type WakeSettlementRequest = { wake: EntityId };
   type SievePageRequest = { limit?: number | null };
@@ -3721,7 +3729,7 @@ declare namespace Sdk {
   type BrowserSwitchEngineOutput = BrowserAnswer<SwitchEngineOutput>;
   type BoardRefreshRequest = { frame_epoch?: number | null };
   type BoardVerbOutput = unknown;
-  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts";
+  type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews";
   type BoardSubscriptionRequest = { scopes: SubscriptionScope[] };
   type ConnectorAnswerAction = "accept" | "decline" | "cancel";
   type ConnectorQuestionAnswer = { key: string; action: ConnectorAnswerAction; content?: unknown | null };

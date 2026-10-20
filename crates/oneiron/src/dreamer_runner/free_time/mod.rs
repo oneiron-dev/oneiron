@@ -55,7 +55,6 @@ pub(crate) use self::handoff::{
     FreeTimeClockRows, FreeTimeCycleRows, FreeTimeItemRows, FreeTimePolicyRows,
     FreeTimeReceiptRows, free_time_root_scopes_in_txn,
 };
-pub use self::items::FreeTimeItemBinding;
 #[cfg(feature = "sync")]
 pub(crate) use self::items::free_time_items_fenced_in_txn;
 pub(crate) use self::items::{
@@ -64,6 +63,7 @@ pub(crate) use self::items::{
     free_time_item_waits_unstarted, free_time_line, land_free_time_for_human,
     record_own_time_landed_in_txn,
 };
+pub use self::items::{FreeTimeItemBinding, is_free_time_try};
 pub(crate) use self::policy::free_time_owns_reflection_in_txn;
 pub use self::policy::{
     FREE_TIME_WHEN_UNSET, FreeTimeCadence, FreeTimePolicy, FreeTimePolicyInput, FreeTimeSchedule,

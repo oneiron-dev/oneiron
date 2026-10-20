@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1085 facade rows, 3706 generated types.
+// UniFFI census: 1085 facade rows, 3713 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1037.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -864,6 +864,12 @@ pub struct WakeEnvelope {
     pub actor_ref: String,
     #[serde(rename = "line")]
     pub line: String,
+    #[serde(
+        rename = "review_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub review_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk::BoardWakeReply`.
@@ -29756,6 +29762,12 @@ pub struct HostWakeResult {
     pub attempt: String,
     #[serde(rename = "already_queued")]
     pub already_queued: bool,
+    #[serde(
+        rename = "request_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub request_id: Option<String>,
 }
 
 /// `oneiron_model::llm::budget::types::BudgetExhaustionPolicy`.
@@ -52471,6 +52483,8 @@ pub struct WakeRecipeJobView {
     pub attempt: String,
     #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
+    #[serde(rename = "retry_of", default, skip_serializing_if = "Option::is_none")]
+    pub retry_of: Option<String>,
     #[serde(rename = "kind")]
     pub kind: String,
     #[serde(rename = "state")]
@@ -52507,6 +52521,58 @@ pub struct WakeRecipeJobView {
     pub conclusions: Vec<String>,
 }
 
+/// `oneiron::dreamer_runner::observation::WakeOutcomeState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WakeOutcomeState {
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "succeeded")]
+    Succeeded,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "failed")]
+    Failed,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeParkedJob`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeParkedJob {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "cause", default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<DreamerParkCauseView>,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeDeferredJob`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeDeferredJob {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "due", default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<u64>,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeOutcomeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeOutcomeView {
+    #[serde(rename = "state")]
+    pub state: WakeOutcomeState,
+    #[serde(rename = "waiting_on")]
+    pub waiting_on: Vec<String>,
+    #[serde(rename = "parked")]
+    pub parked: Vec<WakeParkedJob>,
+    #[serde(rename = "failed")]
+    pub failed: Vec<String>,
+    #[serde(rename = "stopped")]
+    pub stopped: Vec<String>,
+    #[serde(rename = "deferred")]
+    pub deferred: Vec<WakeDeferredJob>,
+    #[serde(rename = "result_refs")]
+    pub result_refs: Vec<String>,
+    #[serde(rename = "conclusions")]
+    pub conclusions: Vec<String>,
+}
+
 /// `oneiron::dreamer_runner::observation::WakeSettlementView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WakeSettlementView {
@@ -52518,6 +52584,14 @@ pub struct WakeSettlementView {
     pub settled: bool,
     #[serde(rename = "jobs")]
     pub jobs: Vec<WakeRecipeJobView>,
+    #[serde(
+        rename = "request_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub request_id: Option<String>,
+    #[serde(rename = "outcome")]
+    pub outcome: WakeOutcomeView,
 }
 
 /// `oneiron::dreamer_runner::observation::WakeSettlementsPage`.
@@ -56406,7 +56480,42 @@ pub struct RowSplice {
     pub delete_count: u64,
 }
 
-/// `oneiron_browser::Row`.
+/// `oneiron_browser::row::RowGapField`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RowGapField {
+    #[serde(rename = "href")]
+    Href,
+    #[serde(rename = "level")]
+    Level,
+    #[serde(rename = "datetime")]
+    Datetime,
+}
+
+/// `oneiron_browser::row::RowGapReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RowGapReason {
+    #[serde(rename = "no_dom_node")]
+    NoDomNode,
+    #[serde(rename = "stale_node")]
+    StaleNode,
+    #[serde(rename = "outside_dom_read")]
+    OutsideDomRead,
+    #[serde(rename = "read_failed")]
+    ReadFailed,
+    #[serde(rename = "unresolvable")]
+    Unresolvable,
+}
+
+/// `oneiron_browser::row::RowFieldGap`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RowFieldGap {
+    #[serde(rename = "field")]
+    pub field: RowGapField,
+    #[serde(rename = "reason")]
+    pub reason: RowGapReason,
+}
+
+/// `oneiron_browser::row::Row`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct Row {
     #[serde(rename = "ref")]
@@ -56423,6 +56532,18 @@ pub struct Row {
     pub states: Option<Vec<String>>,
     #[serde(rename = "depth")]
     pub depth: u16,
+    #[serde(rename = "href", default, skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+    #[serde(rename = "level", default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<u32>,
+    #[serde(rename = "datetimes", default, skip_serializing_if = "Option::is_none")]
+    pub datetimes: Option<Vec<String>>,
+    #[serde(
+        rename = "unavailable",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub unavailable: Option<Vec<RowFieldGap>>,
 }
 
 /// `oneiron_browser::observation::Rebound`.
@@ -58486,6 +58607,8 @@ pub enum SubscriptionScope {
     Presence,
     #[serde(rename = "counts")]
     Counts,
+    #[serde(rename = "diary_reviews")]
+    DiaryReviews,
 }
 
 /// `oneiron::task_verb::sdk::BoardSubscriptionRequest`.
