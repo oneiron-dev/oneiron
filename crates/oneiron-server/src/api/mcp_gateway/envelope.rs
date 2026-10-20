@@ -1,7 +1,7 @@
 //! JSON-RPC envelope types and request dispatch.
 
-use super::call_meta::MCP_INVOCATION_META;
 use super::booking_call::resolve_handshake_caller;
+use super::call_meta::MCP_INVOCATION_META;
 use super::tool_receipt::mcp_call_receipt;
 use super::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call,

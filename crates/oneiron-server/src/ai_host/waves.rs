@@ -1,11 +1,19 @@
 //! Live, model-backed wave planning on the server's durable workflow pump.
 //! Instructions come from a stored agent definition. The model returns data;
 //! the host owns the epic, plan identity, lease, validation and TASK writes.
+//!
+//! A plan whose step budget runs out inside its model call is held, not
+//! failed (OF-541, FIX 1723): the queue's budget hold parks its attempt with
+//! the checkpoint before that call, its status carries the hold, and the
+//! ordinary run-tree Resume takes the same plan up again. It is no agent
+//! dispatch, so no dispatch root holds it.
+
+use std::cell::Cell;
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, ClaimAttempt, ClaimOutcome,
-    FailAttempt, SetAttemptResult,
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptResumePoint, ClaimAttempt,
+    ClaimOutcome, FailAttempt, HoldAttemptForBudget, SetAttemptResult,
 };
 use oneiron::compaction::output::{OutputRef, restore_output, store_output};
 use oneiron::retrieval_depth::RetrievalDeadline;
@@ -25,6 +33,10 @@ use super::step::{ModelStep, StepRunner};
 use crate::decision_host::{DecisionHost, WAVE_FANOUT_BUDGET};
 
 const LEASE_OWNER: &str = "oneiron-server-waves";
+/// The checkpoint a held plan resumes from: before its model call.
+const HOLD_RESUME_POINT: &str = "wave-plan:before-model-call";
+/// Why a held plan waits, as its status reads.
+const HOLD_REASON: &str = "wave plan budget ran out during its model call";
 
 /// Host-authored metadata around the caller's opaque planning constraints.
 #[derive(Serialize, Deserialize)]
@@ -129,6 +141,8 @@ struct ModelWavePlanner<'a> {
     attempt: &'a AttemptRecord,
     context: &'a PlanningContext,
     actor: WriteActor,
+    /// Set when the plan's model call ran out of its step budget.
+    exhausted: &'a Cell<bool>,
 }
 
 impl WavePlanner for ModelWavePlanner<'_> {
@@ -194,7 +208,10 @@ impl WavePlanner for ModelWavePlanner<'_> {
                         },
                     },
                 )
-                .map_err(|fault| fault.error)?;
+                .map_err(|fault| {
+                    self.exhausted.set(fault.exhausted);
+                    fault.error
+                })?;
             let output = store_output(self.vault, &bytes)?;
             AttemptQueue::new(self.vault).set_result(SetAttemptResult {
                 id: self.attempt.id,
@@ -236,6 +253,7 @@ pub(super) fn run_once(
         status.workflows.state = WorkState::Working;
         status.workflows.started += 1;
     });
+    let exhausted = Cell::new(false);
     let result = (|| -> WaveResult<_> {
         let job: PlanningJob = serde_json::from_slice(&attempt.payload)
             .map_err(|_| invalid("invalid served wave planning job"))?;
@@ -250,6 +268,7 @@ pub(super) fn run_once(
             attempt: &attempt,
             context: &job.constraints,
             actor: WriteActor::new(actor, class),
+            exhausted: &exhausted,
         };
         let plan = planner.cut_plan(WavePlanRequest {
             epic_task_ref: epic,
@@ -274,6 +293,9 @@ pub(super) fn run_once(
         )
     })();
     runner.forget(attempt.id);
+    // Only a plan that fails because its step budget ran out is held; every
+    // other failure fails as before, and so does a hold the queue refuses.
+    let held = result.is_err() && exhausted.get() && hold_for_budget(&queue, &attempt);
     status.update(|status| {
         status.workflows.state = WorkState::Waiting;
         match &result {
@@ -282,6 +304,8 @@ pub(super) fn run_once(
             // done nor failed, and never replanned. The owner's approval
             // launches that exact cut and completes the attempt.
             Ok(WaveApplyOutcome::Paused(_)) => {}
+            // A held plan waits paused: neither done nor failed.
+            Err(_) if held => {}
             Err(_) => {
                 status.workflows.failed += 1;
                 status.workflows.last_error = Some("wave_plan_failed".to_owned());
@@ -291,7 +315,9 @@ pub(super) fn run_once(
     if matches!(result, Ok(WaveApplyOutcome::Paused(_))) {
         tracing::info!(attempt = ?attempt.id, "wave cut held for fan-out approval");
     }
-    if result.is_err() {
+    if held {
+        tracing::info!(attempt = ?attempt.id, reason = HOLD_REASON, "wave plan held at its spend cap; a run-tree resume takes it up");
+    } else if result.is_err() {
         // Keep provider output by reference and expose a stable failure reason.
         // The run-tree retry door can requeue a failed plan explicitly.
         queue.fail(FailAttempt {
@@ -306,6 +332,26 @@ pub(super) fn run_once(
     Ok(true)
 }
 
+/// Holds the leased plan at its spend cap through the queue's budget hold,
+/// with the checkpoint before its model call. Whether it held: a refusal is
+/// logged, and the plan then fails as it did before the hold existed.
+fn hold_for_budget(queue: &AttemptQueue<'_>, attempt: &AttemptRecord) -> bool {
+    let now = super::unix_now();
+    match queue.hold_for_budget(HoldAttemptForBudget {
+        id: attempt.id,
+        lease_owner: LEASE_OWNER.to_owned(),
+        attempt_count: attempt.attempt_count,
+        resume_point: AttemptResumePoint::new(HOLD_RESUME_POINT, now),
+        now,
+    }) {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a wave plan's budget hold was refused; it fails");
+            false
+        }
+    }
+}
+
 pub(crate) fn status(vault: &Vault, attempt: &AttemptRecord) -> oneiron::Result<Value> {
     let job: PlanningJob = serde_json::from_slice(&attempt.payload)
         .map_err(|_| invalid("invalid served wave planning job"))?;
@@ -315,6 +361,18 @@ pub(crate) fn status(vault: &Vault, attempt: &AttemptRecord) -> oneiron::Result<
         "result_ref": attempt.result_ref.as_ref().map(|reference| reference.as_str()),
         "last_error": attempt.last_error,
     });
+    // The hold notice: a plan held at its spend cap waits for a run-tree
+    // resume, from the checkpoint before its model call.
+    if attempt.budget_hold() {
+        body["hold"] = json!({
+            "reason": HOLD_REASON,
+            "resume_point": attempt
+                .cancel_state
+                .resume_point
+                .as_ref()
+                .map(|point| point.marker.as_str()),
+        });
+    }
     if attempt.state == oneiron::attempt_queue::AttemptState::Completed {
         let reference = attempt
             .result_ref
