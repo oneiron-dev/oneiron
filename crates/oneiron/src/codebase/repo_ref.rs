@@ -114,9 +114,11 @@ impl RepoRef {
 }
 
 fn parse_local_repo_ref(input: &str) -> Result<RepoRef> {
+    // The commit is 40 hex, so the last `#` ends the path: a folder may hold
+    // one (FIX 4309).
     let (path, commit) =
         input
-            .split_once('#')
+            .rsplit_once('#')
             .ok_or(Error::Code(CodeError::InvalidCodebaseSnapshotBody(
                 "local repo_ref must include #<40-hex-commit>",
             )))?;

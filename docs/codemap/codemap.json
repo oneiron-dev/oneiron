@@ -6654,13 +6654,14 @@
      "kind": "src",
      "notable": [
       "EsignDocumentTrail",
-      "EsignDocumentView"
+      "EsignDocumentView",
+      "EsignSealTrail"
      ],
      "path": "src/blob_artifact/esign/document_view.rs",
-     "purpose": "The owner's view of one signing document on `vault.esign.get` (FIX 6481): its delivery receipts always…",
+     "purpose": "The owner's view of one signing document on `vault.esign.get` (FIX 6481) and of its seal on…",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 2,
       "struct": 1
      }
     },
@@ -38970,7 +38971,7 @@
      "path": "src/office_body/docx.rs",
      "purpose": "The DOCX body inside its Loro document, schema 1",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 2,
       "struct": 2
      }
@@ -56004,7 +56005,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 6,
       "mod": 1,
       "re-export": 8,
@@ -56055,6 +56056,16 @@
      "surface": {
       "crate-vis": 10,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/shallow.rs",
+     "purpose": "Strict shallow cuts of a window document (FIX 6520)",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -66211,7 +66222,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 220,
+     "files": 221,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66409,7 +66420,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4152,
+   "source_files": 4153,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83974,6 +83985,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/bin/oneiron-vm-init.rs",
+     "purpose": "`oneiron-vm-init`: a vault VM's root bootstrap, run by the image's init before the engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/bin/oneiron.rs",
      "purpose": "—",
      "surface": {}
@@ -84117,7 +84136,6 @@
       "HostInitArgs",
       "HostReRootArgs",
       "HostRecoverSharedOwnerArgs",
-      "HostVmArgs",
       "InitArgs",
       "McpArgs",
       "McpAuthMode",
@@ -84143,8 +84161,8 @@
      "surface": {
       "enum": 12,
       "fn": 3,
-      "re-export": 11,
-      "struct": 23
+      "re-export": 12,
+      "struct": 22
      }
     },
     {
@@ -84297,6 +84315,19 @@
      "surface": {
       "enum": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostVmArgs"
+     ],
+     "path": "src/cli/vm_args.rs",
+     "purpose": "`oneiron-server host vm`: one vault as a Firecracker VM behind a unix socket",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
      }
     },
     {
@@ -86917,7 +86948,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 3,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -87163,6 +87194,46 @@
       "enum": 1,
       "fn": 15,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_host/provision.rs",
+     "purpose": "The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init.rs",
+     "purpose": "A vault VM's root bootstrap, `oneiron-vm-init` (FIX 6308): the step between the image's shell init, which…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/fscrypt.rs",
+     "purpose": "The fscrypt v2 ioctls a vault VM's root bootstrap needs (`linux/fscrypt.h`): add the vault's key to its…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/layout.rs",
+     "purpose": "The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -90189,7 +90260,7 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -90427,7 +90498,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 34,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90583,7 +90654,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 912,
+   "source_files": 918,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -91948,6 +92019,7 @@
       "EsignRecipient",
       "EsignSealAttemptView",
       "EsignSealGetRequest",
+      "EsignSealTrail",
       "EsignSealView",
       "EsignSealedItemView",
       "EsignSealedView",
@@ -94467,7 +94539,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 887,
+      "enum": 888,
       "struct": 2796
      }
     },
@@ -94909,7 +94981,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 16,
+      "mod": 17,
       "re-export": 9
      }
     },
@@ -95165,9 +95237,28 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 12,
+      "const": 14,
       "enum": 2,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmFscryptKey",
+      "VmProvision",
+      "VmProvisionBinding",
+      "VmProvisionFailure",
+      "VmProvisionReply"
+     ],
+     "path": "src/lib/vm_provision.rs",
+     "purpose": "A vault VM's provision connection (FIX 6308): what its root bootstrap, `oneiron-vm-init`, takes from the…",
+     "surface": {
+      "const": 3,
+      "enum": 2,
+      "fn": 7,
+      "struct": 3
      }
     },
     {
@@ -95190,7 +95281,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95199,7 +95290,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 34,
+   "source_files": 35,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
