@@ -27,4 +27,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/supervisor/relay_workers.rs` | src | s | 3 crate-vis | — | Bounded relay workers for a guest's datagrams (FIX 5979) |
 | `src/supervisor/sockets.rs` | src | s | 1 crate-vis | — | A guest's `socket()` (FIX 5978): the guest gets one end of a fresh Unix pair, which the notification's ADDFD… |
 | `src/transport.rs` | src | s | 1 struct · 1 trait · 1 fn | SessionLease, SessionTransport | A selected backend's private duplex transport and lifetime custody |
-| `src/wire.rs` | src | s | 12 crate-vis | — | Private, bounded launcher/supervisor protocol |
+| `src/wire.rs` | src | s | 13 crate-vis | — | Private, bounded launcher/supervisor protocol |
