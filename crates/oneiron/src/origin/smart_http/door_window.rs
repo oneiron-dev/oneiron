@@ -296,9 +296,7 @@ fn scan_window(
                 &lfs_pointers,
                 &ref_lfs_pointers,
             )
-            .unwrap_or_else(|_| {
-                RetainedReasons::one(InputRefused::Unverified.reason().to_owned())
-            });
+            .unwrap_or_else(|_| RetainedReasons::one(InputRefused::Unverified.reason().to_owned()));
     }
     let verdict = match scan {
         _ if !unlandable.is_empty() => DoorWindowVerdict::Rejected {
