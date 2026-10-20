@@ -1,24 +1,28 @@
-//! FIX 6424 (Engine 10-20 17:4x): an e-sign act called with no retry key
-//! keeps the first key it was prepared under across the owner's ask and the
-//! retry. An owner's one-time press approves exactly one prepared send, and
-//! that send's logical ref (`esign:<verb>:<document>:<key>`) is part of what
-//! it approves: a key minted anew on each call would make every retry a new
-//! send the press does not cover.
+//! FIX 6424 (Engine 10-20 20:4x): an e-sign act called with no retry key is
+//! keyed on its own call. An owner's one-time press approves exactly one
+//! prepared send, and that send's logical ref (`esign:<verb>:<document>:<key>`)
+//! is part of what it approves, so two separate calls stay two sends: two
+//! keys, two intent refs, two gate decisions, each with its own press.
 //!
-//! The key is the first link of the caller's own chain, for this act on this
-//! document and principal, that no admission has used yet. A gate that holds
-//! or refuses the act writes no ledger row, so its retry finds the same key;
-//! once a send is admitted under a link, the next act takes the next one, so
-//! each admitted act stays its own send, as each no-key call was before. No
-//! key is stored, and none is minted after the press.
+//! A call whose transport named its invocation (`x-oneiron-invocation`, MCP
+//! `_meta`, a code-mode step) derives its key from that id, so a true retry
+//! of the call, naming it again, prepares the same send and spends the same
+//! press. A call that names none mints a fresh nonce, as every no-key call
+//! did before; its view's `intent_ref` ends in that key, and its retry passes
+//! the key as `idempotency_key`. No key is stored and no ledger row is read,
+//! so a damaged earlier row never blocks a new call (CALLS `FIX 6424 e-sign
+//! no-key key chain`).
 
-use super::model::invalid;
 use super::outbound::EsignOutboundVerb;
-use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
-use crate::{EntityId, Result, Vault};
+use crate::memory::{MemoryError, MemoryResult};
+use crate::runtime_hooks::InvocationId;
+use crate::{EntityId, Vault};
 
-/// The BLAKE3 domain of a no-key act's key chain.
-const NO_KEY_CHAIN_DOMAIN: &[u8] = b"oneiron.esign.dispatch.no_key.v1";
+/// The BLAKE3 domain of a no-key act's key derived from its invocation.
+const NO_KEY_CALL_DOMAIN: &[u8] = b"oneiron.esign.dispatch.no_key.call.v1";
+/// How many bytes of that digest the key keeps, as lower hex: a fresh
+/// nonce's length.
+const NO_KEY_CALL_KEY_BYTES: usize = 16;
 
 /// One e-sign act's OF-327 intent ref: its logical send ref and ledger
 /// identity, carrying its retry key.
@@ -26,23 +30,54 @@ pub(super) fn esign_intent_ref(verb: EsignOutboundVerb, document: EntityId, key:
     format!("esign:{}:{}:{key}", verb.as_str(), document.to_hex())
 }
 
-/// The retry key a no-key act of `actor` runs under: the first link of its
-/// chain whose act no admission has recorded on the ledger yet.
+/// The retry key an e-sign act of `actor` runs under: the caller's own
+/// `idempotency_key`; for a call with none, one derived from `invocation`,
+/// the call's own id, when its transport named one, else a fresh nonce
+/// minted for this call.
 /// # Errors
-/// A storage failure, or a ledger row that does not read.
-pub(super) fn first_unadmitted_key(
+/// An empty `idempotency_key`, or the nonce's mint failing.
+pub(super) fn esign_dispatch_key(
     vault: &Vault,
     verb: EsignOutboundVerb,
     document: EntityId,
     actor: EntityId,
     on_behalf_of: Option<&str>,
-) -> Result<String> {
+    idempotency_key: Option<&str>,
+    invocation: Option<InvocationId>,
+) -> MemoryResult<String> {
+    match (idempotency_key, invocation) {
+        (Some(key), _) if key.trim().is_empty() => {
+            Err(MemoryError::bad_request("idempotency_key is empty"))
+        }
+        (Some(key), _) => Ok(key.to_owned()),
+        (None, Some(invocation)) => Ok(invocation_key(
+            verb,
+            document,
+            actor,
+            on_behalf_of,
+            invocation,
+        )),
+        (None, None) => Ok(vault.new_entity_id()?.to_hex()),
+    }
+}
+
+/// The key a no-key call named `invocation` derives: BLAKE3 over the domain,
+/// the actor, the act, the document and the invocation, each length-framed
+/// (u64 little-endian), and the principal tagged present (1) or absent (0).
+fn invocation_key(
+    verb: EsignOutboundVerb,
+    document: EntityId,
+    actor: EntityId,
+    on_behalf_of: Option<&str>,
+    invocation: InvocationId,
+) -> String {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(NO_KEY_CHAIN_DOMAIN);
+    hasher.update(NO_KEY_CALL_DOMAIN);
     for part in [
         actor.to_hex().as_str(),
         verb.as_str(),
         document.to_hex().as_str(),
+        invocation.to_hex().as_str(),
     ] {
         hasher.update(&(part.len() as u64).to_le_bytes());
         hasher.update(part.as_bytes());
@@ -57,25 +92,5 @@ pub(super) fn first_unadmitted_key(
             hasher.update(&[0]);
         }
     }
-    let mut link = hasher.finalize();
-    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-    loop {
-        let key = crate::entity_id::bytes_to_hex_lower(&link.as_bytes()[..16]);
-        let attempt =
-            crate::outbound::outbound_dispatch_attempt_id(&esign_intent_ref(verb, document, &key))
-                .map_err(|_| invalid("dispatch attempt id"))?;
-        let admitted = read_intent_for_attempt_in_txn(vault, &txn, attempt, 0).map_err(
-            |error| match error {
-                IntentLedgerError::Engine(error) => error,
-                _ => invalid("dispatch ledger row"),
-            },
-        )?;
-        if admitted.is_none() {
-            return Ok(key);
-        }
-        let mut next = blake3::Hasher::new();
-        next.update(NO_KEY_CHAIN_DOMAIN);
-        next.update(link.as_bytes());
-        link = next.finalize();
-    }
+    crate::entity_id::bytes_to_hex_lower(&hasher.finalize().as_bytes()[..NO_KEY_CALL_KEY_BYTES])
 }
