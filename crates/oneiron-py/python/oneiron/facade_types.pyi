@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1085 facade rows, 3730 declarations.
+Census: 1085 facade rows, 3735 declarations.
 Inputs: 1020 of 1085 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 972 of 1085 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
@@ -9519,11 +9519,13 @@ HostWakeKind = Literal["compaction", "session_end", "event", "timer"]
 class HostWakeRequest(TypedDict):
     wake_kind: HostWakeKind
     queue_head: list[EntityId]
+NightStepRequestId = str
 class HostWakeResult(TypedDict):
     wake_kind: HostWakeKind
     queue_head: list[EntityId]
     attempt: str
     already_queued: bool
+    request_id: NotRequired[NightStepRequestId | None]
 class BudgetExhaustionPolicySuspend(TypedDict):
     kind: Literal["suspend"]
 class BudgetExhaustionPolicyContinueOnLocal(TypedDict):
@@ -17197,6 +17199,7 @@ class WakeSettlementsRequest(TypedDict):
 class WakeRecipeJobView(TypedDict):
     attempt: EntityId
     parent: NotRequired[EntityId | None]
+    retry_of: NotRequired[EntityId | None]
     kind: str
     state: AttemptState
     created_at: int
@@ -17208,11 +17211,29 @@ class WakeRecipeJobView(TypedDict):
     parked_at: NotRequired[int | None]
     result_ref: NotRequired[str | None]
     conclusions: list[EntityId]
+WakeOutcomeState = Literal["running", "succeeded", "partial", "failed"]
+class WakeParkedJob(TypedDict):
+    attempt: EntityId
+    cause: NotRequired[DreamerParkCauseView | None]
+class WakeDeferredJob(TypedDict):
+    attempt: EntityId
+    due: NotRequired[int | None]
+class WakeOutcomeView(TypedDict):
+    state: WakeOutcomeState
+    waiting_on: list[EntityId]
+    parked: list[WakeParkedJob]
+    failed: list[EntityId]
+    stopped: list[EntityId]
+    deferred: list[WakeDeferredJob]
+    result_refs: list[str]
+    conclusions: list[EntityId]
 class WakeSettlementView(TypedDict):
     wake: EntityId
     input: NotRequired[WakeRecipeInputView | None]
     settled: bool
     jobs: list[WakeRecipeJobView]
+    request_id: NotRequired[NightStepRequestId | None]
+    outcome: WakeOutcomeView
 class WakeSettlementsPage(TypedDict):
     wakes: list[WakeSettlementView]
     next: NotRequired[EntityId | None]
