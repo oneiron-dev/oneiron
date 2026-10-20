@@ -25,10 +25,10 @@ use super::audience_edit_guard::kept_root_in;
 use super::audience_events::{AudienceEvent, erased_here_in, event_body, live_edit_in};
 use super::*;
 use crate::consent::AuthenticatedOwner;
-use crate::deletion::{DeleteEntityOutcome, DeleteReason, LegalHoldActorKind};
+use crate::deletion::{ConfirmedEraseOutcome, DeleteEntityOutcome, due_erase_requester_in_txn};
 use crate::memory::{DeleteReceipt, SafeDeleteReason};
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::store::legal_hold::{HoldActor, pending_erase_by_in_txn};
+use crate::store::legal_hold::HoldActor;
 
 /// Erases the audience edit `id` its live root keeps, for a privacy erase
 /// by `actor` that `reverify` re-proves: in one write, a legal hold naming
@@ -41,21 +41,37 @@ pub(crate) fn erase_audience_edit(
     actor: HoldActor,
     reverify: impl Fn(&heed::RoTxn<'_>) -> Result<()>,
 ) -> Result<Option<DeleteEntityOutcome>> {
-    erase_edit_as(vault, id, |txn| reverify(txn).map(|()| actor.clone()))
+    let erased = erase_edit_as(vault, id, |txn| {
+        reverify(txn)?;
+        Ok(Some(actor.clone()))
+    })?;
+    match erased {
+        Some(ConfirmedEraseOutcome::Completed(outcome)) => Ok(Some(outcome)),
+        // Its proof always names an actor, so it never cancels; were it to,
+        // the erase fails rather than running as an ordinary delete.
+        Some(ConfirmedEraseOutcome::Cancelled) => Err(Error::InvariantViolation(
+            "an ordinary audience edit erase cancelled",
+        )),
+        None => Ok(None),
+    }
 }
 
 /// [`erase_audience_edit`] with the actor a hold's refusal names read in
-/// the write itself, by `reverify` as it re-proves the erase there.
+/// the write itself, by `reverify` as it re-proves the erase there. `None`
+/// from it cancels the erase, the edit left as it is (FIX 6337); `None`
+/// from this, when `id` is no such edit, is never a cancelled one.
 fn erase_edit_as(
     vault: &Vault,
     id: &EntityId,
-    reverify: impl Fn(&heed::RoTxn<'_>) -> Result<HoldActor>,
-) -> Result<Option<DeleteEntityOutcome>> {
+    reverify: impl Fn(&heed::RoTxn<'_>) -> Result<Option<HoldActor>>,
+) -> Result<Option<ConfirmedEraseOutcome>> {
     vault.with_write_txn_grouped(|txn| {
         if kept_root_in(&vault.store, txn, id)?.is_none() {
             return Ok(None);
         }
-        let actor = reverify(txn)?;
+        let Some(actor) = reverify(txn)? else {
+            return Ok(Some(ConfirmedEraseOutcome::Cancelled));
+        };
         vault
             .store
             .reject_legal_holds_in_txn(txn, &[*id], &actor.privacy(true))?;
@@ -63,11 +79,13 @@ fn erase_edit_as(
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
         let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
         rewrite_audience_edit_in_txn(vault, txn, id, &erased)?;
-        Ok(Some(DeleteEntityOutcome {
-            existed: true,
-            receipt_id: None,
-            sweep_key: None,
-        }))
+        Ok(Some(ConfirmedEraseOutcome::Completed(
+            DeleteEntityOutcome {
+                existed: true,
+                receipt_id: None,
+                sweep_key: None,
+            },
+        )))
     })
 }
 
@@ -239,21 +257,18 @@ impl Vault {
     /// An owner-confirmed erase of `record` come due, nothing holding it
     /// now (FIX 5906): an audience edit its live root keeps is erased as
     /// [`Memory::owner_confirmed_erase`] erases it, a hold placed since
-    /// refusing it; any other record is hard-deleted as before. The edit's
-    /// write re-proves that the erase still waits, and a hold's refusal there
-    /// names the owner its row records as confirming it (FIX 6099).
-    pub(crate) fn due_confirmed_erase(&self, record: &EntityId) -> Result<DeleteEntityOutcome> {
+    /// refusing it; any other record is hard-deleted as before. Either
+    /// arm's writer re-proves that the erase still waits, and a hold's
+    /// refusal there names the owner its row records as confirming it
+    /// (FIX 6099). None waiting cancels it, and a cancelled edit is never
+    /// then deleted (FIX 6337).
+    pub(crate) fn due_confirmed_erase(&self, record: &EntityId) -> Result<ConfirmedEraseOutcome> {
         let erased = erase_edit_as(self, record, |txn| {
-            let by = pending_erase_by_in_txn(&self.store, txn, record)?.ok_or_else(|| {
-                Error::InvalidConfig("no confirmed erase of this record waits".into())
-            })?;
-            Ok(by.map_or(HoldActor::UNATTRIBUTED, |by| {
-                HoldActor::new(LegalHoldActorKind::Owner, Some(by))
-            }))
+            due_erase_requester_in_txn(self, txn, record)
         })?;
         match erased {
             Some(outcome) => Ok(outcome),
-            None => self.delete_entity_with_reason(record, DeleteReason::UserHardDelete),
+            None => self.delete_confirmed_erase(record),
         }
     }
 }

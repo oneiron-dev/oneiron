@@ -327,8 +327,11 @@ pub(super) fn stage_edge(
     edge: &ExportEdge,
     inserted: &ArchiveIndex<'_>,
 ) -> Result<()> {
+    // A link its pair does not prove is left out here and counted once, by
+    // the import's last edge pass (FIX 6206).
     if edge.provenance.is_none() {
-        return import_edge(vault, txn, edge, inserted);
+        import_edge(vault, txn, edge, inserted)?;
+        return Ok(());
     }
     let source = parse_id(&edge.source)?;
     let target = parse_id(&edge.target)?;
@@ -347,7 +350,8 @@ pub(super) fn stage_edge(
     }
     let mut bare = edge.clone();
     bare.provenance = None;
-    import_edge(vault, txn, &bare, inserted)
+    import_edge(vault, txn, &bare, inserted)?;
+    Ok(())
 }
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("provenance import: {reason}"))

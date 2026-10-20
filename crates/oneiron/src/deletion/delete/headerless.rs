@@ -21,7 +21,7 @@ use super::super::tombstone::{
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
-use super::DeleteEntityOutcome;
+use super::{DeleteEntityOutcome, PendingConfirmedErase};
 use crate::side_table::HexId;
 
 impl Vault {
@@ -31,6 +31,7 @@ impl Vault {
         reason: DeleteReason,
         requested_at: u64,
         gate: Option<&GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
         refuse_claim(gate)?;
         // Probe first so a fully-missing id stays a strict no-op — deleting
@@ -81,17 +82,19 @@ impl Vault {
         let window_label = window_label_from_timestamp(requested_at);
         if reason.active_store_hard_purge_v1() {
             let txn = self.store.env.read_txn()?;
-            self.store.reject_legal_hold_in_txn(&txn, id.as_bytes())?;
+            let requester = due.map(PendingConfirmedErase::requester);
+            self.reject_erase_hold_in_txn(&txn, id, requester.as_ref())?;
             // A row may have landed since the header read (OF-470).
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
         }
-        let crdt_persisted = self.write_crdt_tombstone(
+        let crdt_persisted = self.write_crdt_tombstone_due(
             id,
             requested_at,
             &window_label,
             &tombstone,
             gate_decision.as_ref(),
             gate,
+            due,
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
@@ -115,8 +118,13 @@ impl Vault {
         // its own view, atomically with the residue tear, the `dt:` marker, the
         // `pt:` propagation intent, the gate record and the receipt.
         reverify_deletion_authority_when_unpublished(gate, crdt_persisted, &wtxn)?;
+        // A due confirmed erase nothing has published re-proves here that it
+        // still waits, before any marker, scrub or purge (FIX 6337).
+        let requester = due
+            .map(|due| due.prove_when_unpublished(self, &wtxn, id, crdt_persisted))
+            .transpose()?;
         if reason.active_store_hard_purge_v1() {
-            self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+            self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         }
         if !crdt_persisted && reason.active_store_hard_purge_v1() {

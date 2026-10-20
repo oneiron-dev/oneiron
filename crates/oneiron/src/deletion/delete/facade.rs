@@ -23,7 +23,9 @@ use super::super::tombstone::{
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
-use super::{DeleteEntityOptions, DeleteEntityOutcome};
+use super::{
+    ConfirmedEraseOutcome, DeleteEntityOptions, DeleteEntityOutcome, PendingConfirmedErase,
+};
 use crate::error::RegistryError;
 use crate::side_table::HexId;
 
@@ -58,7 +60,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let deleted = self.delete_entity_through_dependents(id, reason, None);
+        let deleted = self.delete_entity_through_dependents(id, reason, None, None);
         self.store.flush_legal_hold_refusals_settled();
         deleted
     }
@@ -75,9 +77,22 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        let deleted = self.delete_entity_through_dependents(id, reason, Some(gate));
+        let deleted = self.delete_entity_through_dependents(id, reason, Some(gate), None);
         self.store.flush_legal_hold_refusals_settled();
         deleted
+    }
+
+    /// The hard delete of an owner-confirmed erase come due (FIX 6337), run
+    /// as [`Self::delete_entity_with_reason`] runs one, except that the first
+    /// writer that would publish or tear the record re-proves that the erase
+    /// still waits, and a hold's refusal names the owner its row records.
+    /// None waiting cancels the erase: nothing is published or torn.
+    pub(crate) fn delete_confirmed_erase(&self, id: &EntityId) -> Result<ConfirmedEraseOutcome> {
+        let due = PendingConfirmedErase::default();
+        let reason = DeleteReason::UserHardDelete;
+        let deleted = self.delete_entity_through_dependents(id, reason, None, Some(&due));
+        self.store.flush_legal_hold_refusals_settled();
+        due.outcome(deleted)
     }
 
     /// One delete and its dependent walks. Its caller logs the refusals once
@@ -87,8 +102,9 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false)?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false, due)?;
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
@@ -109,7 +125,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, true, None)?;
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
@@ -207,6 +223,7 @@ impl Vault {
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
+        due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         {
@@ -262,6 +279,12 @@ impl Vault {
                 .as_ref()
                 .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor)
                 .privacy(reason == DeleteReason::GdprDelete);
+            // A due confirmed erase that no longer waits ends here, before
+            // any writer, and a hold names the owner its row records.
+            let actor = match due {
+                Some(due) => due.prove_in(self, &txn, id)?,
+                None => actor,
+            };
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
             // A pad is held by its world's holds too (OF-470).
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &txn, &[*id])?;
@@ -271,7 +294,7 @@ impl Vault {
         }
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
-            return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref());
+            return self.delete_entity_without_header(id, reason, requested_at, gate.as_ref(), due);
         };
         if crate::batch::delete_door_protected(header.entity_type)
             || crate::workspace_roster::is_project_revision_type(&self.store, header.entity_type)
@@ -523,13 +546,14 @@ impl Vault {
         // delete, so the authority behind it is re-proven atomically with the
         // recovery sidecar that stages it (`stage_deletion_gate_recovery`) —
         // a revoked owner must not publish a deletion other devices obey.
-        let crdt_persisted = self.write_crdt_tombstone(
+        let crdt_persisted = self.write_crdt_tombstone_due(
             id,
             header.learned_at,
             &window_label,
             &tombstone,
             gate_decision.as_ref(),
             gate.as_ref(),
+            due,
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;
@@ -704,7 +728,12 @@ impl Vault {
         // FORBIDDEN to the caller with the tombstone already on the wire and
         // peers tearing.
         reverify_deletion_authority_when_unpublished(gate.as_ref(), authority_settled, &wtxn)?;
-        self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+        // A due confirmed erase nothing has published re-proves here that it
+        // still waits, before any marker, scrub or purge (FIX 6337).
+        let requester = due
+            .map(|due| due.prove_when_unpublished(self, &wtxn, id, authority_settled))
+            .transpose()?;
+        self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         if !authority_settled {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
