@@ -34328,7 +34328,7 @@
      "surface": {
       "crate-vis": 11,
       "mod": 11,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -34891,6 +34891,16 @@
      "path": "src/llm/seat/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/solo.rs",
+     "purpose": "Solo admission (INF 1): a call an own server runs alone, with nothing batched beside it",
+     "surface": {
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -56766,7 +56776,7 @@
      "purpose": "The drain pass a host worker drives: claim ready markers, read each turn, call the tagger outside any write…",
      "surface": {
       "crate-vis": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -66245,7 +66255,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 115,
+     "files": 116,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66947,7 +66957,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4196,
+   "source_files": 4197,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69604,6 +69614,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/overrun.rs",
+     "purpose": "A message the pipe cannot take whole (FIX 6851): one past the 32 MiB bound fails only its own call, or is…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -69631,6 +69651,16 @@
      "purpose": "CDP over a WebSocket, for a Lightpanda guest (FIX 6680, BROWSER-SPLIT)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/websocket/gate.rs",
+     "purpose": "The frame gate between a Lightpanda guest's bytes and its WebSocket (FIX 6851, `oversize_message_policy`)…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69699,6 +69729,16 @@
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/row_metadata.rs",
+     "purpose": "Where a link row goes, a heading row's level and a row's datetimes, from the outline's own candidates and…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -69787,7 +69827,6 @@
       "RoutineAsk",
       "RoutineDecider",
       "RoutineReply",
-      "Row",
       "ScreenshotInput",
       "ScreenshotOutput",
       "ScreenshotTrigger",
@@ -69813,8 +69852,8 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 11,
-      "struct": 41,
+      "re-export": 12,
+      "struct": 40,
       "trait": 2
      }
     },
@@ -69885,7 +69924,7 @@
      "path": "src/outline.rs",
      "purpose": "The accessibility tree as rows a program reads: a closed set of roles, closed menus collapsed, layout and…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -69912,6 +69951,22 @@
      "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)",
      "surface": {
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Row",
+      "RowFieldGap",
+      "RowGapField",
+      "RowGapReason"
+     ],
+     "path": "src/row.rs",
+     "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…",
+     "surface": {
+      "enum": 2,
+      "struct": 2
      }
     },
     {
@@ -70004,7 +70059,7 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -70018,7 +70073,7 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -70080,6 +70135,13 @@
      "layout": "file",
      "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)"
     },
+    "row": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX…"
+    },
     "session": {
      "files": 4,
      "impl_vault": false,
@@ -70097,7 +70159,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 28,
+   "source_files": 32,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -75501,8 +75563,8 @@
      "path": "src/lib/backend.rs",
      "purpose": "Backend assembly: config, backend struct, LlmBackend impl, and capability gating",
      "surface": {
-      "crate-vis": 2,
-      "fn": 7,
+      "crate-vis": 3,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -82894,7 +82956,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -82904,7 +82966,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs/browser_guest.rs",
      "purpose": "A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -94917,6 +94979,9 @@
       "RoutineOutcome",
       "Row",
       "RowBirth",
+      "RowFieldGap",
+      "RowGapField",
+      "RowGapReason",
       "RowSplice",
       "RsiBudgetConfig",
       "RsiBudgetRead",
@@ -95833,8 +95898,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 898,
-      "struct": 2812
+      "enum": 900,
+      "struct": 2813
      }
     },
     {
