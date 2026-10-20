@@ -151,6 +151,7 @@ mod send_receipt_audit;
 mod short_id_alias;
 mod structural_kind_registry;
 mod training_link;
+pub(crate) mod turn_missing;
 mod writer_lease;
 
 #[cfg(test)]
