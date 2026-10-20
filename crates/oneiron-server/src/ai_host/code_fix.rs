@@ -215,6 +215,22 @@ impl<'a> HostModels<'a> {
         self.served_on(&self.run, role, messages)
     }
 
+    /// [`Self::generate_served`] for messages fixed code assembled from
+    /// `rows` (FIX 6935), as [`Self::generate_sourced`] carries them, with
+    /// the model of the rung that answered. `None` is unknown.
+    #[expect(
+        dead_code,
+        reason = "a Coach call that needs its served model switches to it with its own rows"
+    )]
+    pub(super) fn generate_served_sourced(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+        rows: Option<Vec<EntityId>>,
+    ) -> oneiron::Result<Option<(String, String)>> {
+        self.served_on(&self.run.sourced(rows), role, messages)
+    }
+
     /// [`Self::generate_served`] admitted through `run`, this run or a
     /// sourced handle on it.
     fn served_on(

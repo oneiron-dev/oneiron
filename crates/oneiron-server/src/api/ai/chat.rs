@@ -73,6 +73,7 @@ mod compaction;
 mod hook_ask;
 mod recall;
 mod sitting;
+mod sources;
 
 pub(crate) use compaction::{
     AnswerBreakpoint, ChatReuse, live_fork_unavailable, reuse_chat_breakpoint,
@@ -438,7 +439,7 @@ fn start_turn(
     locality: oneiron::claim::CallerLocality,
     headers: &axum::http::HeaderMap,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
-    board: Option<String>,
+    board: Option<crate::api::context_board::ChatBoard>,
 ) -> Result<Started, Refused> {
     // A turn reads the agent and the conversation, and writes both turns.
     for scope in [CoreScope::Read, CoreScope::Write] {
@@ -481,6 +482,8 @@ fn start_turn(
         .into_iter()
         .map(|text| text_message(LlmMessageRole::System, text))
         .collect();
+    // FIX 6935: the rows the call is read from, gathered as it is assembled.
+    let mut sources = sources::TurnSources::of_agent(agent);
     // OF-490: the answering agent is shown its own craft after its
     // instructions, read on one snapshot; the reply's receipt keeps the
     // exact pack once the reply is saved. A turn runs on no attempt. Only
@@ -502,6 +505,9 @@ fn start_turn(
         crate::ai_host::resident_craft::join_craft(&mut messages, craft.message);
         craft.entries
     });
+    if let Some(entries) = &craft {
+        sources.craft(entries);
+    }
     // FIX 4465 D: a self agent on its live fork reads its log from the
     // retained ledger, as the caller reads it where it sits; every other
     // turn takes the caller's lines as before.
@@ -520,10 +526,15 @@ fn start_turn(
         )
     });
     match &self_chat {
-        Some(chat) => chat.push_log(&mut messages),
+        Some(chat) => {
+            chat.push_log(&mut messages);
+            sources.add(chat.sources().as_deref());
+        }
         None => {
             let skip = request.history.len().saturating_sub(settings.history_turns);
             for earlier in request.history.into_iter().skip(skip) {
+                // A caller's line names no row it was read from.
+                sources.add(None);
                 let role = match earlier.role {
                     HistoryRole::User => LlmMessageRole::User,
                     HistoryRole::Assistant => LlmMessageRole::Assistant,
@@ -538,7 +549,12 @@ fn start_turn(
     // FIX 6794: the board rides after the stable history, right before the
     // newest User (FIX 6676's layout); a role that does not admit it with
     // the board admits the turn as it was.
+    let (board, board_rows) = board.map(|board| (board.block, board.rows)).unzip();
     let (admitted, recalled) = recall::admit(&server.ai, &vault, &seat, messages, board);
+    // A board the call goes without is no row it read.
+    if recalled {
+        sources.add(board_rows.as_deref());
+    }
     let mut admitted = admitted.map_err(|refusal| match refusal {
         RoleRefusal::NoSeat => refused(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -690,7 +706,7 @@ fn start_turn(
         MessageWriteMode::Atomic
     };
     let hooks_vault = Arc::clone(&vault);
-    let answering = begin_answer(
+    let answering = begin_sourced_answer(
         &server.ai,
         Answer {
             vault,
@@ -717,6 +733,7 @@ fn start_turn(
             today: None,
             craft,
         },
+        sources.rows(),
     )
     .map_err(|refusal| match refusal {
         AnswerRefused::WaitedOut(reason) => {
@@ -1158,6 +1175,17 @@ pub(crate) struct AnswerOutcome {
 /// Opens the reply's stream, admits its run and starts the model call, then
 /// drives it on a task of its own: a caller that goes away does not stop it.
 pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, AnswerRefused> {
+    begin_sourced_answer(ai, answer, None)
+}
+
+/// [`begin_answer`] for a call fixed code assembled from `sources` (FIX
+/// 6935): its run's permits and metered settlement carry them. `None` is
+/// unknown.
+fn begin_sourced_answer(
+    ai: &AiHandle,
+    answer: Answer,
+    sources: Option<Vec<EntityId>>,
+) -> Result<Answering, AnswerRefused> {
     let Answer {
         vault,
         agent,
@@ -1246,7 +1274,7 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
                 meter,
                 funding,
             );
-            compaction::open_stream(&run, admitted, today, pending.as_ref())
+            compaction::open_stream(&run.sourced(sources), admitted, today, pending.as_ref())
                 .map_err(|error| format!("chat budget: {error:?}"))
         });
     let stream = match started {

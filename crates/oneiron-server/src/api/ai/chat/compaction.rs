@@ -114,6 +114,22 @@ impl SelfChat {
         }
     }
 
+    /// The rows the log's lines were read from (FIX 6935): each summary
+    /// standing in them and each retained turn they hold, with its messages.
+    /// `None` for a log whose turns were not all pinned, whose rows it does
+    /// not all name.
+    pub(super) fn sources(&self) -> Option<Vec<EntityId>> {
+        if !self.log.pinned {
+            return None;
+        }
+        let mut rows = self.log.summaries.clone();
+        for span in &self.log.sources {
+            rows.push(span.turn);
+            rows.extend_from_slice(&span.messages);
+        }
+        Some(rows)
+    }
+
     /// The turn's breakpoint, its log read as `reader` where it sits.
     pub(super) fn breakpoint(
         self,

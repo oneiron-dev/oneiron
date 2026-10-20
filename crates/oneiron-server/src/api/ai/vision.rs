@@ -294,7 +294,12 @@ async fn asked(
         })?;
     let model = admitted.request.model.clone();
     let locality = admitted.request.envelope.locality;
-    let run = run()?;
+    // The call reads the pulled ASSET's pixels and the caller's own question:
+    // the asset is the one row its input was read from (FIX 6935).
+    let read = EntityId::from_hex(&pulled.asset_ref)
+        .ok()
+        .map(|asset| vec![asset]);
+    let run = run()?.sourced(read);
     let response = admitted
         .ladder
         .generate(&run, admitted.request, None)

@@ -13,21 +13,23 @@ use oneiron::{LlmMessage, LlmMessageRole, ModelLocality, Vault};
 
 use super::{ChatTurnRequest, assistant, chat_request, text_message};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
+use crate::api::context_board::ChatBoard;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
 
 /// The board `request`'s turn reads as `auth` reads, read before anything is
-/// written; `None` when the turn reads none: a caller or request the turn
-/// refuses, no chat seat, a refused assembly, an empty frame, or rows a world
-/// keeps from where the call goes. The seat's ladder may fall back to a rung
-/// off this device, so the board is read as an off-device read is, and its
-/// rows meet the hold of a prompt that leaves the device.
+/// written, beside every row it served (FIX 6935); `None` when the turn reads
+/// none: a caller or request the turn refuses, no chat seat, a refused
+/// assembly, an empty frame, or rows a world keeps from where the call goes.
+/// The seat's ladder may fall back to a rung off this device, so the board is
+/// read as an off-device read is, and its rows meet the hold of a prompt that
+/// leaves the device.
 pub(super) async fn turn_board(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     request: &ChatTurnRequest,
-) -> Option<String> {
+) -> Option<ChatBoard> {
     if auth.require(CoreScope::Read).is_err()
         || auth.require(CoreScope::Write).is_err()
         || request.text.trim().is_empty()
@@ -67,7 +69,7 @@ pub(super) async fn turn_board(
         &board.rows,
         board.block.as_bytes(),
     ) {
-        Ok(None) => Some(board.block),
+        Ok(None) => Some(board),
         Ok(Some(hold)) => {
             tracing::info!(
                 reason = hold.reason(),
