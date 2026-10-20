@@ -35,6 +35,8 @@ use crate::memory::{
 };
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
+mod publish;
+
 /// One party's answer to a join that waits on it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -108,8 +110,7 @@ impl Memory<'_> {
             )?)
         })?;
         // FIX 1794: the receipt reaches the live window of its room or thread.
-        #[cfg(feature = "sync")]
-        vault.refresh_room_rows_in_live_windows(&[outcome.join_ref.as_str()], &[]);
+        outcome.publish_after_commit(vault);
         Ok(outcome)
     }
 
@@ -130,8 +131,7 @@ impl Memory<'_> {
             Ok::<_, MemoryError>(owner_invite_in_txn(vault, txn, request, caller, now)?)
         })?;
         // FIX 1794: the invitation reaches the live window of its room.
-        #[cfg(feature = "sync")]
-        vault.refresh_room_rows_in_live_windows(&[outcome.join_ref.as_str()], &[]);
+        outcome.publish_after_commit(vault);
         Ok(outcome)
     }
 
@@ -168,8 +168,7 @@ impl Memory<'_> {
         })?;
         // FIX 1794: the answer reaches the live window of the join's room or
         // thread.
-        #[cfg(feature = "sync")]
-        vault.refresh_room_rows_in_live_windows(&[outcome.join_ref.as_str()], &[]);
+        outcome.publish_after_commit(vault);
         Ok(outcome)
     }
 }
@@ -183,7 +182,8 @@ impl Memory<'_> {
 /// filing under a scope it funds gives that payer's yes. The same intent
 /// replays: Ready and refused joins return as stored, a held one decides
 /// again against live facts. The same intent key with another request
-/// refuses.
+/// refuses. A raw-transaction owner pushes the outcome to live windows once
+/// it commits ([`JoinOutcome::publish_after_commit`], FIX 3458).
 pub fn rooms_join_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -486,7 +486,8 @@ fn file_join_in_txn(
 
 /// Records `answer` on a filed join, from the party its part names, and
 /// decides again in the caller's write transaction. A settled join replays
-/// as stored.
+/// as stored. A raw-transaction owner pushes the outcome to live windows
+/// once it commits ([`JoinOutcome::publish_after_commit`], FIX 3458).
 pub fn rooms_consent_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

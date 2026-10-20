@@ -57,8 +57,11 @@ pub(crate) fn thread_reader_in(
 /// [`room_ceiling_in`](super::room_ceiling_in) for a reader of thread `thread` of `room`
 /// ([`thread_reader_in`]): the same terms, audience and peer reads over the
 /// room's roster in this snapshot, which a thread's reader never joins. A
-/// private thread's (FIX 2951) are over the members in its audience alone.
-/// `None` when `caller` does not read the thread here. Held, as the room's.
+/// private thread's (FIX 2951) are over the members in its audience alone;
+/// one whose audience holds no member now, read by the vault's Owner or an
+/// Admin in it off the room (FIX 6267), is bound to that caller alone: its
+/// worlds and clearance, and it as the audience. `None` when `caller` does
+/// not read the thread here. Held, as the room's.
 pub(crate) fn thread_ceiling_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -72,7 +75,15 @@ pub(crate) fn thread_ceiling_in(
     if !thread_reader_in(vault, txn, room, thread, &members, caller)? {
         return Ok(None);
     }
-    let members = crate::workspace_roster::thread_members_in(vault, txn, room, thread, &members)?;
+    let mut members =
+        crate::workspace_roster::thread_members_in(vault, txn, room, thread, &members)?;
+    if members.is_empty()
+        && crate::workspace_roster::privileged_private_thread_reader_in(
+            vault, txn, room, thread, caller,
+        )?
+    {
+        members.push(caller);
+    }
     let worlds = reading_defaults_in(vault, txn, &members)?;
     let clearances = clearances_in(vault, txn, &members)?;
     let roster: Vec<_> = members
