@@ -19,7 +19,9 @@
 //! references in (FIX 6634, [`RefPath`]): the value there is read with no
 //! known-value sweep, so a run id, a context domain or a type node equal to a
 //! value custody holds still resolves; every shape the door's rules place is
-//! placed there as anywhere else.
+//! placed there as anywhere else. The sweep withheld there is the whole of
+//! it: a known value's raw bytes and each spelling the index reads it in
+//! (base64, percent, JSON escapes), on the plan and on the minted pass alike.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -33,7 +35,7 @@ use zeroize::{Zeroize, Zeroizing};
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
-use super::wipe::{PlanParts, PlanTree, replace_wiped};
+use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
@@ -131,7 +133,10 @@ fn mask_tree(masker: &mut Masker, tree: &mut Value) -> Result<bool> {
 /// a path in `refs` ends at is read with no known-value sweep (FIX 6634): a
 /// structural reference that equals or holds a value custody holds stays as
 /// written, while a shape the door's rules place in it is placed, or
-/// refused, as anywhere else. With no path this is that reading exactly.
+/// refused, as anywhere else. The masker reads no known value there at all,
+/// so none of the index's spellings of one (base64, percent, JSON escapes)
+/// matches either, at that value or under it. With no path this is that
+/// reading exactly.
 fn mask_referenced(
     masker: &mut Masker,
     tree: &mut Value,
@@ -180,14 +185,18 @@ fn mask_referenced(
             .and_then(|text| serde_json::from_str::<Value>(text).ok()),
         _ => None,
     };
-    let Some(mut descriptor) = descriptor else {
+    let Some(descriptor) = descriptor else {
         return mask_plain(masker, tree, nested);
     };
-    if !mask_referenced(masker, &mut descriptor, &within, nested)? {
+    // The decoded descriptor holds the member's secrets: wiped as it drops,
+    // and the spelling it replaces wiped first (FIX 1101).
+    let mut descriptor = PlanTree(descriptor);
+    if !mask_referenced(masker, &mut descriptor.0, &within, nested)? {
         return Ok(false);
     }
-    let spelled = serde_json::to_string(&descriptor)
+    let spelled = serde_json::to_string(&descriptor.0)
         .map_err(|_| Error::InvariantViolation("a masked descriptor did not encode"))?;
+    wipe_value(tree);
     *tree = Value::from(spelled);
     Ok(true)
 }
