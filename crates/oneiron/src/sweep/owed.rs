@@ -6,7 +6,8 @@
 //! compaction: one `hc:{window}` row in the sweep queue, written in its
 //! transaction. A pass that compacts every window settles each row. Any other
 //! pass compacts each owed window on its own and settles it once it has; a
-//! window still open, raced or held keeps its row for the next pass.
+//! window still open, raced or held, or whose cut was not proved to root at
+//! its tip (FIX 6520), keeps its row for the next pass.
 
 use std::collections::BTreeSet;
 
@@ -157,6 +158,11 @@ fn compact_owed_window(
                 "sweep: a legal hold names a row the owed window would erase — deferred"
             );
             run.windows_deferred_held += 1;
+            false
+        }
+        // Nothing was written: the row stays until a cut is proved.
+        Some(Ok(CompactOutcome::UnprovedDefer)) => {
+            run.windows_deferred_raced += 1;
             false
         }
         Some(Err(err)) => {
