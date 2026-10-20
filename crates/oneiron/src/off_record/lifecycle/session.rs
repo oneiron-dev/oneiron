@@ -991,11 +991,10 @@ impl OffRecordSession<'_> {
     }
 
     /// The known-value index of this session's vault (OF-560 C), for a sweep
-    /// over what a run in this session writes.
-    pub(crate) fn known_values(
-        &self,
-    ) -> Result<Option<std::sync::Arc<crate::secret_custody::KnownValues>>> {
-        self.vault.known_values()
+    /// over what a run in this session writes: its ids, read again at each
+    /// frame (KS-3).
+    pub(crate) fn known_source(&self) -> Result<Option<crate::secret_custody::KnownSource>> {
+        self.vault.known_source()
     }
 
     /// The `[limits]` rows of this session's vault.
