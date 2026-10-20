@@ -16,7 +16,7 @@
 //! acked.
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU8, AtomicU64};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -36,6 +36,11 @@ pub(crate) use self::managed::{MANAGED_BACKUP_EVERY, PreIdleAttempt, PreIdleBack
 
 /// How often a running server checks whether a backup is due.
 pub(crate) const SCHEDULE_TICK: Duration = Duration::from_secs(60);
+
+/// How often a scheduled backup pass that has not finished says so (FIX
+/// 6769): a pass held on the backup lock or in a long backup shows in the
+/// log, not only by its silence.
+const PASS_STILL_RUNNING_EVERY: Duration = Duration::from_secs(60);
 
 /// What a server knows about its vault's place on disk and its backups.
 pub(crate) struct OwnerHost {
@@ -59,6 +64,9 @@ pub(crate) struct OwnerHost {
     /// The backup jobs in flight: the resident pass and a backup before an
     /// idle reap, which a reap preparation tells from other writes.
     backup_jobs: AtomicU64,
+    /// The managed pass's last decision said that took no backup, `0` for
+    /// none (`managed`).
+    managed_said: AtomicU8,
 }
 
 impl OwnerHost {
@@ -84,6 +92,7 @@ impl OwnerHost {
             rehearse_temp: None,
             managed_every: None,
             backup_jobs: AtomicU64::new(0),
+            managed_said: AtomicU8::new(0),
         }
     }
 
@@ -309,23 +318,49 @@ impl SyncServer {
         tick: Duration,
         admit: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        let host = Arc::clone(self.owner_host.as_ref()?);
+        let Some(host) = self.owner_host.as_ref().map(Arc::clone) else {
+            tracing::info!("no backup schedule: this server keeps no backups");
+            return None;
+        };
         let server = Arc::clone(self);
+        tracing::info!(
+            tick_secs = tick.as_secs(),
+            managed_every_secs = ?host.managed_every.map(|every| every.as_secs()),
+            "backup schedule started"
+        );
         Some(tokio::spawn(async move {
             let mut interval = tokio::time::interval(tick);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut refused = false;
             loop {
                 interval.tick().await;
                 let Some(admission) = admit() else {
+                    // Said once a run of refused ticks, as the pause is.
+                    if !std::mem::replace(&mut refused, true) {
+                        tracing::info!(
+                            "scheduled backup tick refused: the vault is paused; the next \
+                             admitted tick decides"
+                        );
+                    }
                     continue;
                 };
+                refused = false;
                 let (host, server) = (Arc::clone(&host), Arc::clone(&server));
-                let outcome = tokio::task::spawn_blocking(move || {
+                let mut pass = tokio::task::spawn_blocking(move || {
                     let _admission = admission;
                     let _job = host.backup_job();
                     host.take_if_due(server.vault())
-                })
-                .await;
+                });
+                let started = tokio::time::Instant::now();
+                let outcome = loop {
+                    match tokio::time::timeout(PASS_STILL_RUNNING_EVERY, &mut pass).await {
+                        Ok(outcome) => break outcome,
+                        Err(_) => tracing::info!(
+                            running_secs = started.elapsed().as_secs(),
+                            "scheduled backup pass still running"
+                        ),
+                    }
+                };
                 match outcome {
                     Ok(Ok(Some(taken))) => tracing::info!(
                         backup = %taken.backup.path.display(),
