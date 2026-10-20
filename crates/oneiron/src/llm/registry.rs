@@ -6,7 +6,9 @@ mod installed_pack;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
 
 use super::{LlmCatalogEntry, ModelId};
+use crate::entity_id::EntityId;
 use crate::side_table::{self, LegacyJson, SideTable};
+use crate::skill_optimize::union_source_rows;
 use crate::{
     Vault,
     error::{Error, Result},
@@ -56,6 +58,12 @@ pub struct ModelRegistryRow {
     /// no seat is born on it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stale_since: Option<u64>,
+    /// The rows this row's entry, scores and marks were derived from (FIX
+    /// 5760): the installed pack's source for a row the pack shipped, and
+    /// each score snapshot's evidence. `None`, unknown, for a row whose
+    /// producer named none, such as one the owner or a mesh peer wrote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +91,11 @@ pub struct ScoreSnapshot {
     pub source: String,
     pub fetched_at: u64,
     pub observations: Vec<ScoreObservation>,
+    /// The rows the observations were read from (FIX 5760): none for a
+    /// public benchmark fetch. `None`, unknown, for a snapshot whose
+    /// producer named none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 pub(super) fn invalid(message: impl Into<String>) -> Error {
     Error::InvalidConfig(message.into())
@@ -208,14 +221,23 @@ impl Vault {
         ) {
             return Err(invalid("scores must change through snapshot diff"));
         }
-        REGISTRY_ROW.put(self, &mut txn, &key, row)?;
+        // Scores change only through a snapshot, so the row keeps the
+        // evidence its stored scores were read from (FIX 5760).
+        let mut row = row.clone();
+        if let Some(old) = previous.as_ref().filter(|old| !old.scores.is_empty()) {
+            row.source_rows =
+                union_source_rows([row.source_rows.as_deref(), old.source_rows.as_deref()]);
+        }
+        REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
         txn.commit()?;
         Ok(())
     }
     /// Stores `ratio`, the host's measured [`ModelRegistryRow::tokens_per_o200k`],
     /// on `measured`'s stored row while that row still holds the catalog entry
     /// it was measured on. `Ok(false)` when there is no such row: none is
-    /// stored, or a refresh changed it since.
+    /// stored, or a refresh changed it since. The row keeps its source rows
+    /// (FIX 5760): the ratio is measured from that same entry and a fixed
+    /// passage, and reads no other row.
     ///
     /// # Errors
     ///
@@ -367,6 +389,10 @@ impl Vault {
         prior: Option<&CatalogSeed>,
     ) -> Result<()> {
         let checked = CatalogSeed::from_json(&encode(seed)?)?;
+        // The rows the seed was read from: a retirement it marks derives
+        // from them (FIX 5760).
+        let seed_sources =
+            union_source_rows(checked.rows.iter().map(|row| row.source_rows.as_deref()));
         let shipped: BTreeMap<&str, &ModelRegistryRow> = prior
             .map(|prior| {
                 prior
@@ -397,18 +423,29 @@ impl Vault {
                     } else {
                         row.tokens_per_o200k
                     };
+                    // The new entry is the seed's, the kept scores their
+                    // snapshots' (FIX 5760).
+                    let source_rows = union_source_rows([
+                        existing.source_rows.as_deref(),
+                        row.source_rows.as_deref(),
+                    ]);
                     let refreshed = ModelRegistryRow {
                         version: row.version,
                         wire: row.wire,
                         catalog: row.catalog,
                         tokens_per_o200k,
                         stale_since: None,
+                        source_rows,
                         ..existing
                     };
                     REGISTRY_ROW.put(&self.store, txn, &key, &refreshed)?;
                 }
                 Some(mut existing) if existing.is_stale() => {
                     existing.stale_since = None;
+                    existing.source_rows = union_source_rows([
+                        existing.source_rows.as_deref(),
+                        row.source_rows.as_deref(),
+                    ]);
                     REGISTRY_ROW.put(&self.store, txn, &key, &existing)?;
                 }
                 Some(_) => {}
@@ -428,6 +465,8 @@ impl Vault {
                 && !existing.is_stale()
             {
                 existing.stale_since = Some(now);
+                existing.source_rows =
+                    union_source_rows([existing.source_rows.as_deref(), seed_sources.as_deref()]);
                 REGISTRY_ROW.put(&self.store, txn, &key, &existing)?;
             }
         }
@@ -498,6 +537,12 @@ impl Vault {
                 if prior_watermark.is_some_and(|at| at > snapshot.fetched_at) {
                     return Err(invalid("stale benchmark snapshot"));
                 }
+                // Every write below reads this snapshot's evidence too (FIX
+                // 5760).
+                row.source_rows = union_source_rows([
+                    row.source_rows.as_deref(),
+                    snapshot.source_rows.as_deref(),
+                ]);
                 let scores = row.scores.entry(snapshot.source.clone()).or_default();
                 let previous = scores.get(&observation.benchmark).copied();
                 if prior_watermark == Some(snapshot.fetched_at)
