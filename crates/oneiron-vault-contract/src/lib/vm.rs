@@ -8,12 +8,22 @@
 //! adapter and the host's VMM driver both build against the names here.
 //!
 //! The boot port carries what a node's process child gets from inherited
-//! descriptors. The guest's first connection is the credential connection:
-//! the host writes the credential frame and half-closes, and the guest
-//! answers with the ready byte. Every later connection is the lifecycle
+//! descriptors. On a cold boot the guest's first connection is the provision
+//! connection ([`crate::vm_provision`]): the guest's root bootstrap takes the
+//! vault's binding and its fscrypt key there, lays out the encrypted storage
+//! and the UID table, and only then starts the engine as the vault's own
+//! non-root UID (FIX 6308). The engine's first connection is the credential
+//! connection: the host writes the credential frame and half-closes, and the
+//! guest answers with the ready byte. Every later connection is the lifecycle
 //! connection: the guest opens it with [`VmGuestFrame::Join`], then both
 //! sides speak one JSON line per frame. A snapshot restore resets vsock, so
-//! the guest joins again after each one.
+//! the guest joins again after each one; it runs no second provision.
+//!
+//! The provision connection rides contract version 3 with a build floor, the
+//! first engine revision that ships `oneiron-vm-init`: a host speaks it only
+//! to an image built at or after that floor, which the image manifest pins.
+//! An older image's engine would read the provision frame as its credential
+//! frame and refuse it, so it never starts.
 
 use crate::UnixTs;
 use serde::{Deserialize, Serialize};
@@ -23,7 +33,8 @@ use std::path::{Path, PathBuf};
 pub const VM_GUEST_CID: u32 = 3;
 /// The host's context id, the only peer a guest can reach.
 pub const VM_HOST_CID: u32 = 2;
-/// Guest to host: the credential connection, then the lifecycle connection.
+/// Guest to host: on a cold boot the provision connection, then the
+/// credential connection, then the lifecycle connection.
 pub const VM_BOOT_PORT: u32 = 1024;
 /// Host to guest: the vault's HTTP surface.
 pub const VM_HTTP_PORT: u32 = 1025;
@@ -44,11 +55,18 @@ pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// supervisor maps a guest owner path below it onto the vault's own config
 /// directory (`crate::settings_paths`).
 pub const VM_GUEST_CONFIG_DIR: &str = "/config";
-/// The guest engine's data directory (`--data-dir`), on the vault's own
-/// disk; `deploy/firecracker/oneiron-vault-init` passes this path. A
-/// supervisor maps a guest owner path below it onto the vault disk's data
-/// view (`crate::settings_paths`).
-pub const VM_GUEST_DATA_DIR: &str = "/vault/data";
+/// The vault's fscrypt v2 storage on its own disk: owned by the vault's UID,
+/// mode 0700, encrypted under the provisioned key. It holds the data
+/// directory and the engine's siblings of it (backups, rehearsals).
+pub const VM_GUEST_STORAGE_DIR: &str = "/vault/storage";
+/// The guest engine's data directory (`--data-dir`), inside the encrypted
+/// storage; `oneiron-vm-init` passes this path, and the guest's UID table
+/// binds it. A supervisor maps a guest owner path below it onto the vault
+/// disk's data view (`crate::settings_paths`).
+pub const VM_GUEST_DATA_DIR: &str = "/vault/storage/data";
+/// The engine's key directory (`--keystore-dir`), on the vault's own disk
+/// beside the storage, under the same owner, mode and fscrypt policy.
+pub const VM_GUEST_KEYS_DIR: &str = "/vault/keys";
 /// One boot-channel frame, newline included.
 pub const MAX_VM_FRAME: usize = 1024;
 

@@ -69,9 +69,13 @@ mod vm_guest;
 #[cfg(target_os = "linux")]
 mod vm_host;
 #[cfg(target_os = "linux")]
+mod vm_init;
+#[cfg(target_os = "linux")]
 mod vm_schedule;
 #[cfg(target_os = "linux")]
 pub use self::vm_host::{SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun, run_vault_vm};
+#[cfg(target_os = "linux")]
+pub use self::vm_init::run_vm_init;
 
 pub use self::args::{ManagedArgs, ManagedError, ManagedStartMode, NO_FD, SettingsRefusal};
 pub use self::key_sync::{

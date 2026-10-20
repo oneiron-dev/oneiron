@@ -13,6 +13,8 @@ pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
+mod vm_args;
+pub use vm_args::HostVmArgs;
 mod wake_args;
 mod widen_proposal_args;
 pub use hook_args::{
@@ -380,26 +382,6 @@ pub enum HostCommand {
     /// A running `serve` answers the same at
     /// `/v1/operator/shared/recover-owner`, under the host's root credential.
     RecoverSharedOwner(Box<HostRecoverSharedOwnerArgs>),
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct HostVmArgs {
-    /// JSON VM profile: firecracker, kernel, rootfs, vault_disk, state_dir,
-    /// vcpus, mem_mib and optional boot_args and allowed_origins.
-    #[arg(long)]
-    pub config: PathBuf,
-    #[arg(long)]
-    pub vault_name: String,
-    /// The unix socket clients connect to; each connection is proxied into
-    /// the vault's HTTP surface.
-    #[arg(long)]
-    pub listen: PathBuf,
-    /// Inherited descriptor carrying the 64-byte DEK and spawn-token frame.
-    #[arg(long)]
-    pub credentials_fd: i32,
-    /// Seconds without traffic before the vault sleeps.
-    #[arg(long, default_value_t = 300)]
-    pub idle_secs: u64,
 }
 
 /// The current secret comes from `--secret-file`, the config or
@@ -1098,21 +1080,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
             commands::host_recover_shared_owner(*args)
         }
         Command::Host(HostCommand::Relay(args)) => crate::managed::run_relay(&args.config).await,
-        #[cfg(target_os = "linux")]
-        Command::Host(HostCommand::Vm(args)) => {
-            crate::managed::run_vault_vm(crate::managed::VaultVmRun {
-                config: args.config,
-                vault_name: args.vault_name,
-                listen: args.listen,
-                credentials_fd: args.credentials_fd,
-                idle: std::time::Duration::from_secs(args.idle_secs),
-            })
-            .await
-        }
-        #[cfg(not(target_os = "linux"))]
-        Command::Host(HostCommand::Vm(_)) => {
-            anyhow::bail!("vault VMs need Linux with KVM")
-        }
+        Command::Host(HostCommand::Vm(args)) => vm_args::run(*args).await,
         Command::Dreamer(DreamerCommand::Grant(args)) => commands::dreamer_grant(*args),
         Command::Embedder(EmbedderCommand::Serve(args)) => commands::embedder_serve(*args).await,
         Command::Oneironer(command) => commands::oneironer(command),

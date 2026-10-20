@@ -164,7 +164,10 @@ does every refusal from this vault there. Other hosts keep plain `/a/`. A
 device publishes to this server by syncing: a pinned pointer reaches it once
 window sync has delivered the bytes and rows it names. Managed serve takes
 `--artifact-domains` beside `--artifact-http-socket` and refuses
-`--artifact-vault-name`: its subdomain is always its own vault name.
+`--artifact-vault-name`: it answers only at the public slug the supervisor
+names with `--artifact-public-slug` (`<slug>.<domain>`), never at its vault
+name or vault_id, and without a slug no subdomain answers while `/a/` still
+serves.
 
 `[limits]` bounds the work a caller can start. Every bound is finite. A zero is
 a config error on every row except `disk_reserve_bytes`, where zero puts the

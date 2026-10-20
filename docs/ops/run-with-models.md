@@ -198,7 +198,7 @@ vault reports ready (settings it cannot use stop the start), admits each pass
 like a served write, and reads its API key or bridge token at each pass from
 the vault secret `api_key_secret` or `bridge_token_secret` names, bound to
 `connector:linear`; a direct mirror keeps its response custody in
-`<data_dir>.linear-responses` (`/vault/data.linear-responses` in the vault VM),
+`<data_dir>.linear-responses` (`/vault/storage/data.linear-responses` in the vault VM),
 made private at start. A value the supervisor also passes on argv
 (`--dimensions`, `--fast-dims`, `--map-size`, `--log-level`,
 `--dict-search-paths`, `--assistant-display-names`, `--maximum-tier`,

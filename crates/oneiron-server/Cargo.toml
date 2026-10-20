@@ -27,6 +27,14 @@ name = "oneiron-broker"
 path = "src/bin/oneiron-broker.rs"
 doc = false
 
+# A vault VM's root bootstrap (FIX 6308): it takes the vault's binding and
+# fscrypt key from the host, lays out the encrypted storage and the UID table,
+# and starts the server beside it as the vault's own non-root UID.
+[[bin]]
+name = "oneiron-vm-init"
+path = "src/bin/oneiron-vm-init.rs"
+doc = false
+
 [lib]
 # No doc-comment code fences in this crate (audited 2026-08-19); skip the
 # doctest compile pass entirely.

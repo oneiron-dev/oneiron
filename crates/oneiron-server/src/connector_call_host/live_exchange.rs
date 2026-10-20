@@ -378,6 +378,10 @@ pub(super) fn read_stream_round(
 
 /// Reads the reply to a retried `tools/call` (`id`), refusing any server
 /// request on its stream.
+#[allow(
+    clippy::result_large_err,
+    reason = "the error is the worker's terminal event, handed on as is"
+)]
 pub(super) fn read_retry_reply(
     session: &LiveSession,
     response: reqwest::blocking::Response,

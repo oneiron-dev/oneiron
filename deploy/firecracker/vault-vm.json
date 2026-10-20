@@ -8,5 +8,11 @@
   "mem_mib": 512,
   "artifact_origin": false,
   "artifact_domains": [],
-  "boot_args": "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init oneiron.vault=example oneiron.owner=0000000000000000000000000000000000000000000000000000000000000000"
+  "boot_args": "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init oneiron.vault=example oneiron.owner=0000000000000000000000000000000000000000000000000000000000000000",
+  "provision": {
+    "guest_uid": 61000,
+    "derivation_owner": "0000000000000000000000000000000000000000000000000000000000000000",
+    "vault_disk_uuid": "00000000-0000-0000-0000-000000000000",
+    "fscrypt_key_identifier": "00000000000000000000000000000000"
+  }
 }
