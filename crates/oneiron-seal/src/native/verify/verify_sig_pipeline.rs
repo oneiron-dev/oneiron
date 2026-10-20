@@ -3,7 +3,8 @@
 use lopdf::{Document, Object};
 
 use crate::api::{
-    Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    Counter, Sha256Digest, VerifyCheck, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    note_current,
 };
 use crate::error::SealError;
 
@@ -27,18 +28,11 @@ pub(super) struct SigEntry {
 }
 
 fn resolved_name<'a>(doc: &'a Document, obj: &'a Object) -> Result<&'a Object, SealError> {
-    Ok(doc.dereference(obj).map_err(|_| malformed_input())?.1)
+    pdf::resolve(doc, obj).ok_or_else(malformed_input)
 }
 fn name_eq(obj: &Object, expected: &[u8]) -> bool {
     matches!(obj, Object::Name(n) if n == expected)
 }
-
-/// Total nodes one AcroForm field-tree descent may visit. Real signature
-/// hierarchies are a handful of nodes deep; past this the tree is hostile
-/// (or corrupt) and discovery fails closed rather than burning work. The
-/// cycle guard alone bounds a self-referential `/Kids`, but a legal,
-/// acyclic, extremely wide tree still deserves a ceiling.
-const MAX_FIELD_TREE_WORK: usize = 16_384;
 
 /// Collect signature/timestamp dictionaries in revision order (earlier
 /// revisions cover fewer bytes). Discovery is by REACHABILITY: only
@@ -69,8 +63,8 @@ const MAX_FIELD_TREE_WORK: usize = 16_384;
 /// candidates, no evaluation. A PRESENT `/AcroForm` that does not resolve
 /// to a dictionary, or whose `/Fields` does not resolve to an array, is
 /// malformed input (a hostile catalog must not dodge the malformed verdict
-/// by hiding broken form state); both dereferences are bounded and
-/// fail-closed through lopdf's chain limit.
+/// by hiding broken form state); both chains are followed whole and fail
+/// closed on a dangling or cyclic link.
 ///
 /// `/SubFilter` dispatch (fail-closed): a candidate is evaluated ONLY under
 /// the handler its `/SubFilter` names — `/Sig` requires
@@ -83,25 +77,32 @@ const MAX_FIELD_TREE_WORK: usize = 16_384;
 /// interop allowance itself is gated on an ABSENT `/Type`: a present
 /// `/Type` naming neither handler — or not even a name — is skipped, never
 /// laundered into CAdES candidacy through the typeless path.
+///
+/// The nodes the descent visits are counted for the `[limits]` field-tree
+/// row, a failed descent's too; no count of them stops it (Rule 5).
 pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealError> {
+    let mut work = 0usize;
+    let collected = discover_signatures(doc, &mut work);
+    note_current(Counter::FieldTreeWork, work);
+    collected
+}
+
+/// [`collect_signatures`], counting the nodes it visits in `work`.
+fn discover_signatures(doc: &Document, work: &mut usize) -> Result<Vec<SigEntry>, SealError> {
     let mut out = Vec::new();
-    let catalog = doc.catalog().map_err(|_| malformed_input())?;
+    let catalog = pdf::catalog(doc).ok_or_else(malformed_input)?;
     let Ok(af_obj) = catalog.get(b"AcroForm") else {
         return Ok(out);
     };
-    let af = doc
-        .dereference(af_obj)
-        .map_err(|_| malformed_input())?
-        .1
+    let af = pdf::resolve(doc, af_obj)
+        .ok_or_else(malformed_input)?
         .as_dict()
         .map_err(|_| malformed_input())?;
     let Ok(fields_obj) = af.get(b"Fields") else {
         return Ok(out);
     };
-    let fields = doc
-        .dereference(fields_obj)
-        .map_err(|_| malformed_input())?
-        .1
+    let fields = pdf::resolve(doc, fields_obj)
+        .ok_or_else(malformed_input)?
         .as_array()
         .map_err(|_| malformed_input())?;
     // ISO 32000 §12.7.3.2: AcroForm fields form a TREE — a non-terminal
@@ -112,26 +113,22 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
     // fail an honest document. `/V` is never inherited: each terminal field
     // carries its own or is legally unfilled.
     //
-    // The descent is bounded on both axes and fail-closed: `visited` stops a
-    // hostile `/Kids` cycle (self-loop or mutual) from spinning, and
-    // `MAX_FIELD_TREE_WORK` caps total nodes so a wide-and-deep tree cannot
-    // burn unbounded work. Every dereference stays bounded by lopdf's chain
-    // limit and maps a failure to malformed input, exactly as the flat walk
-    // did. Orphan carve-out unchanged: a signature-shaped object NOT reached
-    // through this tree is never evaluated.
+    // The descent runs to its end and fails closed only on malformed form
+    // state: `visited` stops a hostile `/Kids` cycle (self-loop or mutual)
+    // from spinning, and every node it pops is counted (Rule 5: a wide,
+    // deep, acyclic tree is walked whole). Every chain is followed whole
+    // and a dangling or cyclic one maps to malformed input, exactly as the
+    // flat walk did. Orphan carve-out unchanged: a signature-shaped object
+    // NOT reached through this tree is never evaluated.
     let mut visited: std::collections::BTreeSet<lopdf::ObjectId> =
         std::collections::BTreeSet::new();
-    let mut work = 0usize;
     let mut stack: Vec<(&Object, bool)> = Vec::new();
     for field in fields.iter().rev() {
         stack.push((field, false));
     }
     while let Some((node, inherited_sig_ft)) = stack.pop() {
-        work = work.checked_add(1).ok_or_else(malformed_input)?;
-        if work > MAX_FIELD_TREE_WORK {
-            return Err(malformed_input());
-        }
-        let (node_id, node_obj) = doc.dereference(node).map_err(|_| malformed_input())?;
+        *work = work.saturating_add(1);
+        let (node_id, node_obj) = pdf::chain(doc, node).ok_or_else(malformed_input)?;
         // A field reached twice (shared kid, or a /Kids cycle) is walked
         // once: re-walking cannot discover a new signature, and refusing to
         // recurse is what makes a cycle terminate.
@@ -155,10 +152,8 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         // NOT exclusive: a widget kid carries neither /FT nor /V and simply
         // contributes nothing, while a child field is reached either way.
         if let Ok(kids_obj) = field.get(b"Kids") {
-            let kids = doc
-                .dereference(kids_obj)
-                .map_err(|_| malformed_input())?
-                .1
+            let kids = pdf::resolve(doc, kids_obj)
+                .ok_or_else(malformed_input)?
                 .as_array()
                 .map_err(|_| malformed_input())?;
             for kid in kids.iter().rev() {
@@ -177,7 +172,7 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
             // shape, never evaluated.
             continue;
         };
-        let Object::Dictionary(d) = doc.dereference(v).map_err(|_| malformed_input())?.1 else {
+        let Object::Dictionary(d) = pdf::resolve(doc, v).ok_or_else(malformed_input)? else {
             return Err(malformed_input());
         };
         let ty = d
@@ -238,8 +233,8 @@ pub(super) fn collect_signatures(doc: &Document) -> Result<Vec<SigEntry>, SealEr
         let field_name = field
             .get(b"T")
             .ok()
-            .and_then(|o| doc.dereference(o).ok())
-            .and_then(|(_, o)| o.as_str().ok())
+            .and_then(|o| pdf::resolve(doc, o))
+            .and_then(|o| o.as_str().ok())
             .map_or_else(
                 || "unnamed".to_owned(),
                 |v| String::from_utf8_lossy(v).into_owned(),

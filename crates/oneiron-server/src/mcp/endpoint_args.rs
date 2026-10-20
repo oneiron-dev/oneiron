@@ -281,6 +281,9 @@ pub struct McpVerbArguments {
     pub room_ref: Option<String>,
     #[serde(default)]
     pub turn_ref: Option<String>,
+    /// `vault.rooms.messages`'s one thread, by its root (FIX 5638).
+    #[serde(default)]
+    pub thread_ref: Option<String>,
     #[serde(default)]
     pub spec: Option<Value>,
     /// One native request. A present JSON null is distinct from omission for
@@ -313,7 +316,7 @@ pub struct McpVerbArguments {
 }
 
 impl McpVerbArguments {
-    fn present_fields(&self) -> [(&'static str, bool); 19] {
+    fn present_fields(&self) -> [(&'static str, bool); 20] {
         [
             ("key", self.key.is_some()),
             ("frame_epoch", self.frame_epoch.is_some()),
@@ -324,6 +327,7 @@ impl McpVerbArguments {
             ("session_id", self.session_id.is_some()),
             ("room_ref", self.room_ref.is_some()),
             ("turn_ref", self.turn_ref.is_some()),
+            ("thread_ref", self.thread_ref.is_some()),
             ("spec", self.spec.is_some()),
             ("request", self.request.is_some()),
             ("label", self.label.is_some()),
@@ -372,6 +376,7 @@ impl McpVerbArguments {
         validate_optional_nonblank(tool, "arguments.session_id", self.session_id.as_deref())?;
         validate_optional_entity_ref(tool, "arguments.room_ref", self.room_ref.as_deref())?;
         validate_optional_entity_ref(tool, "arguments.turn_ref", self.turn_ref.as_deref())?;
+        validate_optional_entity_ref(tool, "arguments.thread_ref", self.thread_ref.as_deref())?;
         if self.scopes.as_ref().is_some_and(Vec::is_empty) {
             return Err(McpToolValidationError::field(
                 tool,

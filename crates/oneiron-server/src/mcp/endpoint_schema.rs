@@ -487,7 +487,7 @@ fn verb_argument_field_schema(field: &str) -> Value {
             "minItems": 1,
 
         }),
-        "task_ref" | "room_ref" | "turn_ref" => entity_id_schema(),
+        "task_ref" | "room_ref" | "turn_ref" | "thread_ref" => entity_id_schema(),
         "label" => json!({
             "type": "string",
             "minLength": 1,
