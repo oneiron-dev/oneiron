@@ -301,6 +301,15 @@ pub(crate) fn resolve(
             ),
             _ => OwnerError::from(error),
         })?;
+    // An approved curator rung applies now, after the approval committed,
+    // not at the next nightly pass (FIX 470); one that cannot waits for it.
+    if receipt.action == GateConsentBundleAction::Approve {
+        oneiron::dreamer_runner::maintenance::apply_curator_after_consent(
+            vault,
+            receipt.member_claim_ids.iter().copied(),
+            vault.now_recorded_at(),
+        );
+    }
     // The approval half of a commitment wake: an approved proposal schedules
     // its outbound intent now, after the approval committed.
     let commitment_wakes = match receipt.action {

@@ -214,6 +214,7 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::dreamer_runner::maintenance::agent_health::HEALTH_ESCALATE_TTL_HOURS,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_CARD_FLOOR,
     crate::dreamer_runner::maintenance::agent_health::HEALTH_DUP_MIN_COST,
+    crate::dreamer_runner::maintenance::coach::TRADEOFF_REMINDER_HOURS,
     crate::skill::EXPLORATION_ASK_CLIMB_HOURS,
     crate::skill::EXPLORATION_ASK_LAPSE_HOURS,
     crate::blob_artifact::esign::ESIGN_ASK_CLIMB_HOURS,

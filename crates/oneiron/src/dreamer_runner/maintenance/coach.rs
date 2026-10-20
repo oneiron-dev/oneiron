@@ -165,10 +165,17 @@ const MAINTENANCE_FACETS: [&str; 10] = [
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
 const MAX_PERSON_THRESHOLD_BATCH: usize = 1024;
-/// How long a pending tradeoff ask waits on one rung before it climbs. Canon
-/// names no window: one night apart, less an hour of wake jitter, so a
-/// nightly pass climbs once a night.
-const TRADEOFF_REMINDER_SECS: u64 = 23 * 60 * 60;
+/// Hours a pending tradeoff ask waits on one rung before it climbs, a learned
+/// setting the owner seeds or pins (FIX 707). Canon names no window; the
+/// shipped seed is one night apart, less an hour of wake jitter, so a nightly
+/// pass climbs once a night.
+pub const TRADEOFF_REMINDER_HOURS: crate::learning_setting::SettingSpec =
+    crate::learning_setting::SettingSpec {
+        key: "coach.tradeoff_reminder_hours",
+        min: 1.0,
+        max: 720.0,
+        seed: 23.0,
+    };
 
 /// When the Coach last climbed, or first saw, a pending tradeoff ask. Key: the
 /// ask's proposal.
@@ -577,6 +584,10 @@ pub(super) fn run_tripwires(vault: &Vault, now: u64) -> Result<()> {
 /// the two climbs a night late rather than skipping a role. The row of an ask
 /// that is answered or withdrawn goes.
 pub(super) fn run_tradeoff_escalation(vault: &Vault, now: u64) -> Result<()> {
+    // One read per pass: the owner's pin or seed, else the shipped seed.
+    let reminder_secs = (crate::learning_setting::setting_value(vault, &TRADEOFF_REMINDER_HOURS)?
+        * 3600.0)
+        .round() as u64;
     let asks = crate::skill_optimize::pending_skill_tradeoff_asks(vault)?;
     for ask in &asks {
         let proposal = ask.question.proposal;
@@ -584,7 +595,7 @@ pub(super) fn run_tradeoff_escalation(vault: &Vault, now: u64) -> Result<()> {
             let txn = vault.store.env.read_txn()?;
             TRADEOFF_CLIMB.get(&vault.store, &txn, &proposal)?
         };
-        if since.is_some_and(|since| now.saturating_sub(since) < TRADEOFF_REMINDER_SECS) {
+        if since.is_some_and(|since| now.saturating_sub(since) < reminder_secs) {
             continue;
         }
         vault
