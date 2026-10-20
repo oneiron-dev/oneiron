@@ -10,7 +10,6 @@
 //! answered request marked reads cold. Warmth never depends on where the
 //! agent runs.
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError, Weak};
 use std::time::Instant;
 
@@ -299,14 +298,16 @@ impl OfferLadder {
             .first_warm(prefixes.iter().rev().take(profile.lookback).map(key))
     }
 
-    /// [`Self::generate_exact_within`] for the first live-fork send of a
-    /// flight under a row on `auto` (FIX 6029): sent only while `prefix`,
-    /// the live request it forks as `captured` sends it, is still warm,
-    /// asked before the rung is admitted, again once it is admitted, and
-    /// through any wait for its offer back. `Ok(None)` when it went cold
-    /// first: nothing went out, and a permit admitted for it settled
-    /// unstarted, for nothing. A provider's failure is its own error, never
-    /// read as cold.
+    /// The first live-fork send of a flight under a row on `auto` (FIX
+    /// 6029), on this one picked rung: sent only while `prefix`, the live
+    /// request it forks as `captured` sends it, is still warm. `Ok(None)`
+    /// for every stop before the rung went out (a cold prefix, asked before
+    /// the rung is admitted and again once it is; a rung that rests, has its
+    /// probation request out or is held on the device; a refused admission;
+    /// a gate that refused it unsent), its permit settled unstarted first,
+    /// for nothing: the flight's cheap writer then writes as the agent. Once
+    /// the rung went out, its failure is its own, never read as cold, and
+    /// the call goes on as [`Self::generate_exact_within`] would.
     pub(crate) async fn generate_exact_while_warm(
         &self,
         run: &RunAdmission,
@@ -314,30 +315,67 @@ impl OfferLadder {
         captured: &LiveForkRung,
         prefix: &LlmRequest,
     ) -> LlmResult<Option<LlmResponse>> {
+        let [rung] = self.rungs.as_slice() else {
+            return Ok(None);
+        };
+        if !self.picked || self.admits(&request).is_err() {
+            return Ok(None);
+        }
         let Some(key) = self.warm_key(captured, prefix) else {
             return Ok(None);
         };
-        let cold = AtomicBool::new(false);
-        let may_send = || {
-            let warm = self.rests.warmth.warm(&key);
-            if !warm {
-                cold.store(true, Ordering::Release);
-            }
-            warm
+        let warm = || self.rests.warmth.warm(&key);
+        let takes_now = self.kept_on_device(0, &request).is_none()
+            && self
+                .rests
+                .resting(&rung.offer.binding, &rung.wire_model)
+                .is_none()
+            && self
+                .rests
+                .probing(&rung.offer.binding, &rung.wire_model)
+                .is_none();
+        if !takes_now || !warm() {
+            return Ok(None);
+        }
+        // The run is live until this call ends: the host stays awake for it.
+        let _awake = oneiron_vault_contract::host_adapters::run_awake();
+        let Ok((bound, permit)) = self.admit(run, rung, &request, None, false) else {
+            return Ok(None);
         };
-        let budget = Duration::from_secs(self.rests.max_wait_secs());
-        match self
-            .generate_exact_within(run, request, None, &may_send, budget)
-            .await
-        {
-            Ok(response) => Ok(Some(response)),
-            // The guard stopped the walk before any rung went out: such a
-            // walk ends as an invalid request, a sent rung's with its own
-            // failure.
-            Err(LlmError::Fatal(FatalLlmError::InvalidRequest)) if cold.load(Ordering::Acquire) => {
-                Ok(None)
+        // Admission can wait on the run's receipts: the prefix and the world
+        // are judged again right before the rung is sent.
+        if !warm() || self.kept_on_device(0, &request).is_some() {
+            settle_failed(permit);
+            return Ok(None);
+        }
+        let mut walk = Walk::default();
+        let Some(probe) = self.probe(0, &mut walk) else {
+            settle_failed(permit);
+            return Ok(None);
+        };
+        let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let warmth = Sending::of(rung, &bound);
+        match gate.generate(bound, permit.lease()).await {
+            Ok(mut response) => {
+                warmth.answered(&self.rests);
+                self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
+                permit.settle(CallOutcome::Answered(&response.usage))?;
+                response.usage = self.answered(0, &walk, response.usage);
+                rung.note_answered(&request);
+                Ok(Some(response))
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                if !settle_failed(permit) {
+                    // The gate refused it before it went out.
+                    return Ok(None);
+                }
+                drop(probe);
+                self.failed(0, error, true, &mut walk)?;
+                let budget = Duration::from_secs(self.rests.max_wait_secs());
+                self.generate_exact_within(run, request, None, &|| true, budget)
+                    .await
+                    .map(Some)
+            }
         }
     }
 }

@@ -776,10 +776,12 @@ count as the shortest. A restart, a rebuilt provider client, or a matching
 prefix more than 20 content blocks before the request's end reads cold too.
 The breakpoint checks warmth when it captures the live request, and the
 flight checks it again right before its first call goes out, after its
-admission and any wait for its offer: a prefix that went cold by then sends
-nothing on the live rung, and the cheap writer writes the flight instead. A
-provider's failure is never read as cold. The flight keeps the source its
-first call ran on for every retry and fold. An `auto` flight's window is
+admission. Any stop before that call has gone out (a prefix gone cold, a live
+rung that rests, is on probation or is held on the device, a refused
+admission, a stale rung) sends nothing on the live rung, settles its permit
+unstarted, and the cheap writer writes the flight instead. Once the call has
+gone out, a provider's failure stays a failure, never read as cold. The
+flight keeps the source its first call ran on for every retry and fold. An `auto` flight's window is
 sized on the smaller of the live model's room and the cheap writer's, so a
 prefix that goes cold before the first call never leaves a window the cheap
 model cannot take. A self agent's chat turn (FIX 4465 D) follows the same
