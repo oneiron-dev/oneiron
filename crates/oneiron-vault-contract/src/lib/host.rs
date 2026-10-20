@@ -97,6 +97,7 @@ pub fn shed_before_reap<S, R>(
     let request = crate::CtlRequest::Shed {
         cause: crate::ShedCause::MemoryPressure,
         waited_secs,
+        wait_id: None,
     };
     let shed = request
         .validate()
