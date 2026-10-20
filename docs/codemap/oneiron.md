@@ -2968,7 +2968,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/mod.rs` | src | s | 5 re-export · 3 crate-vis | — | OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731) |
 | `src/off_record/lifecycle/on_record.rs` | src | m | 1 fn · 14 crate-vis | — | A stretch on record (ARCH-0052 D5) |
 | `src/off_record/lifecycle/overlay_writes.rs` | src | m | 8 crate-vis | — | Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written… |
-| `src/off_record/lifecycle/participant.rs` | src | s | 5 crate-vis | — | A run's session handle, bound to the participant it acts as (Codex burn engine-prs-01) |
+| `src/off_record/lifecycle/participant.rs` | src | s | 6 crate-vis | — | A run's session handle, bound to the participant it acts as (Codex burn engine-prs-01) |
 | `src/off_record/lifecycle/promotion.rs` | src | m | 1 fn · 3 crate-vis | — | Promotion out of the room (ARCH-0052 D4): the one session-overlay-to-base write, and the doors that save a… |
 | `src/off_record/lifecycle/registry.rs` | src | m | 22 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
 | `src/off_record/lifecycle/retained.rs` | src | s | 1 trait · 1 fn | RetainedCharge | A room stretch's memory, charged to its host's retained-memory line (SCAN C029, FIX 5991) |
