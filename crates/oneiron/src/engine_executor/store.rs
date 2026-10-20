@@ -155,10 +155,12 @@ pub(super) struct StreamedOutputs {
     files: Vec<(String, BodySink)>,
 }
 
-/// A step's bodies, ready to publish: its observation and its files, in the
+/// A step's bodies, ready to publish: its observation, the console lines of
+/// a finished step (whose observation is its answer), and its files, in the
 /// order the step first wrote them.
 pub(super) struct StepBodies {
     pub(super) observation: BodySink,
+    pub(super) console: Option<BodySink>,
     pub(super) files: Vec<(String, BodySink)>,
 }
 
@@ -214,17 +216,18 @@ impl StreamedOutputs {
     }
 
     /// The step's bodies: the answer of a finished step, else its console
-    /// lines, and its files, with whatever a runtime returned in its
-    /// outcome instead of streaming it.
+    /// lines, the console lines a finished step also wrote, and its files,
+    /// with whatever a runtime returned in its outcome instead of streaming
+    /// it.
     pub(super) fn into_step_bodies(
         self,
         storage: &ExecutorStorage<'_>,
         outcome: &JsCodeModeStepOutcome,
     ) -> Result<StepBodies> {
-        let observation = if outcome.done {
-            self.finish
+        let (observation, console) = if outcome.done {
+            (self.finish, self.console)
         } else {
-            self.console
+            (self.console, None)
         };
         let mut observation = match observation {
             Some(sink) => sink,
@@ -237,7 +240,11 @@ impl StreamedOutputs {
             sink.write(&output.bytes)?;
             files.push((output.path.clone(), sink));
         }
-        Ok(StepBodies { observation, files })
+        Ok(StepBodies {
+            observation,
+            console,
+            files,
+        })
     }
 }
 
@@ -576,6 +583,12 @@ pub(super) fn script_output_path(seq: u64) -> String {
 
 pub(super) fn observation_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.observation.txt")
+}
+
+/// The console lines of a step that finished, kept as evidence beside its
+/// answer; the answer stays the step's observation and result.
+pub(super) fn console_output_path(seq: u64) -> String {
+    format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.console.txt")
 }
 
 /// A shadow check's report for the step's program.

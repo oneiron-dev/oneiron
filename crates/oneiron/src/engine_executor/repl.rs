@@ -15,11 +15,11 @@ use super::record::{
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, IMPLICIT_SPEECH_TEXT_BYTES, ImplicitSpeechIntent,
     ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_REPLY_INLINE_BYTES, checkpoint_label,
-    clean_for_context, fallback_speech_marker, implicit_speak_output_path, load_context_output,
-    load_observation_window, load_utf8_output, message_result_attachment, observation_output_path,
-    observation_ref, publish_output, record_reply_evidence, record_script_output,
-    record_text_output, recoverable_chunk_path, resumed_output_path, resumed_output_wait,
-    script_output_path, validate_runtime_outputs, write_json,
+    clean_for_context, console_output_path, fallback_speech_marker, implicit_speak_output_path,
+    load_context_output, load_observation_window, load_utf8_output, message_result_attachment,
+    observation_output_path, observation_ref, publish_output, record_reply_evidence,
+    record_script_output, record_text_output, recoverable_chunk_path, resumed_output_path,
+    resumed_output_wait, script_output_path, validate_runtime_outputs, write_json,
 };
 use super::types::{
     ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorConfig,
@@ -418,6 +418,16 @@ impl EngineNativeExecutor<'_> {
                 observation_output_path(completed_steps),
                 bodies.observation,
             )?;
+            // A finished step's console lines are evidence, not its result,
+            // so they stay out of the step's result digests.
+            if let Some(console) = bodies.console {
+                publish_output(
+                    &self.storage,
+                    &mut record,
+                    console_output_path(completed_steps),
+                    console,
+                )?;
+            }
             let mut outputs = Vec::with_capacity(bodies.files.len());
             for ((path, sink), stored_path) in bodies.files.into_iter().zip(runtime_output_paths) {
                 let output = publish_output(&self.storage, &mut record, stored_path, sink)?;
