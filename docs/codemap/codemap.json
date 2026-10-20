@@ -6108,7 +6108,7 @@
      "path": "src/batch/secret_scan/mask/side_row.rs",
      "purpose": "The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -6119,6 +6119,16 @@
      "purpose": "Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER)",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/secret_scan/mask/text.rs",
+     "purpose": "A text's mask on write (OF-560): each span the door's text rules place, and each value custody already…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -13495,21 +13505,23 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CapsuleContent",
       "CapsuleHost",
       "CapsuleRungBinding",
       "ExecutorStepStart",
       "ExposureKind",
       "ExposureSlot",
       "StepReplayCapsule",
+      "StoredSpan",
       "TaskExposure"
      ],
      "path": "src/code_run/replay_capsule.rs",
      "purpose": "Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical…",
      "surface": {
-      "crate-vis": 5,
-      "enum": 2,
-      "fn": 4,
-      "struct": 5
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 6,
+      "struct": 6
      }
     },
     {
@@ -13785,8 +13797,28 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 11,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/admit.rs",
+     "purpose": "A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/replay_capsule/erase.rs",
+     "purpose": "The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -26284,7 +26316,7 @@
      "path": "src/failure_signals/code_fix/exact.rs",
      "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -63782,7 +63814,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63943,7 +63975,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 106,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65226,7 +65258,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4053,
+   "source_files": 4056,
    "test_files": 902
   },
   "oneiron-android": {

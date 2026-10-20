@@ -514,8 +514,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/secret_scan/mask.rs` | src | L | 9 crate-vis | — | Mask on write (OF-560; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A): a secret the… |
 | `src/batch/secret_scan/mask/admit.rs` | src | s | 6 crate-vis | — | Mask on write for content a writer stores outside the batch door (OF-067): a message stream's seed, a NOTE's… |
 | `src/batch/secret_scan/mask/carrier.rs` | src | s | 13 crate-vis | — | The batch door's file mark (owner ruling C2) for a carrier's stored text no door rewrites (OF-067, Engine… |
-| `src/batch/secret_scan/mask/side_row.rs` | src | m | 8 crate-vis | — | The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A) |
+| `src/batch/secret_scan/mask/side_row.rs` | src | m | 10 crate-vis | — | The side-row wall (OF-067; ARCH-0069 #mask-on-write and #handles-in-fields, owner ruling G04 = A) |
 | `src/batch/secret_scan/mask/stream_known.rs` | src | s | 6 crate-vis | — | Known custody values in a streamed ASSET body (FIX 5395, CALLS KNOWN_VALUE_STREAM_FINDER) |
+| `src/batch/secret_scan/mask/text.rs` | src | s | 2 crate-vis | — | A text's mask on write (OF-560): each span the door's text rules place, and each value custody already… |
 | `src/batch/secret_scan/shapes.rs` | src | m | 18 crate-vis | — | Credential-shape detection shared by write, serve, and export |
 | `src/batch/secret_scan/tests.rs` | test | m | — | — | — |
 | `src/batch/secret_scan/whole_read.rs` | src | m | 10 crate-vis | — | The release doors' whole read of a value: its text, and its encoding as the write door reads a body's bytes |
@@ -1071,7 +1072,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/reader.rs` | src | m | 21 struct · 8 enum · 1 trait · 19 fn · 6 const · 12 crate-vis | ClaimOutcome, DelegatedSource, ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState +22 | Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and… |
 | `src/code_run/reader_fold.rs` | src | s | 2 fn | — | The model call behind `summarize` (code-mode-summary-sdk-v1): the one prompt a summary job sends, by its… |
 | `src/code_run/replay.rs` | src | L | 12 struct · 1 enum · 24 fn · 8 const · 12 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor +5 | — |
-| `src/code_run/replay_capsule.rs` | src | m | 5 struct · 2 enum · 4 fn · 5 crate-vis | CapsuleHost, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, StepReplayCapsule, TaskExposure | Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical… |
+| `src/code_run/replay_capsule.rs` | src | m | 6 struct · 3 enum · 6 fn · 7 crate-vis | CapsuleContent, CapsuleHost, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, StepReplayCapsule, StoredSpan +1 | Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical… |
 | `src/code_run/result_read/chunks.rs` | src | m | 2 crate-vis | — | `chunks`: a result cut into range refs, a page at a time |
 | `src/code_run/result_read/mod.rs` | src | m | 1 enum · 2 fn · 1 const · 21 crate-vis | ResultFacet | Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`… |
 | `src/code_run/result_read/outside.rs` | src | s | 2 fn | — | Reads of a code run's results for a caller outside the run: the cards of its named results, and one read of… |
@@ -1093,7 +1094,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/records.rs` | src | m | 2 struct · 8 fn · 20 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/records/bodies.rs` | src | m | 3 fn · 24 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
 | `src/code_run/storage/replay_bodies.rs` | src | s | 2 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
-| `src/code_run/storage/replay_capsule.rs` | src | s | 1 fn · 13 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
+| `src/code_run/storage/replay_capsule.rs` | src | s | 1 fn · 11 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
+| `src/code_run/storage/replay_capsule/admit.rs` | src | m | 2 crate-vis | — | A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the… |
+| `src/code_run/storage/replay_capsule/erase.rs` | src | s | 2 crate-vis | — | The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer |
 | `src/code_run/storage/routing.rs` | src | L | 33 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
 | `src/code_run/storage/routing/bodies.rs` | src | s | 8 crate-vis | — | A session-bound run's result bodies: the sinks they stream through, the routed rows that publish one and the… |
 | `src/code_run/storage/session_write.rs` | src | s | 1 crate-vis | — | One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment… |
@@ -2029,7 +2032,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/transitions.rs` | src | s | 8 crate-vis | — | Queue-transition guards and single-transition helpers (validate, scope-bind, fail/retry once) |
 | `src/failure_signals.rs` | src | m | 5 struct · 4 enum · 10 fn · 5 re-export · 3 crate-vis | AgentKind, AgentSurface, ExportVersionedComponent, FailureClassV1, FailureSignalDimensions, FailureSignalInput, FailureTaxonomy, Tier1FailureCount +1 | Content-free, versioned tier-1 agent failure counts |
 | `src/failure_signals/code_fix.rs` | src | m | 6 struct · 9 enum · 2 trait · 5 fn · 5 const · 1 re-export · 10 crate-vis | CandidateFix, CandidateFixResult, CodeFixExport, CodeFixReplay, CodeFixSource, CodeFixVerdict, CodeFixWithheld, ExportScrubber +9 | FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2) |
-| `src/failure_signals/code_fix/exact.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ExactReplayRequest, ReplayFidelity | The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it… |
+| `src/failure_signals/code_fix/exact.rs` | src | s | 1 struct · 1 enum · 1 fn · 3 crate-vis | ExactReplayRequest, ReplayFidelity | The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it… |
 | `src/failure_signals/code_fix/subject.rs` | src | s | 4 crate-vis | — | What a code fix reads of the real failure behind its source: the text and every world it touched, a failure… |
 | `src/failure_signals/delivery.rs` | src | s | 2 struct · 1 enum · 1 trait · 2 fn · 3 const | FailureSignalBatch, FailureSignalDelivery, FailureSignalTransport, FailureSignalTransportRequest | Delivery of the failure-signal exports to the deployment's publisher (OF-380) |
 | `src/failure_signals/live.rs` | src | m | 1 enum · 1 fn · 8 crate-vis | DispatchFailure | Live tier-1 counting (OF-380, FIX 2146) |
