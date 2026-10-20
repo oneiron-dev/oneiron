@@ -370,6 +370,8 @@ impl EntityDocument {
     /// Append a peer update only if its grant and live ledger selector still
     /// permit writing this document in the SAME transaction as the append.
     /// This door never lets an upstream peer replace state or import raw NOTE.
+    /// `session_is_live` rechecks the writer's credential in that transaction
+    /// too (FIX 5999), so a revocation that lands first refuses the write.
     pub fn import_from_peer(
         &self,
         kind: u8,
@@ -377,6 +379,7 @@ impl EntityDocument {
         scope: crate::FederationGrantScope,
         selector: &super::selector::SyncSelector,
         peer: crate::authority::PeerMachine,
+        session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
     ) -> Result<()> {
         if kind != document_sub_tags::UPDATE {
             return Err(Error::sync_protocol(
@@ -384,6 +387,11 @@ impl EntityDocument {
             ));
         }
         self.import_admitted(kind, bytes, |txn| {
+            if !session_is_live(txn) {
+                return Err(Error::sync_protocol(
+                    SyncProtocolValidation::DocumentAdmissionDenied,
+                ));
+            }
             admit_document_destination_in_txn(&self.vault, txn, self.id, peer)?;
             super::selector::admit_document_write_in_txn(&self.vault, txn, self.id, scope, selector)
         })

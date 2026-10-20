@@ -295,25 +295,6 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
     Ok(vault.scoped_read(key.for_destination(&auth.destination())))
 }
 
-/// The read a door serving rows by record scope (the TURN routes) holds each
-/// row's private threads to, and nothing else (FIX 5652,
-/// `Vault::private_threads_admit`): [`scoped_read_for_core_auth`]'s, whose
-/// key names the caller's authenticated person, the owner for a self-hosted
-/// root or the dev mode. A host credential that acts as no person reads under
-/// a key that authenticates no one: it reads no private thread, and every
-/// other row as before.
-pub(super) fn private_thread_read_for_core_auth<'a>(
-    vault: &'a oneiron::Vault,
-    auth: &CoreAuth,
-) -> Result<oneiron::claim::ScopedRead<'a>, ApiError> {
-    if super::host_action::host_action_of(vault, auth).is_some_and(|action| action.is_err()) {
-        let key = oneiron::claim::ScopedReadActorKey::read_nothing("host", "host")
-            .ok_or_else(|| ApiError::internal_server_error("scoped read actor key is empty"))?;
-        return Ok(vault.scoped_read(key));
-    }
-    scoped_read_for_core_auth(vault, auth)
-}
-
 /// The legacy read lane for the credential [`check_api_auth`] admitted, where
 /// its connection sits. A verified slip reads under its own key, through the
 /// one builder, so an agent's full-scope slip reads a relationship's rows here

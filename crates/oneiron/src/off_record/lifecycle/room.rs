@@ -104,6 +104,27 @@ impl<'vault> OffRecordSessionVault<'vault> {
         Ok(self.handle(key, entry))
     }
 
+    /// [`Self::enter_in_room`], its memory charged to `charge` (FIX 5991):
+    /// the host reserved [`super::room_entry_bytes`] on its retained-memory
+    /// line before this call, and the stretch moves the charge to what it
+    /// holds until its overlay drains. A refusal drops the charge unused.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::enter_in_room`].
+    pub fn enter_in_room_charged(
+        &self,
+        session_ref: &str,
+        backend: OffRecordBackendClass,
+        (room, by): (EntityId, EntityId),
+        charge: Box<dyn super::RetainedCharge>,
+    ) -> Result<OffRecordSession<'vault>> {
+        let session = self.enter_in_room(session_ref, backend, room, by)?;
+        let entered = super::room_entry_bytes(session_ref);
+        session.entry.overlay.bind_charge(charge, entered);
+        Ok(session)
+    }
+
     /// Binds the stretch `session_ref` in `room` for `actor`, who must be on
     /// the room's roster now. No such stretch and a stretch in a room the
     /// actor is not in are the same refusal.

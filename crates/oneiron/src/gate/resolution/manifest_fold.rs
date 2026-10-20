@@ -105,9 +105,14 @@ pub(crate) fn resolve_policy_manifest(
         }
 
         let body = &raw.body;
-        let decoded_row = store.manifest_memo().row(body);
-        if crate::gate::project_depth::is_project_depth_id(&id) || decoded_row.project_depth {
-            match &decoded_row.carrier {
+        // Quarantine and trust are judged before a decode is kept (FIX 5987):
+        // a signed project-depth carrier is told by its id or bytes and kept
+        // as before; a quarantined pack is never decoded; an untrusted one is
+        // decoded for this fold alone.
+        if crate::gate::project_depth::is_project_depth_id(&id)
+            || crate::gate::project_depth::is_project_depth_contribution(body)
+        {
+            match &store.manifest_memo().row(body).carrier {
                 Some(DecodedManifestCarrier::ProjectDepth(row)) => {
                     // Its policy is resolved by the project-scoped causal fold,
                     // not by a local manifest:trusted sidecar or a global pack.
@@ -122,6 +127,11 @@ pub(crate) fn resolve_policy_manifest(
         }
         let trusted =
             crate::gate::manifest_authenticity::manifest_is_trusted(store, txn, &id, body)?;
+        let decoded_row = if trusted {
+            store.manifest_memo().row(body)
+        } else {
+            store.manifest_memo().transient(body)
+        };
         match &decoded_row.carrier {
             Some(DecodedManifestCarrier::Pack(pack)) => {
                 let decoded = pack.clone();
@@ -742,10 +752,12 @@ pub(crate) fn policy_manifest_contributors(
             Err(error) => return Err(error),
         };
         if raw.entity_type == ENTITY_TYPE_POLICY_MANIFEST {
-            let decoded_row = store.manifest_memo().row(&raw.body);
-            if crate::gate::project_depth::is_project_depth_id(&id) || decoded_row.project_depth {
+            // Only a project-depth carrier is decoded here (FIX 5987).
+            if crate::gate::project_depth::is_project_depth_id(&id)
+                || crate::gate::project_depth::is_project_depth_contribution(&raw.body)
+            {
                 if matches!(
-                    &decoded_row.carrier,
+                    &store.manifest_memo().row(&raw.body).carrier,
                     Some(DecodedManifestCarrier::ProjectDepth(_))
                 ) {
                     continue;
