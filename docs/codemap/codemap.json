@@ -45012,6 +45012,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HomeTableNote",
       "RestoreEpoch",
       "RestoreReason",
       "RestoreReport",
@@ -45021,7 +45022,7 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "crate-vis": 1,
-      "enum": 1,
+      "enum": 2,
       "fn": 19,
       "re-export": 9,
       "struct": 3
@@ -45074,7 +45075,7 @@
      "path": "src/recovery/checkpoint/rebuild.rs",
      "purpose": "Rebuild mechanical projections and reset leased attempt ownership",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -45094,7 +45095,7 @@
      "path": "src/recovery/checkpoint/restore_class/mod.rs",
      "purpose": "What a restore over a live vault does with each canonical row: one table, deny by default",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -54037,7 +54038,7 @@
      "path": "src/sync/client/residence/home_handoff.rs",
      "purpose": "The old home's end of a home handoff on the residence RPC lane (FIX 5661 C2a)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -54502,13 +54503,33 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/arrival.rs",
+     "purpose": "FIX 5661 C2b (FIX 6211): the new home's ordering",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/home_handoff/delivery.rs",
      "purpose": "FIX 5661 C2a: what delivery asks of the carrier, additive beside C1",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/home_handoff/drain.rs",
+     "purpose": "FIX 5661 C2b (FIX 6212): the old home's drain",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -54538,7 +54559,7 @@
      "path": "src/sync/home_handoff/mod.rs",
      "purpose": "FIX 5661 C1: the typed home-to-home handoff carrier",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 22
      }
     },
     {
@@ -54555,10 +54576,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/home_handoff/restore.rs",
+     "purpose": "FIX 5661 C2b: a restore over a live vault keeps every registered table's rows live",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/home_handoff/store.rs",
      "purpose": "The carrier's four side tables and their typed access",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -54568,7 +54599,7 @@
      "path": "src/sync/home_handoff/table.rs",
      "purpose": "The tables a home move carries",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -54578,7 +54609,7 @@
      "path": "src/sync/home_handoff/transfer.rs",
      "purpose": "The carrier's steps: the drain request an election records, the fence a registered table's write asks, the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -55322,13 +55353,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FreeTimeArming",
+      "HomeHandoffCancel",
       "HomeHandoffStanding"
      ],
      "path": "src/sync/residence/home_handoff.rs",
      "purpose": "The new home's doors for a home handoff (FIX 5661 C2a): the target end of `residence.home_handoff.status`…",
      "surface": {
-      "enum": 1,
-      "fn": 3
+      "enum": 2,
+      "fn": 6,
+      "struct": 1
      }
     },
     {
@@ -66130,7 +66164,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 217,
+     "files": 220,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66328,7 +66362,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4144,
+   "source_files": 4147,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86345,7 +86379,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/livequery/residence/home_handoff.rs",
-     "purpose": "`residence.home_handoff.status`, `.part` and `.commit`: this node as the new home a home handoff moves to…",
+     "purpose": "`residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this node as the new home a home handoff…",
      "surface": {
       "crate-vis": 1
      }
