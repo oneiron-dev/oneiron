@@ -78152,7 +78152,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer/unverifiable.rs",
-     "purpose": "The check's outcome when the promise cannot be read (FIX 6265): `unverifiable_unpriced_cache`",
+     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317)",
      "surface": {
       "crate-vis": 3
      }
@@ -88314,7 +88314,7 @@
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
       "crate-vis": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
