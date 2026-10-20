@@ -84966,20 +84966,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DistillArgs",
       "ExportArgs",
       "OneironerCommand",
-      "PublishArgs"
+      "PublishArgs",
+      "QualifyArgs",
+      "QualifyDevice",
+      "QualifyLayers"
      ],
      "path": "src/commands/oneironer.rs",
      "purpose": "`oneiron-server oneironer`: the tagger's offline handoff with the model project (ARCH-0036 \"one base, two…",
      "surface": {
-      "enum": 1,
+      "enum": 3,
       "fn": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -88619,7 +88622,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -88633,23 +88636,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/local/heads.rs",
-     "purpose": "The trained coreference ranker and turn-affect MLP",
+     "purpose": "The trained coreference ranker, turn-affect MLP and character edge head",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 9
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/oneironer/local/window.rs",
      "purpose": "One causal window with byte-accurate message coordinates",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 17
      }
     },
     {
