@@ -17,17 +17,25 @@
 //! document or recipient ended settles instead, unsent, with its typed reason
 //! (FIX 6363, [`super::delivery_settlement`]). One whose document has an
 //! event awaiting its owner's answer, or whose trail no longer reads, waits
-//! on its own with its typed reason (FIX 6423); no other delivery waits on
-//! it.
+//! on its own with its typed reason (FIX 6423), and so does one whose own
+//! queued notice, or whose send's admitted call on the outbound ledger, does
+//! not read (FIX 6455). No other delivery waits on it. A storage failure is
+//! the only error: nothing in one delivery's own data is.
+//!
+//! [`delivery_read_in`] is the one classifier: the mint acts on what it
+//! reads, and the owner's document view lists the waits it reads now beside
+//! the ended receipts (`delivery_receipts`).
 
 use super::capability::{EsignCapability, delivered_digest_in, mint_delivery_capability_in_txn};
-use super::delivery_settlement::{EsignDeliveryEndReason, settle_ended_in_txn};
+use super::delivery_settlement::{EsignDeliveryEndReason, ended_reason, fail_ended_in_txn};
 use super::ledger::delivery_chain_in;
 use super::model::*;
 use super::notice_dispatch::EsignNotice;
 use super::outbound::{EsignOutboundVerb, OwnerSendAct, dispatch_marker_in};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
+use crate::outbound::EsignDeliveryCall;
 use crate::{EntityId, Result, Vault};
+use serde::{Deserialize, Serialize};
 
 /// The queue kind the vault keeps authorized e-sign mail under.
 pub(super) const DELIVERY_KIND: &str = "esign.delivery";
@@ -49,30 +57,64 @@ pub enum EsignDeliveryMint {
     /// Nothing was minted: the delivery's document or recipient ended, so
     /// it settled unsent with this reason (FIX 6363).
     Settled(EsignDeliveryEndReason),
-    /// Nothing was minted: the delivery's document keeps this one delivery
-    /// waiting, its lease kept (FIX 6423).
+    /// Nothing was minted: this one delivery waits, its lease kept, for its
+    /// document or its own data (FIX 6423, 6455).
     Waits(EsignDeliveryWait),
 }
 
-/// Why a delivery's document keeps it unexported for now (FIX 6423). It
-/// waits on its own; no other delivery waits on it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why one delivery stays unexported for now (FIX 6423, 6455). It waits on
+/// its own; no other delivery waits on it. The exporter logs its code, and
+/// the owner reads it on `vault.esign.get`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EsignDeliveryWait {
     /// An event of the document awaits its owner's answer.
     DocumentAwaitsOwner,
     /// The document's trail no longer reads.
     DocumentUnreadable,
+    /// The delivery's own queued notice does not read as an invitation or a
+    /// reminder of one document: its schema, the document it names, or a
+    /// notice that carries no signing link.
+    NoticeUnreadable,
+    /// The send's admitted call does not read off the outbound ledger: its
+    /// dispatch ref, its ledger row or its frozen payload.
+    SendUnreadable,
 }
 
 impl EsignDeliveryWait {
-    /// The reason's code, as the exporter logs it.
+    /// The reason's code, as the exporter logs it and the owner reads it.
     #[must_use]
     pub const fn code(self) -> &'static str {
         match self {
             Self::DocumentAwaitsOwner => "document_awaits_owner",
             Self::DocumentUnreadable => "document_unreadable",
+            Self::NoticeUnreadable => "notice_unreadable",
+            Self::SendUnreadable => "send_unreadable",
         }
     }
+}
+
+/// What one queued invitation or reminder reads to, in the mint's order
+/// ([`delivery_read_in`]).
+pub(super) enum DeliveryRead {
+    /// Its document or recipient ended: it settles unsent, for this reason.
+    Ended(EsignDeliveryEndReason),
+    /// It stays queued and unexported, for this reason.
+    Held(&'static str),
+    /// It waits on its own, for this typed reason.
+    Waits(EsignDeliveryWait),
+    /// Every read passes; the mint goes on under its writer.
+    Mintable(Box<Mintable>),
+}
+
+/// What the mint goes on with once every read passes.
+pub(super) struct Mintable {
+    document: EntityId,
+    notice: EsignNotice,
+    state: EsignState,
+    /// The admitted call a Grant live under the mint's writer must still
+    /// cover, or `None` when the vault owner's own act covers the send.
+    grant: Option<Box<EsignDeliveryCall>>,
 }
 
 impl EsignNotice {
@@ -93,12 +135,12 @@ impl Vault {
     /// bind that exact content. The raw link is returned to the exporter
     /// alone.
     /// # Errors
-    /// A row whose notice is unreadable or carries no link, or a storage
-    /// failure. A delivery the mint may not serve is [`EsignDeliveryMint::Held`];
-    /// one whose document or recipient ended settles, under this same writer,
-    /// as [`EsignDeliveryMint::Settled`]; one whose document's chain holds an
-    /// event for its owner's answer, or does not read, is
-    /// [`EsignDeliveryMint::Waits`].
+    /// A storage failure, the queue row's own decode included. A delivery the
+    /// mint may not serve is [`EsignDeliveryMint::Held`]; one whose document
+    /// or recipient ended settles, under this same writer, as
+    /// [`EsignDeliveryMint::Settled`]; one whose document's chain holds an
+    /// event for its owner's answer or does not read, or whose own notice or
+    /// send's admitted call does not read, is [`EsignDeliveryMint::Waits`].
     pub fn mint_esign_delivery_link(
         &self,
         attempt: AttemptId,
@@ -118,43 +160,29 @@ impl Vault {
             {
                 return Ok(EsignDeliveryMint::Held("the delivery's lease ended"));
             }
-            let notice = notice_of(&row)?;
-            if !notice.carries_signing_link() {
-                return Err(invalid("this delivery carries no signing link"));
-            }
-            let Some(dispatch_ref) = notice.dispatch_ref.as_deref() else {
-                return Ok(EsignDeliveryMint::Held(
-                    "the delivery names no admitted send",
-                ));
-            };
-            let document = EntityId::from_hex(&notice.document)?;
-            if row.dedupe_key.as_deref() != Some(delivery_key(&notice, dispatch_ref).as_str()) {
-                return Ok(EsignDeliveryMint::Held(
-                    "the delivery's key does not bind its notice",
-                ));
-            }
-            // An end that landed after the exporter's own check settles here,
-            // under the mint's writer, so no link is minted for it.
             let now = self.now_recorded_at();
-            if let Some(reason) = settle_ended_in_txn(self, txn, &row, &notice, now)? {
-                return Ok(EsignDeliveryMint::Settled(reason));
-            }
-            let Some((state, held)) = delivery_chain_in(self, txn, document)? else {
-                return Ok(EsignDeliveryMint::Waits(
-                    EsignDeliveryWait::DocumentUnreadable,
-                ));
+            let mintable = match delivery_read_in(self, txn, &row, now)? {
+                DeliveryRead::Mintable(mintable) => mintable,
+                DeliveryRead::Held(reason) => return Ok(EsignDeliveryMint::Held(reason)),
+                DeliveryRead::Waits(wait) => return Ok(EsignDeliveryMint::Waits(wait)),
+                // An end that landed after the exporter's own check settles
+                // here, under the mint's writer, so no link is minted for it.
+                DeliveryRead::Ended(reason) => {
+                    fail_ended_in_txn(self, txn, &row, reason, now)?;
+                    return Ok(EsignDeliveryMint::Settled(reason));
+                }
             };
-            if held {
-                return Ok(EsignDeliveryMint::Waits(
-                    EsignDeliveryWait::DocumentAwaitsOwner,
-                ));
-            }
-            if let Some(reason) = unsignable(&state, &notice, now) {
+            if let Some(call) = &mintable.grant
+                && let Some(reason) = self.grant_unauthorized_in(txn, call)?
+            {
                 return Ok(EsignDeliveryMint::Held(reason));
             }
-            if let Some(reason) = self.delivery_unauthorized_in(txn, &notice, dispatch_ref)? {
-                return Ok(EsignDeliveryMint::Held(reason));
-            }
+            let Mintable {
+                document,
+                notice,
+                state,
+                ..
+            } = *mintable;
             let lease = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
             let capability = mint_delivery_capability_in_txn(
                 self,
@@ -173,74 +201,24 @@ impl Vault {
     }
 
     /// The delivered-content digest the exporter recorded with the link
-    /// minted for `row`'s current lease; `None` when no link names it.
+    /// minted for `row`'s current lease; `None` when no link names it, as for
+    /// a row whose notice does not read as one (its mint waits it, FIX 6455).
     /// # Errors
-    /// A row whose notice is unreadable, or a storage failure.
+    /// A storage failure.
     pub fn esign_delivery_digest(&self, row: &AttemptRecord) -> Result<Option<String>> {
-        let notice = notice_of(row)?;
-        let document = EntityId::from_hex(&notice.document)?;
         let txn = self.store.env.read_txn()?;
-        let lease = crate::entity_id::bytes_to_hex_lower(row.id.as_bytes());
-        delivered_digest_in(
-            self,
-            &txn,
-            document,
-            &notice.recipient,
-            (&lease, row.attempt_count),
-        )
+        lease_digest_in(self, &txn, row)
     }
 
-    /// Why the send's authority no longer covers minting this delivery's
-    /// link, or `None` when it does: the vault owner's own recorded act or
-    /// his recorded one-time press on the send, or a Grant live under this
-    /// writer that covers the admitted call, with an automated sender's
-    /// principal dial still at autonomous-in-envelope.
-    fn delivery_unauthorized_in(
+    /// Why no Grant live under this writer covers `call` any more, or `None`
+    /// when one does, with an automated sender's principal dial still at
+    /// autonomous-in-envelope.
+    fn grant_unauthorized_in(
         &self,
         txn: &heed::RwTxn<'_>,
-        notice: &EsignNotice,
-        dispatch_ref: &str,
+        call: &EsignDeliveryCall,
     ) -> Result<Option<&'static str>> {
-        let Some(marker) = dispatch_marker_in(self, txn, dispatch_ref)? else {
-            return Ok(Some("no admitted send act covers the delivery"));
-        };
-        let Some(call) = crate::outbound::esign_delivery_call_in_txn(self, txn, dispatch_ref)?
-        else {
-            return Ok(Some("the send's admitted call is not on the ledger"));
-        };
-        let verb = if notice.transition == "invite" {
-            EsignOutboundVerb::SendForSignature
-        } else {
-            EsignOutboundVerb::Remind
-        };
-        if call.target != notice.document
-            || call.verb != verb.as_str()
-            || call.content_ref.as_deref() != Some(marker.binding.as_str())
-        {
-            return Ok(Some("the send's admitted call does not cover the delivery"));
-        }
-        // The owner's own act, recorded with his revalidated proof, covers
-        // every delivery it queued; so does his one-time press on an agent's
-        // send, when it is the proof this same admitted call carries
-        // (FIX 6362). An agent sender is not the owner, so the press is
-        // matched by its proof, never by actor.
-        let owner_act = match &marker.owner_act {
-            Some(OwnerSendAct::Direct { actor, .. }) => call
-                .actor_entity_ref
-                .is_some_and(|entity| entity.to_hex() == *actor),
-            Some(OwnerSendAct::Approved {
-                intent_ref,
-                effect_digest,
-            }) => call.admitted_approval.is_some_and(|proof| {
-                crate::entity_id::bytes_to_hex_lower(&proof.intent_id()) == *intent_ref
-                    && proof.effect_digest().to_hex() == *effect_digest
-            }),
-            None => false,
-        };
-        if owner_act {
-            return Ok(None);
-        }
-        if crate::outbound::esign_delivery_grant_in_txn(self, txn, &call)?.is_none() {
+        if crate::outbound::esign_delivery_grant_in_txn(self, txn, call)?.is_none() {
             return Ok(Some("no live Grant covers the delivery"));
         }
         if call.actor_class != "human"
@@ -254,6 +232,126 @@ impl Vault {
         }
         Ok(None)
     }
+}
+
+/// Reads `row`, a queued invitation or reminder, as its mint does at `now`,
+/// short of what only the mint's writer may decide (the send's live Grant
+/// and its principal's dial): the end it settles on, why it holds or waits,
+/// or what the mint goes on with. The mint acts on it and the owner's
+/// document view lists its waits, so the two never part (FIX 6455).
+/// # Errors
+/// A storage failure only. A notice, a document trail or a send's admitted
+/// call that does not read waits this one delivery.
+pub(super) fn delivery_read_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &AttemptRecord,
+    now: u64,
+) -> Result<DeliveryRead> {
+    let Ok(notice) = notice_of(row) else {
+        return Ok(DeliveryRead::Waits(EsignDeliveryWait::NoticeUnreadable));
+    };
+    if !notice.carries_signing_link() {
+        return Ok(DeliveryRead::Waits(EsignDeliveryWait::NoticeUnreadable));
+    }
+    let Some(dispatch_ref) = notice.dispatch_ref.as_deref() else {
+        return Ok(DeliveryRead::Held("the delivery names no admitted send"));
+    };
+    let Ok(document) = EntityId::from_hex(&notice.document) else {
+        return Ok(DeliveryRead::Waits(EsignDeliveryWait::NoticeUnreadable));
+    };
+    if row.dedupe_key.as_deref() != Some(delivery_key(&notice, dispatch_ref).as_str()) {
+        return Ok(DeliveryRead::Held(
+            "the delivery's key does not bind its notice",
+        ));
+    }
+    let Some((state, held)) = delivery_chain_in(vault, txn, document)? else {
+        return Ok(DeliveryRead::Waits(EsignDeliveryWait::DocumentUnreadable));
+    };
+    if let Some(reason) = ended_reason(&state, held, &notice, now) {
+        return Ok(DeliveryRead::Ended(reason));
+    }
+    if held {
+        return Ok(DeliveryRead::Waits(EsignDeliveryWait::DocumentAwaitsOwner));
+    }
+    if let Some(reason) = unsignable(&state, &notice, now) {
+        return Ok(DeliveryRead::Held(reason));
+    }
+    let Some(marker) = dispatch_marker_in(vault, txn, dispatch_ref)? else {
+        return Ok(DeliveryRead::Held(
+            "no admitted send act covers the delivery",
+        ));
+    };
+    let call = match crate::outbound::esign_delivery_call_in_txn(vault, txn, dispatch_ref)? {
+        Ok(Some(call)) => call,
+        Ok(None) => {
+            return Ok(DeliveryRead::Held(
+                "the send's admitted call is not on the ledger",
+            ));
+        }
+        Err(_) => return Ok(DeliveryRead::Waits(EsignDeliveryWait::SendUnreadable)),
+    };
+    let verb = if notice.transition == "invite" {
+        EsignOutboundVerb::SendForSignature
+    } else {
+        EsignOutboundVerb::Remind
+    };
+    if call.target != notice.document
+        || call.verb != verb.as_str()
+        || call.content_ref.as_deref() != Some(marker.binding.as_str())
+    {
+        return Ok(DeliveryRead::Held(
+            "the send's admitted call does not cover the delivery",
+        ));
+    }
+    // The owner's own act, recorded with his revalidated proof, covers every
+    // delivery it queued; so does his one-time press on an agent's send, when
+    // it is the proof this same admitted call carries (FIX 6362). An agent
+    // sender is not the owner, so the press is matched by its proof, never by
+    // actor. Anything else needs a Grant live under the mint's writer.
+    let owner_act = match &marker.owner_act {
+        Some(OwnerSendAct::Direct { actor, .. }) => call
+            .actor_entity_ref
+            .is_some_and(|entity| entity.to_hex() == *actor),
+        Some(OwnerSendAct::Approved {
+            intent_ref,
+            effect_digest,
+        }) => call.admitted_approval.is_some_and(|proof| {
+            crate::entity_id::bytes_to_hex_lower(&proof.intent_id()) == *intent_ref
+                && proof.effect_digest().to_hex() == *effect_digest
+        }),
+        None => false,
+    };
+    Ok(DeliveryRead::Mintable(Box::new(Mintable {
+        document,
+        notice,
+        state,
+        grant: (!owner_act).then(|| Box::new(call)),
+    })))
+}
+
+/// The digest recorded with the link minted for `row`'s current lease, or
+/// `None` when no link names it, as for a row whose notice does not read as
+/// one.
+pub(super) fn lease_digest_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &AttemptRecord,
+) -> Result<Option<String>> {
+    let Ok(notice) = notice_of(row) else {
+        return Ok(None);
+    };
+    let Ok(document) = EntityId::from_hex(&notice.document) else {
+        return Ok(None);
+    };
+    let lease = crate::entity_id::bytes_to_hex_lower(row.id.as_bytes());
+    delivered_digest_in(
+        vault,
+        txn,
+        document,
+        &notice.recipient,
+        (&lease, row.attempt_count),
+    )
 }
 
 pub(super) fn notice_of(row: &AttemptRecord) -> Result<EsignNotice> {

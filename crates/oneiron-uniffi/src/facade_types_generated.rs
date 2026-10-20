@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1075 facade rows, 3657 generated types.
+// UniFFI census: 1075 facade rows, 3659 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1027.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -47125,6 +47125,29 @@ pub enum EsignDeliveryEndReason {
     RecipientEnded,
 }
 
+/// `oneiron::blob_artifact::esign::delivery_capability::EsignDeliveryWait`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EsignDeliveryWait {
+    #[serde(rename = "document_awaits_owner")]
+    DocumentAwaitsOwner,
+    #[serde(rename = "document_unreadable")]
+    DocumentUnreadable,
+    #[serde(rename = "notice_unreadable")]
+    NoticeUnreadable,
+    #[serde(rename = "send_unreadable")]
+    SendUnreadable,
+}
+
+/// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryReceiptState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state", content = "reason")]
+pub enum EsignDeliveryReceiptState {
+    #[serde(rename = "ended")]
+    Ended(EsignDeliveryEndReason),
+    #[serde(rename = "waits")]
+    Waits(EsignDeliveryWait),
+}
+
 /// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EsignDeliveryReceipt {
@@ -47136,10 +47159,10 @@ pub struct EsignDeliveryReceipt {
     pub recipient: String,
     #[serde(rename = "transition")]
     pub transition: String,
-    #[serde(rename = "reason")]
-    pub reason: EsignDeliveryEndReason,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(flatten)]
+    pub esign_delivery_receipt_state: EsignDeliveryReceiptState,
 }
 
 /// `oneiron::blob_artifact::esign::door::EsignDocumentView`.
