@@ -493,9 +493,31 @@ fn sweep_side_tables(
     let ledger = keeps_gate_ledger(store, txn)?;
     let mut counts = SideCounts::default();
     let families = Families::of(SideDb::VaultMeta, ledger);
-    report.side_rows = sweep(&store.vault_meta, txn, budget, |key, _| {
-        families.doomed(key, kept, &mut counts)
-    })?;
+    // The vault_meta walk is [`sweep`]'s, keeping each gate-ledger value it
+    // deletes: the claim keys those rows used retire with them (FIX 5749).
+    let mut keys = Vec::new();
+    let mut ledger_values = Vec::new();
+    if !budget.spent {
+        for row in store.vault_meta.iter(txn)? {
+            let (key, value) = row?;
+            if families.doomed(&key[..], kept, &mut counts) {
+                if !budget.take() {
+                    break;
+                }
+                let value = key
+                    .starts_with(side_table::GATE_DECISION_LEDGER.prefix)
+                    .then(|| value.into_owned());
+                keys.push((key.into_owned(), value));
+            }
+        }
+    }
+    report.side_rows = keys.len();
+    for (key, value) in keys {
+        if store.vault_meta.delete(txn, &key)? {
+            ledger_values.extend(value);
+        }
+    }
+    store.stage_purged_claim_key_retirements_in_txn(txn, &ledger_values)?;
     let families = Families::of(SideDb::SyncState, ledger);
     report.sync_rows = sweep_sync_state(store, txn, budget, |key| {
         families.doomed(key.as_bytes(), kept, &mut counts)
