@@ -225,6 +225,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.mesh_relays.is_some(),
         ArgvUse::Read,
     ),
+    // The node's read-only shared model root (FIX 6828).
+    (
+        "shared-model-root",
+        |args| args.shared_model_root.is_some(),
+        ArgvUse::Read,
+    ),
     // The bind: the supervisor's socket, never a host:port.
     (
         "host",

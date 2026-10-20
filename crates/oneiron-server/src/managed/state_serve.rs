@@ -29,7 +29,7 @@ use crate::server::SyncServer;
 
 use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
-use super::listener::{BoundServeListener, ManagedCtl, ServeListener, init_managed_tracing};
+use super::listener::{BoundServeListener, ManagedCtl, ServeListener};
 use super::vault_gates::{open_managed_vault, provision_host_authority};
 use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
@@ -893,15 +893,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // The supervisor names a personal vault's owner by the contract's copy of
     // the embedded owner's id; a copy that drifted stops the boot here.
     super::vault_gates::check_embedded_owner_holder()?;
-    let mut config = managed.serve_config(args);
-    // The owner's settings file, refused leaf by leaf and settled once,
-    // before anything reads the configuration: its `[oneironer]` arms the
-    // write-time marker in `vault_config` below. Tracing starts between its
-    // refusal and its settling, at the level the settled configuration runs
-    // at (argv over the file), so what settling decides is logged.
-    let settings = super::settings::prepare(&managed, args, &mut config)?;
-    init_managed_tracing(super::settings::log_level(settings.as_ref(), &config));
-    let settled = super::settings::settle(settings, &mut config)?;
+    // Argv's configuration with the owner's settings file settled over it,
+    // tracing started between the file's refusal and its settling.
+    let (mut config, settled) = super::settings::configure(args, &managed)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     tracing::info!(
         vault = %managed.vault_name,

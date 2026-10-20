@@ -196,8 +196,9 @@ pub struct ServeArgs {
     /// leaf the supervisor owns (the listener, ingress and auth, tenant
     /// identity, custody, sockets, the key directory), a key named by an
     /// environment variable, and an owner path outside the vault's data
-    /// directory and this file's own directory are refused. Without it a
-    /// managed vault runs on the defaults.
+    /// directory and this file's own directory (a model directory may lie
+    /// in `--shared-model-root` instead) are refused. Without it a managed
+    /// vault runs on the defaults.
     #[arg(long = "settings-file")]
     pub settings_file: Option<PathBuf>,
 
@@ -295,6 +296,16 @@ pub struct ServeArgs {
         requires = "managed_by_hypnos"
     )]
     pub mesh_relays: Option<Vec<String>>,
+
+    /// Managed mode: the node's shared model root, an absolute path where
+    /// the supervisor installs each model bundle once for every vault,
+    /// owned by root and writable by no vault's UID
+    /// (`oneiron_vault_contract::settings_paths::SharedModelRoot`). A model
+    /// directory the settings file names may be a bundle's own directory
+    /// there, `<root>/<class>/<stack_sha16>`. A root that fails its check is
+    /// ignored with a warning, never a refused start.
+    #[arg(long = "shared-model-root", requires = "managed_by_hypnos")]
+    pub shared_model_root: Option<PathBuf>,
 
     /// Host address to bind to.
     #[arg(long)]
@@ -581,6 +592,7 @@ impl fmt::Debug for ServeArgs {
             .field("organ_dir", &self.organ_dir)
             .field("mesh_bind", &self.mesh_bind)
             .field("mesh_relays", &self.mesh_relays)
+            .field("shared_model_root", &self.shared_model_root)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)

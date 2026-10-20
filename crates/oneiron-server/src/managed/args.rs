@@ -165,9 +165,11 @@ pub enum SettingsRefusal {
     /// A key named by an environment variable, which managed mode never reads.
     #[error("it names a key in the environment, which managed mode never reads")]
     EnvironmentSecret,
-    /// A path that does not lie in this vault's own storage.
+    /// A path that lies neither in this vault's own storage nor, for a model
+    /// directory, in the supervisor's shared model root as its bundle's own
+    /// directory.
     #[error(
-        "an owner path must be absolute, hold no `~` or `..`, exist, and lie under the vault's data directory or the settings file's own directory"
+        "an owner path must be absolute, hold no `~` or `..`, exist, and lie under the vault's data directory or the settings file's own directory, or, for a model directory, be its bundle's own directory `<root>/<class>/<stack_sha16>` in the supervisor's read-only shared model root, named by the stack the settings pin beside it and by its manifest"
     )]
     OutsideVault,
     /// A key the server's config schema does not have.
@@ -263,6 +265,10 @@ pub struct ManagedArgs {
     /// The mesh's private relays (`--mesh-relays`); direct paths only
     /// without them.
     pub mesh_relays: Vec<String>,
+    /// The node's shared model root as the supervisor declared it
+    /// (`--shared-model-root`), checked when the start configures
+    /// (`managed::settings`): one that fails is ignored with a warning.
+    pub shared_model_root: Option<PathBuf>,
 }
 
 impl ManagedArgs {
@@ -390,6 +396,9 @@ impl ManagedArgs {
             mesh_relays: crate::config::normalize_list(
                 args.mesh_relays.clone().unwrap_or_default(),
             ),
+            // Not among the absolute paths refused below: a root that fails
+            // its check is ignored, never a refused start.
+            shared_model_root: args.shared_model_root.clone(),
         };
         if managed
             .artifact_socket

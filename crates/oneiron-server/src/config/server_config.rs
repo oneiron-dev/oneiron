@@ -424,6 +424,13 @@ pub struct ServeConfig {
     /// training outbox writes offers and withdrawals and reads the intake's
     /// receipts (OF-420). Unset, no outbox worker runs.
     pub publisher_training_outbox_dir: Option<PathBuf>,
+    /// `--shared-model-root`, managed and argv only: the node's read-only
+    /// shared model root as its check accepted it, where a model directory
+    /// the settings file names may lie
+    /// ([`oneiron_vault_contract::settings_paths::SharedModelRoot`]). Unset
+    /// on a plain serve, and where the supervisor declared none or its
+    /// check ignored the one declared.
+    pub shared_model_root: Option<oneiron_vault_contract::settings_paths::SharedModelRoot>,
 }
 
 impl Default for ServeConfig {
@@ -501,6 +508,7 @@ impl Default for ServeConfig {
             device_class: vault.machine_device_class,
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,
+            shared_model_root: None,
         }
     }
 }
@@ -590,6 +598,7 @@ impl fmt::Debug for ServeConfig {
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
             )
+            .field("shared_model_root", &self.shared_model_root)
             .finish()
     }
 }
