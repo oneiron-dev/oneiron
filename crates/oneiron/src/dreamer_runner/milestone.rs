@@ -11,10 +11,10 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::claim::{ClaimBody, ClaimSubject};
 use crate::entity_id::EntityId;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE};
 use crate::side_table::{self, Raw, SideKey, SideTable};
-use crate::store::Store;
+use crate::store::{Store, active_write_txn_depth};
 use crate::write_envelope::ClaimCandidate;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 
@@ -92,10 +92,26 @@ impl DreamerRunnerStore<'_> {
     ///
     /// This is the coarse fallback surface for consumers that cannot reach the
     /// executing device's live ephemeral row.
+    ///
+    /// Must not nest: until the index backfill has run, this opens its own
+    /// writer, which inside a write transaction the calling thread holds
+    /// would wait on that thread forever. Inside one it refuses (C067); a
+    /// caller holding a write transaction uses
+    /// [`Self::latest_durable_milestone_in_txn`] with it instead.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvariantViolation`] inside an active write transaction;
+    /// storage errors.
     pub fn latest_durable_milestone(
         &self,
         attempt_id: AttemptId,
     ) -> Result<Option<DreamerDurableMilestone>> {
+        if active_write_txn_depth() > 0 {
+            return Err(Error::InvariantViolation(
+                "nested milestone lookup requires caller transaction",
+            ));
+        }
         let rtxn = self.vault.store.env.read_txn()?;
         if MILESTONE_INDEX_BACKFILLED.contains(&self.vault.store, &rtxn, &())? {
             return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, attempt_id);
@@ -103,14 +119,28 @@ impl DreamerRunnerStore<'_> {
         drop(rtxn);
 
         let mut wtxn = self.vault.store.env.write_txn()?;
-        if MILESTONE_INDEX_BACKFILLED.contains(&self.vault.store, &wtxn, &())? {
-            drop(wtxn);
-            let rtxn = self.vault.store.env.read_txn()?;
-            return latest_indexed_dreamer_milestone(&self.vault.store, &rtxn, attempt_id);
-        }
-        let latest = backfill_dreamer_milestone_index(&self.vault.store, &mut wtxn, attempt_id)?;
+        let latest = self.latest_durable_milestone_in_txn(&mut wtxn, attempt_id)?;
         wtxn.commit()?;
         Ok(latest)
+    }
+
+    /// [`Self::latest_durable_milestone`] composed into the caller's write
+    /// transaction `txn`: the indexed lookup once the index backfill marker
+    /// is set, else the one-time backfill, written into `txn` to commit or
+    /// roll back with it. Nothing is opened or committed here.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn latest_durable_milestone_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt_id: AttemptId,
+    ) -> Result<Option<DreamerDurableMilestone>> {
+        if MILESTONE_INDEX_BACKFILLED.contains(&self.vault.store, &*txn, &())? {
+            return latest_indexed_dreamer_milestone(&self.vault.store, &*txn, attempt_id);
+        }
+        backfill_dreamer_milestone_index(&self.vault.store, txn, attempt_id)
     }
 }
 

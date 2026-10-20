@@ -175,7 +175,9 @@ impl BodyDir {
         published
     }
 
-    pub(super) fn discard(&self, temp: &str) {
+    /// Unlinks the temp file `temp`; one already gone is fine. A spill's
+    /// descriptor reads on once its name is gone.
+    pub(crate) fn discard(&self, temp: &str) {
         let _ = unlinkat(&self.dir, temp, AtFlags::empty());
     }
 

@@ -62,10 +62,11 @@ pub(crate) fn snapshot_craft(vault: &Vault, resident: &EntityId, at: u64) -> Opt
     snapshot_of(&notes, at)
 }
 
-/// [`snapshot_craft`] for a chat answer (SCAN C009): only the notes the
-/// caller's own read admits, read through `reader`, the caller's handle
-/// where it sits, in one snapshot. `None` without such craft, or when the
-/// caller's read or the craft does not read.
+/// [`snapshot_craft`] for a chat answer (SCAN C009) and a Retry or
+/// Continue (FIX 6102): only the notes the caller's own read admits, read
+/// through `reader`, the caller's handle where it sits, in one snapshot.
+/// `None` without such craft, or when the caller's read or the craft does
+/// not read.
 pub(crate) fn snapshot_craft_scoped(
     vault: &Vault,
     reader: &Memory<'_>,
