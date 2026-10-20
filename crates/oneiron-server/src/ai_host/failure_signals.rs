@@ -4,6 +4,11 @@
 //! the owner's "Help improve Oneiron" switch is on, sends through the
 //! outbound pipeline, and acks only what was delivered, so a pass that fails
 //! loses nothing. This transport carries the bytes and judges nothing.
+//!
+//! Before it picks the sender, the host keeps the participation grant in
+//! step with the switch once (FIX 1884): a deployment that stopped exporting
+//! has its grant revoked even when no destination is configured and no
+//! sender runs. That pass sends nothing.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -42,17 +47,25 @@ impl FailureSignalHost {
     }
 }
 
-/// Starts the sender, when there is somewhere to send. Each pass is
+/// Keeps the participation grant in step once (FIX 1884), then starts the
+/// sender when there is somewhere to send. Each pass, the grant's too, is
 /// admitted through `admit`, the way a housekeeping pass is, and runs on a
 /// blocking thread: the transport is a blocking client.
 pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     host: Option<FailureSignalHost>,
     admit: HousekeepingAdmission,
-) -> Option<tokio::task::JoinHandle<()>> {
-    let host = Arc::new(host?);
+) -> tokio::task::JoinHandle<()> {
     let weak = Arc::downgrade(server);
-    Some(tokio::spawn(async move {
+    tokio::spawn(async move {
+        if let Some(server) = weak.upgrade()
+            && let Some(admission) = admit()
+        {
+            reconcile(server, admission).await;
+        }
+        let Some(host) = host.map(Arc::new) else {
+            return;
+        };
         let mut tick = tokio::time::interval(host.every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
@@ -88,7 +101,29 @@ pub(crate) fn spawn(
                 Ok(Ok(_)) => {}
             }
         }
-    }))
+    })
+}
+
+/// The participation grant kept in step with the switch, once, with no
+/// transport (FIX 1884). A failure is logged by kind and never stops the
+/// sender, whose every pass keeps the grant in step too.
+async fn reconcile(server: Arc<SyncServer>, admission: Box<dyn Send>) {
+    let pass = tokio::task::spawn_blocking(move || {
+        let _admission = admission;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |time| time.as_secs());
+        server.vault().reconcile_failure_signal_participation(now)
+    })
+    .await;
+    match pass {
+        Ok(Ok(())) => {}
+        // By kind only: an engine error can quote the vault.
+        Ok(Err(error)) => {
+            tracing::warn!(kind = ?error.kind(), "failure signal participation was not reconciled");
+        }
+        Err(error) => tracing::warn!(%error, "failure signal participation pass panicked"),
+    }
 }
 
 fn deliver(
