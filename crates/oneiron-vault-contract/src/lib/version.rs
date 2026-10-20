@@ -99,7 +99,15 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// floor too, at the engine revision they merged in, with no `Ping` field:
 /// an engine before it refuses either flag before it touches anything, so a
 /// supervisor passes them only with installed engines at or after the
-/// floor. Supervisor and vault move to v3 together; no v2 reader is kept.
+/// floor. The writes in flight at an idle reap's freeze
+/// ([`IdleReapInFlight`](crate::IdleReapInFlight), FIX 6902:
+/// `idle_reap.in_flight_at_freeze`, required on every `prepare_idle_reap`
+/// answer) carry a build floor too, at the engine revision they merged in,
+/// with no `Ping` field: they ride v3 and idle reap schema 1 with no version
+/// move, a vault built before the floor answers without them, and no reader
+/// of an answer without them is kept, so a supervisor that reads them runs
+/// only with installed engines at or after the floor. Supervisor and vault
+/// move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

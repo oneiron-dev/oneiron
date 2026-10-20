@@ -9,19 +9,16 @@ use std::sync::atomic::Ordering;
 use oneiron_vault_contract::{CtlResponse, validate_wake_entries};
 
 use super::ManagedState;
+use super::admission::InFlightCounts;
 use crate::managed::ManagedError;
 use crate::managed::ledger::LedgerSnapshot;
-use crate::owner::schedule::OwnerHost;
 
 /// What a reap's freeze, drain and export found
 /// ([`ManagedState::freeze_drain_export`]).
 pub(super) struct Prepared {
-    /// The admitted writes in flight once frozen, read before the drain and
-    /// the export.
-    pub(super) in_flight: u64,
-    /// The owner host's backup jobs in flight, read just after: some of
-    /// those writes.
-    pub(super) backup_jobs: u64,
+    /// The admitted writes in flight at the freeze, by kind, read before
+    /// the drain and the export.
+    pub(super) at_freeze: InFlightCounts,
     /// Whether the lease table drained.
     pub(super) drained: bool,
     pub(super) ledger_rev: u64,
@@ -31,15 +28,25 @@ pub(super) struct Prepared {
 
 impl ManagedState {
     pub fn is_frozen(&self) -> bool {
-        self.frozen.load(Ordering::SeqCst)
+        self.admission.is_frozen()
     }
 
     pub fn freeze(&self) -> Result<(), ManagedError> {
-        self.frozen.store(true, Ordering::SeqCst);
+        self.freeze_counted()?;
+        Ok(())
+    }
+
+    /// Freezes, and returns the admitted writes in flight at that moment,
+    /// by kind: read in the same hold of the admission's lock that sets the
+    /// freeze, before the telemetry flush, so they are exactly the writes
+    /// the freeze let in.
+    pub(super) fn freeze_counted(&self) -> Result<InFlightCounts, ManagedError> {
+        let at_freeze = self.admission.freeze();
         self.server
             .wire_telemetry
             .freeze_and_flush()
-            .map_err(|error| ManagedError::VaultMeta(error.to_string()))
+            .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
+        Ok(at_freeze)
     }
 
     /// Lifts the process-local freeze on `reap_abort`. A new process starts
@@ -49,7 +56,7 @@ impl ManagedState {
             .wire_telemetry
             .unfreeze()
             .map_err(|error| ManagedError::VaultMeta(error.to_string()))?;
-        self.frozen.store(false, Ordering::SeqCst);
+        self.admission.thaw();
         // A relay delete deferred `not_ready` while frozen asks again now.
         self.relay_delete.thawed();
         if self.background_waiting.swap(false, Ordering::SeqCst) {
@@ -77,7 +84,7 @@ impl ManagedState {
     pub(super) async fn prepare_reap(&self) -> Result<CtlResponse, ManagedError> {
         let prepared = self.freeze_drain_export().await?;
         Ok(CtlResponse::PrepareReap {
-            quiescent: self.quiescent(prepared.in_flight, prepared.drained),
+            quiescent: self.quiescent(prepared.at_freeze.total(), prepared.drained),
             ledger_rev: prepared.ledger_rev,
             next_wake: prepared.report.entries,
             training: prepared.report.training,
@@ -85,10 +92,10 @@ impl ManagedState {
     }
 
     /// The strict quiescence `prepare_reap` reports, from `in_flight`, the
-    /// admitted writes read once frozen, and whether the lease table
-    /// `drained`: none in flight, drained, still frozen, and no sync session
-    /// that could still commit. The idle reap's preparation judges its own,
-    /// less its backup job.
+    /// admitted writes of every kind read once frozen, and whether the lease
+    /// table `drained`: none in flight, drained, still frozen, and no sync
+    /// session that could still commit. The idle reap's preparation judges
+    /// its own.
     pub(super) fn quiescent(&self, in_flight: u64, drained: bool) -> bool {
         in_flight == 0 && drained && self.is_frozen() && !self.live_sync_writer()
     }
@@ -100,15 +107,17 @@ impl ManagedState {
     /// gets describe the quiesced state rather than the one before it. The
     /// training setting rides the same report, read under the same revision.
     pub(super) async fn freeze_drain_export(&self) -> Result<Prepared, ManagedError> {
-        self.freeze()?;
-        // Check BEFORE drain/export. A writer finishing after export must not
-        // turn a stale exported ledger into a quiescent reply.
-        let in_flight = self.http_mutating_in_flight.load(Ordering::SeqCst);
-        let backup_jobs = self
-            .server
-            .owner_host
-            .as_deref()
-            .map_or(0, OwnerHost::backup_jobs);
+        // Counted BEFORE drain/export. A writer finishing after export must
+        // not turn a stale exported ledger into a quiescent reply.
+        let at_freeze = self.freeze_counted()?;
+        self.drain_export(at_freeze).await
+    }
+
+    /// The drain and the export after a freeze that found `at_freeze`.
+    pub(super) async fn drain_export(
+        &self,
+        at_freeze: InFlightCounts,
+    ) -> Result<Prepared, ManagedError> {
         let drained = self.drain_lease_table().await;
         let (ledger_rev, report) = self.ledger.export_at_freeze(&self.server).await?;
         // The reply carries the entries, so they are bounds-checked before
@@ -120,8 +129,7 @@ impl ManagedState {
                 reason: error.to_string(),
             })?;
         Ok(Prepared {
-            in_flight,
-            backup_jobs,
+            at_freeze,
             drained,
             ledger_rev,
             report,

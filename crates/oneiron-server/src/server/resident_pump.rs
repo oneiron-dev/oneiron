@@ -190,26 +190,32 @@ impl SyncServer {
     /// Starts the pump, or returns `None` when no engine-native code host
     /// serves this vault.
     pub(crate) fn spawn_resident_pump(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
-        self.spawn_resident_pump_admitted(admit_every_pass())
+        self.spawn_resident_pump_admitted(admit_every_pass(), admit_every_pass())
     }
 
-    /// Starts the pump on a host with a write freeze: each pass and each run
-    /// is admitted through `admit`, and holds that admission on its blocking
-    /// thread until its last write, so an aborted pump's work still counts
-    /// until its writes do. A run is admitted after its permit wait and
-    /// before its claim. Nothing is admitted while the pump waits.
+    /// Starts the pump on a host with a write freeze: each pass is admitted
+    /// through `admit` and each run through `admit_run`, and holds that
+    /// admission on its blocking thread until its last write, so an aborted
+    /// pump's work still counts until its writes do. A run is admitted after
+    /// its permit wait and before its claim. Nothing is admitted while the
+    /// pump waits.
     pub(crate) fn spawn_resident_pump_admitted(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
+        admit_run: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
         self.code_execution_host()?.engine_native()?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
-            server.pump_residents_forever(admit).await
+            server.pump_residents_forever(admit, admit_run).await
         }))
     }
 
-    async fn pump_residents_forever(self: Arc<Self>, admit: HousekeepingAdmission) {
+    async fn pump_residents_forever(
+        self: Arc<Self>,
+        admit: HousekeepingAdmission,
+        admit_run: HousekeepingAdmission,
+    ) {
         // Subscribed before the first pass, so a commit between that pass
         // and the first wait still wakes the loop.
         let mut wake = AttemptQueue::new(self.vault()).subscribe();
@@ -251,7 +257,7 @@ impl SyncServer {
                 }
                 let server = Arc::clone(&self);
                 let running = Arc::clone(&running);
-                let admit = Arc::clone(&admit);
+                let admit = Arc::clone(&admit_run);
                 tokio::spawn(async move {
                     if !server.run_agent(id, of, &admit).await {
                         held(&running).remove(&id);

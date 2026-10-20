@@ -49,6 +49,49 @@ pub(crate) fn admit_every_pass() -> HousekeepingAdmission {
     Arc::new(|| Some(Box::new(())))
 }
 
+/// Whether the host has paused its background passes: a managed vault
+/// frozen for reap (FIX 6902). A pass reads it between its units and, while
+/// it holds, starts no next unit and returns what it did, as a pass that ran
+/// out of work does; the unit in hand finishes and settles under its
+/// admission.
+pub(crate) type HousekeepingPause = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// A background worker's admission, and the pause it reads between units.
+#[derive(Clone)]
+pub(crate) struct PassControl {
+    admission: HousekeepingAdmission,
+    pause: HousekeepingPause,
+}
+
+impl PassControl {
+    pub(crate) fn new(admission: HousekeepingAdmission, pause: HousekeepingPause) -> Self {
+        Self { admission, pause }
+    }
+
+    /// The control of a host with no freeze: `admission`, never paused.
+    #[expect(
+        dead_code,
+        reason = "plain serve's tagging worker takes it with its before-claim check (FIX 6902)"
+    )]
+    pub(crate) fn unpaused(admission: HousekeepingAdmission) -> Self {
+        Self::new(admission, Arc::new(|| false))
+    }
+
+    /// The admission alone, for a worker that reads no pause.
+    pub(crate) fn admission(&self) -> HousekeepingAdmission {
+        Arc::clone(&self.admission)
+    }
+
+    /// Whether the host has paused background passes now.
+    #[expect(
+        dead_code,
+        reason = "the tagging worker reads it before each claim (FIX 6902)"
+    )]
+    pub(crate) fn paused(&self) -> bool {
+        (self.pause)()
+    }
+}
+
 /// How the authority checkpoint upkeep last failed (FIX 3204): the engine
 /// error's kind, or the task's own end. A failure that repeats tick after
 /// tick warns once; any pass that ends `Ok` clears it.

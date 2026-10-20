@@ -2,8 +2,6 @@
 //! (FIX 1485): `host_order_holds`, its pages and its confirm (FIX 6820),
 //! answered under the reap freeze.
 
-use std::sync::atomic::Ordering;
-
 use oneiron_vault_contract::restore::{
     HostHoldsCursor, HostHoldsSource, HostOrderHoldsExport, HostOrderHoldsNotProven,
     ManagedRestoreIdentity,
@@ -46,7 +44,7 @@ impl ManagedState {
             return Ok(not_proven(HostOrderHoldsNotProven::NotFrozen));
         }
         // Read before the drain and the export, as `prepare_reap` reads it.
-        let in_flight = self.http_mutating_in_flight.load(Ordering::SeqCst);
+        let in_flight = self.admission.in_flight().total();
         let drained = self.drain_lease_table().await;
         if !self.quiescent(in_flight, drained) {
             return Ok(not_proven(HostOrderHoldsNotProven::NotQuiescent));
@@ -71,7 +69,7 @@ impl ManagedState {
         };
         // Again after the read: a freeze lifted or a writer let in meanwhile
         // makes the family not proven, never a page.
-        let in_flight = self.http_mutating_in_flight.load(Ordering::SeqCst);
+        let in_flight = self.admission.in_flight().total();
         if !self.quiescent(in_flight, drained) {
             return Ok(not_proven(HostOrderHoldsNotProven::NotQuiescent));
         }

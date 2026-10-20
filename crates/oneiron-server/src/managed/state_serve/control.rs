@@ -9,6 +9,7 @@ use oneiron_vault_contract::{
 };
 
 use super::ManagedState;
+use super::admission::WriteKind;
 use crate::managed::ManagedError;
 
 impl ManagedState {
@@ -58,7 +59,7 @@ impl ManagedState {
                 waited_secs,
                 wait_id,
             } => {
-                self.guard_write()?;
+                let _admission = self.admit(WriteKind::OwnerWrite)?;
                 crate::managed::shed::shed(self.server.vault(), cause, waited_secs, wait_id)
             }
             CtlRequest::PrepareReap => self.prepare_reap().await,
@@ -74,7 +75,7 @@ impl ManagedState {
                 Ok(CtlResponse::Ok { ok: true })
             }
             CtlRequest::TrainingPurge => {
-                self.guard_write()?;
+                let _admission = self.admit(WriteKind::OwnerWrite)?;
                 let training_purge = self.server.vault().training_purge().map_err(|error| {
                     ManagedError::CtlRequestRefused {
                         reason: error.to_string(),
@@ -129,7 +130,7 @@ impl ManagedState {
             // Through the write gate, as `shed`: a vault frozen for reap
             // answers the typed reap pause and stays frozen.
             CtlRequest::Unslim => {
-                self.guard_write()?;
+                let _admission = self.admit(WriteKind::OwnerWrite)?;
                 crate::managed::shed::unslim(self.server.vault())
             }
             // A read of the cold restore this process kept: it writes nothing

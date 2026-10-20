@@ -1,28 +1,32 @@
 //! The backup before an idle reap (`prepare_idle_reap`, Engine 10-20 backup
 //! shipper row (a), co-signed with LC).
 //!
-//! One attempt at a time. The first call starts it: the freeze, drain and
-//! export `prepare_reap` runs, then, when no other write was in flight, one
-//! backup job on a blocking thread of its own
+//! One attempt at a time. The first call starts it: the freeze
+//! `prepare_reap` runs, which reads the writes in flight by kind (FIX
+//! 6902). An owner write among them leaves the vault busy. Otherwise the
+//! background passes, which take no new unit once frozen, are waited for,
+//! by the attempt's deadline; then the drain and the export, and, when the
+//! vault was quiet, one backup job on a blocking thread of its own
 //! ([`OwnerHost::back_up_before_idle`]). Every later call joins it, and none
 //! starts a second drain or a second backup. A call answers once the attempt
 //! settles, or once its deadline passes, [`IDLE_REAP_PREPARATION_SECS`] after
-//! its first call.
+//! its first call; every answer carries the writes in flight at the freeze.
 //!
 //! The deadline is a phase change the attempt owns, not a timeout on its
 //! job: whoever looks at the attempt past it, a call or the job itself,
-//! settles it failed, `backup_busy` while another backup held the lock and
-//! `deadline_exceeded` otherwise. The job is never cancelled and counts
-//! among the writes in flight until it ends, so the vault never reads
-//! quiescent while it writes, and what it finishes after the deadline is
-//! never recorded as covered (`owner::backup::finalize`).
+//! settles it failed, `backup_busy` while another backup held the lock, or
+//! was in flight while background passes were waited for, and
+//! `deadline_exceeded` otherwise. Neither the job nor a background pass is
+//! cancelled, and each counts among the writes in flight until it ends, so
+//! the vault never reads quiescent while one writes, and what the job
+//! finishes after the deadline is never recorded as covered
+//! (`owner::backup::finalize`).
 //!
 //! `reap_abort` drops the attempt before the vault thaws: a call still
 //! waiting on it is refused, and its job, should it finish, records nothing.
 //! The next call starts a new attempt, whose backup waits for that job's
 //! lock. A stop waits for every job started to end.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
@@ -36,6 +40,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use super::ManagedState;
+use super::admission::{InFlightCounts, WriteKind};
 use crate::managed::ManagedError;
 use crate::managed::ledger::LedgerSnapshot;
 use crate::owner::schedule::{OwnerHost, PreIdleAttempt, PreIdleBackup};
@@ -86,6 +91,9 @@ struct Attempt {
 enum Phase {
     /// Freezing, draining and exporting.
     Preparing,
+    /// Waiting for the background passes in flight at the freeze to end;
+    /// the owner host's backup jobs are read at the deadline.
+    Draining(Option<Arc<OwnerHost>>),
     /// The job waits for the backup lock.
     Locking,
     /// The job holds the lock and writes.
@@ -105,25 +113,32 @@ enum Settled {
 
 /// What the freeze, drain and export found.
 struct Report {
-    /// No write but backup jobs was in flight once frozen, the lease table
-    /// drained, and no sync session could still commit.
+    /// No owner write was in flight at the freeze, the background passes
+    /// then in flight ended before the drain, the lease table drained, and
+    /// no sync session could still commit.
     quiet: bool,
+    /// The admitted writes in flight at the freeze, by kind.
+    in_flight_at_freeze: InFlightCounts,
     ledger_rev: u64,
     ledger: LedgerSnapshot,
 }
 
 impl Attempt {
     /// Settles the attempt failed once its deadline passed, `backup_busy`
-    /// while its job waited for the lock and `deadline_exceeded` otherwise;
-    /// a settled one stays as it is.
+    /// while its job waited for the lock, or while background passes were
+    /// waited for with a backup job in flight, and `deadline_exceeded`
+    /// otherwise; a settled one stays as it is.
     fn expire(&mut self) {
         if Instant::now() < self.deadline {
             return;
         }
-        let reason = match self.phase {
+        let reason = match &self.phase {
             Phase::Settled(_) => return,
             Phase::Locking => IdleBackupFailure::BackupBusy,
-            Phase::Preparing | Phase::Writing => IdleBackupFailure::DeadlineExceeded,
+            Phase::Draining(Some(host)) if host.backup_jobs() > 0 => IdleBackupFailure::BackupBusy,
+            Phase::Preparing | Phase::Draining(_) | Phase::Writing => {
+                IdleBackupFailure::DeadlineExceeded
+            }
         };
         self.phase = Phase::Settled(Settled::Failed(reason));
     }
@@ -185,6 +200,14 @@ impl IdleBackup {
             job_running: false,
         });
         (id, true)
+    }
+
+    /// The deadline of the attempt `id`, while it stands.
+    fn deadline(&self, id: &str) -> Option<Instant> {
+        self.attempt()
+            .as_ref()
+            .filter(|attempt| attempt.id == id)
+            .map(|attempt| attempt.deadline)
     }
 
     /// Drops the attempt that stands, on `reap_abort`: no call answers for
@@ -279,15 +302,6 @@ impl PreIdleAttempt for JobAttempt {
     }
 }
 
-/// A backup job's place among the writes in flight, held until it ends.
-struct InFlight(Arc<AtomicU64>);
-
-impl Drop for InFlight {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
 impl ManagedState {
     /// Answers `prepare_idle_reap`: starts an attempt or joins the one that
     /// stands, and answers once it settles or its deadline passes. A freeze,
@@ -331,26 +345,48 @@ impl ManagedState {
         }
     }
 
-    /// The first call's part: the freeze, drain and export, then the backup
-    /// job, unless a write was in flight, the deadline passed or the attempt
-    /// was dropped meanwhile.
+    /// The first call's part: the freeze; when no owner write was in flight
+    /// at it, the wait for the background passes then in flight; the drain
+    /// and the export; then the backup job, unless a write was in flight, a
+    /// background pass outlasted the deadline, the deadline passed or the
+    /// attempt was dropped meanwhile.
     async fn prepare_attempt(&self, id: &str) -> Result<(), ManagedError> {
         let idle = &self.idle_backup;
-        let prepared = match self.freeze_drain_export().await {
+        let at_freeze = match self.freeze_counted() {
+            Ok(at_freeze) => at_freeze,
+            Err(error) => {
+                idle.drop_failed(id);
+                return Err(error);
+            }
+        };
+        tracing::info!(
+            attempt_id = id,
+            owner_write = at_freeze.owner_write,
+            background_tagging = at_freeze.background_tagging,
+            dreamer = at_freeze.dreamer,
+            background_other = at_freeze.background_other,
+            backup = at_freeze.backup,
+            "the idle reap preparation froze the vault; the writes in flight by kind"
+        );
+        let host = self.server.owner_host.clone();
+        // An owner write at the freeze leaves the vault busy, whenever it
+        // ends. Background passes take no new unit once frozen; those in
+        // flight are waited for, so the export comes after their last write.
+        let owner_idle = at_freeze.owner_write == 0;
+        let background_drained = owner_idle && self.drain_background(id, host.clone()).await;
+        let prepared = match self.drain_export(at_freeze).await {
             Ok(prepared) => prepared,
             Err(error) => {
                 idle.drop_failed(id);
                 return Err(error);
             }
         };
-        let quiet = prepared.in_flight.saturating_sub(prepared.backup_jobs) == 0
-            && prepared.drained
-            && !self.live_sync_writer();
-        let host = self.server.owner_host.clone();
+        let quiet = background_drained && prepared.drained && !self.live_sync_writer();
         let start = idle
             .with_attempt(id, |attempt| {
                 attempt.report = Some(Report {
                     quiet,
+                    in_flight_at_freeze: at_freeze,
                     ledger_rev: prepared.ledger_rev,
                     ledger: prepared.report,
                 });
@@ -358,6 +394,7 @@ impl ManagedState {
                 if matches!(attempt.phase, Phase::Settled(_)) {
                     return false;
                 }
+                // A wait the deadline cut short settled in `expire`, above.
                 match (&host, quiet) {
                     (_, false) => attempt.fail(IdleBackupFailure::WritersBusy),
                     (None, true) => attempt.fail(IdleBackupFailure::SnapshotFailed),
@@ -381,6 +418,44 @@ impl ManagedState {
         Ok(())
     }
 
+    /// Waits for the background passes in flight to end: `true` once none
+    /// is, `false` once the attempt `id`'s deadline passed, settling it as
+    /// it stands then, or once the attempt was dropped. It wakes as each
+    /// pass ends and as the attempt changes, cancels nothing and releases
+    /// nothing. `host`'s backup jobs decide the reason at the deadline.
+    async fn drain_background(&self, id: &str, host: Option<Arc<OwnerHost>>) -> bool {
+        let idle = &self.idle_backup;
+        let mut ended = self.admission.ended();
+        let mut changes = idle.changed.subscribe();
+        idle.with_attempt(id, |attempt| {
+            if matches!(attempt.phase, Phase::Preparing) {
+                attempt.phase = Phase::Draining(host);
+            }
+        });
+        loop {
+            if self.admission.in_flight().background() == 0 {
+                idle.with_attempt(id, |attempt| {
+                    if matches!(attempt.phase, Phase::Draining(_)) {
+                        attempt.phase = Phase::Preparing;
+                    }
+                });
+                return true;
+            }
+            let Some(deadline) = idle.deadline(id) else {
+                return false;
+            };
+            if Instant::now() >= deadline {
+                idle.with_attempt(id, Attempt::expire);
+                return false;
+            }
+            tokio::select! {
+                _ = ended.changed() => {}
+                _ = changes.changed() => {}
+                () = tokio::time::sleep_until(deadline) => {}
+            }
+        }
+    }
+
     /// Starts the attempt `id`'s backup job: on a blocking thread, counted
     /// among the writes in flight and as a backup job until it ends, its
     /// handle kept for the stop. Its failure settles the attempt, unless it
@@ -392,8 +467,7 @@ impl ManagedState {
         if jobs.stopped {
             return false;
         }
-        self.http_mutating_in_flight.fetch_add(1, Ordering::SeqCst);
-        let in_flight = InFlight(Arc::clone(&self.http_mutating_in_flight));
+        let in_flight = self.admission.hold(WriteKind::Backup);
         let server = Arc::clone(&self.server);
         let attempt = JobAttempt {
             idle: Arc::clone(&idle),
@@ -433,13 +507,13 @@ impl ManagedState {
     }
 
     /// The answer for `attempt` and its `report`: quiescent only when its
-    /// freeze found the vault quiet, it is still frozen, and no write,
-    /// backup or sync session is in flight now.
+    /// freeze found the vault quiet, it is still frozen, and no write of any
+    /// kind, backup or sync session is in flight now.
     fn idle_reply(&self, attempt: &Attempt, report: &Report) -> CtlResponse {
         let quiescent = report.quiet
             && self.is_frozen()
             && !self.live_sync_writer()
-            && self.http_mutating_in_flight.load(Ordering::SeqCst) == 0;
+            && self.admission.in_flight().total() == 0;
         let pending = IdleBackupWire {
             state: IdleBackupState::Pending,
             attempt_id: attempt.id.clone(),
@@ -469,12 +543,13 @@ impl ManagedState {
                 retryable: reason.retryable(),
                 ..pending
             },
-            Phase::Preparing | Phase::Locking | Phase::Writing => pending,
+            Phase::Preparing | Phase::Draining(_) | Phase::Locking | Phase::Writing => pending,
         };
         CtlResponse::PrepareIdleReap {
             idle_reap: IdleReapWire {
                 schema_version: IDLE_REAP_SCHEMA_VERSION,
                 quiescent,
+                in_flight_at_freeze: report.in_flight_at_freeze.wire(),
                 ledger_rev: report.ledger_rev,
                 next_wake: report.ledger.entries.clone(),
                 training: report.ledger.training.clone(),

@@ -43,7 +43,7 @@ pub(crate) use self::core::BroadcastPayload;
 pub use self::core::{SyncServer, TaskWorkTurn};
 pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::desktop_seats::{RunSeats, Seat, SeatGuest};
-pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
+pub(crate) use self::housekeeping::{HousekeepingAdmission, PassControl, admit_every_pass};
 pub(crate) use self::lifecycle::LifecycleScheduler;
 pub(crate) use self::live_runs::{
     HeldLiveRun, LiveRunCaller, LiveRunRefusal, LiveRuns, ResolvedLiveRun,

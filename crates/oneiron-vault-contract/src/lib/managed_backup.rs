@@ -15,7 +15,7 @@ mod idle_reap;
 
 pub use self::idle_reap::{
     BackupCoverageWire, IDLE_REAP_PREPARATION_SECS, IDLE_REAP_SCHEMA_VERSION, IdleBackupFailure,
-    IdleBackupState, IdleBackupWire, IdleReapWire,
+    IdleBackupState, IdleBackupWire, IdleReapInFlight, IdleReapWire,
 };
 
 /// The one [`ManagedBackupFacts`] schema this crate reads.
