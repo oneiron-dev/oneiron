@@ -79,11 +79,13 @@ fn erase_edit_as(
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
         let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
         rewrite_audience_edit_in_txn(vault, txn, id, &erased)?;
-        Ok(Some(ConfirmedEraseOutcome::Completed(DeleteEntityOutcome {
-            existed: true,
-            receipt_id: None,
-            sweep_key: None,
-        })))
+        Ok(Some(ConfirmedEraseOutcome::Completed(
+            DeleteEntityOutcome {
+                existed: true,
+                receipt_id: None,
+                sweep_key: None,
+            },
+        )))
     })
 }
 
