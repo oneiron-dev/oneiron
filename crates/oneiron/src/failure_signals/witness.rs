@@ -25,6 +25,13 @@ pub(super) enum WitnessKind {
         model: ModelId,
         observed_at: i64,
     },
+    /// A failure on a committed attempt that no step claim stands for (FIX
+    /// 2146), bound to the lease generation it failed in.
+    AttemptFailure {
+        attempt_id: AttemptId,
+        lease: u32,
+        observed_at: i64,
+    },
 }
 
 #[derive(Clone)]
@@ -70,7 +77,7 @@ impl Vault {
         }
         let observed_at = i64::try_from(event.valid_from)
             .map_err(|_| Error::ArithmeticOverflow("failure signal observation time"))?;
-        let count = super::live::diagnostic_input(&event);
+        let count = self.diagnostic_input(&event);
         self.register_tier1_witness(
             id,
             WitnessKind::Diagnostic {
@@ -81,7 +88,7 @@ impl Vault {
             },
         )?;
         match count {
-            Some(input) => self.count_tier1_diagnostic(id, input, event.valid_from),
+            Some(input) => self.count_tier1_observation(id, input, event.valid_from),
             None => Ok(()),
         }
     }
@@ -161,7 +168,10 @@ impl Vault {
     }
 
     /// Executed steps enter only from the fresh provider-completion branch,
-    /// never from a memo index, recovery replay, or arbitrary claim put.
+    /// never from a memo index, recovery replay, or arbitrary claim put. A
+    /// step a deterministic fallback answered is a failed execution (FIX
+    /// 2146): it counts once, by its claim, for the agent its host-owned
+    /// envelope actor names, checked against its attempt's dispatch.
     pub(crate) fn capture_tier1_executed_step(
         &self,
         witness: &ExecutedModelWitness<'_>,
@@ -204,7 +214,19 @@ impl Vault {
                 model: model.clone(),
                 observed_at,
             },
-        )
+        )?;
+        if witness.fell_back() {
+            let agent = super::live::step_agent(&attempt, witness.actor());
+            let input = self.affected_agent_input(
+                super::FailureClassV1::TaskFailure,
+                super::AgentSurface::Background,
+                agent,
+            );
+            if let Err(error) = self.count_tier1_observation(claim_id, input, at_ms / 1_000) {
+                tracing::warn!(kind = ?error.kind(), "a fallback step was not counted");
+            }
+        }
+        Ok(())
     }
 
     /// Resolve only observations captured by an engine producer in this open

@@ -26075,7 +26075,7 @@
       "crate-vis": 3,
       "enum": 4,
       "fn": 10,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 5
      }
     },
@@ -26105,11 +26105,28 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 9,
       "fn": 5,
+      "re-export": 1,
       "struct": 6,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ExactReplayRequest",
+      "ReplayFidelity"
+     ],
+     "path": "src/failure_signals/code_fix/exact.rs",
+     "purpose": "The request a code fix replays exactly (FIX 1662): the one the failing call sent, as the vault kept it…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -26136,19 +26153,23 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 2,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "DispatchFailure"
+     ],
      "path": "src/failure_signals/live.rs",
-     "purpose": "Live tier-1 counting (OF-380)",
+     "purpose": "Live tier-1 counting (OF-380, FIX 2146)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 8,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -33832,7 +33853,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 3
      }
     },
@@ -46916,13 +46937,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/self_heal/blocked_reports/source.rs",
-     "purpose": "A blocked report's replay source (FIX 2343, OF-380)",
+     "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 15
      }
     },
     {
@@ -64026,7 +64047,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 9,
+     "files": 10,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -64945,7 +64966,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4029,
+   "source_files": 4030,
    "test_files": 902
   },
   "oneiron-android": {

@@ -1,4 +1,5 @@
-//! A blocked report's replay source (FIX 2343, OF-380). A report whose run is
+//! A blocked report's replay source (FIX 2343, OF-380), and the exact model
+//! request a code fix replays (FIX 1662), in one table. A report whose run is
 //! no agent dispatch's attempt (a standalone or MCP run, or one with no
 //! durable run) names nothing a code fix could replay, so the host keeps
 //! what it knows of the run with the report, in the commit that files it:
@@ -10,20 +11,123 @@
 //! prospective: a report filed before it has no source. The source stays
 //! after the Coach settles the report, so a later candidate replays it too,
 //! and an erase of the reporter takes it.
+//!
+//! The table holds two kinds of row (FIX 1662). A receipt row (`Receipt`,
+//! keyed by the receipt alone, as before) keeps the report's source and the
+//! request the run sent, by its canonical hash: the run's replay capsule
+//! holds the request when one does, and the row keeps it whole only when
+//! none does. A step row (`Step`, keyed by attempt, step, lease generation
+//! and call) keeps the canonical request a durable step sent, stored before
+//! the call. Both are written through the side-row wall, so each secret in a
+//! kept request is a custody handle; the hash of the copy kept beside the
+//! hash of the request sent says whether it is the request as sent. A
+//! capture that fails never fails the call or the report: its replay is then
+//! not exact. An erase of an actor takes its step rows and the receipt rows
+//! of its reports.
 
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::AttemptId;
-use crate::side_table::{self, Named, SideTable};
-use crate::{EntityId, Result, Vault};
+use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::{EntityId, LlmRequest, Result, Vault};
 
-/// Key: the receipt.
+/// Receipt rows. Key: the receipt.
 const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
     SideTable::new(&side_table::COACH_BLOCKED_SOURCE);
 
+/// Step rows, in the same table. Key: [`StepSourceKey`].
+const STEPS: SideTable<StepSourceKey, StepReplaySource, Named> =
+    SideTable::new(&side_table::COACH_BLOCKED_SOURCE);
+
+/// The byte a step row's key leads with. A receipt row's key is the
+/// receipt's 16 bytes alone, so the two never share a key's length.
+const STEP_TAG: u8 = b's';
+
+/// A step row's key length: the tag, the attempt, the step's hash, the lease
+/// generation and the call.
+const STEP_KEY_LEN: usize = 1 + 16 + 32 + 8 + 4;
+
+/// One fresh model call of an attempt (FIX 1662).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StepSourceKey {
+    pub(crate) attempt: AttemptId,
+    /// The durable step's hash: its request's canonical hash, which its
+    /// terminal `dreamer.step` claim names beside the attempt.
+    pub(crate) step: [u8; 32],
+    /// The attempt's lease generation when the call was sent.
+    pub(crate) lease: u64,
+    /// The call within the step: 0 for the step's own request.
+    pub(crate) call: u32,
+}
+
+impl SideKey for StepSourceKey {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(STEP_TAG);
+        out.extend_from_slice(self.attempt.as_bytes());
+        out.extend_from_slice(&self.step);
+        out.extend_from_slice(&self.lease.to_be_bytes());
+        out.extend_from_slice(&self.call.to_be_bytes());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let (&tag, rest) = bytes.split_first()?;
+        if tag != STEP_TAG || bytes.len() != STEP_KEY_LEN {
+            return None;
+        }
+        let (attempt, rest) = rest.split_at_checked(16)?;
+        let (step, rest) = rest.split_at_checked(32)?;
+        let (lease, call) = rest.split_at_checked(8)?;
+        Some(Self {
+            attempt: AttemptId::from_bytes(attempt).ok()?,
+            step: step.try_into().ok()?,
+            lease: u64::from_be_bytes(lease.try_into().ok()?),
+            call: u32::from_be_bytes(call.try_into().ok()?),
+        })
+    }
+}
+
+/// A request kept whole (FIX 1662): canonical, with each secret the
+/// side-row wall found left as its custody handle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct KeptRequest {
+    /// The request as kept; its model and envelope are the route it was
+    /// bound to before the call.
+    pub(crate) request: LlmRequest,
+    /// The canonical hash of the copy kept: the hash of the request sent,
+    /// unless the wall masked a secret in it.
+    pub(crate) stored: [u8; 32],
+}
+
+/// The model request a run's executor bound before its call (FIX 1662).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SentRequest {
+    /// The request's canonical hash as sent: the hash its run's replay
+    /// capsule keys it by.
+    pub(crate) digest: [u8; 32],
+    /// The request itself, kept only when no replay capsule of the run holds
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) kept: Option<KeptRequest>,
+}
+
+impl SentRequest {
+    /// `request` as its executor bound it, kept whole until the report is
+    /// filed; `None` when it has no canonical hash.
+    pub(crate) fn bound(request: &LlmRequest) -> Option<Self> {
+        let digest = request.canonical_hash().ok()?;
+        Some(Self {
+            digest,
+            kept: Some(KeptRequest {
+                request: request.clone(),
+                stored: digest,
+            }),
+        })
+    }
+}
+
 /// The model request a run's executor bound to its dispatcher before it
 /// sent the call, as its host assembled it: host-owned, never guest text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct BlockedRunRequest {
     /// The request's instructions: its system text, whole.
     pub(crate) instructions: String,
@@ -32,6 +136,9 @@ pub(crate) struct BlockedRunRequest {
     pub(crate) briefing: Option<String>,
     /// The task the run's host gave it, whole.
     pub(crate) task: Option<String>,
+    /// The request itself (FIX 1662); `None` on a source filed before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) sent: Option<SentRequest>,
 }
 
 /// What the run's host knows of it when it files a blocked report.
@@ -59,7 +166,7 @@ pub(crate) enum RunWorlds {
 }
 
 /// One blocked report's replay source.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct BlockedReplaySource {
     /// `None`: no model request of the run reached this engine, so its
     /// replay is unavailable.
@@ -89,16 +196,98 @@ impl BlockedReplaySource {
             .unwrap_or(0)
         })
     }
+
+    /// The request kept in the row, when there is one.
+    fn kept_mut(&mut self) -> Option<&mut KeptRequest> {
+        self.request
+            .as_mut()
+            .and_then(|request| request.sent.as_mut())
+            .and_then(|sent| sent.kept.as_mut())
+    }
 }
 
-/// Keeps `source` for the report `receipt`, in the report's filing commit.
+/// One durable step's request (FIX 1662), kept before its call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct StepReplaySource {
+    /// The request; the hash of the request sent is the key's step.
+    pub(crate) request: KeptRequest,
+    /// The actor whose call it was: the step's host-owned envelope actor.
+    pub(crate) actor: EntityId,
+    /// Unix milliseconds it was kept.
+    pub(crate) captured_at_ms: u64,
+}
+
+/// The canonical hash of `request`.
+fn canonical_hash(request: &LlmRequest) -> Result<[u8; 32]> {
+    request
+        .canonical_hash()
+        .map_err(|error| crate::Error::InvalidConfig(format!("replay request: {error}")))
+}
+
+/// Keeps `source` for the report `receipt`, in the report's filing commit,
+/// through the side-row wall with the vault's custody door: each secret it
+/// places is a custody handle. A request the run's replay capsule holds stays
+/// there, named by its hash (FIX 1662). A request the wall refuses to keep
+/// is dropped from the row, and the report files without it.
 pub(super) fn put_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     receipt: &EntityId,
     source: &BlockedReplaySource,
 ) -> Result<()> {
-    SOURCE.put(&vault.store, txn, receipt, source)
+    let mut source = source.clone();
+    if let Some(run) = source.code_run
+        && let Some(sent) = source
+            .request
+            .as_mut()
+            .and_then(|request| request.sent.as_mut())
+        && crate::code_run::step_replay_capsules_in_txn(vault, &*txn, run)?
+            .iter()
+            .any(|capsule| capsule.request_hash == sent.digest)
+    {
+        sent.kept = None;
+    }
+    if source.kept_mut().is_none() {
+        return SOURCE.put(vault, txn, receipt, &source);
+    }
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match put_kept_in_txn(vault, &mut savepoint, receipt, source.clone()) {
+        Ok(()) => {
+            savepoint.commit()?;
+            Ok(())
+        }
+        Err(error) => {
+            drop(savepoint);
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a blocked report's request was not kept; its replay is not exact"
+            );
+            if let Some(sent) = source
+                .request
+                .as_mut()
+                .and_then(|request| request.sent.as_mut())
+            {
+                sent.kept = None;
+            }
+            SOURCE.put(vault, txn, receipt, &source)
+        }
+    }
+}
+
+/// Writes a receipt row that keeps its request, the kept hash taken over the
+/// copy the wall masked, as the table reads it back.
+fn put_kept_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &EntityId,
+    mut source: BlockedReplaySource,
+) -> Result<()> {
+    SOURCE.admit(vault, txn, receipt, &mut source)?;
+    let mut source = SOURCE.decode_value(&SOURCE.encode_value(&source)?)?;
+    if let Some(kept) = source.kept_mut() {
+        kept.stored = canonical_hash(&kept.request)?;
+    }
+    SOURCE.put(vault, txn, receipt, &source)
 }
 
 /// The replay source the report `receipt` was filed with, if any.
@@ -110,26 +299,117 @@ pub(crate) fn blocked_source_in(
     SOURCE.get(&vault.store, txn, receipt)
 }
 
-/// An erase of `actor` takes each source of a report witnessed for it, in
-/// the erase's own writer: its request is that actor's run's. A row that
-/// does not decode names no reporter and stays as it is.
+/// Keeps the request a durable step is about to send (FIX 1662), before the
+/// call, under the attempt's lease generation, for the replay of a failure on
+/// a deployment that exports (the only one a code fix runs on). Best effort:
+/// a capture that fails is logged by kind and never fails the step, whose
+/// replay is then not exact.
+pub(crate) fn capture_durable_step(
+    vault: &Vault,
+    attempt: AttemptId,
+    step: [u8; 32],
+    actor: EntityId,
+    request: &LlmRequest,
+    now_ms: u64,
+) {
+    if !vault.config.failure_signals.exports() {
+        return;
+    }
+    if let Err(error) = keep_durable_step(vault, attempt, step, actor, request, now_ms) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "a step's request was not kept; its replay is not exact"
+        );
+    }
+}
+
+fn keep_durable_step(
+    vault: &Vault,
+    attempt: AttemptId,
+    step: [u8; 32],
+    actor: EntityId,
+    request: &LlmRequest,
+    now_ms: u64,
+) -> Result<()> {
+    let lease = AttemptQueue::new(vault)
+        .get(attempt)?
+        .map_or(0, |record| u64::from(record.attempt_count));
+    let key = StepSourceKey {
+        attempt,
+        step,
+        lease,
+        call: 0,
+    };
+    let row = StepReplaySource {
+        request: KeptRequest {
+            request: request.clone(),
+            stored: step,
+        },
+        actor,
+        captured_at_ms: now_ms,
+    };
+    vault.with_write_txn_grouped(|txn| {
+        let mut row = row;
+        STEPS.admit(vault, txn, &key, &mut row)?;
+        let mut row = STEPS.decode_value(&STEPS.encode_value(&row)?)?;
+        row.request.stored = canonical_hash(&row.request.request)?;
+        STEPS.put(vault, txn, &key, &row)
+    })
+}
+
+/// Every durable step request kept for `attempt`, oldest first (FIX 1662).
+/// A row that does not read is not a request to replay.
+pub(crate) fn step_sources_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<Vec<(StepSourceKey, StepReplaySource)>> {
+    let mut prefix = vec![STEP_TAG];
+    prefix.extend_from_slice(attempt.as_bytes());
+    let mut rows = Vec::new();
+    for row in STEPS.iter_raw_from(&vault.store, txn, &prefix)? {
+        let (key, bytes) = row?;
+        if let (Some(key), Ok(source)) =
+            (StepSourceKey::decode_key(&key), STEPS.decode_value(&bytes))
+        {
+            rows.push((key, source));
+        }
+    }
+    rows.sort_by_key(|(_, source)| source.captured_at_ms);
+    Ok(rows)
+}
+
+/// An erase of `actor` takes, in the erase's own writer, each receipt row of
+/// a report witnessed for it (its request is that actor's run's) and each
+/// step row of a call it made, with the request each keeps. A row that does
+/// not decode names no actor and stays as it is.
 pub(crate) fn erase_blocked_source_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    let mut doomed = Vec::new();
+    let mut receipts = Vec::new();
+    let mut steps = Vec::new();
     for row in SOURCE.iter_raw_from(&vault.store, &*wtxn, &[])? {
         let (key, bytes) = row?;
-        if let Ok(source) = SOURCE.decode_value(&bytes)
-            && source.reporter == *actor
-            && let Ok(raw) = <[u8; 16]>::try_from(key.as_slice())
+        if let Ok(raw) = <[u8; 16]>::try_from(key.as_slice()) {
+            if let Ok(source) = SOURCE.decode_value(&bytes)
+                && source.reporter == *actor
+            {
+                receipts.push(EntityId::from_bytes(raw)?);
+            }
+        } else if let Some(step) = StepSourceKey::decode_key(&key)
+            && let Ok(source) = STEPS.decode_value(&bytes)
+            && source.actor == *actor
         {
-            doomed.push(EntityId::from_bytes(raw)?);
+            steps.push(step);
         }
     }
-    for receipt in &doomed {
+    for receipt in &receipts {
         SOURCE.delete(&vault.store, wtxn, receipt)?;
+    }
+    for step in &steps {
+        STEPS.delete(&vault.store, wtxn, step)?;
     }
     Ok(())
 }

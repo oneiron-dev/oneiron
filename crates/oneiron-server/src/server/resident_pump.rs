@@ -1068,6 +1068,14 @@ fn settle(
                 park_owner: LEASE_OWNER.to_owned(),
                 now,
             })?;
+            // FIX 2146: the outage counts once for the run's agent, here,
+            // where the park returns before the failure ladder's door.
+            vault.count_dispatch_failure(
+                attempt.id,
+                attempt.attempt_count,
+                oneiron::failure_signals::DispatchFailure::ProviderOutage,
+                now,
+            );
             return Ok(());
         }
         // A run whose payer waits on the owners' payer-needed ask (OF-531,

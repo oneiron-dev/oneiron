@@ -398,7 +398,11 @@ side_tables! {
     /// The source a `self.report_blocked` receipt's code fix replays (FIX 2343): the instructions,
     /// briefing and task of the model request the run's host bound before the call, whole, or
     /// none for a caller that gave this engine no request, with the run, reporter and scope.
-    /// Kept after the Coach settles the report. Key: id16 of the receipt.
+    /// Kept after the Coach settles the report. Key: id16 of the receipt. FIX 1662: the same
+    /// table keeps the request a code fix replays exactly: a receipt row names it by its hash and
+    /// keeps it whole when no replay capsule of the run holds it, and a step row keeps a durable
+    /// step's request, masked, before its call. Key: b's', id16 of the attempt, the step's hash,
+    /// be64 of the lease generation, be32 of the call.
     COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored
         => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
     /// Where the Coach's contribution checks resume: the credit key and skill of the last
