@@ -93,8 +93,13 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// request as an unknown request, which deletes, binds and proves nothing,
 /// and a relay binary before it refuses the flags, so a supervisor binds a
 /// locker, forwards a relay's requests and starts a guarded relay only with
-/// installed engines at or after the floor. Supervisor and vault move to v3
-/// together; no v2 reader is kept.
+/// installed engines at or after the floor. The container CLI's directories
+/// (FIX 6876: `--container-home` and `--container-runtime-dir`, the `HOME`
+/// and `XDG_RUNTIME_DIR` the guests' container CLI runs with) carry a build
+/// floor too, at the engine revision they merged in, with no `Ping` field:
+/// an engine before it refuses either flag before it touches anything, so a
+/// supervisor passes them only with installed engines at or after the
+/// floor. Supervisor and vault move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
