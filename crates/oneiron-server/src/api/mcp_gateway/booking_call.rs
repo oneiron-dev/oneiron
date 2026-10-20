@@ -12,9 +12,13 @@
 //! booking caller and nothing more: the five booking verbs alone, no STREAM
 //! subscription, core read and write only, no owner grade, no registration,
 //! slip or Grant minted for him. The booking door judges whom he pays as and
-//! answers through the public booking authority. Every other call of his is
-//! refused as before, and a request that carries a credential stays that
-//! credential's caller.
+//! answers through the public booking authority. His handshake takes the
+//! same caller (FIX 5934, Engine ruling 10-20 08:4x), so a client that
+//! initializes first reaches those tools: `initialize`,
+//! `notifications/initialized`, `tools/list` (listing those five tools
+//! alone) and `oneiron/wakes` (whose instance can reach no subscription).
+//! Every other method and tool of his is refused as before, and a request
+//! that carries a credential stays that credential's caller.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -49,7 +53,81 @@ pub(super) async fn resolve_tool_caller(
     server: &Arc<SyncServer>,
     params: Option<&Value>,
 ) -> Result<McpCallContext, McpGatewayError> {
-    if let Some(holder) = booking_holder(mode, headers, connection, server, params)
+    let holder = booking_holder(mode, headers, connection, server, params);
+    resolve_holder_or_caller(
+        mode, request_id, headers, connection, locality, server, holder,
+    )
+    .await
+}
+
+/// The caller of an MCP handshake (FIX 5934, Engine ruling 10-20 08:4x):
+/// `initialize`, `notifications/initialized`, `tools/list` and
+/// `oneiron/wakes`. An attested holder with no credential the vault no
+/// longer records as its live owner is his booking caller, as for a booking
+/// tool call ([`booking_context`]), so a client that initializes first
+/// reaches the booking tools; every other caller as
+/// `owner_call::resolve_mcp_caller` resolves it.
+pub(super) async fn resolve_handshake_caller(
+    mode: McpSurfaceMode,
+    request_id: &str,
+    headers: &HeaderMap,
+    connection: &Extensions,
+    locality: oneiron::claim::CallerLocality,
+    server: &Arc<SyncServer>,
+) -> Result<McpCallContext, McpGatewayError> {
+    let holder = uncredentialed_holder(headers, connection, server);
+    resolve_holder_or_caller(
+        mode, request_id, headers, connection, locality, server, holder,
+    )
+    .await
+}
+
+/// What `tools/list` lists for `actor` (FIX 5934): the endpoint's frozen
+/// listing, the same bytes for every caller, except a stale owner sign-in's
+/// booking caller, who is listed only the booking tools he may call.
+pub(super) fn tools_listing(
+    server: &SyncServer,
+    mode: McpSurfaceMode,
+    actor: &McpCallContext,
+) -> Value {
+    let listing = server.mcp_surface(mode).listing().clone();
+    if !actor
+        .auth
+        .as_ref()
+        .is_some_and(CoreAuth::is_attested_booking_holder)
+    {
+        return listing;
+    }
+    let Value::Array(tools) = listing else {
+        return Value::Array(Vec::new());
+    };
+    Value::Array(
+        tools
+            .into_iter()
+            .filter(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| {
+                        crate::api::booking::booking_payer_verbs().any(|verb| verb == name)
+                    })
+            })
+            .collect(),
+    )
+}
+
+/// `holder`'s booking caller ([`booking_context`]) while the vault no
+/// longer records him as its live owner; else, and with no holder, the
+/// caller `owner_call::resolve_mcp_caller` resolves.
+async fn resolve_holder_or_caller(
+    mode: McpSurfaceMode,
+    request_id: &str,
+    headers: &HeaderMap,
+    connection: &Extensions,
+    locality: oneiron::claim::CallerLocality,
+    server: &Arc<SyncServer>,
+    holder: Option<oneiron::EntityId>,
+) -> Result<McpCallContext, McpGatewayError> {
+    if let Some(holder) = holder
         && let Some(auth) = CoreAuth::for_placed_booking_holder(
             holder,
             headers,
@@ -82,8 +160,7 @@ pub(super) fn invocation_owner(
 }
 
 /// The attested holder of a booking tool call that carries no credential of
-/// its own: the one a managed vault's supervisor attested for this request,
-/// else the one whose held socket it came on. `None` for any other call.
+/// its own ([`uncredentialed_holder`]). `None` for any other call.
 fn booking_holder(
     mode: McpSurfaceMode,
     headers: &HeaderMap,
@@ -92,6 +169,17 @@ fn booking_holder(
     params: Option<&Value>,
 ) -> Option<oneiron::EntityId> {
     booking_tool(mode, params)?;
+    uncredentialed_holder(headers, connection, server)
+}
+
+/// The attested holder of a request that carries no credential of its own:
+/// the one a managed vault's supervisor attested for this request, else the
+/// one whose held socket it came on. `None` for any other request.
+fn uncredentialed_holder(
+    headers: &HeaderMap,
+    connection: &Extensions,
+    server: &SyncServer,
+) -> Option<oneiron::EntityId> {
     if headers.contains_key(MCP_CREDENTIAL_HEADER) || headers.contains_key(AUTHORIZATION) {
         return None;
     }
