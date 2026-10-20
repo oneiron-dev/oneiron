@@ -15339,7 +15339,7 @@
      "path": "src/codebase/ingest.rs",
      "purpose": "Local-git ingest helpers: blob walk, hosted-media gate, custody scan, and validators",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 1,
       "struct": 4,
@@ -44652,7 +44652,7 @@
      "path": "src/recovery/checkpoint/admission/reason.rs",
      "purpose": "Why a cold managed restore refused (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "enum": 3,
       "fn": 3,
       "struct": 1
@@ -52212,7 +52212,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 30
      }
     },
     {
@@ -52449,7 +52449,7 @@
      "path": "src/store/key_custody/fork.rs",
      "purpose": "Restore planning and the fork a copy served beside its source takes (ARCH-0038 #erasure-completeness, \"Key…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
