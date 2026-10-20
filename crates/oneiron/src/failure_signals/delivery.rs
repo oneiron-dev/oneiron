@@ -3,7 +3,9 @@
 //! records; it leaves as an ordinary outbound effect on the
 //! `failure_signals/send` capability, through the dispatch pipeline and its
 //! recorded receipt. What the batch held is acked only once it was
-//! delivered, so a failed send loses nothing.
+//! delivered, so a failed send loses nothing. A batch the Gate holds for the
+//! owner is staged before it leaves and sent again as it was on the passes
+//! after it, so his one press releases the batch he saw (FIX 6679, `held`).
 //!
 //! Consent is the owner's "Help improve Oneiron" switch
 //! ([`FailureSignalConfig::exports`](crate::config::failure_signals::FailureSignalConfig::exports)):
@@ -20,7 +22,8 @@ use serde::{Deserialize, Serialize};
 
 use super::Tier1FailureCount;
 use super::code_fix::CodeFixExport;
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use super::held::{HeldBatch, next_stage};
+use crate::entity_id::EntityId;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
     OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest,
@@ -92,8 +95,9 @@ pub enum FailureSignalDelivery {
         outcome: OutboundDispatchOutcome,
         /// While the Gate holds this batch for the owner, the approve-once
         /// digest his one-time press must name to release it, 64 lower-hex
-        /// (FIX 6424), copied from the dispatch result. It pins this batch;
-        /// the next pass sends a new one. `None` otherwise.
+        /// (FIX 6424), copied from the dispatch result. It pins this batch,
+        /// which the next pass sends again as it was until it is released or
+        /// retired (FIX 6679). `None` otherwise.
         approval_digest: Option<String>,
     },
 }
@@ -119,7 +123,10 @@ impl<T: FailureSignalTransport + ?Sized> OutboundExecutionSink for BatchSink<'_,
 impl Vault {
     /// Sends one batch to `target`, the publisher's exact endpoint: every
     /// tier-1 count since the last delivery and up to `max_records` sealed
-    /// code-fix records. `now` is seconds since the epoch.
+    /// code-fix records. A batch the Gate held for the owner is sent again
+    /// exactly as it was, under its own refs, until it is settled or retired;
+    /// counts and records that came since wait for the batch after it (FIX
+    /// 6679). `now` is seconds since the epoch.
     pub fn deliver_failure_signals(
         &self,
         target: &str,
@@ -127,42 +134,41 @@ impl Vault {
         now: u64,
         transport: &mut dyn FailureSignalTransport,
     ) -> std::result::Result<FailureSignalDelivery, OutboundDispatchError> {
+        let _pass = self.store.diagnostics.failure_signals.lock_delivery();
         let config = self.config.failure_signals;
         let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
         if !config.exports() {
             self.keep_failure_signal_participation(sender, false, now)?;
             // Drops whatever still waits: it may not leave now.
+            self.retire_failure_signal_batch()?;
             self.pending_code_fix_records(0)?;
             return Ok(FailureSignalDelivery::Idle);
         }
-        let counts = self.export_tier1_failure_counts()?;
-        let code_fix = self.pending_code_fix_records(max_records)?;
-        if counts.is_empty() && code_fix.is_empty() {
-            return Ok(FailureSignalDelivery::Idle);
-        }
-        self.keep_failure_signal_participation(sender, true, now)?;
-
-        let mut id = [0u8; 16];
-        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut id);
-        let batch = FailureSignalBatch {
-            version: FAILURE_SIGNAL_BATCH_VERSION,
-            batch_id: bytes_to_hex_lower(&id),
-            training_permitted: config.permits_training(),
-            counts,
-            code_fix,
+        let held = if let Some(held) = self.carried_failure_signal_batch(target)? {
+            self.keep_failure_signal_participation(sender, true, now)?;
+            held
+        } else {
+            let counts = self.export_tier1_failure_counts()?;
+            let code_fix = self.pending_code_fix_rows(max_records)?;
+            if counts.is_empty() && code_fix.is_empty() {
+                return Ok(FailureSignalDelivery::Idle);
+            }
+            self.keep_failure_signal_participation(sender, true, now)?;
+            let held = HeldBatch::mint(target, config.permits_training(), counts, code_fix, now)?;
+            // Staged before it leaves, so a hold the owner sees keeps its batch.
+            self.stage_failure_signal_batch(&held)?;
+            held
         };
-        let body = serde_json::to_vec(&batch)
-            .map_err(|_| crate::Error::InvariantViolation("failure signal batch encode"))?;
-        let digest = blake3::hash(&body).to_hex().to_string();
-        let send_ref = format!("failure_signals:batch:{}", batch.batch_id);
+
+        let send_ref = held.send_ref();
         let intent = OutboundIntent::from_trigger(
             OutboundIntentDraft::new(
                 sender.to_hex(),
                 FAILURE_SIGNALS_SEND_VERB,
                 FAILURE_SIGNALS_CHANNEL,
-                target,
+                held.endpoint.as_str(),
             )
-            .content_ref(format!("failure_signals:digest:{digest}"))
+            .content_ref(held.content_ref())
             .idempotency_key(send_ref.clone()),
             OutboundIntentTrigger::agent_immediate(send_ref.clone()),
         );
@@ -185,38 +191,38 @@ impl Vault {
         request.ledger_identity_ref = Some(send_ref);
         let mut sink = BatchSink {
             transport,
-            body: &body,
-            digest: &digest,
+            body: held.body.as_bytes(),
+            digest: &held.digest,
         };
         let result = self.dispatch_outbound_intent_recorded(request, &mut sink)?;
-        let (outcome, approval_digest) = (result.outcome, result.approval_digest);
-        let ids = batch
-            .code_fix
-            .iter()
-            .map(CodeFixExport::id)
-            .collect::<Vec<_>>();
+        let outcome = result.outcome;
         match outcome {
             OutboundDispatchOutcome::DeliveredToChannel => {
-                self.ack_tier1_failure_counts(&batch.counts)?;
-                self.ack_code_fix_records(&ids)?;
+                self.settle_failure_signal_batch(&held, true)?;
                 Ok(FailureSignalDelivery::Delivered {
-                    counts: batch.counts.len(),
-                    records: ids.len(),
+                    counts: held.counts.len(),
+                    records: held.code_fix.len(),
                 })
             }
             // A record resent carries its own id, so the publisher keeps
             // one; a count resent would count twice.
             OutboundDispatchOutcome::Ambiguous => {
-                self.ack_tier1_failure_counts(&batch.counts)?;
+                self.settle_failure_signal_batch(&held, false)?;
                 Ok(FailureSignalDelivery::NotDelivered {
                     outcome,
-                    approval_digest,
+                    approval_digest: result.approval_digest,
                 })
             }
-            _ => Ok(FailureSignalDelivery::NotDelivered {
-                outcome,
-                approval_digest,
-            }),
+            _ => {
+                match next_stage(&held, &result) {
+                    Some(stage) => self.keep_failure_signal_batch(&held, stage)?,
+                    None => self.retire_failure_signal_batch()?,
+                }
+                Ok(FailureSignalDelivery::NotDelivered {
+                    outcome,
+                    approval_digest: result.approval_digest,
+                })
+            }
         }
     }
 
@@ -224,14 +230,21 @@ impl Vault {
     /// no transport and no destination (FIX 1884): a deployment that stopped
     /// exporting has its grant revoked even when no sender runs, and one
     /// that exports holds one grant under the current policy. Nothing is
-    /// sent. `now` is seconds since the epoch.
+    /// sent, and a stopped deployment drops the batch it carried (FIX 6679).
+    /// `now` is seconds since the epoch.
     ///
     /// # Errors
     ///
     /// Storage and policy errors.
     pub fn reconcile_failure_signal_participation(&self, now: u64) -> Result<()> {
         let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
-        self.keep_failure_signal_participation(sender, self.config.failure_signals.exports(), now)
+        let on = self.config.failure_signals.exports();
+        let _pass = self.store.diagnostics.failure_signals.lock_delivery();
+        self.keep_failure_signal_participation(sender, on, now)?;
+        if on {
+            return Ok(());
+        }
+        self.retire_failure_signal_batch()
     }
 
     /// Keeps the participation grant in step with `on`: one active grant

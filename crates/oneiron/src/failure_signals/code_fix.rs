@@ -41,9 +41,13 @@ use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
 mod exact;
+mod queue;
 mod subject;
 pub(crate) use self::exact::exact_replay_request;
 pub use self::exact::{ExactReplayRequest, ReplayFidelity};
+pub(super) use self::queue::{
+    CodeFixShare, ack_code_fix_records_in_txn, code_fix_still_eligible_in, public_id_key,
+};
 pub(crate) use self::subject::dispatch_worlds_in;
 use self::subject::{SubjectFailure, blocked_source_failure_in};
 
@@ -483,60 +487,6 @@ impl Vault {
         }))
     }
 
-    /// Reads up to `limit` sealed records this deployment may still send, in
-    /// id order (random, so no age order). Nothing leaves the queue here: the
-    /// host delivers what this returns and then acks it, so a failed send
-    /// keeps the only copy. A record whose failure touched a world that has
-    /// since turned private is dropped, and so is every record once the
-    /// deployment stopped exporting.
-    pub fn pending_code_fix_records(&self, limit: usize) -> Result<Vec<CodeFixExport>> {
-        let exports = self.config.failure_signals.exports();
-        let idle = {
-            let txn = self.store.env.read_txn()?;
-            QUEUE.iter_from(&self.store, &txn, &[])?.next().is_none()
-        };
-        if idle {
-            return Ok(Vec::new());
-        }
-        self.with_write_txn_grouped(|txn| {
-            let rows = QUEUE.scan(&self.store, txn)?;
-            if rows.is_empty() {
-                return Ok(Vec::new());
-            }
-            let fold = self.authority_view_readonly_in_txn(txn)?;
-            let mut out = Vec::new();
-            for (key, row) in rows {
-                if !exports || !all_public(&fold, &row.worlds) {
-                    QUEUE.delete(&self.store, txn, &key)?;
-                } else if out.len() < limit {
-                    out.push(row.record);
-                }
-            }
-            Ok(out)
-        })
-    }
-
-    /// Drops the delivered records `ids` from the queue. An id that is not
-    /// queued (already acked, or dropped) is skipped. Returns how many left.
-    pub fn ack_code_fix_records(&self, ids: &[&str]) -> Result<usize> {
-        let keys = ids
-            .iter()
-            .filter_map(|id| public_id_key(id))
-            .collect::<Vec<_>>();
-        if keys.is_empty() {
-            return Ok(0);
-        }
-        self.with_write_txn_grouped(|txn| {
-            let mut acked = 0;
-            for key in &keys {
-                if QUEUE.delete(&self.store, txn, key)? {
-                    acked += 1;
-                }
-            }
-            Ok(acked)
-        })
-    }
-
     /// Queues a door's sealed record in a write of its own, if its source
     /// still stands at commit.
     fn queue_sealing(
@@ -699,18 +649,6 @@ fn dispatch_input(attempt: &AttemptRecord) -> Option<crate::agent_dispatch::Agen
         return None;
     }
     decode_agent_dispatch_input(&payload.input).ok()
-}
-
-/// The queue key behind a record's public id: 32 hex digits.
-fn public_id_key(id: &str) -> Option<[u8; 16]> {
-    if id.len() != 32 {
-        return None;
-    }
-    let mut key = [0u8; 16];
-    for (index, slot) in key.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(id.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(key)
 }
 
 /// Readable everywhere: any narrower, conflicted or unknowable setting is
