@@ -1368,7 +1368,7 @@
      "path": "src/agent_dispatch/widen_record.rs",
      "purpose": "Exact, durable widen intents",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "struct": 1
      }
     },
@@ -1434,7 +1434,7 @@
      "path": "src/agent_dispatch/workflow_record.rs",
      "purpose": "Durable, inert workflow admission and result provenance",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -2384,15 +2384,11 @@
       "AttemptInterventionEffect",
       "AttemptInterventionKind",
       "AttemptPlacement",
-      "AttemptQueueCleanupReport",
-      "AttemptQueueRetryReason",
-      "AttemptQueueRetryReasonCount",
       "AttemptRecord",
       "AttemptResultRef",
       "AttemptState",
       "ClaimAttempt",
       "ClaimOutcome",
-      "CleanupAttemptLeases",
       "CompleteAttempt",
       "CompleteOutcome",
       "EnqueueAttempt",
@@ -2410,10 +2406,29 @@
      "path": "src/attempt_queue/types.rs",
      "purpose": "Durable wire, verb-input, and outcome types for the attempt queue",
      "surface": {
-      "crate-vis": 11,
-      "enum": 11,
-      "fn": 26,
-      "struct": 18
+      "crate-vis": 8,
+      "enum": 10,
+      "fn": 24,
+      "re-export": 1,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptQueueCleanupReport",
+      "AttemptQueueRetryReason",
+      "AttemptQueueRetryReasonCount",
+      "CleanupAttemptLeases"
+     ],
+     "path": "src/attempt_queue/types/cleanup.rs",
+     "purpose": "Lease-cleanup input and report types for the attempt queue, split from [`super`] by move only",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -47091,7 +47106,7 @@
      "path": "src/scope_summary/word_sources.rs",
      "purpose": "Where the words of one stored revision came from",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -62995,7 +63010,7 @@
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 32,
       "enum": 1
      }
     },
@@ -63390,7 +63405,7 @@
      "path": "src/workspace_roster/rooms/witness.rs",
      "purpose": "Claim-before-speaking guard inside the existing witness transaction",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -64955,7 +64970,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66420,7 +66435,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4153,
+   "source_files": 4154,
    "test_files": 902
   },
   "oneiron-android": {
