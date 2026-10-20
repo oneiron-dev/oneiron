@@ -25748,7 +25748,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 3,
       "struct": 2,
       "trait": 1
