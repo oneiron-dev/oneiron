@@ -21,6 +21,12 @@ impl AgentDispatcher<'_> {
     /// attachment; this pump does not promise exactly-once external I/O.
     pub fn advance_workflow(&self, root: AttemptId, now: u64) -> Result<WorkflowProgress> {
         let queue = AttemptQueue::new(self.vault);
+        // FIX 6291: a successor's release re-resolves its real parent's
+        // context, whose fold may read a member's grants: they are judged at
+        // a grant clock committed before this writer.
+        if self.releases_under_parent(&queue, root) {
+            self.vault.store.authorization_now()?;
+        }
         let mut txn = self.vault.store.env.write_txn()?;
         let wrapper = queue
             .get_in_write_txn(&txn, root)?
@@ -136,6 +142,20 @@ impl AgentDispatcher<'_> {
             self.settle_bound_task_after_commit(root, now);
         }
         Ok(progress)
+    }
+
+    /// Whether the wrapper `root` releases its steps under a real parent,
+    /// in a snapshot of its own. One whose rows do not read counts as one,
+    /// and the writer after answers as it always did.
+    fn releases_under_parent(&self, queue: &AttemptQueue<'_>, root: AttemptId) -> bool {
+        let read = || -> Result<bool> {
+            let txn = self.vault.store.env.read_txn()?;
+            Ok(match queue.get_in_txn(&txn, root)? {
+                Some(wrapper) => self.read_workflow(&txn, &wrapper)?.intent.parent.is_some(),
+                None => false,
+            })
+        };
+        read().unwrap_or(true)
     }
 
     fn claim_workflow_wrapper(

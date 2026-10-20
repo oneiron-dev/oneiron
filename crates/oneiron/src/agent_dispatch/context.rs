@@ -112,8 +112,10 @@ impl AgentDispatcher<'_> {
     ///
     /// Under a member's bound run (FIX 5416) the projection is read on that
     /// member's own lane, the rows it does not read left out and counted.
-    /// The member comes from the wrapper the fold crosses, which still adds
-    /// no level; every level resolves as it does for any run.
+    /// Under an owner's or agent's, each row meets the private threads it
+    /// sits in under that binder's own cut alone (FIX 6412). Each comes from
+    /// the wrapper the fold crosses, which still adds no level; every level
+    /// resolves as it does for any run.
     pub(super) fn resolve_ancestor_projection(
         &self,
         attempt: AttemptId,
@@ -121,6 +123,7 @@ impl AgentDispatcher<'_> {
         let queue = AttemptQueue::new(self.vault);
         let mut chain: Vec<(ContextSpec, crate::pipeline::WorldScope)> = Vec::new();
         let mut member = None;
+        let mut binders = Vec::new();
         let mut cursor = Some(attempt);
         let mut seen = std::collections::HashSet::new();
         while let Some(id) = cursor {
@@ -139,6 +142,7 @@ impl AgentDispatcher<'_> {
                 if member.is_none() {
                     member = self.workflow_member(&record)?;
                 }
+                binders.extend(self.workflow_binder(&record)?);
                 cursor = self.workflow_authority_parent(Some(id))?;
                 continue;
             }
@@ -178,9 +182,12 @@ impl AgentDispatcher<'_> {
                 },
             )?);
         }
-        match (projection, member) {
-            (Some(projection), Some(member)) => self.member_context(projection, member).map(Some),
-            (projection, _) => Ok(projection),
-        }
+        let projection = match (projection, member) {
+            (Some(projection), Some(member)) => Some(self.member_context(projection, member)?),
+            (projection, _) => projection,
+        };
+        projection
+            .map(|projection| self.binder_context(projection, &binders))
+            .transpose()
     }
 }

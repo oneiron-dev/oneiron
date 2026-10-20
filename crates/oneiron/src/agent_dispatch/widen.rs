@@ -105,6 +105,9 @@ impl AgentDispatcher<'_> {
         if input.parent_attempt.is_none() {
             return Ok(None);
         }
+        // FIX 6291: the parent's folded context may read a member's grants,
+        // judged at a grant clock committed before this writer.
+        self.vault.store.authorization_now()?;
         let mut wtxn = self.vault.store.env.write_txn()?;
         let proposed = self.propose_context_widen_in_txn(&mut wtxn, input, spawn, None)?;
         if proposed.is_some() {
@@ -235,6 +238,8 @@ impl AgentDispatcher<'_> {
         proposal: &super::ContextWidenProposal,
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
+        // FIX 6291: as the proposal's, judged at a fresh grant clock.
+        self.vault.store.authorization_now()?;
         let mut wtxn = self.vault.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self.vault, &wtxn)?;
         // Proposal ids are content hashes, not bearer authority. Find the exact
