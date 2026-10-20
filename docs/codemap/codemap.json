@@ -44325,7 +44325,7 @@
      "path": "src/recovery/checkpoint/artifact.rs",
      "purpose": "Sealed checkpoint artifacts (OF-570 (c))",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 14,
       "fn": 7,
       "re-export": 1,
       "struct": 2
@@ -44658,7 +44658,7 @@
      "purpose": "Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -44698,6 +44698,46 @@
       "fn": 19,
       "re-export": 8,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/payload/actors.rs",
+     "purpose": "Actor groups (KS7-2b): the actor parts the getters split out of every owner's rows, grouped under each…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/payload/mod.rs",
+     "purpose": "The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'…",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/payload/rows.rs",
+     "purpose": "The payload registry (KS7-2b): one class for every declared side-table family, by its declaration's…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/payload/seal.rs",
+     "purpose": "Sealing the payload's bundles (KS7-2b): one bundle per compartment and role, split into pieces of at most…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -44858,7 +44898,7 @@
      "path": "src/recovery/checkpoint/write_budget.rs",
      "purpose": "The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1,
       "struct": 1,
       "trait": 1
@@ -44871,7 +44911,7 @@
      "path": "src/recovery/checkpoint/write_estimate.rs",
      "purpose": "The bound a restore's copy claims ahead for what it writes past its bodies and rows (FIX 5613), worked out…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -65182,7 +65222,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 70,
+     "files": 74,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -65653,7 +65693,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4087,
+   "source_files": 4091,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81748,7 +81788,7 @@
      "path": "src/api/owner_routes/machine_routes.rs",
      "purpose": "`/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -82854,7 +82894,7 @@
      "path": "src/auth/managed_request.rs",
      "purpose": "The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 22
      }
     },
     {
@@ -85712,6 +85752,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/backup_facts.rs",
+     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): this install's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/managed/ctl_shed_tests.rs",
@@ -85941,7 +85991,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 17,
-      "fn": 20,
+      "fn": 21,
       "struct": 3,
       "type": 1
      }
@@ -89237,7 +89287,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89393,7 +89443,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 898,
+   "source_files": 899,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -93470,6 +93520,8 @@
       "CtlResumeOn",
       "FacilityNotice",
       "FacilityReason",
+      "LegalHoldsNotProven",
+      "LegalHoldsWire",
       "ManagedFacility",
       "ManagedReadiness",
       "ShedBlockerWire",
@@ -93482,7 +93534,7 @@
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 4,
-      "enum": 13,
+      "enum": 15,
       "fn": 9,
       "struct": 5
      }
@@ -93642,6 +93694,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckpointSignerObservation",
+      "CheckpointSignerUnavailable",
+      "ManagedBackupFacts"
+     ],
+     "path": "src/lib/managed_backup.rs",
+     "purpose": "What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): the vault id its…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -93668,7 +93738,7 @@
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
       "mod": 13,
-      "re-export": 8
+      "re-export": 9
      }
     },
     {
@@ -93814,7 +93884,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 27,
+     "files": 28,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93823,7 +93893,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 26,
+   "source_files": 27,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

@@ -17,10 +17,12 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::authority::{ActSurface, FoldedMachine, MachineOwnership, MachineRole, PeerMachine};
+use oneiron::authority::{
+    ActSurface, FoldedMachine, MachineOwnership, MachineRole, OwnerDeviceRenewalProof, PeerMachine,
+};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
@@ -41,10 +43,38 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 /// this very request; else this install's own surface (its host action, its
 /// CLI or its app).
 pub(crate) fn act_surface(server: &SyncServer, auth: &CoreAuth, headers: &HeaderMap) -> ActSurface {
+    surface_of(server, auth, || {
+        crate::auth::required_machine_proof(headers).ok()
+    })
+}
+
+/// [`act_surface`] on a request whose `extensions` may hold the caller the
+/// binding door admitted (FIX 6160): the machine proof that door kept for
+/// this caller's slip, never read from the headers again, where it kept
+/// one; the headers' as [`act_surface`] reads them on any other request.
+/// A missing or malformed proof is this install, as there.
+pub(crate) fn act_surface_admitted(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    headers: &HeaderMap,
+    extensions: &Extensions,
+) -> ActSurface {
+    surface_of(server, auth, || {
+        auth.machine_proof_admitted(headers, extensions)
+    })
+}
+
+/// [`act_surface`]'s answer, with the machine proof `machine` reads, read
+/// only once the caller is not the hosted console's.
+fn surface_of(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    machine: impl FnOnce() -> Option<OwnerDeviceRenewalProof>,
+) -> ActSurface {
     if auth.managed_owner().is_some() {
         return ActSurface::HostedConsole;
     }
-    let Ok(proof) = crate::auth::required_machine_proof(headers) else {
+    let Some(proof) = machine() else {
         return ActSurface::ThisInstall;
     };
     match server.vault().verify_machine_connection_proof(
@@ -177,11 +207,12 @@ async fn get_answer(
 async fn set_answer(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<SetAnswer>, JsonRejection>,
 ) -> OwnerReply<MachineAnswer> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = json_payload(payload)?;
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &request.machine)?;
@@ -210,11 +241,12 @@ async fn set_answer(
 async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<RemoveMachine>, JsonRejection>,
 ) -> OwnerReply<MachineAnswer> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
     let request = json_payload(payload)?;
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &request.machine)?;

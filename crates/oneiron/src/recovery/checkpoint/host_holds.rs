@@ -88,4 +88,17 @@ impl Vault {
             .iter()
             .any(crate::deletion::LegalHold::stands))
     }
+
+    /// How many legal holds stand on this vault, customer and host order
+    /// alike, read as [`Self::legal_hold_keeps_backups`] reads them: what a
+    /// host asks before it erases the whole vault. A count, nothing of any
+    /// hold.
+    pub fn standing_legal_holds(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        let standing = crate::store::legal_hold::holds_in_txn(&self.store, &txn)?
+            .iter()
+            .filter(|hold| hold.stands())
+            .count();
+        Ok(u64::try_from(standing).unwrap_or(u64::MAX))
+    }
 }
