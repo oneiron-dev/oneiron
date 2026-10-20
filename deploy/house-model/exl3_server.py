@@ -92,6 +92,13 @@ def check_placement(name, model):
     print(f"MODEL_DEVICE {name} {devices}", flush=True)
 
 
+def full_request_pool(context, depth):
+    """The pool one full-context request needs alone: the context, the
+    backend's one extra token and its draft depth, and a thinking request's
+    close room, rounded up to whole pages (Engine ruling 10-20, FIX 6723)."""
+    return -(-(context + 1 + depth + CLOSE_ROOM_TOKENS) // PAGE) * PAGE
+
+
 def load(args):
     if args.context % PAGE:
         raise ValueError(f"--context must be a multiple of the cache page, {PAGE}")
@@ -99,13 +106,15 @@ def load(args):
         raise ValueError("--draft-tokens must be at least 1")
     if not 1 <= args.max_in_flight <= MAX_IN_FLIGHT:
         raise ValueError(f"--max-in-flight must be 1 to {MAX_IN_FLIGHT}")
-    # The shared pool every request in flight draws on; today's pool, the
-    # context, unless the launcher names a larger one.
-    cache_tokens = args.context if args.cache_tokens is None else args.cache_tokens
+    # The shared pool every request in flight draws on: one full request (the
+    # context plus its draft and close room, page-rounded) unless the launcher
+    # names a larger one.
+    floor = full_request_pool(args.context, args.draft_tokens if args.draft_dir else 0)
+    cache_tokens = floor if args.cache_tokens is None else args.cache_tokens
     if cache_tokens % PAGE:
         raise ValueError(f"--cache-tokens must be a multiple of the cache page, {PAGE}")
-    if cache_tokens < args.context:
-        raise ValueError("--cache-tokens must be at least --context, so a request the context admits fits alone")
+    if cache_tokens < floor:
+        raise ValueError(f"--cache-tokens must be at least {floor}, so a request the context admits fits alone")
 
     target_config = Config.from_directory(args.target_dir)
     target = Model.from_config(target_config, component="text")
@@ -865,7 +874,8 @@ def main():
                    help="each request's context, in tokens; a multiple of 256")
     p.add_argument("--cache-tokens", type=int, default=None,
                    help="the KV pool every request in flight shares, in tokens; a multiple of 256, at least "
-                        "--context (default: --context, one full request)")
+                        "one full request (default: that floor, --context + 1 + the draft depth + 16, "
+                        "rounded up to 256)")
     p.add_argument("--max-in-flight", type=int, default=DEFAULT_IN_FLIGHT,
                    help=f"requests the scheduler runs at once, 1 to {MAX_IN_FLIGHT} (default {DEFAULT_IN_FLIGHT}: "
                         "one at a time)")

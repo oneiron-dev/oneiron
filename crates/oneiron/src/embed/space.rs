@@ -242,40 +242,99 @@ impl KindSlotBindings {
     }
 }
 
+/// Who wrote an EMBEDDING_SETUP retirement or slot row (FIX 6697): the owner through a door, or a
+/// system move. Startup seeding honours only the owner's retirements and returns to a default;
+/// a system move's re-seed from the config as they did before #3485.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SetupActor {
+    /// The owner, through a door: retiring a space, unbinding or binding a slot, declaring a
+    /// space, abandoning a move, saying yes to one.
+    Owner,
+    /// The engine: a timed-out or worse move's dropped candidate, an undo back to the vault's
+    /// own text index, a swap's backfill retiring the incumbent, and any other engine-driven
+    /// write. A row that names no actor is one of these.
+    #[default]
+    System,
+}
+
+impl SetupActor {
+    fn is_system(&self) -> bool {
+        *self == Self::System
+    }
+}
+
 /// One EMBEDDING_SETUP row (OF-370): a piece of this vault's embedding setup its other devices
 /// need to embed the same inputs into the same spaces. A row's id derives from what it names,
 /// so every device writes one row per space and one per kind slot. A retirement and a slot's
-/// return to its default are rows too, never a missing one.
+/// return to its default are rows too, never a missing one, and each names who wrote it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EmbeddingSetup {
     /// A declared space.
     Space(EmbeddingSpace),
     /// A space retired here: its declaration and rows went.
-    Retired { id: String },
+    Retired {
+        id: String,
+        #[serde(default, skip_serializing_if = "SetupActor::is_system")]
+        by: SetupActor,
+    },
     /// A kind slot's binding; `None` is the slot's default.
     Slot {
         kind: InputKind,
         space: Option<String>,
+        #[serde(default, skip_serializing_if = "SetupActor::is_system")]
+        by: SetupActor,
     },
+}
+
+/// The id of declared space `id`'s EMBEDDING_SETUP row: the entity that names the space, as the
+/// scorer of its retests does (FIX 1638).
+pub(super) fn space_setup_id(id: &str) -> Result<EntityId> {
+    let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
+    EntityId::derive(domain, &[b"space".as_slice(), id.as_bytes()])
+}
+
+/// The id of `kind`'s slot EMBEDDING_SETUP row.
+pub(super) fn slot_setup_id(kind: InputKind) -> Result<EntityId> {
+    let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
+    EntityId::derive(domain, &[b"slot".as_slice(), &[kind.byte()]])
+}
+
+/// The id that names the vault's own text index where a declared space's setup row id would:
+/// the scorer of its retests (FIX 1638). No row is stored under it.
+pub(super) fn text_index_setup_id() -> Result<EntityId> {
+    let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
+    EntityId::derive(domain, &[b"text_index".as_slice()])
 }
 
 impl EmbeddingSetup {
     fn id(&self) -> Result<EntityId> {
-        let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
         match self {
-            Self::Space(EmbeddingSpace { id, .. }) | Self::Retired { id } => {
-                EntityId::derive(domain, &[b"space".as_slice(), id.as_bytes()])
-            }
-            Self::Slot { kind, .. } => {
-                EntityId::derive(domain, &[b"slot".as_slice(), &[kind.byte()]])
-            }
+            Self::Space(EmbeddingSpace { id, .. }) | Self::Retired { id, .. } => space_setup_id(id),
+            Self::Slot { kind, .. } => slot_setup_id(*kind),
         }
     }
 
     fn encode(&self) -> Result<Vec<u8>> {
         rmp_serde::to_vec_named(self)
             .map_err(|_| Error::InvariantViolation("embedding setup row encode"))
+    }
+
+    /// The setup this row states, whoever wrote it: two rows of one state are one row.
+    fn state(&self) -> Self {
+        match self {
+            Self::Space(space) => Self::Space(space.clone()),
+            Self::Retired { id, .. } => Self::Retired {
+                id: id.clone(),
+                by: SetupActor::System,
+            },
+            Self::Slot { kind, space, .. } => Self::Slot {
+                kind: *kind,
+                space: space.clone(),
+                by: SetupActor::System,
+            },
+        }
     }
 
     /// The row `data` holds, refused unless it is exactly the bytes its writer encodes.
@@ -372,7 +431,7 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
             }
             EMBEDDING_SPACE.put(store, wtxn, &space.id.clone(), &space)?;
         }
-        EmbeddingSetup::Retired { id: space_id } => {
+        EmbeddingSetup::Retired { id: space_id, .. } => {
             validate_space_id(&space_id).map_err(|error| refused_setup(error.to_string()))?;
             let bindings = kind_slot_bindings_in_txn(store, wtxn)?;
             if let Some(kind) = InputKind::ALL
@@ -394,6 +453,7 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
         EmbeddingSetup::Slot {
             kind,
             space: Some(space_id),
+            ..
         } => {
             let Some(space) = embedding_space_in_txn(store, wtxn, &space_id)? else {
                 return Err(setup_waits(format!(
@@ -406,7 +466,9 @@ pub(crate) fn install_replicated_embedding_setup_in_txn(
             moving(wtxn, kind)?;
             EMBEDDING_SLOT.put(store, wtxn, &[kind.byte()], &space.id)?;
         }
-        EmbeddingSetup::Slot { kind, space: None } => {
+        EmbeddingSetup::Slot {
+            kind, space: None, ..
+        } => {
             moving(wtxn, kind)?;
             EMBEDDING_SLOT.delete(store, wtxn, &[kind.byte()])?;
         }
@@ -578,6 +640,12 @@ fn validate_space_id(id: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// The overlay key of `id`'s media vector row in declared space `space_id`: the `vault_meta` row
+/// a room's media door stages, which the room holds outside its byte budget (FIX 2345).
+pub(crate) fn media_vector_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
+    MEDIA_VECTOR.key_bytes(&(space_key(space_id), *id))
 }
 
 fn space_key(id: &str) -> [u8; 16] {
@@ -943,11 +1011,32 @@ impl Vault {
     /// declared space, a retirement of each space a row declares and the tables no longer do,
     /// and one per kind slot that is bound or has a row. Every writer of a declaration or a
     /// binding calls it last, and hands what it returns to
-    /// [`Self::embedding_setup_committed`] once `wtxn` commits.
+    /// [`Self::embedding_setup_committed`] once `wtxn` commits. A row it writes is a system
+    /// move's ([`Self::publish_embedding_setup_as_in_txn`]).
     pub(crate) fn publish_embedding_setup_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
     ) -> Result<BTreeSet<EntityId>> {
+        self.publish_embedding_setup_as_in_txn(wtxn, &BTreeSet::new())
+    }
+
+    /// [`Self::publish_embedding_setup_in_txn`] for an owner's door that acted on the rows
+    /// `owned` names (FIX 6697): each retirement and slot row among them names the owner, and
+    /// is written again with the owner's name even where its state holds already, as the
+    /// owner's retirement of a space a system move retired is; every other row it writes is a
+    /// system move's, and one whose state holds keeps whoever wrote it.
+    pub(crate) fn publish_embedding_setup_as_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        owned: &BTreeSet<EntityId>,
+    ) -> Result<BTreeSet<EntityId>> {
+        let by = |id: &EntityId| {
+            if owned.contains(id) {
+                SetupActor::Owner
+            } else {
+                SetupActor::System
+            }
+        };
         let mut held = BTreeMap::new();
         let ids = self
             .store
@@ -967,13 +1056,20 @@ impl Vault {
             wanted.insert(setup.id()?, setup);
         }
         for (id, setup) in &held {
-            if let EmbeddingSetup::Space(space) = setup
+            let retired = match setup {
+                EmbeddingSetup::Space(space) => Some(&space.id),
+                // A retirement holds; the owner's door names the owner on it.
+                EmbeddingSetup::Retired { id: space, .. } if owned.contains(id) => Some(space),
+                _ => None,
+            };
+            if let Some(space) = retired
                 && !wanted.contains_key(id)
             {
                 wanted.insert(
                     *id,
                     EmbeddingSetup::Retired {
-                        id: space.id.clone(),
+                        id: space.clone(),
+                        by: by(id),
                     },
                 );
             }
@@ -982,8 +1078,12 @@ impl Vault {
         for kind in InputKind::ALL {
             let space = bindings.space_for(kind).map(str::to_owned);
             let bound = space.is_some();
-            let setup = EmbeddingSetup::Slot { kind, space };
-            let id = setup.id()?;
+            let id = slot_setup_id(kind)?;
+            let setup = EmbeddingSetup::Slot {
+                kind,
+                space,
+                by: by(&id),
+            };
             if bound || held.contains_key(&id) {
                 wanted.insert(id, setup);
             }
@@ -991,7 +1091,9 @@ impl Vault {
         let mut written = BTreeSet::new();
         let mut ops = Vec::new();
         for (id, setup) in wanted {
-            if held.get(&id) == Some(&setup) {
+            if held.get(&id).is_some_and(|held| {
+                held.state() == setup.state() && (!owned.contains(&id) || *held == setup)
+            }) {
                 continue;
             }
             ops.push(BatchOp::Put {
@@ -1083,29 +1185,40 @@ impl Vault {
         kind_slot_bindings_in_txn(&self.store, &rtxn)
     }
 
-    /// Whether `space_id`'s EMBEDDING_SETUP row reads retired: the last act on that space here
-    /// retired it ([`Self::retire_embedding_space`], or a move's end). A host that seeds spaces
-    /// from its config reads it, so a listed space stays retired until a declaration through a
-    /// door names it again (FIX 1960).
-    pub fn embedding_space_retired(&self, space_id: &str) -> Result<bool> {
+    /// Whether the owner retired `space_id` through a door: its EMBEDDING_SETUP row reads
+    /// retired, by the owner ([`Self::retire_embedding_space`], or abandoning a move). A host
+    /// that seeds spaces from its config reads it, so a listed space stays retired until a
+    /// declaration through a door names it again (FIX 1960). A system move's retirement (a
+    /// timed-out or worse move's dropped candidate, a swap's backfill retiring the incumbent)
+    /// reads `false`, so the config declares the space again (FIX 6697).
+    pub fn embedding_space_retired_by_owner(&self, space_id: &str) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let row = EmbeddingSetup::Retired {
             id: space_id.to_owned(),
+            by: SetupActor::Owner,
         };
         Ok(matches!(
             self.embedding_setup_row_in_txn(&rtxn, &row)?,
-            Some(EmbeddingSetup::Retired { .. })
+            Some(EmbeddingSetup::Retired {
+                by: SetupActor::Owner,
+                ..
+            })
         ))
     }
 
-    /// Whether `kind`'s EMBEDDING_SETUP row reads its slot's default: the slot was bound and
-    /// the last act on it here returned it to its default ([`Self::unbind_kind_slot`], or a
-    /// move's undo). A host that seeds slots from its config reads it, so a listed slot stays
-    /// unbound until a binding through a door names it again (FIX 1960). A slot never bound
-    /// has no row, and reads `false`.
-    pub fn kind_slot_unbound(&self, kind: InputKind) -> Result<bool> {
+    /// Whether the owner returned `kind`'s slot to its default through a door: its
+    /// EMBEDDING_SETUP row reads the default, by the owner ([`Self::unbind_kind_slot`]). A host
+    /// that seeds slots from its config reads it, so a listed slot stays unbound until a binding
+    /// through a door names it again (FIX 1960). A slot never bound has no row, and a system
+    /// move's return to the default (an undo back to the vault's own text index) reads `false`,
+    /// so the config binds the slot again (FIX 6697).
+    pub fn kind_slot_unbound_by_owner(&self, kind: InputKind) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
-        let row = EmbeddingSetup::Slot { kind, space: None };
+        let row = EmbeddingSetup::Slot {
+            kind,
+            space: None,
+            by: SetupActor::Owner,
+        };
         Ok(self.embedding_setup_row_in_txn(&rtxn, &row)? == Some(row))
     }
 
@@ -1130,7 +1243,8 @@ impl Vault {
     pub fn bind_kind_slot(&self, kind: InputKind, space_id: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         bind_kind_slot_in_txn(&self.store, &mut wtxn, kind, space_id)?;
-        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
+        let owned = BTreeSet::from([slot_setup_id(kind)?]);
+        let setup = self.publish_embedding_setup_as_in_txn(&mut wtxn, &owned)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         Ok(())
@@ -1158,12 +1272,14 @@ impl Vault {
         for kind in &space.accepts {
             refuse_moving_slot_in_txn(&self.store, &wtxn, *kind)?;
         }
+        let mut owned = BTreeSet::new();
         for kind in InputKind::ALL {
             if space.accepts.contains(&kind) {
                 EMBEDDING_SLOT.put(&self.store, &mut wtxn, &[kind.byte()], &space.id)?;
+                owned.insert(slot_setup_id(kind)?);
             }
         }
-        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
+        let setup = self.publish_embedding_setup_as_in_txn(&mut wtxn, &owned)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         Ok(())
@@ -1175,7 +1291,8 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         refuse_moving_slot_in_txn(&self.store, &wtxn, kind)?;
         EMBEDDING_SLOT.delete(&self.store, &mut wtxn, &[kind.byte()])?;
-        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
+        let owned = BTreeSet::from([slot_setup_id(kind)?]);
+        let setup = self.publish_embedding_setup_as_in_txn(&mut wtxn, &owned)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         Ok(())
@@ -1213,8 +1330,13 @@ impl Vault {
     }
 
     /// Retires a declared space no slot binds and no open version move names: its rows and its
-    /// declaration go.
+    /// declaration go. The owner's door: its row names the owner (FIX 6697).
     pub fn retire_embedding_space(&self, space_id: &str) -> Result<()> {
+        self.retire_embedding_space_as(space_id, SetupActor::Owner)
+    }
+
+    /// [`Self::retire_embedding_space`], its retirement row naming `by` as who acted.
+    pub(crate) fn retire_embedding_space_as(&self, space_id: &str, by: SetupActor) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let bindings = kind_slot_bindings_in_txn(&self.store, &wtxn)?;
         if InputKind::ALL
@@ -1233,7 +1355,11 @@ impl Vault {
         MEDIA_VECTOR.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         MEDIA_REFUSED.delete_from(&self.store, &mut wtxn, &space_key(space_id))?;
         EMBEDDING_SPACE.delete(&self.store, &mut wtxn, &space_id.to_owned())?;
-        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
+        let owned = match by {
+            SetupActor::Owner => BTreeSet::from([space_setup_id(space_id)?]),
+            SetupActor::System => BTreeSet::new(),
+        };
+        let setup = self.publish_embedding_setup_as_in_txn(&mut wtxn, &owned)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         Ok(())

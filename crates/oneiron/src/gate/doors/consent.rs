@@ -8,7 +8,8 @@ use crate::gate::ceiling::PolicyApprovalCeiling;
 use crate::gate::constants::POLICY_SCHEMA_VERSION;
 use crate::gate::decision::{GateDecision, GateOutcome};
 use crate::gate::input::{
-    ConsentGateContext, GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles,
+    ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
+    GateContentKind, GateEvaluatorInput, GateProvenanceHandles,
 };
 use crate::gate::resolution::{
     PolicyManifestResolution, hash_bool, hash_bytes, hash_opt_str, hash_str,
@@ -44,46 +45,81 @@ impl GateConsentBinding {
         input: &GateEvaluatorInput,
         policy: &PolicyManifestResolution,
     ) -> Result<Self> {
-        let mut hasher = Sha256::new();
-        hash_bytes(&mut hasher, b"oneiron.gate.external_effect.v0");
-        hash_str(&mut hasher, &input.actor.actor_class);
-        hash_opt_str(&mut hasher, input.actor.actor_ref.as_deref());
-        match input.provenance.actor_entity_ref {
-            Some(actor_entity_ref) => {
-                hash_bool(&mut hasher, true);
-                hash_bytes(&mut hasher, actor_entity_ref.as_bytes());
-            }
-            None => hash_bool(&mut hasher, false),
-        }
-        match input.external_effect.as_ref() {
-            Some(effect) => {
-                hash_bool(&mut hasher, true);
-                hash_str(&mut hasher, effect.verb.trim());
-                hash_str(&mut hasher, effect.channel.trim());
-                hash_opt_str(&mut hasher, effect.brief_ref.as_deref());
-                hash_opt_str(&mut hasher, effect.send_ref.as_deref());
-                hash_opt_str(&mut hasher, effect.standing_grant_ref.as_deref());
-                match effect.scoped_mcp_call.as_ref() {
-                    Some(call) => {
-                        hash_bool(&mut hasher, true);
-                        hash_str(&mut hasher, &call.server);
-                        hash_str(&mut hasher, &call.tool);
-                        hash_str(&mut hasher, call.payload_data_class.as_str());
-                        hash_str(&mut hasher, &call.resolved_endpoint);
-                    }
-                    None => hash_bool(&mut hasher, false),
-                }
-                hash_bool(&mut hasher, effect.has_opted_in);
-                hash_bool(&mut hasher, effect.has_permission);
-                hash_str(&mut hasher, effect.policy_risk.as_str());
-            }
-            None => hash_bool(&mut hasher, false),
-        }
         Ok(Self {
-            diff_handle: hasher.finalize().to_vec(),
+            diff_handle: external_effect_diff_handle(input),
             read_frontier_hash: policy.read_frontier_hash()?,
         })
     }
+}
+
+/// The diff handle an external-effect decision on `input` records: its
+/// actor, verb, channel, refs, standing grant, scoped call and risk, hashed.
+fn external_effect_diff_handle(input: &GateEvaluatorInput) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hash_bytes(&mut hasher, b"oneiron.gate.external_effect.v0");
+    hash_str(&mut hasher, &input.actor.actor_class);
+    hash_opt_str(&mut hasher, input.actor.actor_ref.as_deref());
+    match input.provenance.actor_entity_ref {
+        Some(actor_entity_ref) => {
+            hash_bool(&mut hasher, true);
+            hash_bytes(&mut hasher, actor_entity_ref.as_bytes());
+        }
+        None => hash_bool(&mut hasher, false),
+    }
+    match input.external_effect.as_ref() {
+        Some(effect) => {
+            hash_bool(&mut hasher, true);
+            hash_str(&mut hasher, effect.verb.trim());
+            hash_str(&mut hasher, effect.channel.trim());
+            hash_opt_str(&mut hasher, effect.brief_ref.as_deref());
+            hash_opt_str(&mut hasher, effect.send_ref.as_deref());
+            hash_opt_str(&mut hasher, effect.standing_grant_ref.as_deref());
+            match effect.scoped_mcp_call.as_ref() {
+                Some(call) => {
+                    hash_bool(&mut hasher, true);
+                    hash_str(&mut hasher, &call.server);
+                    hash_str(&mut hasher, &call.tool);
+                    hash_str(&mut hasher, call.payload_data_class.as_str());
+                    hash_str(&mut hasher, &call.resolved_endpoint);
+                }
+                None => hash_bool(&mut hasher, false),
+            }
+            hash_bool(&mut hasher, effect.has_opted_in);
+            hash_bool(&mut hasher, effect.has_permission);
+            hash_str(&mut hasher, effect.policy_risk.as_str());
+        }
+        None => hash_bool(&mut hasher, false),
+    }
+    hasher.finalize().to_vec()
+}
+
+/// FIX 6679: whether `record` is the Gate's own decision on `effect`, one
+/// send as its dispatch prepares it: an external-effect row of its actor
+/// whose diff handle is `effect`'s binding, its send ref among it, under the
+/// standing grant the row names. Contact hydration may raise the send's
+/// risk to a hold before the Gate records it, so either risk counts; nothing
+/// else the binding hashes moves between the preparation and the record.
+pub(crate) fn external_effect_decision_on(
+    record: &GateDecisionRecord,
+    effect: &ExternalEffectGateInput,
+) -> bool {
+    if record.content_kind != GateContentKind::ExternalEffect.as_str()
+        || record.actor_class != effect.actor.actor_class
+        || record.actor_ref != effect.actor.actor_ref
+    {
+        return false;
+    }
+    let mut effect = effect.clone();
+    effect.standing_grant_ref.clone_from(&record.grant_ref);
+    [
+        ExternalEffectPolicyRisk::Normal,
+        ExternalEffectPolicyRisk::HoldToProposal,
+    ]
+    .into_iter()
+    .any(|risk| {
+        effect.policy_risk = risk;
+        external_effect_diff_handle(&effect.gate_input(None, None)) == record.diff_handle
+    })
 }
 
 // The claim-door assembler takes the full axis tuple one call site at a time

@@ -1582,7 +1582,7 @@ export class Oneiron {
       probes: {
         /** Every stored embedding space probe with its id. */
         list: (input: Facade.EmptyRequest = {}): Facade.EmbeddingSpaceProbes => this.#call(() => this.#client.vaultEmbeddingSpacesProbesList(input) as Facade.EmbeddingSpaceProbes),
-        /** Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author. */
+        /** Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author. */
         put: (input: Facade.EmbeddingSpaceProbePutRequest): Facade.EmbeddingSpaceProbe => this.#call(() => this.#client.vaultEmbeddingSpacesProbesPut(input) as Facade.EmbeddingSpaceProbe),
         /** Removes one stored embedding space probe by its id. */
         delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),

@@ -42,10 +42,11 @@ pub(crate) use self::dispatch_attempt_id::{
     connector_logical_send_ref, outbound_dispatch_attempt_id,
 };
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
+pub(crate) use self::dispatch_pipeline::outbound_gate_effect;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::dispatch_pipeline::{
     EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
-    esign_delivery_grant_in_txn,
+    esign_delivery_grant_in_txn, failure_signals_approval_digest_from_frozen_payload,
 };
 pub use self::dispatch_pipeline::{OutboundDispatchPipeline, outbound_approve_once_digest};
 pub use self::dispatch_types::{

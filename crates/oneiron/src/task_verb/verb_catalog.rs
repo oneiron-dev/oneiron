@@ -11036,7 +11036,7 @@ impl AgentVerb {
                 "Every stored embedding space probe with its id."
             }
             Self::VaultEmbeddingSpacesProbesPut => {
-                "Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."
+                "Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author."
             }
             Self::VaultEmbeddingSpacesProbesDelete => {
                 "Removes one stored embedding space probe by its id."

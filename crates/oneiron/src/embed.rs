@@ -6,6 +6,7 @@ mod locality;
 mod media;
 mod session_media;
 mod space;
+mod space_card;
 mod space_move;
 mod space_probe;
 mod turn;
@@ -22,6 +23,7 @@ pub(crate) use eligibility::{
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput};
+pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 pub use space::{
     EMBEDDING_SPACE_ID_MAX_LEN, EMBEDDING_SPACE_MAX_DIMENSIONS, EmbeddingSpace, InputKind,
@@ -44,8 +46,8 @@ pub use space_move::{
     SpaceProbeEncoder, SpaceRef,
 };
 pub use space_probe::{
-    SPACE_PROBE_MAX_TARGETS, SPACE_PROBE_QUERY_MAX_LEN, SPACE_PROBES_PER_KIND, SpaceProbe,
-    SpaceProbeAuthor, SpaceProbeReport,
+    SPACE_PROBE_COHORT_SECS, SPACE_PROBE_MAX_TARGETS, SPACE_PROBE_QUERY_MAX_LEN,
+    SPACE_PROBES_PER_KIND, SpaceProbe, SpaceProbeAuthor, SpaceProbeReport,
 };
 pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,
@@ -188,6 +190,20 @@ pub trait EgressPredicate: Send + Sync {
     /// `decide` must not call into the vault or wait on anything a vault
     /// caller can hold while it writes, or the vault's writer deadlocks.
     fn decide(&self, input: &PendingEmbeddingInput) -> EgressDecision;
+
+    /// Egress verdict for one stored document a third-party media embedder
+    /// would read: an ASSET's image or audio bytes, or a record's text
+    /// (FIX 382, [`crate::Vault::reconcile_media_embeddings_admitted`]).
+    /// Only `Allow` sends it; `Deny` and `NoVerdict` keep it home, unsent,
+    /// for a later pass. The default gives no verdict, so a gate written for
+    /// the text rung's rows keeps every stored document home.
+    ///
+    /// Called under a held read transaction: as [`Self::decide`], a
+    /// non-blocking cached lookup that never calls into the vault.
+    fn decide_media(&self, input: &MediaEmbeddingInput<'_>) -> EgressDecision {
+        let _ = input;
+        EgressDecision::NoVerdict
+    }
 }
 
 /// A configured non-OnDevice rung.

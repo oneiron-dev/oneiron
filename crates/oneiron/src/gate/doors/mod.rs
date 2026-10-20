@@ -11,11 +11,11 @@ pub(crate) use claim_write::{
     check_claim_policy_for_write, check_claim_policy_for_write_with_preflight_decision,
     check_claim_policy_for_write_with_record, claim_source_trust_admits_auto,
 };
-pub(crate) use consent::claim_consent_binding_parts;
 pub(super) use consent::{
     GateConsentBinding, claim_gate_input, enforce_gate_decision,
     gate_decision_matches_pending_candidate,
 };
+pub(crate) use consent::{claim_consent_binding_parts, external_effect_decision_on};
 #[cfg(test)]
 pub(super) use dreamer_run::dreamer_run_id_from_write_envelope;
 #[cfg(feature = "sync")]

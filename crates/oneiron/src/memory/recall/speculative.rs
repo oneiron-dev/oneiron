@@ -20,9 +20,20 @@ impl Memory<'_> {
                 "speculative session belongs to another vault",
             ));
         }
-        // The one resolution recall reads its scope by (FIX 5006).
+        // The one resolution recall reads its scope by (FIX 5006). A reader
+        // its policy denies everything reads nothing, so its facet ref is not
+        // looked up first, as recall's is not (FIX 6694).
         let selection = self.recall_selection(scope, None)?;
-        let selection = self.recall_faceted(selection, scope, None)?;
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+        let lane = match selection.worlds() {
+            Some(worlds) => lane.within_worlds(worlds.clone()),
+            None => lane,
+        };
+        let selection = if lane.read_receipt(None, 0)?.applied.deny_all {
+            selection.denied()
+        } else {
+            self.recall_faceted(selection, scope, None)?
+        };
         let mut key = self.read_key()?;
         if let Some(worlds) = &selection.worlds {
             key = key.within_worlds(worlds.clone());

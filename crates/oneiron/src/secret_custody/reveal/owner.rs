@@ -2,9 +2,9 @@
 //! owner's own read of a value.
 
 use super::{
-    OwnerSecretReveal, READER_AGENT, READER_OWNER, REVEALS, RevealAct, RevealRow, RevealTarget,
-    SECRET_REVEAL_OPERATION, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
-    SecretRevealState, append_reveal_decision_in_txn, checked_text, not_active,
+    FileSight, OwnerSecretReveal, READER_AGENT, READER_OWNER, REVEALS, RevealAct, RevealRow,
+    RevealTarget, SECRET_REVEAL_OPERATION, SecretRevealAnswer, SecretRevealAnswered,
+    SecretRevealAsk, SecretRevealState, append_reveal_decision_in_txn, checked_text, not_active,
     resolve_handle_in_txn, unknown, value_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
@@ -213,6 +213,22 @@ impl Vault {
     }
 }
 
+/// What a group's ask card adds for a read of more than one class group
+/// (FIX 6738): the read opens only once each other group is approved too,
+/// named by class word and key handles. Nothing for a read of one group.
+fn sibling_note(file: &FileSight) -> String {
+    if file.siblings.is_empty() {
+        return String::new();
+    }
+    let others = file
+        .siblings
+        .iter()
+        .map(|(class, handle)| format!("{handle} ({class})"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    format!("\nThe read opens only when each of its other key groups is approved too: {others}")
+}
+
 /// One reveal as the owner reads it. The card and the digest are there only
 /// while the ask is open.
 fn ask_view(
@@ -232,11 +248,12 @@ fn ask_view(
         let prompt = match &row.file {
             Some(file) => format!(
                 "{connection} asks to read file {} unmasked, with its keys {} ({}), for its \
-                 model: {}",
+                 model: {}{}",
                 file.artifact.to_hex(),
                 row.handle,
                 row.class,
-                row.why
+                row.why,
+                sibling_note(file)
             ),
             None => format!(
                 "{connection} asks to reveal {} ({}) to its model: {}",

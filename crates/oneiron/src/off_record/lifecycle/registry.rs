@@ -339,6 +339,18 @@ impl OffRecordSessionRegistry {
             .any(|entry| entry.published_record.load().is_some())
     }
 
+    /// The key of every live session, in key order, read from the published
+    /// snapshot as [`Self::any_live`] reads it (FIX 2345: a host pass that
+    /// binds each live room to work beside it). RAM only.
+    pub(crate) fn live_keys(&self) -> Vec<String> {
+        self.published
+            .load()
+            .iter()
+            .filter(|(_, entry)| entry.published_record.load().is_some())
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
     pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
         let sessions = self.published.load();
         for entry in sessions.values() {

@@ -25621,7 +25621,7 @@
       "crate-vis": 9,
       "enum": 3,
       "fn": 8,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 4,
       "trait": 2
      }
@@ -25698,20 +25698,23 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 6,
-      "fn": 1,
+      "crate-vis": 16,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "SessionMediaRefusals"
+     ],
      "path": "src/embed/session_media.rs",
      "purpose": "The session-aware media door (OF-370): a media vector written while a room is off record stays in the room",
      "surface": {
-      "fn": 1
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -25727,10 +25730,20 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 32,
+      "crate-vis": 39,
       "enum": 1,
       "fn": 18,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_card.rs",
+     "purpose": "What a space move's check stands on beside its paired interval (FIX 1638; ARCH-0053 `#eval-sufficiency`…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -25751,7 +25764,7 @@
      "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
      "surface": {
       "const": 5,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 9,
       "struct": 4,
@@ -25759,7 +25772,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SpaceProbe",
@@ -25769,8 +25782,8 @@
      "path": "src/embed/space_probe.rs",
      "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
      "surface": {
-      "const": 3,
-      "crate-vis": 1,
+      "const": 4,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 2,
       "trait": 1
@@ -26807,9 +26820,9 @@
      "path": "src/failure_signals.rs",
      "purpose": "Content-free, versioned tier-1 agent failure counts",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 4,
-      "fn": 10,
+      "fn": 8,
       "re-export": 5,
       "struct": 5
      }
@@ -26840,9 +26853,9 @@
      "purpose": "FIX6 code-fix exports (DEC-0005 #world-privacy-p8-tier2)",
      "surface": {
       "const": 5,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 9,
-      "fn": 5,
+      "fn": 3,
       "re-export": 1,
       "struct": 6,
       "trait": 2
@@ -26868,10 +26881,32 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/failure_signals/code_fix/queue.rs",
+     "purpose": "The sealed code-fix records' export queue: what the host reads and what a delivery acks, moved out of the…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/failure_signals/code_fix/subject.rs",
      "purpose": "What a code fix reads of the real failure behind its source: the text and every world it touched, a failure…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/count_delivery.rs",
+     "purpose": "The tier-1 aggregate's delivery side: the export a batch reads and the subtraction its delivery settles…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2
      }
     },
     {
@@ -26887,10 +26922,21 @@
      "purpose": "Delivery of the failure-signal exports to the deployment's publisher (OF-380)",
      "surface": {
       "const": 3,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 2,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/failure_signals/held.rs",
+     "purpose": "FIX 6679 (Engine 10-20 22:3x, pick B): a failure-signal batch the Gate holds for its owner carries into the…",
+     "surface": {
+      "crate-vis": 16
      }
     },
     {
@@ -28249,7 +28295,7 @@
      "path": "src/gate/doors/consent.rs",
      "purpose": "Consent binding hashes plus the pending lifecycle and enforcement matrix",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -28333,7 +28379,7 @@
      "path": "src/gate/effect/approval_target.rs",
      "purpose": "FIX 6424 (Engine 10-20 17:4x): an owner's approve-once press approves exactly one send",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -36865,7 +36911,7 @@
      "path": "src/memory/recall/selection.rs",
      "purpose": "What one recall narrows by, resolved once from its scope (FIX 2905): the worlds, projects, facet and kinds",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 18
      }
     },
     {
@@ -38852,7 +38898,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -38978,7 +39024,7 @@
      "path": "src/off_record/lifecycle/vault_api.rs",
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 10
      }
     },
@@ -40249,7 +40295,7 @@
      "path": "src/outbound/dispatch_pipeline/esign_delivery.rs",
      "purpose": "E-sign delivery authority (FIX 5238 option 3; an L02 seam that changes no existing body)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -40269,7 +40315,7 @@
      "path": "src/outbound/dispatch_pipeline/govern.rs",
      "purpose": "Gate input assembled from the canonical outbound request",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -40280,7 +40326,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 2
      }
     },
@@ -40445,7 +40491,7 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1,
       "re-export": 10
      }
@@ -47562,7 +47608,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/reveal/owner.rs",
@@ -52443,7 +52489,7 @@
      "path": "src/store/gate_decision/lookup.rs",
      "purpose": "First-match reads on the caller's gate-decision ledger transaction",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -65635,7 +65681,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -65684,7 +65730,7 @@
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
     "failure_signals": {
-     "files": 10,
+     "files": 13,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -66603,7 +66649,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4169,
+   "source_files": 4173,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69238,7 +69284,7 @@
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -69266,7 +69312,17 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/change.rs",
+     "purpose": "The change check (FIX 6680, BROWSER-SPLIT)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -69276,7 +69332,7 @@
      "path": "src/driver/handles.rs",
      "purpose": "Live handles (AB-001): every row the driver reads is minted here, once, as the outline becomes rows",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -69287,6 +69343,35 @@
      "purpose": "The answers a driver holds (Rule 5, AB-002): the observations a later one may edit, the one its caller last…",
      "surface": {
       "crate-vis": 25
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BrowserEngine"
+     ],
+     "path": "src/engine.rs",
+     "purpose": "The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt…",
+     "surface": {
+      "enum": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActionFact",
+      "ActionTarget",
+      "NoEffectReason",
+      "ViewportPoint"
+     ],
+     "path": "src/fact.rs",
+     "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…",
+     "surface": {
+      "enum": 2,
+      "struct": 2
      }
     },
     {
@@ -69352,7 +69437,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 8,
+      "re-export": 10,
       "struct": 41,
       "trait": 2
      }
@@ -69464,7 +69549,7 @@
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 22,
+      "fn": 23,
       "struct": 2
      }
     }
@@ -69499,11 +69584,25 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
+    },
+    "engine": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The engine a browser session drives (FIX 6680, BROWSER-SPLIT): every browser answer and every effect receipt…"
+    },
+    "fact": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What an act proved about its own effect (FIX 6680, BROWSER-SPLIT): a click, type, select or open whose page…"
     },
     "library": {
      "files": 1,
@@ -69557,7 +69656,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 15,
+   "source_files": 18,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -88946,7 +89045,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/schedule/managed.rs",
@@ -89499,7 +89598,7 @@
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -91243,8 +91342,10 @@
       "ActExecution",
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
+      "ActionFact",
       "ActionModePolicy",
       "ActionModeRule",
+      "ActionTarget",
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -91541,6 +91642,7 @@
       "BrowserAnswerProposeOutput",
       "BrowserAnswerScreenshotOutput",
       "BrowserAnswerWaitForOutput",
+      "BrowserEngine",
       "BudgetDenied",
       "BudgetExhaustionPolicy",
       "BudgetHoldNotice",
@@ -93223,6 +93325,7 @@
       "NearCopyFlag",
       "NeighborhoodGraphAtom",
       "NerSpan",
+      "NoEffectReason",
       "NoShowRecoveryRule",
       "NodeKind",
       "NodeMove",
@@ -94759,6 +94862,7 @@
       "VerdictMode",
       "VersionReconciliation",
       "ViewInput",
+      "ViewportPoint",
       "VisibleFilePolicy",
       "VoiceBankClipInput",
       "VoiceBankInspectRequest",
@@ -94917,8 +95021,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 888,
-      "struct": 2796
+      "enum": 891,
+      "struct": 2798
      }
     },
     {
