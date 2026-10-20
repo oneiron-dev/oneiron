@@ -33,15 +33,19 @@ use crate::{Error, LlmResponse, Result};
 /// program may read back: the run's results, and the observation of each
 /// step before it.
 pub(crate) fn shadow_readable_outputs(prefix: &CodeRunReplayRecord) -> Vec<CodeRunRawOutput> {
-    let observations: Vec<String> = (0..prefix.step_checkpoints.len() as u64)
-        .map(observation_output_path)
-        .collect();
-    prefix
+    let mut readable: Vec<CodeRunRawOutput> = prefix
         .outputs
         .iter()
-        .filter(|output| is_result_output_path(&output.path) || observations.contains(&output.path))
+        .filter(|output| is_result_output_path(&output.path))
         .cloned()
-        .collect()
+        .collect();
+    for seq in 0..prefix.step_checkpoints.len() as u64 {
+        let path = observation_output_path(seq);
+        if let Some(output) = prefix.outputs.iter().find(|output| output.path == path) {
+            readable.push(output.clone());
+        }
+    }
+    readable
 }
 
 /// Runs `prepared`'s captured step in an arm whose bodies are in `store`,

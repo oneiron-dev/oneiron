@@ -95,8 +95,8 @@ impl ShadowBodyStore {
     /// Copies in the body `body` names from `bytes`, checked against its
     /// digest and length, unless the store holds it already.
     pub(crate) fn import(&self, body: OutputRef, bytes: &[u8]) -> Result<()> {
-        self.dir()?
-            .import(&body.hash, body.byte_len, &mut &bytes[..])
+        let mut source = bytes;
+        self.dir()?.import(&body.hash, body.byte_len, &mut source)
     }
 
     /// The whole body `body` names, checked against its digest; `None` when

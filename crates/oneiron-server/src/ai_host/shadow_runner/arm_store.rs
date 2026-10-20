@@ -134,7 +134,7 @@ fn sweep(scratch: &Path) {
             continue;
         };
         if held.try_lock().is_ok()
-            && let Err(error) = std::fs::remove_dir_all(&path)
+            && let Err(error) = std::fs::remove_dir_all(path)
         {
             tracing::debug!(kind = ?error.kind(), "a stopped shadow runner's arms were not removed");
         }
