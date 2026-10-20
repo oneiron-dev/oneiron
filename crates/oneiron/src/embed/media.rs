@@ -348,7 +348,7 @@ impl Vault {
 
     /// [`Self::media_backlog_in_txn`] of the documents `gate` admits, when there is one; the
     /// others are counted [`MediaEmbedReport::withheld`].
-    fn media_backlog_where_in_txn(
+    pub(super) fn media_backlog_where_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         space: &EmbeddingSpace,
