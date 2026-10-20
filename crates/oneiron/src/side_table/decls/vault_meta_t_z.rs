@@ -149,6 +149,9 @@ side_tables! {
     TRUSTED_CONTACT_RELATION: VaultMeta b"trusted_contact.relation.v1:" Named;
     /// The trusted-contact tier the owner gave one `RouteToHelp` policy row. Key: string (row ref).
     TRUSTED_CONTACT_TIER: VaultMeta b"trusted_contact.tier.v1:" Named;
+    /// The MESSAGE rows a kept TURN lost to a window demotion (OF-534, FIX 3859), until each is
+    /// back with its PartOf edge: derived, local, never synced. Key: id16 (turn).
+    TURN_MISSING_MESSAGES: VaultMeta b"turn:missing_messages:v1:" Named;
     /// A typed body's Loro snapshot at its head. Key: id16 (entity).
     TYPED_BODY_DOC: VaultMeta b"typed_body:doc:v1:" Raw;
     /// Work on a typed body away from its head: opener, base frontier and state. Key: id16
