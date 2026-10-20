@@ -30,6 +30,7 @@ pub(super) fn erase_actor_fields_in_txn(
 ) -> Result<()> {
     IDENTITY_OPS(vault, wtxn, actor)?;
     ORIGIN_CLAIMS(vault, wtxn, actor)?;
+    crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)?;
     for scrub in crate::side_table::actor_scrubs() {
         scrub(vault, wtxn, actor)?;
     }
