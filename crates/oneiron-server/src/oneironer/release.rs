@@ -408,7 +408,10 @@ pub(crate) fn fetch_release(
 enum Staged {
     /// Staged and verified: `kept` bytes were on disk before this run,
     /// `fetched` came over the network.
-    Ready { kept: u64, fetched: u64 },
+    Ready {
+        kept: u64,
+        fetched: u64,
+    },
     NotPublished,
     Unauthorized,
 }
@@ -517,7 +520,9 @@ fn verify_placed(release: &OneironerRelease, dir: &Path) -> Result<(), Oneironer
         let path = dir.join(file);
         let digest = model_manager::sha256_file(&path).map_err(io_error("hashing", &path))?;
         if digest != pinned {
-            return Err(invalid(format!("{file} has sha256 {digest}, pinned {pinned}")));
+            return Err(invalid(format!(
+                "{file} has sha256 {digest}, pinned {pinned}"
+            )));
         }
     }
     Ok(())

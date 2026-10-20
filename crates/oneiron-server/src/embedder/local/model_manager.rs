@@ -1048,7 +1048,9 @@ pub(crate) fn fetch_resumable(
         }
         Err(_) => {
             let held = file.stream_position().unwrap_or(start);
-            Err(failed(&format!("interrupted with {held} bytes kept for the next run")))
+            Err(failed(&format!(
+                "interrupted with {held} bytes kept for the next run"
+            )))
         }
     }
 }
