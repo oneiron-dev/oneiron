@@ -17,10 +17,7 @@ use crate::error::Result;
 /// in, and the order of a change's dependencies, may differ; two changes
 /// with one id refuse. An operation kind with no typed equality here (a
 /// counter, a future kind) is never the same.
-pub(crate) fn prove_loro_equivalent(
-    expected: &[JsonChange],
-    actual: &[JsonChange],
-) -> Result<()> {
+pub(crate) fn prove_loro_equivalent(expected: &[JsonChange], actual: &[JsonChange]) -> Result<()> {
     let expected = by_id(expected)?;
     let actual = by_id(actual)?;
     let mut pairs = expected.iter().zip(&actual);

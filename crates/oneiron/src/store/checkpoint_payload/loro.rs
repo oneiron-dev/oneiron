@@ -541,8 +541,7 @@ fn fill_history<C: LoroActorCodec>(
     }
     let mut opened: BTreeMap<&str, EntityId> = BTreeMap::new();
     for atom in atoms {
-        if !holes.contains(&atom.field)
-            || opened.insert(atom.field.as_str(), atom.actor).is_some()
+        if !holes.contains(&atom.field) || opened.insert(atom.field.as_str(), atom.actor).is_some()
         {
             return Err(corrupt());
         }
