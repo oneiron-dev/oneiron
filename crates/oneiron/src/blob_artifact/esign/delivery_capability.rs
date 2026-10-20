@@ -10,20 +10,24 @@
 //!
 //! A mint runs under the send's authority as it stands under the mint
 //! writer, never under the queued row alone: the vault owner's own recorded
-//! act, or a Grant still live that covers the send, with the principal dial
+//! act or his recorded one-time press on the send (FIX 6362), or a Grant
+//! still live that covers the send, with the principal dial
 //! still permitting an automated sender. Anything short of that holds the
-//! delivery unexported with its reason; it is never dropped.
+//! delivery unexported with its reason; it is never dropped. A delivery whose
+//! document or recipient ended settles instead, unsent, with its typed reason
+//! (FIX 6363, [`super::delivery_settlement`]).
 
 use super::capability::{EsignCapability, delivered_digest_in, mint_delivery_capability_in_txn};
+use super::delivery_settlement::{EsignDeliveryEndReason, settle_ended_in_txn};
 use super::ledger::state_in;
 use super::model::*;
 use super::notice_dispatch::EsignNotice;
-use super::outbound::{EsignOutboundVerb, dispatch_marker_in};
+use super::outbound::{EsignOutboundVerb, OwnerSendAct, dispatch_marker_in};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::{EntityId, Result, Vault};
 
 /// The queue kind the vault keeps authorized e-sign mail under.
-const DELIVERY_KIND: &str = "esign.delivery";
+pub(super) const DELIVERY_KIND: &str = "esign.delivery";
 
 /// A fresh signing link for one delivery lease.
 pub struct EsignDeliveryLink {
@@ -39,6 +43,9 @@ pub enum EsignDeliveryMint {
     Minted(EsignDeliveryLink),
     /// Nothing was minted, for this reason; the delivery stays queued.
     Held(&'static str),
+    /// Nothing was minted: the delivery's document or recipient ended, so
+    /// it settled unsent with this reason (FIX 6363).
+    Settled(EsignDeliveryEndReason),
 }
 
 impl EsignNotice {
@@ -60,7 +67,9 @@ impl Vault {
     /// alone.
     /// # Errors
     /// A row whose notice is unreadable or carries no link, or a storage
-    /// failure. A delivery the mint may not serve is [`EsignDeliveryMint::Held`].
+    /// failure. A delivery the mint may not serve is [`EsignDeliveryMint::Held`];
+    /// one whose document or recipient ended settles, under this same writer,
+    /// as [`EsignDeliveryMint::Settled`].
     pub fn mint_esign_delivery_link(
         &self,
         attempt: AttemptId,
@@ -90,20 +99,19 @@ impl Vault {
                 ));
             };
             let document = EntityId::from_hex(&notice.document)?;
-            let key = match notice.transition.as_str() {
-                "reminder" => format!(
-                    "{}:reminder:{}:{dispatch_ref}",
-                    notice.document, notice.recipient
-                ),
-                _ => format!("{}:invite:{}", notice.document, notice.recipient),
-            };
-            if row.dedupe_key.as_deref() != Some(key.as_str()) {
+            if row.dedupe_key.as_deref() != Some(delivery_key(&notice, dispatch_ref).as_str()) {
                 return Ok(EsignDeliveryMint::Held(
                     "the delivery's key does not bind its notice",
                 ));
             }
+            // An end that landed after the exporter's own check settles here,
+            // under the mint's writer, so no link is minted for it.
+            let now = self.now_recorded_at();
+            if let Some(reason) = settle_ended_in_txn(self, txn, &row, &notice, now)? {
+                return Ok(EsignDeliveryMint::Settled(reason));
+            }
             let state = state_in(self, txn, document)?;
-            if let Some(reason) = unsignable(&state, &notice, self.now_recorded_at()) {
+            if let Some(reason) = unsignable(&state, &notice, now) {
                 return Ok(EsignDeliveryMint::Held(reason));
             }
             if let Some(reason) = self.delivery_unauthorized_in(txn, &notice, dispatch_ref)? {
@@ -145,9 +153,10 @@ impl Vault {
     }
 
     /// Why the send's authority no longer covers minting this delivery's
-    /// link, or `None` when it does: the vault owner's own recorded act, or
-    /// a Grant live under this writer that covers the admitted call, with an
-    /// automated sender's principal dial still at autonomous-in-envelope.
+    /// link, or `None` when it does: the vault owner's own recorded act or
+    /// his recorded one-time press on the send, or a Grant live under this
+    /// writer that covers the admitted call, with an automated sender's
+    /// principal dial still at autonomous-in-envelope.
     fn delivery_unauthorized_in(
         &self,
         txn: &heed::RwTxn<'_>,
@@ -173,11 +182,23 @@ impl Vault {
             return Ok(Some("the send's admitted call does not cover the delivery"));
         }
         // The owner's own act, recorded with his revalidated proof, covers
-        // every delivery it queued.
-        let owner_act = marker.owner_act.as_ref().is_some_and(|act| {
-            call.actor_entity_ref
-                .is_some_and(|actor| actor.to_hex() == act.actor)
-        });
+        // every delivery it queued; so does his one-time press on an agent's
+        // send, when it is the proof this same admitted call carries
+        // (FIX 6362). An agent sender is not the owner, so the press is
+        // matched by its proof, never by actor.
+        let owner_act = match &marker.owner_act {
+            Some(OwnerSendAct::Direct { actor, .. }) => call
+                .actor_entity_ref
+                .is_some_and(|entity| entity.to_hex() == *actor),
+            Some(OwnerSendAct::Approved {
+                intent_ref,
+                effect_digest,
+            }) => call.admitted_approval.is_some_and(|proof| {
+                crate::entity_id::bytes_to_hex_lower(&proof.intent_id()) == *intent_ref
+                    && proof.effect_digest().to_hex() == *effect_digest
+            }),
+            None => false,
+        };
         if owner_act {
             return Ok(None);
         }
@@ -197,12 +218,25 @@ impl Vault {
     }
 }
 
-fn notice_of(row: &AttemptRecord) -> Result<EsignNotice> {
+pub(super) fn notice_of(row: &AttemptRecord) -> Result<EsignNotice> {
     serde_json::from_slice(&row.payload).map_err(|_| invalid("notice schema"))
 }
 
+/// The dedupe key the vault queues `notice`'s invitation or reminder under,
+/// for the send `dispatch_ref` admitted.
+pub(super) fn delivery_key(notice: &EsignNotice, dispatch_ref: &str) -> String {
+    match notice.transition.as_str() {
+        "reminder" => format!(
+            "{}:reminder:{}:{dispatch_ref}",
+            notice.document, notice.recipient
+        ),
+        _ => format!("{}:invite:{}", notice.document, notice.recipient),
+    }
+}
+
 /// Why the document no longer takes `notice`'s recipient's signature, or
-/// `None` while it does.
+/// `None` while it does. An ended document or recipient has settled before
+/// this is read; what is left here holds the delivery.
 fn unsignable(state: &EsignState, notice: &EsignNotice, now: u64) -> Option<&'static str> {
     if state.status != DocumentStatus::Pending || state.rejection.is_some() {
         return Some("the document no longer takes signatures");

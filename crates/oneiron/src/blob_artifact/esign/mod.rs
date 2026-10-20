@@ -26,6 +26,8 @@ mod capability;
 mod ceremony;
 mod delivery_capability;
 pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint};
+mod delivery_settlement;
+pub use delivery_settlement::{EsignDeliveryEndReason, EsignDeliveryReceipt};
 mod ingress;
 pub use ingress::EsignIngress;
 mod door;

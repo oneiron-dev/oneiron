@@ -15,7 +15,8 @@ use sha2::{Digest, Sha256};
 const DISPATCH_MARKER: SideTable<[u8; 32], DispatchMarker, Raw> =
     SideTable::new(&side_table::ESIGN_DISPATCH_MARKER);
 /// One admitted e-sign act: the command binding it ran under and, when the
-/// vault owner made it himself, his recorded act (FIX 5238). Stored as JSON.
+/// vault owner made it himself (FIX 5238) or pressed it through once
+/// (FIX 6362), his recorded act. Stored as JSON.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct DispatchMarker {
@@ -24,13 +25,20 @@ pub(super) struct DispatchMarker {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) owner_act: Option<OwnerSendAct>,
 }
-/// The owner's own send, remind or void: his actor and the decision his
-/// revalidated proof carried.
+/// The vault owner's act an admitted e-sign act records.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct OwnerSendAct {
-    pub(super) actor: String,
-    pub(super) decision_ref: String,
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum OwnerSendAct {
+    /// His own send, remind or void: his actor and the decision his
+    /// revalidated proof carried.
+    Direct { actor: String, decision_ref: String },
+    /// His one-time press on an agent's send or reminder, as the gate spent
+    /// it admitting this act: the ledger intent the press released and the
+    /// effect digest it approved, both lower-hex (FIX 6362).
+    Approved {
+        intent_ref: String,
+        effect_digest: String,
+    },
 }
 impl RawValue for DispatchMarker {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -39,6 +47,55 @@ impl RawValue for DispatchMarker {
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         serde_json::from_slice(bytes).map_err(|_| invalid("dispatch marker schema").into())
     }
+}
+/// The owner's one-time press the gate spent admitting the e-sign act
+/// `request` carries, as the ledger row that admission committed records it:
+/// call 0 of the act's dispatch attempt, on the e-sign channel, for this
+/// act's verb, target and command `binding`. `None` when no press released
+/// it. The proof is the gate's alone; no caller supplies it.
+fn admitted_owner_press_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: &OutboundExecutionRequest<'_>,
+    binding: &str,
+) -> Result<Option<OwnerSendAct>> {
+    #[derive(Deserialize)]
+    struct Bound {
+        channel: String,
+        verb: String,
+        target: String,
+        #[serde(default)]
+        content_ref: Option<String>,
+    }
+    let attempt = crate::outbound::outbound_dispatch_attempt_id(request.intent_ref)
+        .map_err(|_| invalid("dispatch attempt id"))?;
+    let record =
+        crate::outbound_intent_ledger::read_intent_for_attempt_in_txn(vault, txn, attempt, 0)
+            .map_err(|error| match error {
+                crate::outbound_intent_ledger::IntentLedgerError::Engine(error) => error,
+                _ => invalid("dispatch ledger row"),
+            })?;
+    let Some((record, proof)) =
+        record.and_then(|record| record.admitted_approval.map(|proof| (record, proof)))
+    else {
+        return Ok(None);
+    };
+    let frozen: Bound =
+        serde_json::from_slice(record.payload()).map_err(|_| invalid("dispatch frozen call"))?;
+    let verb = request.intent.verb.as_str();
+    if record.server != "esign"
+        || record.tool != verb
+        || frozen.channel != "esign"
+        || frozen.verb != verb
+        || frozen.target != request.intent.target
+        || frozen.content_ref.as_deref() != Some(binding)
+    {
+        return Ok(None);
+    }
+    Ok(Some(OwnerSendAct::Approved {
+        intent_ref: crate::entity_id::bytes_to_hex_lower(&proof.intent_id()),
+        effect_digest: proof.effect_digest().to_hex(),
+    }))
 }
 /// The marker of the act `intent_ref` admitted, if one ran.
 pub(super) fn dispatch_marker_in(
@@ -105,14 +162,19 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 return Ok(id);
             }
             // The owner's own act is recorded with his proof, revalidated
-            // under this writer, so a delivery minted later can cite it.
+            // under this writer, so a delivery minted later can cite it. An
+            // agent's send or reminder records the owner's press the gate
+            // spent admitting it, read off the row that admission committed.
             let owner_act = match self.owner {
                 Some(owner) => {
                     let actor = super::principals::verify_owner(self.vault, txn, owner)?;
-                    (request.intent.actor == actor.to_hex()).then(|| OwnerSendAct {
+                    (request.intent.actor == actor.to_hex()).then(|| OwnerSendAct::Direct {
                         actor: actor.to_hex(),
                         decision_ref: owner.decision_id().to_hex(),
                     })
+                }
+                None if self.command.verb != EsignOutboundVerb::Void => {
+                    admitted_owner_press_in(self.vault, txn, request, binding)?
                 }
                 None => None,
             };

@@ -15,7 +15,10 @@ mod transport;
 mod vault;
 pub(super) mod verdict;
 
-pub(crate) use self::esign_delivery::{esign_delivery_call_in_txn, esign_delivery_grant_in_txn};
+pub(crate) use self::esign_delivery::{
+    esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
+    esign_delivery_grant_in_txn,
+};
 pub use self::pipeline::OutboundDispatchPipeline;
 pub(crate) use self::pipeline::RecordedDispatch;
 pub(super) use self::policy_risk::GATE_OUTCOME_PENDING;

@@ -519,7 +519,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // The proof is the Gate's ACTUAL selected tap under this writer lock,
     // not an availability observation from dispatch preparation. Spend,
     // decision, typed proof, budget marker and Pending insert commit together.
-    pending.admitted_approval = governance.admitted_mail_approval(pending.id);
+    pending.admitted_approval = governance.admitted_send_approval(pending.id);
     if pending.id != intent_id {
         return Err(IntentLedgerError::InvalidRecord(
             "prepared outbound identity changed",

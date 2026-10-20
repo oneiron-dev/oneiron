@@ -51,7 +51,12 @@
 //! again a minute later. With no ack the lease stands until it expires; then
 //! the intent is queued again, and its next claim replaces the envelope. An
 //! ack that does not echo the current lease, its link included, settles
-//! nothing. Nothing here fails an intent, so none is ever dropped. Both
+//! nothing. An invitation or reminder whose document or recipient ended
+//! before its export settles unsent, its typed reason (`document_ended`,
+//! `recipient_ended`) kept on the failed intent as the owner's receipt
+//! (FIX 6363); it is checked before any base, directory or slot check could
+//! hold it, and no envelope, ack or receipt is written for it. Nothing else
+//! here fails an intent, so none is ever dropped. Both
 //! sides write a file whole: a private temporary sibling, synced, renamed,
 //! then the directory synced. The directory is 0700 and every file 0600: a
 //! link is written only while no other user may enter it.
@@ -69,7 +74,7 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
     CompleteAttempt, RequeueAttempt,
 };
-use oneiron::blob_artifact::esign::{EsignCapability, EsignDeliveryMint};
+use oneiron::blob_artifact::esign::{EsignCapability, EsignDeliveryEndReason, EsignDeliveryMint};
 use oneiron_vault_contract::esign_delivery::{
     ESIGN_DELIVERY_FILE_PREFIX as FILE_PREFIX, ESIGN_DELIVERY_KIND as DELIVERY_KIND,
     ESIGN_DELIVERY_LEASE_OWNER as LEASE_OWNER,
@@ -163,6 +168,16 @@ struct Outbox {
     dir: PathBuf,
     /// The https base signing links are built on, or why there is none.
     signing_base: Result<String, &'static str>,
+}
+
+/// What an invitation's or reminder's envelope came to.
+enum LinkedEnvelope {
+    /// The envelope, a link minted for this lease in it.
+    Ready(Vec<u8>),
+    /// No link can be minted now, for this reason; the lease waits.
+    Held(&'static str),
+    /// The delivery's document or recipient ended: it settled unsent.
+    Settled(EsignDeliveryEndReason),
 }
 
 /// What writing one lease's envelope came to, least pressing first.
@@ -473,6 +488,13 @@ impl Outbox {
             {
                 return Ok(Published::Done);
             }
+            // An ended document or recipient settles it before a missing
+            // base, an open directory or an untaken slot could hold it.
+            if let Some(reason) =
+                vault.settle_esign_delivery_if_ended(row.id, LEASE_OWNER, row.attempt_count)?
+            {
+                return Ok(self.settled(row, &export, reason));
+            }
             None
         } else {
             let bytes = envelope_bytes(row, &export, None)?;
@@ -492,8 +514,8 @@ impl Outbox {
         let bytes = match unlinked {
             Some(bytes) => bytes,
             None => match self.linked_envelope(vault, row, &export)? {
-                Ok(bytes) => bytes,
-                Err(reason) => {
+                LinkedEnvelope::Ready(bytes) => bytes,
+                LinkedEnvelope::Held(reason) => {
                     tracing::warn!(
                         attempt = %hex(row.id.as_bytes()),
                         stem = %export.stem,
@@ -502,6 +524,7 @@ impl Outbox {
                     );
                     return Ok(Published::Held);
                 }
+                LinkedEnvelope::Settled(reason) => return Ok(self.settled(row, &export, reason)),
             },
         };
         // The sender has not seen this lease, so an ack beside it answers an
@@ -518,19 +541,20 @@ impl Outbox {
     }
 
     /// The envelope of an invitation or reminder with a link the vault
-    /// minted for this lease, or why none can be minted now.
+    /// minted for this lease, why none can be minted now, or the end its
+    /// delivery settled on under the mint's writer.
     fn linked_envelope(
         &self,
         vault: &Vault,
         row: &AttemptRecord,
         export: &Export<'_>,
-    ) -> anyhow::Result<Result<Vec<u8>, &'static str>> {
+    ) -> anyhow::Result<LinkedEnvelope> {
         let base = match &self.signing_base {
             Ok(base) => base.as_str(),
-            Err(reason) => return Ok(Err(*reason)),
+            Err(reason) => return Ok(LinkedEnvelope::Held(*reason)),
         };
         if !files::is_private(&self.dir).with_context(|| format!("stat {}", self.dir.display()))? {
-            return Ok(Err(
+            return Ok(LinkedEnvelope::Held(
                 "the outbox directory admits other users; links are written only to a 0700 one",
             ));
         }
@@ -544,10 +568,43 @@ impl Outbox {
             vault.mint_esign_delivery_link(row.id, LEASE_OWNER, row.attempt_count, &deliver)?;
         let link = match minted {
             EsignDeliveryMint::Minted(link) => link,
-            EsignDeliveryMint::Held(reason) => return Ok(Err(reason)),
+            EsignDeliveryMint::Held(reason) => return Ok(LinkedEnvelope::Held(reason)),
+            EsignDeliveryMint::Settled(reason) => return Ok(LinkedEnvelope::Settled(reason)),
         };
         let link = SigningLink::new(base, &link.capability, link.hard_expires_at);
-        Ok(Ok(envelope_bytes(row, export, Some(&link))?))
+        Ok(LinkedEnvelope::Ready(envelope_bytes(
+            row,
+            export,
+            Some(&link),
+        )?))
+    }
+
+    /// `row`'s lease settled unsent for `reason`: only an envelope naming
+    /// that lease goes, and one that cannot go now is retired next tick
+    /// with the other ended leases' files. No ack or receipt is written.
+    fn settled(
+        &self,
+        row: &AttemptRecord,
+        export: &Export<'_>,
+        reason: EsignDeliveryEndReason,
+    ) -> Published {
+        tracing::info!(
+            attempt = %hex(row.id.as_bytes()),
+            stem = %export.stem,
+            reason = reason.code(),
+            "esign delivery settled unsent: its document or recipient ended"
+        );
+        if let Err(error) = self
+            .remove_envelope_of(&export.stem, row)
+            .and_then(|()| sync_dir(&self.dir))
+        {
+            tracing::warn!(
+                %error,
+                stem = %export.stem,
+                "a settled esign delivery's envelope stays; the next tick retires it"
+            );
+        }
+        Published::Done
     }
 
     fn envelope_path(&self, stem: &str) -> PathBuf {

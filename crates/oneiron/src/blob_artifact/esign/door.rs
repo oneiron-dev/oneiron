@@ -20,6 +20,7 @@
 //!   input); the bound caller only classes the act.
 //! - `vault.esign.seal.get`: the seal task's receipts for one document
 //!   and its sealed manifest once sealing lands.
+use super::delivery_settlement::EsignDeliveryReceipt;
 use super::model::{
     DocumentStatus, EsignAuditActor, EsignDocument, EsignEventRow, RecipientState, SignatureRow,
 };
@@ -140,6 +141,8 @@ pub struct EsignDocumentView {
     pub sealed_sha256: Vec<String>,
     /// The hash-chained trail, oldest first: every event, its actor and time.
     pub audit: Vec<EsignEventRow>,
+    /// The invitations and reminders that ended unsent, oldest first (FIX 6363).
+    pub delivery_receipts: Vec<EsignDeliveryReceipt>,
 }
 
 /// The document whose recipients' signing links to mint.
@@ -391,6 +394,8 @@ impl Memory<'_> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let (state, audit, held) = super::ledger::read_in(vault, &txn, document)?;
+        let delivery_receipts =
+            super::delivery_settlement::delivery_receipts_in(vault, &txn, document)?;
         Ok(EsignDocumentView {
             document_ref: document.to_hex(),
             status: state.status,
@@ -405,6 +410,7 @@ impl Memory<'_> {
                 .map(|digest| crate::entity_id::bytes_to_hex_lower(digest.as_slice()))
                 .collect(),
             audit,
+            delivery_receipts,
         })
     }
 

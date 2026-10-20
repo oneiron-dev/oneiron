@@ -145,8 +145,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
 
     // A typed mail approval is valid only with the exact current Gate input.
     // Hostless Resume has no such context: keep Pending instead of sending on
-    // yesterday's consent. Terminal dedup returned before this branch.
-    if replayed && prepared.is_none() && record.admitted_approval.is_some() {
+    // yesterday's consent. Terminal dedup returned before this branch. An
+    // e-sign row's recorded press (FIX 6362) resumes as its sends always did.
+    if replayed
+        && prepared.is_none()
+        && record.admitted_approval.is_some()
+        && record.server == "email"
+    {
         let mut held = effect_result(&record, None, replayed, None);
         held.gate_outcome = Some("pending".into());
         held.gate_receipt_reasons

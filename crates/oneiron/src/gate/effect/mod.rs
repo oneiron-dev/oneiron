@@ -1,3 +1,4 @@
+mod admitted_approval;
 mod effect_consent;
 mod effect_contacts;
 mod effect_grants;
@@ -85,23 +86,6 @@ impl ExternalEffectGovernance {
         &self,
     ) -> Option<&connector_key::ScopedCapabilityProvenance> {
         self.scoped_capability.as_ref()
-    }
-
-    /// The actual one-send tap selected under the admission writer lock.
-    /// Its proof is persisted only if this Gate decision and Pending insertion
-    /// commit together; a preflight lookup never authors admission authority.
-    pub(crate) fn admitted_mail_approval(
-        &self,
-        intent_id: crate::outbound_intent_ledger::IntentId,
-    ) -> Option<crate::outbound_intent_ledger::AdmittedApproval> {
-        if self.approval_context != ApprovalContext::FirstAdmission
-            || !self.input.external_effect.as_ref()?.mail_approve_once
-        {
-            return None;
-        }
-        self.approve_once.as_ref().map(|tap| {
-            crate::outbound_intent_ledger::AdmittedApproval::from_gate(intent_id, tap.digest())
-        })
     }
 
     #[must_use]
@@ -266,7 +250,10 @@ pub(crate) fn evaluate_external_effect_policy(
             .is_some_and(|effect| effect.digest() == proof.effect_digest()),
         _ => false,
     };
-    if mail_retry_authorized
+    // FIX 6362: an e-sign retry on its recorded owner press (L12-B seam).
+    let esign_retry_authorized =
+        admitted_approval::esign_retry_authorized(&hydrated_effect, approval_context);
+    if (mail_retry_authorized || esign_retry_authorized)
         && let Some(bound) = requirement.as_ref()
         && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
     {
@@ -378,7 +365,7 @@ pub(crate) fn evaluate_external_effect_policy(
     } else {
         external_effect_composed_effect(&hydrated_effect)
     };
-    let approve_once = if mail_retry_authorized {
+    let approve_once = if mail_retry_authorized || esign_retry_authorized {
         None // The first admission spent it; this exact Pending retry reuses it.
     } else {
         composed
