@@ -87766,7 +87766,7 @@
      "path": "src/managed/settings.rs",
      "purpose": "The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -96074,19 +96074,24 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "OwnerPath",
+      "OwnerPathOrigin",
+      "OwnerRoots",
       "SettingsPathReason",
-      "SettingsPathRefused"
+      "SettingsPathRefused",
+      "SharedModelRoot",
+      "SharedModelRootIgnored"
      ],
      "path": "src/lib/settings_paths.rs",
      "purpose": "The owner paths of a managed vault's settings file (`--settings-file`): the leaves that name a file or…",
      "surface": {
-      "const": 4,
-      "enum": 1,
-      "fn": 6,
-      "struct": 1
+      "const": 7,
+      "enum": 3,
+      "fn": 9,
+      "struct": 4
      }
     },
     {
