@@ -1,5 +1,5 @@
 //! The relay delete guard over one vault's backup holds (FIX 1488): the
-//! adapter L14's relay locker delete takes ([`super::relay_hold_guard`]).
+//! adapter L14's relay locker delete takes ([`crate::managed::RelayDeleteHoldGuard`]).
 //!
 //! It reads the vault's standing legal holds the way backup expiry does,
 //! under the vault's writer ([`oneiron::Vault::with_backup_hold_exclusion`]),
@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use super::relay_hold_guard::{
+use crate::managed::{
     RelayDeleteDeferral, RelayDeleteHoldError, RelayDeleteHoldGuard, RelayDeleteHoldOutcome,
     RelayDeleteTarget,
 };

@@ -29,6 +29,8 @@ use subtle::ConstantTimeEq;
 use tokio::io::AsyncWriteExt;
 use zeroize::Zeroizing;
 
+pub(super) mod hold_guard;
+
 /// The relay executable must be built from the same fork revision as the
 /// engine's mesh adapter. It remains a sidecar, not another engine transport.
 pub const IROH_RELAY_REVISION: &str = "17c0612f80f78f5288e97b818b1360ae6ea0a51a";

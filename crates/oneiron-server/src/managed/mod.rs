@@ -55,6 +55,10 @@ mod relay;
 /// The cold managed restore start mode (`--restore`).
 mod restore;
 pub use relay::{IROH_RELAY_REVISION, RelayConfig, run_relay};
+pub(crate) use relay::hold_guard::{
+    RelayDeleteDeferral, RelayDeleteHoldError, RelayDeleteHoldGuard, RelayDeleteHoldOutcome,
+    RelayDeleteTarget,
+};
 mod settings;
 mod shed;
 pub(crate) use self::peer::UnixPeer;
