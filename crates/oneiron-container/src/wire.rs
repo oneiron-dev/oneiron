@@ -117,6 +117,13 @@ impl Operation {
     pub(crate) fn carries_fd(&self) -> bool {
         matches!(self, Self::Listen { .. })
     }
+
+    /// Whether this request settles what an earlier one reserved, so it
+    /// runs even after its call ended: the reserved connection goes back to
+    /// its queue rather than stay reserved until its listener ends (FIX 6789).
+    pub(crate) fn settles_reservation(&self) -> bool {
+        matches!(self, Self::AcceptFinish { .. })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]

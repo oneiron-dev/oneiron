@@ -318,8 +318,12 @@ fn serve(mut reader: UnixStream, listener: Arc<OwnedFd>, state: Arc<State>) -> i
         std::thread::spawn(move || {
             if let Ok(mut result) = completion.result.lock() {
                 let reply = result.get_or_insert_with(|| {
-                    let outcome = linux::valid(listener.as_raw_fd(), request.notification)
-                        .and_then(|()| operate(&request, &listener, &state, carried));
+                    let outcome = if request.op.settles_reservation() {
+                        operate(&request, &listener, &state, carried)
+                    } else {
+                        linux::valid(listener.as_raw_fd(), request.notification)
+                            .and_then(|()| operate(&request, &listener, &state, carried))
+                    };
                     match outcome {
                         Ok(mut reply) => {
                             reply.id = request.id;
