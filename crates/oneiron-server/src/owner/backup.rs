@@ -55,11 +55,6 @@ mod rehearse;
     reason = "L14 wires the relay locker delete through it (FIX 1488)"
 )]
 mod relay_hold;
-#[allow(
-    dead_code,
-    reason = "staged for L14, which moves it to managed/relay/hold_guard.rs (FIX 1488)"
-)]
-mod relay_hold_guard;
 mod restore;
 mod scratch;
 pub(crate) mod write_budget;
