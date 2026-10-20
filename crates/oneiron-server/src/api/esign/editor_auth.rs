@@ -15,7 +15,7 @@
 //! under its route's body limit and [`EditorBudget`]'s two slots and
 //! 60-per-minute window. A present header the registry does not admit is
 //! refused before the body; it never falls back to that anonymous door.
-use super::editor_budget::EditorBudget;
+use super::editor_budget::{EditorBudget, EditorWaitError};
 use super::*;
 use axum::extract::FromRequestParts;
 use base64::Engine as _;
@@ -120,9 +120,11 @@ impl FromRequestParts<Arc<SyncServer>> for EditorIngress {
     /// digest, purpose and expiry are checked first, then its caller's
     /// credential is re-consulted the way a live sync socket's is
     /// ([`crate::auth::CoreAuth::credential_is_live`]). An admitted request
-    /// waits its turn for a slot: no queue length, count or wait refuses it.
-    /// The caller is re-consulted once more after the wait. The token's
-    /// expiry is not checked again: an admitted upload runs to its end.
+    /// waits its turn for a slot, at most `limits.queue_wait_timeout_ms`
+    /// (then 503 `editor_waited_out`); no queue length or count refuses it.
+    /// After the wait the token is admitted again, so one that expired or
+    /// was reaped while queued admits nothing, and its caller is
+    /// re-consulted. Once it holds a slot the upload runs to its end.
     async fn from_request_parts(
         parts: &mut Parts,
         server: &Arc<SyncServer>,
@@ -142,12 +144,30 @@ impl FromRequestParts<Arc<SyncServer>> for EditorIngress {
             return Err(editor_refused("editor_caller_not_live"));
         }
         crate::http_listener::authenticated();
-        let permit = desk.budget.queue().await.ok_or_else(unavailable)?;
+        let permit = match desk.budget.queue(server.config.limits.queue_wait()).await {
+            Ok(permit) => permit,
+            Err(EditorWaitError::TimedOut) => return Err(editor_waited_out()),
+            Err(EditorWaitError::Closed) => return Err(unavailable()),
+        };
+        let caller = desk
+            .admit(presented.as_bytes())
+            .ok_or_else(|| editor_refused("editor_token_unadmitted"))?;
         if !caller.credential_is_live(server.vault()) {
             return Err(editor_refused("editor_caller_not_live"));
         }
         Ok(Self::Admitted(permit))
     }
+}
+
+/// An admitted editor POST that waited `limits.queue_wait_timeout_ms` for
+/// one of the two slots. The body is unread and nothing was started.
+fn editor_waited_out() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::RETRY_AFTER, "1")],
+        Json(serde_json::json!({"error":{"code":"editor_waited_out"}})),
+    )
+        .into_response()
 }
 
 /// A present editor header that does not admit its request: an unknown or

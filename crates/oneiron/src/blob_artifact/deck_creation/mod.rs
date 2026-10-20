@@ -39,6 +39,20 @@ pub struct DeckOutlineView {
     pub outline: DeckOutline,
     pub kept: Option<KeptOutline>,
     pub freshness: OutlineFreshness,
+    /// Why `kept` is left out although the outline has a keep. The current
+    /// outline still answers; only the frozen keep is withheld.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept_omission: Option<KeptOutlineOmissionReason>,
+}
+
+/// Why an outline read leaves out its kept outline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KeptOutlineOmissionReason {
+    /// A source the kept outline cites does not resolve under this credential.
+    SourcesUnreadable,
+    /// The kept outline's frozen bytes do not parse into sources.
+    InvalidFrozenOutline,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
