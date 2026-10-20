@@ -6,7 +6,7 @@ members = ["crates/*", "apps/macos/src-tauri"]
 # it must not be reformatted, relinted, or test-run as if it were our code.
 # See the `[patch.crates-io]` entry at the bottom of this file and
 # `crates/heed/PROVENANCE.md`.
-exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff", "crates/loro", "crates/loro/vendor/loro-1.16.2", "crates/loro/vendor/loro-internal-1.16.2"]
+exclude = ["crates/heed", "crates/heed/vendor/heed-0.20.5", "crates/heed/vendor/lmdb-master3-sys-0.2.6", "crates/paste", "crates/paste/vendor/paste-1.0.15", "crates/oneiron-docedit/vendor/stemma-engine", "crates/oneiron-docedit/vendor/stemma-diff", "crates/loro", "crates/loro/vendor/loro-1.16.2", "crates/loro/vendor/loro-internal-1.16.2"]
 
 # Limited debug information keeps file/line backtraces while reducing build CPU,
 # peak memory and target size. Tests inherit this profile. For debugger locals:
@@ -114,10 +114,13 @@ too_many_lines = "deny"
 # Same package and version (0.20.5). OF-570 (page AEAD) moved its C library to
 # mdb.master3 (`lmdb-master3-sys` 0.2.6, LMDB data format 3) for the opt-in
 # sealed-page tier, and its page cipher adds three crates already in the lock.
+# FIX 1910: that C library is vendored too (same version, features and FFI)
+# so it wipes its copy of the page key on replacement and on close.
 # Provenance, seam, SAFETY contract, and the LMDB audit are in
 # `crates/heed/PROVENANCE.md`.
 [patch.crates-io]
 heed = { path = "crates/heed/vendor/heed-0.20.5" }
+lmdb-master3-sys = { path = "crates/heed/vendor/lmdb-master3-sys-0.2.6" }
 paste = { path = "crates/paste/vendor/paste-1.0.15" }
 loro = { path = "crates/loro/vendor/loro-1.16.2" }
 loro-internal = { path = "crates/loro/vendor/loro-internal-1.16.2" }

@@ -8,12 +8,14 @@ this one reuses its pinning, ELF and kernel-archive checks.
   kernel      the vault kernel from a SHA256-pinned Linux source archive and
               this directory's kernel.config (fscrypt v2, keyring, vsock)
   rootfs      /sbin/oneiron-vault-init, the same-build /usr/bin/oneiron-server,
-              /usr/bin/oneiron-broker and /usr/bin/oneiron-vm-init, the shell
-              tools the init runs and their explicit library closure
+              /usr/bin/oneiron-broker, /usr/bin/oneiron-vm-init and
+              /usr/bin/oneiron-vm-outbox (the outbox carrier's companion), the
+              shell tools the init runs and their explicit library closure
   vault-disk  an empty ext4 vault disk with its encrypt feature and a fixed
               UUID: the vault_disk_uuid of the VM profile's provision binding
   manifest    every artifact's SHA256 and the engine revision, for the host's
-              image pin (the provision prelude's build floor)
+              image pin (the provision prelude's and the outbox carrier's
+              build floor)
 """
 from __future__ import annotations
 
@@ -40,10 +42,12 @@ _SPEC.loader.exec_module(microvm)
 # /config the optional settings drive, /etc/oneiron the UID table's tmpfs.
 DIRECTORIES = ("bin", "sbin", "usr/bin", "lib", "lib64", "usr/lib", "proc", "sys",
                "dev", "run", "tmp", "vault", "config", "etc/oneiron")
-BINARIES = ("oneiron-server", "oneiron-broker", "oneiron-vm-init")
+BINARIES = ("oneiron-server", "oneiron-broker", "oneiron-vm-init", "oneiron-vm-outbox")
 # What /sbin/oneiron-vault-init runs besides the engine's binaries.
 TOOLS = ("sh", "mount", "umount", "cat", "head", "sync", "reboot")
 PROVISION_REVISION = 1
+# The outbox carrier's wire revision (oneiron_vault_contract::vm_outbox).
+OUTBOX_WIRE_REVISION = 1
 
 
 def build_kernel(args):
@@ -184,6 +188,7 @@ def make_manifest(args):
     with output.open("x") as stream:
         json.dump({"schema": 1, "engine_revision": args.engine_revision,
                    "contract_version": 3, "provision_revision": PROVISION_REVISION,
+                   "outbox_wire_revision": OUTBOX_WIRE_REVISION,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")

@@ -31,6 +31,9 @@ use crate::owner::schedule::OwnerHost;
 /// or rehearsal names its own failure until the storage is there. One with no
 /// fscrypt policy, or whose policy cannot be read, is said too, and used as
 /// it is ([`say_if_unencrypted`]).
+///
+/// The backups' label gets its handoff policy here ([`pin_backup_handoff`]),
+/// so retention waits for the node's stage ack of each backup.
 pub(super) fn owner_host(
     config: &ServeConfig,
     rehearsal_config: oneiron::VaultConfig,
@@ -68,7 +71,43 @@ pub(super) fn owner_host(
             say_if_unencrypted(storage, dir);
         }
     }
+    pin_backup_handoff(&host.backups.dir, &host.backups.label, managed);
     host
+}
+
+/// Installs the handoff policy of the backups at `dir` labelled `label`
+/// (`oneiron_vault_contract::backup_handoff`, LC backup shipper rows): from
+/// now on retention keeps each of its backups until the node supervisor's
+/// root-stage ack names it, and prunes nothing it cannot prove staged. In a
+/// vault VM the outbox companion carries those backups and acks (FIX 5235),
+/// so it is told this same directory and label. Either step that fails is
+/// said, and the vault serves on.
+fn pin_backup_handoff(dir: &Path, label: &str, managed: &super::args::ManagedArgs) {
+    if let Err(error) =
+        oneiron_vault_contract::backup_handoff::install_backup_handoff_policy(dir, label)
+    {
+        tracing::warn!(
+            reason = "backup_handoff_policy_unavailable",
+            dir = %dir.display(),
+            error = %format!("{error:#}"),
+            "the backup handoff policy is not installed; retention prunes without the node's ack"
+        );
+        return;
+    }
+    #[cfg(target_os = "linux")]
+    if managed.vsock_guest
+        && let Err(error) = super::vm_outbox::register_backup(dir, label)
+    {
+        tracing::warn!(
+            reason = "vm_outbox_backup_unregistered",
+            dir = %dir.display(),
+            error = %format!("{error:#}"),
+            "the vault VM's outbox companion does not carry this vault's backups this start; \
+             they are kept"
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = managed;
 }
 
 /// Makes the direct Linear mirror's response custody `[linear]` names, the

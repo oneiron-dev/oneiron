@@ -17,16 +17,20 @@
 //! and consumed by rename before it is loaded, so one RAM image never resumes
 //! twice. Placement, the jailer and cgroups stay with the supervisor that
 //! runs this driver; the guest's UID is the one its provision binding names.
+//! A profile with an `outbox` binds the outbox carrier's attachment before
+//! the VMM starts (FIX 5235, `VmOutboxAttachment`): parked before a
+//! snapshot, opened on each start, drained on a stop.
 
 mod provision;
 
 use super::listener::bind_unix_socket;
 use super::vault_gates::read_managed_credentials;
+use super::vm_outbox::{VmOutboxAttachment, VmOutboxHostRoots};
 use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
     MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
-    VM_LEDGER_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
-    guest_initiated_socket, host_connect_line,
+    VM_LEDGER_PORT, VM_OUTBOX_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame,
+    encode_vm_frame, guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::vm_provision::{VmFscryptKey, VmProvisionBinding};
 use oneiron_vault_contract::{
@@ -110,6 +114,11 @@ pub struct VaultVmConfig {
     /// key's identifier. Required: a profile without a valid one never boots,
     /// and a guest that finds it contradicted refuses its provisioning.
     pub provision: VmProvisionBinding,
+    /// Where this host keeps the vault's outboxes and the carrier's records
+    /// (FIX 5235): the trees its shippers read. Without it no attachment is
+    /// bound, and the guest keeps its outbox work, deferred.
+    #[serde(default)]
+    pub outbox: Option<VmOutboxHostRoots>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -139,11 +148,13 @@ pub struct VaultVm {
     child: Option<tokio::process::Child>,
     lifecycle: Option<Lifecycle>,
     schedule: VmWakeSchedule,
+    outbox: Option<VmOutboxAttachment>,
 }
 
 impl VaultVm {
-    /// Makes the state directory and binds the boot port's host socket, both
-    /// before any VMM runs, so a guest never dials an unbound port.
+    /// Makes the state directory and binds the boot port's host socket, and
+    /// the outbox carrier's when the profile names its roots, all before any
+    /// VMM runs, so a guest never dials an unbound port.
     pub fn prepare(config: VaultVmConfig, vault: String) -> anyhow::Result<Self> {
         anyhow::ensure!(valid_vault_name(&vault), "invalid vault name");
         if let Err(fault) = config.provision.validate() {
@@ -155,6 +166,14 @@ impl VaultVm {
         let schedule = VmWakeSchedule::load(config.state_dir.join("wake-ledger.json"), &vault)?;
         let vsock = config.state_dir.join("vsock.sock");
         let boot = bind_unix_socket(&guest_initiated_socket(&vsock, VM_BOOT_PORT))?;
+        let outbox = config
+            .outbox
+            .clone()
+            .map(|roots| {
+                let socket = guest_initiated_socket(&vsock, VM_OUTBOX_PORT);
+                VmOutboxAttachment::bind(&socket, vault.clone(), roots)
+            })
+            .transpose()?;
         Ok(Self {
             config,
             vault,
@@ -162,6 +181,7 @@ impl VaultVm {
             child: None,
             lifecycle: None,
             schedule,
+            outbox,
         })
     }
 
@@ -191,6 +211,9 @@ impl VaultVm {
         fscrypt_key: &VmFscryptKey,
         timeout: Duration,
     ) -> anyhow::Result<()> {
+        if let Some(outbox) = &self.outbox {
+            outbox.resume();
+        }
         if self.has_snapshot() {
             self.restore(timeout).await
         } else {
@@ -518,6 +541,10 @@ impl VaultVm {
             self.stop(STOP_GRACE).await?;
             return Ok(SleepOutcome::Stopped { next_wake });
         }
+        // No carrier commit is in flight on this end when RAM is taken.
+        if let Some(outbox) = &self.outbox {
+            outbox.park();
+        }
         self.pause().await?;
         let (snap_tmp, mem_tmp) = (self.path("vm.snap.tmp"), self.path("vm.mem.tmp"));
         self.api(
@@ -570,7 +597,12 @@ impl VaultVm {
     }
 
     /// Asks the vault to stop and kills the VMM when the grace runs out.
+    /// The outbox attachment denies new transfers from here on and lets its
+    /// commit in flight finish; the next start opens it again.
     pub async fn stop(&mut self, grace: Duration) -> anyhow::Result<()> {
+        if let Some(outbox) = &self.outbox {
+            outbox.drain();
+        }
         if self.lifecycle.is_some() {
             let _ = self.send(&VmHostFrame::Stop).await;
         }

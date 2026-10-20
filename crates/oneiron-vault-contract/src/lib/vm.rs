@@ -17,7 +17,9 @@
 //! guest answers with the ready byte. Every later connection is the lifecycle
 //! connection: the guest opens it with [`VmGuestFrame::Join`], then both
 //! sides speak one JSON line per frame. A snapshot restore resets vsock, so
-//! the guest joins again after each one; it runs no second provision.
+//! the guest joins again after each one; it runs no second provision. The
+//! guest's outbox companion dials [`VM_OUTBOX_PORT`] on its own
+//! ([`crate::vm_outbox`]) and dials again after a reset.
 //!
 //! The provision connection rides contract version 3 with a build floor, the
 //! first engine revision that ships `oneiron-vm-init`: a host speaks it only
@@ -48,6 +50,9 @@ pub const VM_ARTIFACT_PORT: u32 = 1028;
 /// Host to guest: the vault's voice loop, when its `[models.voice]` names a
 /// socket (FIX 2391). The socket's directory is [`VM_VOICE_DIR`].
 pub const VM_VOICE_PORT: u32 = 1029;
+/// Guest to host: the outbox carrier, one persistent duplex stream that
+/// carries every outbox kind both ways (FIX 5235, `crate::vm_outbox`).
+pub const VM_OUTBOX_PORT: u32 = 1030;
 /// The owner-only directory a vault VM's `[models.voice]` socket lies in.
 pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// Where the guest mounts the vault's read-only config drive: its settings

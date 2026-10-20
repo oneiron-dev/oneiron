@@ -182,7 +182,16 @@ pub(crate) fn admit_side_parts(
 ) -> Result<bool> {
     let origins = vec![(origin(place, key)?, place); parts.len()];
     let pass = Pass::default();
-    Ok(admitted(dbs, wtxn, &origins, parts, &mut Lifted::default(), accepts, pass)?.is_some())
+    Ok(admitted(
+        dbs,
+        wtxn,
+        &origins,
+        parts,
+        &mut Lifted::default(),
+        accepts,
+        pass,
+    )?
+    .is_some())
 }
 
 /// [`admit_side_parts`], tracked (FIX 6144): the same pass, which also keeps
@@ -201,7 +210,15 @@ pub(crate) fn admit_tracked_side_parts(
         tracked: true,
         known: None,
     };
-    admitted(dbs, wtxn, &origins, parts, &mut Lifted::default(), accepts, pass)
+    admitted(
+        dbs,
+        wtxn,
+        &origins,
+        parts,
+        &mut Lifted::default(),
+        accepts,
+        pass,
+    )
 }
 
 /// How one admission runs: whether it keeps where each handle went in each
@@ -312,7 +329,8 @@ fn admitted(
         return refusal.map_or(Ok(None), Err);
     };
     let at = crate::ports::recorded_at_in_txn(custody.store, wtxn)?;
-    seed.0.adopt(plan.mint(&custody, wtxn, at)?.map(|(handle, _)| handle));
+    seed.0
+        .adopt(plan.mint(&custody, wtxn, at)?.map(|(handle, _)| handle));
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,
