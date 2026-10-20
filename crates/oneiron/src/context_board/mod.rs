@@ -80,8 +80,8 @@ pub use stream::{
     AppliedStreamState, BoardEvent, BoardRenderMode, BoardSnapshot, BoardStreamFrame,
     BoardStreamRegistry, CarrierCoalesceBuffer, CoalesceOutcome, CommittedTaskBoardState,
     DeliveryClass, DeliveryPolicy, DeltaRow, FrameApplyOutcome, FrameEnqueueOutcome, FrameKind,
-    RouteObservation, StreamConnectionId, StreamConnectionState, SubscriptionError,
-    SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
+    PendingDiaryReview, RouteObservation, StreamConnectionId, StreamConnectionState,
+    SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
 #[cfg(test)]
 mod surfaces_tests;

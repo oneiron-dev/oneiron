@@ -13,7 +13,9 @@
 //! call's next resume meets its hold again and asks then. A hold the Gate
 //! named an approve-once digest for (FIX 6424 part 3) also names that digest:
 //! the owner's press on it, at the consent door, releases exactly the call
-//! as it was prepared. The answer to the ask still grants nothing.
+//! as it was prepared. The answer to the ask still grants nothing. A newer
+//! approvable ask's question withdraws the one it replaces once it is
+//! queued, in the write that records it (FIX 6906 (c)).
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -45,6 +47,13 @@ const ASK_NAME_MAX_CHARS: usize = 120;
 
 /// The most hold reasons the ask lists.
 const ASK_MAX_REASONS: usize = 16;
+
+/// The policy hook of CALLS "FIX 6906 superseded MCP owner question"
+/// (Engine 10-21 06:3x): the question a newer approvable ask re-puts is
+/// withdrawn in the write that records the new question's arrival number,
+/// never before it queued. `false` is the earlier path, where the earlier
+/// question stays open.
+const SUPERSEDED_OWNER_ASK_WITHDRAWN: bool = true;
 
 /// The wording of a held call's owner ask: the one place it lives. It names
 /// the connector, the tool, the call ref and the hold's reason codes, says
@@ -164,18 +173,63 @@ impl Vault {
         let queued =
             self.queue_decision_ask(&connector_call_ask(call_ref, principal, &pending, reasons));
         let seq = queued.as_ref().ok().copied();
-        self.with_write_txn(|txn| {
+        let withdrawn = self.with_write_txn(|txn| {
             let Some(mut row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
-                return Ok(());
+                return Ok(None);
             };
             if row.settled.is_some() || row.owner_ask_seq.is_some() {
-                return Ok(());
+                return Ok(None);
             }
             row.held_reasons = reasons.to_vec();
             row.owner_ask_seq = seq;
-            PENDING_CALLS.put(&self.store, txn, call_ref, &row)
+            let withdrawn = self.withdraw_superseded_ask_in_txn(txn, call_ref, &mut row, seq);
+            PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
+            Ok(withdrawn)
         })?;
+        // Its waiters wake once the withdrawal committed.
+        if let Some(superseded) = withdrawn {
+            self.signal_decision_answer(superseded);
+        }
         Ok(Some(queued?))
+    }
+
+    /// FIX 6906 (c): in the write that records `seq`, the newly queued
+    /// question of the held call `row`, withdraws the earlier question that
+    /// a newer approvable ask replaced, and clears it from the row either
+    /// way, so it is never retried. Returns it when the withdrawal closed
+    /// it, for its waiters' signal once the write committed. A question that
+    /// did not queue withdraws nothing and keeps it for the repair pass's
+    /// later queue. A withdrawal that fails is logged and the write goes on
+    /// as it would without it.
+    fn withdraw_superseded_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        call_ref: &EntityId,
+        row: &mut PendingConnectorCall,
+        seq: Option<u64>,
+    ) -> Option<u64> {
+        if !SUPERSEDED_OWNER_ASK_WITHDRAWN {
+            return None;
+        }
+        let new = seq?;
+        let superseded = row.approval.as_mut()?.superseded_ask_seq.take()?;
+        if superseded == new {
+            return None;
+        }
+        match self.withdraw_decision_ask_in_txn(txn, superseded) {
+            Ok(withdrawn) => withdrawn.then_some(superseded),
+            Err(error) => {
+                tracing::warn!(
+                    reason = "connector_call_superseded_ask_not_withdrawn",
+                    call = %call_ref.to_hex(),
+                    ask = superseded,
+                    error = %error,
+                    "the owner question a newer approvable ask replaced was not withdrawn; the \
+                     newer question is recorded as before"
+                );
+                None
+            }
+        }
     }
 
     /// Queues the owner ask of every held call whose ask was tried and did
