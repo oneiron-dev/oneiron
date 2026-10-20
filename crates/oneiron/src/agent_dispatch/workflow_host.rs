@@ -104,6 +104,13 @@ impl AgentDispatcher<'_> {
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
         let status = AgentDispatchStatus { attempt, input };
+        // A member's run reads its context on their own grants (FIX 5416),
+        // judged at the grant clock persisted here, before that read.
+        if let Some(task) = &record.intent.task
+            && task.payer_required
+        {
+            self.vault.store.authorization_now()?;
+        }
         let context = self.resolve_attempt_context(status.attempt.id)?;
         let result = execute(&status, context)?;
         let mut txn = self.vault.store.env.write_txn()?;

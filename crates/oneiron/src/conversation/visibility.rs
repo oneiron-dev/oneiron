@@ -217,10 +217,11 @@ impl AudienceCache {
                     // never wider than from its entry into this room. A live
                     // Ready receipt for the room is current standing too
                     // (OF-417); it is re-proved here, never cached, and so
-                    // is a private thread's Owner or Admin (FIX 5638).
-                    if !membership::windows_rows(rows, *person)?
-                        .iter()
-                        .any(|w| w.contains(h.occurred_start))
+                    // is a private thread's Owner or Admin with no seat here
+                    // (FIX 5638): a seated one keeps its window (FIX 6268).
+                    let windows = membership::windows_rows(rows, *person)?;
+                    let seated = windows.last().is_some_and(|window| window.to.is_none());
+                    if !windows.iter().any(|w| w.contains(h.occurred_start))
                         && !attendee::speaker_entry_covers_in(
                             vault,
                             txn,
@@ -231,7 +232,8 @@ impl AudienceCache {
                         && !crate::workspace_roster::room_join_audience_in(
                             vault, txn, room, *person,
                         )?
-                        && !privileged_thread_reader_in(vault, txn, room, record, *person)?
+                        && (seated
+                            || !privileged_thread_reader_in(vault, txn, room, record, *person)?)
                     {
                         return Ok(false);
                     }
