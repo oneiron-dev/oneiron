@@ -119,6 +119,7 @@ mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
+pub mod usage_repair;
 mod web_fetch;
 mod witness;
 
