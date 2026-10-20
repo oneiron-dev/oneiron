@@ -344,6 +344,8 @@ fn elect_in_txn(
     if previous.as_ref().map(|home| (home.node_id, home.class))
         == designation.as_ref().map(|home| (home.node_id, home.class))
     {
+        #[cfg(feature = "sync")]
+        retry_home_move_in_txn(store, txn, previous.map(|home| home.node_id));
         return Ok((previous, false));
     }
     if let Some(designation) = designation {
@@ -351,7 +353,69 @@ fn elect_in_txn(
     } else {
         HOME_NODE.delete(store, txn, &())?;
     }
+    #[cfg(feature = "sync")]
+    request_home_move_in_txn(
+        store,
+        txn,
+        previous.map(|home| home.node_id),
+        designation.map(|home| home.node_id),
+    );
     Ok((designation, true))
+}
+
+/// FIX 5661: records with the home-state carrier (`sync::home_handoff`) that
+/// this election moved the home from sync node `from` to `to`, so the old
+/// home drains its free-time state and hands it to the new one. Only the
+/// request rides the election's writer, in a savepoint: no export or signing
+/// runs here, and a request that fails is logged and never refuses the
+/// election. The next election of this node records it again
+/// ([`retry_home_move_in_txn`]).
+#[cfg(feature = "sync")]
+fn request_home_move_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    from: Option<u64>,
+    to: Option<u64>,
+) {
+    if let Err(error) = record_home_move_in_txn(store, txn, from, to) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            ?from,
+            ?to,
+            "the MACRO home moved with no drain request recorded; the next election records it"
+        );
+    }
+}
+
+#[cfg(feature = "sync")]
+fn record_home_move_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    from: Option<u64>,
+    to: Option<u64>,
+) -> Result<()> {
+    let mut savepoint = store.env.nested_write_txn(txn)?;
+    crate::sync::home_handoff::request_move_in_txn(store, &mut savepoint, from, to)?;
+    savepoint.commit()?;
+    Ok(())
+}
+
+/// FIX 5661: an election that moved nothing records a move the carrier has
+/// not heard of. The last request the carrier holds names the node the home
+/// moved to then; when this election's home is another, a later move went
+/// unrecorded, and it moved from that node to this home.
+#[cfg(feature = "sync")]
+fn retry_home_move_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, home: Option<u64>) {
+    match crate::sync::home_handoff::pending_move_in_txn(store, txn) {
+        Ok(Some((_, to))) if to != home => request_home_move_in_txn(store, txn, to, home),
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the MACRO home's drain request did not read; the next election reads it again"
+            );
+        }
+    }
 }
 
 fn elect_home_node_designation(

@@ -923,6 +923,7 @@ vaultEsignCreate(input: unknown): unknown
 vaultEsignGet(input: unknown): unknown
 vaultEsignLinksIssue(input: unknown): unknown
 vaultEsignSendForSignature(input: unknown): unknown
+vaultEsignNoticesDispatch(input: unknown): unknown
 vaultEsignRemind(input: unknown): unknown
 vaultEsignVoid(input: unknown): unknown
 vaultEsignSigningAct(input: unknown): unknown
