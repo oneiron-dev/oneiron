@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1075 facade rows, 3659 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1027.
+// UniFFI census: 1076 facade rows, 3662 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1028.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -38489,6 +38489,32 @@ pub struct RoomThreadWait {
     pub until: Option<u64>,
 }
 
+/// `oneiron::workspace_roster::rooms::liveness::RoomThreadAudienceOp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RoomThreadAudienceOp {
+    #[serde(rename = "walk_in")]
+    WalkIn,
+    #[serde(rename = "open_full_history")]
+    OpenFullHistory,
+}
+
+/// `oneiron::workspace_roster::rooms::liveness::RoomThreadAudienceEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RoomThreadAudienceEvent {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "op")]
+    pub op: RoomThreadAudienceOp,
+    #[serde(
+        rename = "person_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_ref: Option<String>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
 /// `oneiron::workspace_roster::rooms::liveness::RoomThread`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct RoomThread {
@@ -38514,6 +38540,14 @@ pub struct RoomThread {
         skip_serializing_if = "Option::is_none"
     )]
     pub converted_project: Option<String>,
+    #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
+    pub audience: Option<Vec<String>>,
+    #[serde(
+        rename = "audience_events",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audience_events: Option<Vec<RoomThreadAudienceEvent>>,
 }
 
 /// `oneiron::workspace_roster::rooms::RoomTrunkHeader`.
@@ -38670,6 +38704,16 @@ pub struct ThreadAudienceReceipt {
     pub thread_ref: String,
     #[serde(rename = "event_ref")]
     pub event_ref: String,
+    #[serde(rename = "history", default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<ThreadAudienceHistory>,
+}
+
+/// `oneiron::workspace_roster::rooms::audience_history::ThreadAudienceOpenFullHistoryRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ThreadAudienceOpenFullHistoryRequest {
+    #[serde(rename = "thread_ref")]
+    pub thread_ref: String,
 }
 
 /// `oneiron::workspace_roster::rooms::audience_doors::ThreadAudienceRemoveRequest`.

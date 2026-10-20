@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
+use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
 use crate::store::Store;
 
 use super::anchor::{anchor_record, anchored_position, verified_position};
@@ -40,6 +41,7 @@ use super::identity::{
 };
 use super::log::{Control, CustodyPosition, FrameHeader, LogEntry, frame_hash, open_frame};
 use super::protocol::{AnchorAdvance, AnchorStore, CustodySource, Lineage};
+use super::recipients::RecipientRetirement;
 
 /// What a restore with no anchor configured says about the head it used
 /// (Engine 10-20 04:0x).
@@ -160,6 +162,11 @@ pub(crate) struct AdmittedCustody {
     retired_through: BTreeMap<CustodySubject, u64>,
     /// The anchor record admission read; `None` with no anchor configured.
     anchor: Option<Vec<u8>>,
+    /// The head's own position, before its anchor reconciled it.
+    head: CustodyPosition,
+    /// The released escrow recipients the lineage retired, by fingerprint:
+    /// the head's, and the log's after it (LC FIX 5384/5385).
+    recipients: BTreeMap<[u8; 32], RecipientRetirement>,
 }
 
 impl AdmittedCustody {
@@ -185,63 +192,103 @@ fn chain(
     lineage: Lineage,
     from: &CustodyPosition,
     to: &CustodyPosition,
-) -> Result<Vec<Vec<u8>>> {
+) -> std::result::Result<Vec<Vec<u8>>, Rejected> {
     let mut tip = from.tip;
     let mut frames = Vec::new();
     for seq in from.seq.saturating_add(1)..=to.seq {
         let frame = source.frame(lineage, seq)?.ok_or_else(|| {
-            refused("the custody log beside the backup is missing a frame".into())
+            Rejected::new(
+                R::CustodyLogIncomplete,
+                refused("the custody log beside the backup is missing a frame".into()),
+            )
         })?;
-        let (header, _): (FrameHeader, _) = FrameHeader::parse(&frame)?;
+        let (header, _): (FrameHeader, _) =
+            FrameHeader::parse(&frame).map_err(because(R::CodecInvalid))?;
         if header.seq != seq
             || header.prev != tip
             || header.epoch > to.epoch
             || header.vault != lineage.vault
             || header.namespace != lineage.namespace
         {
-            return Err(refused(
-                "the custody log beside the backup does not chain".into(),
-            ));
+            return Err(diverged());
         }
         tip = frame_hash(&frame);
         frames.push(frame);
     }
     if tip != to.tip {
-        return Err(refused(
-            "the custody log beside the backup does not chain".into(),
-        ));
+        return Err(diverged());
     }
     Ok(frames)
+}
+
+fn diverged() -> Rejected {
+    Rejected::new(
+        R::CustodyDiverged,
+        refused("the custody log beside the backup does not chain".into()),
+    )
+}
+
+/// A frame of the lineage opened under its control secret: one that does
+/// not parse is a codec failure, one that does not open is another
+/// lineage's.
+fn open_lineage_frame(control: &Control, frame: &[u8]) -> std::result::Result<LogEntry, Rejected> {
+    open_frame(control, frame)
+        .map(|(_, entry)| entry)
+        .map_err(|error| match error {
+            Error::CorruptedIndex(_) => Rejected::new(R::CodecInvalid, error),
+            error => Rejected::new(R::CustodyDiverged, error),
+        })
 }
 
 /// Admits the custody `required` names from `source`, opened with
 /// `opener`, against `anchor` when one is configured. Refuses a missing
 /// head; with an anchor, a missing or stale anchor record; and a bad seal,
-/// lineage, chain or coverage.
+/// lineage, chain or coverage. Each refusal names its reason beside the
+/// error it always returned.
 pub(crate) fn admit_recovery(
     required: &CustodyRequirement,
     source: &dyn CustodySource,
     opener: &CustodyOpener<'_>,
     anchor: Option<&dyn AnchorStore>,
-) -> Result<AdmittedCustody> {
-    let wanted = required.position()?;
+) -> std::result::Result<AdmittedCustody, Rejected> {
+    let wanted = required
+        .position()
+        .map_err(because(R::CustodyRequirementInvalid))?;
     let lineage = Lineage::of(&wanted);
-    let record =
-        match anchor {
-            Some(anchor) => Some(anchor.read(lineage.vault, lineage.namespace)?.ok_or_else(
-                || refused("the custody anchor holds no record of this vault's custody".into()),
-            )?),
-            None if CUSTODY_ANCHOR_UNSET_RESTORE => None,
-            None => return Err(refused(ROLLBACK_NOT_PROVEN.into())),
-        };
-    let head = source
-        .head(lineage)?
-        .ok_or_else(|| refused("no custody head of this vault is beside the backup".into()))?;
-    let opened: OpenedHead = open_head(&head, opener)?;
+    let record = match anchor {
+        Some(anchor) => Some(
+            anchor
+                .read(lineage.vault, lineage.namespace)
+                .map_err(because(R::AnchorUnavailable))?
+                .ok_or_else(|| {
+                    Rejected::new(
+                        R::AnchorMissing,
+                        refused(
+                            "the custody anchor holds no record of this vault's custody".into(),
+                        ),
+                    )
+                })?,
+        ),
+        None if CUSTODY_ANCHOR_UNSET_RESTORE => None,
+        None => {
+            return Err(Rejected::new(
+                R::AnchorMissing,
+                refused(ROLLBACK_NOT_PROVEN.into()),
+            ));
+        }
+    };
+    let head = source.head(lineage)?.ok_or_else(|| {
+        Rejected::new(
+            R::CustodyHeadInvalid,
+            refused("no custody head of this vault is beside the backup".into()),
+        )
+    })?;
+    let opened: OpenedHead = open_head(&head, opener).map_err(because(R::CustodyHeadInvalid))?;
     drop(head);
     if !opened.position.same_lineage(&wanted) {
-        return Err(refused(
-            "the custody head beside the backup is another vault's".into(),
+        return Err(Rejected::new(
+            R::CustodyLineageMismatch,
+            refused("the custody head beside the backup is another vault's".into()),
         ));
     }
     let control = Control::for_secret(opened.control);
@@ -254,13 +301,21 @@ pub(crate) fn admit_recovery(
         retired: opened.retired,
         retired_through: BTreeMap::new(),
         anchor: None,
+        head: opened.position,
+        recipients: opened
+            .recipients
+            .into_iter()
+            .map(|fact| (fact.fingerprint, fact))
+            .collect(),
     };
     if let Some(record) = record {
-        let anchored = verified_position(&record, &control.anchor_key())?;
+        let anchored =
+            verified_position(&record, &control.anchor_key()).map_err(because(R::AnchorInvalid))?;
         let head = admitted.position;
         if !anchored.same_lineage(&head) {
-            return Err(refused(
-                "the custody anchor record is another vault's".into(),
+            return Err(Rejected::new(
+                R::CustodyLineageMismatch,
+                refused("the custody anchor record is another vault's".into()),
             ));
         }
         let epoch = head.epoch.max(anchored.epoch);
@@ -272,7 +327,7 @@ pub(crate) fn admit_recovery(
             // The head is older than its anchor: the retirements after it
             // still apply, and a key minted after it is not in it.
             for frame in chain(source, lineage, &head, &anchored)? {
-                match open_frame(&control, &frame)?.1 {
+                match open_lineage_frame(&control, &frame)? {
                     LogEntry::Retire {
                         subject, through, ..
                     } => {
@@ -285,12 +340,16 @@ pub(crate) fn admit_recovery(
                     LogEntry::Mint(id) => {
                         minted_after.insert(id);
                     }
+                    LogEntry::RetireRecipient(fact) => {
+                        admitted.recipients.insert(fact.fingerprint, fact);
+                    }
                 }
             }
             admitted.position = anchored;
         } else {
-            return Err(refused(
-                "the custody head and its anchor have diverged".into(),
+            return Err(Rejected::new(
+                R::CustodyDiverged,
+                refused("the custody head and its anchor have diverged".into()),
             ));
         }
         admitted.position.epoch = epoch;
@@ -299,42 +358,56 @@ pub(crate) fn admit_recovery(
     // The image's position is the admitted one, or its ancestor.
     let current = admitted.position;
     if wanted.seq > current.seq || wanted.epoch > current.epoch {
-        return Err(refused(
-            "the custody head is older than the backup: it cannot hold every key the backup needs"
-                .into(),
+        return Err(Rejected::new(
+            R::CustodyHeadTooOld,
+            refused(
+                "the custody head is older than the backup: it cannot hold every key the backup \
+                 needs"
+                    .into(),
+            ),
         ));
     }
     if wanted.seq == current.seq {
         if wanted.tip != current.tip {
-            return Err(refused(
-                "the custody head and the backup have diverged".into(),
+            return Err(Rejected::new(
+                R::CustodyDiverged,
+                refused("the custody head and the backup have diverged".into()),
             ));
         }
     } else {
         chain(source, lineage, &wanted, &current)?;
     }
     let missing: Vec<CustodyId> = required
-        .ids()?
+        .ids()
+        .map_err(because(R::CustodyRequirementInvalid))?
         .into_iter()
         .filter(|id| !admitted.live.contains_key(id) && !admitted.retires(id))
         .collect();
     if !missing.is_empty() {
         let count = missing.len();
-        return Err(refused(
-            if missing.iter().any(|id| minted_after.contains(id)) {
+        let (reason, message) = if missing.iter().any(|id| minted_after.contains(id)) {
+            (
+                R::CustodyHeadTooOld,
                 format!(
                     "{count} key(s) the backup needs were minted after the newest custody head \
                      beside it"
-                )
-            } else if opened.unopened.is_empty() {
-                format!("the custody head does not hold {count} key(s) the backup needs")
-            } else {
+                ),
+            )
+        } else if opened.unopened.is_empty() {
+            (
+                R::CustodyKeyMissing,
+                format!("the custody head does not hold {count} key(s) the backup needs"),
+            )
+        } else {
+            (
+                R::CustodyOwnerKeyRequired,
                 format!(
                     "the custody head holds {count} key(s) the backup needs in a compartment only \
                      the recovery kit opens: restore with --unlock kit"
-                )
-            },
-        ));
+                ),
+            )
+        };
+        return Err(Rejected::new(reason, refused(message)));
     }
     Ok(admitted)
 }
@@ -370,7 +443,14 @@ pub(crate) fn land_recovery(
         let control = Control::taken_over(admitted.control.clone(), &admitted.position)?;
         let journal = custody.journal()?;
         journal.install(&control)?;
-        if !admitted.retired.is_empty() || !admitted.retired_through.is_empty() {
+        // The released recipients the lineage retired stay retired in it.
+        for fact in admitted.recipients.values() {
+            journal.put_recipient_fact(fact)?;
+        }
+        if !admitted.retired.is_empty()
+            || !admitted.retired_through.is_empty()
+            || !admitted.recipients.is_empty()
+        {
             journal.record_takeover(&CustodyPosition {
                 epoch: control.epoch,
                 ..admitted.position
@@ -390,30 +470,62 @@ pub(crate) fn land_recovery(
 /// Advances the anchor admission read to the next writer epoch at the
 /// admitted position, fencing the lineage's old writer. Refused when the
 /// anchor moved since admission: a retirement may have completed there.
-pub(crate) fn fence_takeover(admitted: &AdmittedCustody, anchor: &dyn AnchorStore) -> Result<()> {
+pub(crate) fn fence_takeover(
+    admitted: &AdmittedCustody,
+    anchor: &dyn AnchorStore,
+) -> std::result::Result<(), Rejected> {
     let Some(record) = &admitted.anchor else {
         return Ok(());
     };
-    let control = Control::taken_over(admitted.control.clone(), &admitted.position)?;
-    let taken = CustodyPosition {
-        epoch: control.epoch,
-        ..admitted.position
-    };
-    let current = anchored_position(record)?;
+    let (taken, control) = admitted.taken_over()?;
+    let current = anchored_position(record).map_err(because(R::AnchorInvalid))?;
     if !current.same_lineage(&taken) {
-        return Err(refused(
-            "the custody anchor record is another vault's".into(),
+        return Err(Rejected::new(
+            R::CustodyLineageMismatch,
+            refused("the custody anchor record is another vault's".into()),
         ));
     }
-    match anchor.advance(
-        Some(*blake3::hash(record).as_bytes()),
-        &anchor_record(&taken, &control),
-    )? {
+    match anchor
+        .advance(
+            Some(*blake3::hash(record).as_bytes()),
+            &anchor_record(&taken, &control),
+        )
+        .map_err(because(R::AnchorUnavailable))?
+    {
         AnchorAdvance::Advanced => Ok(()),
-        AnchorAdvance::Moved => Err(refused(
-            "this vault's custody moved on while the restore ran; run the restore again".into(),
+        AnchorAdvance::Moved => Err(Rejected::new(
+            R::AnchorMoved,
+            refused(
+                "this vault's custody moved on while the restore ran; run the restore again".into(),
+            ),
         )),
     }
+}
+
+impl AdmittedCustody {
+    /// The admitted position at the next writer epoch, and that epoch's
+    /// control state: the takeover a landing journals at and a fence
+    /// advances the anchor to.
+    fn taken_over(&self) -> Result<(CustodyPosition, Control)> {
+        let control = Control::taken_over(self.control.clone(), &self.position)?;
+        let taken = CustodyPosition {
+            epoch: control.epoch,
+            ..self.position
+        };
+        Ok((taken, control))
+    }
+}
+
+/// What a cold managed restore reports of a landing (LC FIX 5384/5385):
+/// positions, the takeover writer epoch and anchor record digests, public
+/// structure only.
+pub(crate) struct LandingFacts {
+    pub(crate) head: CustodyPosition,
+    pub(crate) admitted: CustodyPosition,
+    pub(crate) takeover_epoch: u64,
+    pub(crate) anchor_read: Option<[u8; 32]>,
+    pub(crate) anchor_advanced: Option<[u8; 32]>,
+    pub(crate) retired_ids: usize,
 }
 
 /// Where a restore that keeps its image's custody takes it from.
@@ -457,11 +569,38 @@ impl CustodyLanding {
 
     /// With an anchor configured (the one admission read), fences the
     /// lineage's old writer before the restore is kept.
-    pub(crate) fn fence(&self, anchor: Option<&dyn AnchorStore>) -> Result<()> {
+    pub(crate) fn fence(
+        &self,
+        anchor: Option<&dyn AnchorStore>,
+    ) -> std::result::Result<(), Rejected> {
         match anchor {
             Some(anchor) => fence_takeover(&self.admitted, anchor),
             None => Ok(()),
         }
+    }
+
+    /// The landing's positions, takeover epoch and anchor records, for a
+    /// cold managed restore's receipt.
+    pub(crate) fn facts(&self) -> Result<LandingFacts> {
+        let admitted = &self.admitted;
+        let (taken, control) = admitted.taken_over()?;
+        let digest = |record: &[u8]| *blake3::hash(record).as_bytes();
+        Ok(LandingFacts {
+            head: admitted.head,
+            admitted: admitted.position,
+            takeover_epoch: taken.epoch.get(),
+            anchor_read: admitted.anchor.as_deref().map(digest),
+            anchor_advanced: admitted
+                .anchor
+                .as_ref()
+                .map(|_| digest(&anchor_record(&taken, &control))),
+            retired_ids: admitted.retired.len() + admitted.retired_through.len(),
+        })
+    }
+
+    /// The released escrow recipients the admitted lineage retired.
+    pub(crate) fn retired_recipients(&self) -> Vec<RecipientRetirement> {
+        self.admitted.recipients.values().cloned().collect()
     }
 
     /// The restore is kept, and its custody with it.
@@ -511,6 +650,29 @@ fn legacy_binding_absent(rows: &mut Vec<(Vec<u8>, Vec<u8>)>) -> Result<bool> {
     }
 }
 
+/// A cold managed restore's check before its route (LC FIX 5384/5385): the
+/// custody the image's rows bind is the lineage its manifest requires. No
+/// other restore asks it.
+pub(crate) fn refuse_foreign_binding(
+    rows: &[(Vec<u8>, Vec<u8>)],
+    required: Option<&CustodyRequirement>,
+) -> std::result::Result<(), Rejected> {
+    let bound = super::binding_in_rows(rows).map_err(because(R::CustodyRequirementInvalid))?;
+    let (Some(bound), Some(required)) = (bound, required) else {
+        return Ok(());
+    };
+    let wanted = required
+        .position()
+        .map_err(because(R::CustodyRequirementInvalid))?;
+    if bound.vault() != wanted.vault || bound.namespace() != wanted.namespace {
+        return Err(Rejected::new(
+            R::CustodyLineageMismatch,
+            refused("the backup's custody binding is not the lineage its manifest requires".into()),
+        ));
+    }
+    Ok(())
+}
+
 /// The route a restore that keeps its image's custody takes, decided on the
 /// image's `rows` before anything is made at `destination`. A landed head
 /// rebinds the image's binding row beside `destination` in `rows`, so the
@@ -530,8 +692,10 @@ pub(crate) fn route_custody(
     destination: &std::path::Path,
     data_key: Zeroizing<[u8; 32]>,
     source: Option<&CustodySourceAt<'_>>,
-) -> Result<CustodyRoute> {
-    let Some(bound) = super::binding_in_rows(rows)? else {
+) -> std::result::Result<CustodyRoute, Rejected> {
+    let Some(bound) =
+        super::binding_in_rows(rows).map_err(because(R::CustodyRequirementInvalid))?
+    else {
         return Ok(if legacy_binding_absent(rows)? {
             CustodyRoute::Absent
         } else {
@@ -547,11 +711,14 @@ pub(crate) fn route_custody(
     let Some(required) = required else {
         return Ok(CustodyRoute::Absent);
     };
+    let wanted = required
+        .position()
+        .map_err(because(R::CustodyRequirementInvalid))?;
     let target = FolderTarget::at(source.folder.to_path_buf());
     // No head beside the backup: an image that needs no live key has
     // nothing for one to recover, and with no anchor configured nothing
     // says one is owed. With an anchor, admission refuses (fail-closed).
-    if target.head(Lineage::of(&required.position()?))?.is_none()
+    if target.head(Lineage::of(&wanted))?.is_none()
         && (required.required.is_empty() || source.anchor.is_none())
     {
         return Ok(CustodyRoute::Absent);
@@ -561,29 +728,37 @@ pub(crate) fn route_custody(
         data_key: Some(data_key),
     };
     let admitted = admit_recovery(required, &target, &opener, source.anchor)?;
+    let landing = |error: Error| {
+        let reason = match error {
+            Error::Io(_) | Error::Storage(_) => R::StorageIo,
+            _ => R::CustodyLandingFailed,
+        };
+        Rejected::new(reason, error)
+    };
     // The restored vault opens at its canonical root: its parent resolved,
     // its own name as made.
     let name = destination
         .file_name()
-        .ok_or_else(|| refused("the restore destination has no name".into()))?;
+        .ok_or_else(|| refused("the restore destination has no name".into()))
+        .map_err(landing)?;
     let parent = destination
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(std::path::Path::new("."));
-    let root = parent.canonicalize()?.join(name);
+    let root = parent.canonicalize().map_err(Error::from)?.join(name);
     if super::custody_present(&root)? {
-        return Err(refused(
+        return Err(landing(refused(
             "key custody already exists beside the restore destination; restore elsewhere".into(),
-        ));
+        )));
     }
     let binding = bound.rebind_to(root);
-    let landed = land_recovery(&admitted, &binding)?;
+    let landed = land_recovery(&admitted, &binding).map_err(landing)?;
     let landing = Box::new(CustodyLanding {
         landed: Some(landed),
         admitted,
     });
     let raw = crate::side_table::RawValue::to_raw(&binding)
-        .map_err(|_| super::identity::custody_corrupt())?;
+        .map_err(|_| Rejected::new(R::CustodyLandingFailed, super::identity::custody_corrupt()))?;
     for (key, value) in rows.iter_mut() {
         if key.as_slice() == super::binding_key() {
             *value = raw.clone();
