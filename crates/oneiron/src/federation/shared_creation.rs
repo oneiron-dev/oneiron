@@ -223,6 +223,7 @@ impl Vault {
             false,
             true,
         )?;
+        let seeded = seeded_manifest.is_some();
         if let Some((id, data)) = seeded_manifest {
             self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
         }
@@ -246,6 +247,11 @@ impl Vault {
             }
         }
         txn.commit()?;
+        if seeded {
+            // A floor the seeded manifest moved is judged again at once
+            // (FIX 5505).
+            self.apply_pending_rebinds_after_commit();
+        }
         Ok(creation)
     }
     pub(crate) fn shared_vault_creation_in_txn(

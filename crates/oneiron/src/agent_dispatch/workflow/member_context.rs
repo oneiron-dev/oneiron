@@ -4,7 +4,8 @@
 //! notice. Nothing here refuses: a withheld row, even every one, is left
 //! out. The lane is the member's grant key, rebuilt from the binding their
 //! run's wrapper stores wherever context resolves; no credential is kept.
-//! Owner- and agent-bound runs never reach it.
+//! Owner- and agent-bound runs never reach it: theirs meets each private
+//! thread's cut alone, their binder's own (FIX 6412).
 
 use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::AttemptRecord;
@@ -13,6 +14,7 @@ use crate::context_projection::ResolvedContextProjection;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::write_envelope::WriteActor;
 
 impl AgentDispatcher<'_> {
     /// The member whose bound run `row` wraps: a registered wrapper whose
@@ -72,6 +74,70 @@ impl AgentDispatcher<'_> {
         let txn = self.vault.store.env.read_txn()?;
         let memory = readable_in(&read, &txn, &projection.memory_sections)?;
         let chat = readable_in(&read, &txn, &projection.chat_sections)?;
+        Ok(projection.lane_narrowed(memory, chat))
+    }
+
+    /// The owner or agent who bound the run `row` wraps, as its stored TASK
+    /// binding names them, never the leaf agent, the payer or the caller.
+    /// `None` for a member's run ([`Self::workflow_member`]), a TASK-less
+    /// one and every other row.
+    pub(in crate::agent_dispatch) fn workflow_binder(
+        &self,
+        row: &AttemptRecord,
+    ) -> Result<Option<WriteActor>> {
+        if self.workflow_member(row)?.is_some() {
+            return Ok(None);
+        }
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(self
+            .workflow_task_source_in_txn(&txn, row)?
+            .map(|bind| bind.bound_by))
+    }
+
+    /// `projection` less every memory and chat section whose row sits in a
+    /// private thread one of `binders` does not read (FIX 6412): an owner's
+    /// or agent's bound run meets each thread's cut under its binder's own
+    /// CONTENT rule, and no grant, facet or floor beside it. A section whose
+    /// row cannot be named or judged is left out too; nothing here refuses.
+    pub(in crate::agent_dispatch) fn binder_context(
+        &self,
+        projection: ResolvedContextProjection,
+        binders: &[WriteActor],
+    ) -> Result<ResolvedContextProjection> {
+        if binders.is_empty()
+            || (projection.memory_sections.is_empty() && projection.chat_sections.is_empty())
+        {
+            return Ok(projection);
+        }
+        let reads = binders
+            .iter()
+            .map(|binder| {
+                ScopedReadActorKey::with_actor_class(
+                    binder.entity_ref().to_hex(),
+                    binder.actor_class().gate_actor_class(),
+                )
+                .map(|key| self.vault.scoped_read(key))
+                .ok_or(Error::InvariantViolation(
+                    "a binder's id builds no read key",
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let txn = self.vault.store.env.read_txn()?;
+        let kept = |sections: &[String]| -> Vec<String> {
+            sections
+                .iter()
+                .filter(|section| {
+                    section_row(section).is_ok_and(|row| {
+                        reads
+                            .iter()
+                            .all(|read| read.private_threads_admit_in(&txn, &row).unwrap_or(false))
+                    })
+                })
+                .cloned()
+                .collect()
+        };
+        let memory = kept(&projection.memory_sections);
+        let chat = kept(&projection.chat_sections);
         Ok(projection.lane_narrowed(memory, chat))
     }
 }
