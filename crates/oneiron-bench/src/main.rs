@@ -29,6 +29,10 @@
 //! * `load` — the shipped server binary under synthetic load: facade ingest,
 //!   recall per grade and agent count, fairness and memory, as one JSON result
 //!   (`docs/ops/load-bench.md`).
+//! * `infer` — the built-in inference bench (FIX 6559): one arm over
+//!   runtime-only case packets through the production model seams; TTFT,
+//!   native and end-to-end rates, sampled VRAM and a quality check per case,
+//!   as resumable JSONL rows.
 //!
 //! The full MIRACL / Mr.TyDi / internal SEA judgment-set retrieval
 //! matrix is not shipped here; this binary only ships the bench skeleton,
@@ -47,6 +51,7 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 mod beam;
 mod eval;
 mod fleet;
+mod infer;
 mod interface_bench;
 mod load;
 mod oneironer_shadow;
@@ -95,6 +100,7 @@ fn main() -> ExitCode {
         [cmd, rest @ ..] if cmd == "fleet" => fleet::run(rest),
         [cmd, rest @ ..] if cmd == "swarm" => swarm::run(rest),
         [cmd, rest @ ..] if cmd == "load" => load::run(rest),
+        [cmd, rest @ ..] if cmd == "infer" => infer::run(rest),
         _ => {
             eprintln!("unknown invocation: {args:?}");
             print_help();
@@ -169,6 +175,12 @@ fn print_help() {
                                        ingest, recall per grade x agents, fairness,\n\
                                        memory (docs/ops/load-bench.md)\n\
           load compare A.json B.json  markdown table of two load results\n\
+          infer run --arm-id ID --transport direct|own-server --models-toml FILE\n\
+                    --model PROVIDER:MODEL --cases /ABS/CASES.jsonl --out /ABS/ROWS.jsonl\n\
+                                       built-in inference bench: one arm, runtime-only\n\
+                                       cases, resumable rows (see `infer --help`)\n\
+          infer summarize --out ROWS.jsonl [--out ...]\n\
+                                       per-arm markdown table of finished rows\n\
           swarm --matrix              three seeded trials each of write, recall,\n\
                                        mixed at 1/10/100/300 agents; JSONL\n\
           swarm --mode write|recall|mixed --agents 1|10|100|300\n\

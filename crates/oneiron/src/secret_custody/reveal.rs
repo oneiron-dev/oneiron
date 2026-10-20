@@ -201,8 +201,9 @@ pub struct SecretRevealReceipt {
     pub asked_at: u64,
     /// When its value went out.
     pub delivered_at: Option<u64>,
-    /// The file an agent's read of a marked file named: its keys are the
-    /// handles above, and each went out under its own T1 lease.
+    /// The file an agent's read of a marked file named, or the artifact of
+    /// a typed body an agent's read showed: its keys are the handles above,
+    /// and each went out under its own T1 lease.
     pub file: Option<EntityId>,
 }
 
@@ -487,8 +488,10 @@ struct RevealRow {
     decision: Option<GateDecisionId>,
     lease: Option<EntityId>,
     delivered_at: Option<u64>,
-    /// An agent's read of a file stored with keys in it, where this reveal is
-    /// one; `None` for a handle's reveal.
+    /// An agent's read of a file stored with keys in it, or of one projection
+    /// of a typed body whose lifted texts hold keys (one row per custody
+    /// class of its keys), where this reveal is one; `None` for a handle's
+    /// reveal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     file: Option<FileSight>,
 }
@@ -496,9 +499,17 @@ struct RevealRow {
 /// The file an agent's read names: the artifact, its stored bytes' hash, and
 /// each key with its handle, in the file's order. Delivery adds each key's
 /// lease.
+///
+/// A typed body's read (FIX 2941) names its artifact, and in `hash` the
+/// read's fingerprint in place of stored bytes' hash: the projection it
+/// shows (a deck's export key, a body's view) and each custody class group's
+/// keys, hashed under their own domain (`reveal::file`), so it never equals
+/// a stored file's hash. Its keys are one class group's, in custody-id
+/// order.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FileSight {
     artifact: EntityId,
+    /// The stored bytes' blake3, or a typed body read's fingerprint.
     hash: [u8; 32],
     keys: Vec<(EntityId, String)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -568,7 +579,8 @@ impl RevealRow {
             part(person.claim.as_bytes());
             part(&person.digest);
         }
-        // A file's read binds the file, its bytes and each key it opens.
+        // A file's read binds the file, its bytes (or a typed body read's
+        // fingerprint) and each key it opens.
         if let Some(file) = &self.file {
             part(file.artifact.as_bytes());
             part(&file.hash);
