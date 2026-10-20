@@ -106,7 +106,7 @@ impl DetectorPolicy {
 }
 
 /// The shared decision path a detector's questions go through: the host's ladder, the
-/// principal the answers are for, the dial and learned bands they run under, the bounded
+/// principal the answers are for, the dial and learned bands they run under, the whole
 /// state the host built from the runs, and each question's anytime budget. Telemetry reaches a
 /// provider only as evidence ids and that state, as untrusted data, never as instructions; an
 /// answer cannot choose its own detector id, event class or tier.
@@ -115,7 +115,8 @@ pub struct DetectorDecisions<'a> {
     pub principal: EntityId,
     pub dial: DecisionDial,
     pub bands: DecisionBandPolicy,
-    /// A JSON object of at most `MAX_DECISION_STATE_BYTES`, read by every provider.
+    /// A JSON object, whole, read by every provider: its producer measures it
+    /// at `limits.maintenance_text_bytes` and never cuts it.
     pub state: &'a serde_json::Value,
     /// Each question's one clock, from when it is asked.
     pub budget: Duration,
@@ -129,11 +130,21 @@ impl DetectorDecisions<'_> {
         question: &DecisionQuestion,
         evidence: &[EntityId],
     ) -> Result<(bool, DecisionReceipt)> {
+        self.raised_with_state(question, evidence, self.state)
+    }
+
+    /// [`Self::raised`] over a state the question was given in place of the host's.
+    fn raised_with_state(
+        &self,
+        question: &DecisionQuestion,
+        evidence: &[EntityId],
+        state: &serde_json::Value,
+    ) -> Result<(bool, DecisionReceipt)> {
         let decision = self.ladder.run(
             question,
             self.principal,
             evidence,
-            self.state,
+            state,
             self.dial,
             &self.bands,
             Reversibility::ReversibleRead,
@@ -150,6 +161,22 @@ fn run_ids(runs: &[RetrievalRunRecord]) -> Result<Vec<EntityId>> {
     runs.iter()
         .map(|run| EntityId::from_bytes(run.run_id.as_bytes()))
         .collect()
+}
+
+/// The host's state with the one run a question grades named as its `target` (FIX 2481):
+/// its id and its whole record. The window and the reviewed examples stay whole beside it.
+fn targeted(state: &serde_json::Value, run: &RetrievalRunRecord) -> Result<serde_json::Value> {
+    let record = serde_json::to_value(run)
+        .map_err(|_| Error::InvariantViolation("retrieval telemetry encode"))?;
+    let mut state = state.clone();
+    let Some(fields) = state.as_object_mut() else {
+        return Err(Error::InvalidConfig("invalid decision state".into()));
+    };
+    fields.insert(
+        "target".into(),
+        serde_json::json!({ "run": run.run_id.to_hex(), "record": record }),
+    );
+    Ok(state)
 }
 
 /// A proposed-only output. No conversion from this type to SignedDetectorRun exists.
@@ -264,7 +291,7 @@ impl Vault {
     }
 
     /// `examples` are reviewed positive and negative diagnostic events, asked as evidence
-    /// after each run.
+    /// after each run. Each run's question carries that run as the state's one `target`.
     pub(super) fn classify_prompt_with_examples(
         &self,
         policy: &DetectorPolicy,
@@ -281,7 +308,11 @@ impl Vault {
         for run in runs {
             let mut evidence = run_ids(std::slice::from_ref(run))?;
             evidence.extend(examples.0.iter().chain(examples.1));
-            let (raised, receipt) = decisions.raised(&question, &evidence)?;
+            let state = targeted(decisions.state, run)?;
+            // The state goes whole: past `limits.maintenance_text_bytes` it asks.
+            let bytes = serde_json::to_vec(&state).map_or(0, |bytes| bytes.len());
+            let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, bytes as u64);
+            let (raised, receipt) = decisions.raised_with_state(&question, &evidence, &state)?;
             if raised {
                 streak.push(receipt);
             } else {

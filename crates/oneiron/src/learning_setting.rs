@@ -219,6 +219,7 @@ pub const SETTING_CATALOG: &[SettingSpec] = &[
     crate::skill::EXPLORATION_ASK_LAPSE_HOURS,
     crate::blob_artifact::esign::ESIGN_ASK_CLIMB_HOURS,
     crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS,
+    crate::self_heal::DETECTOR_CENTROID_MIN_SIMILARITY,
 ];
 
 /// The catalog row named `key`, if the engine knows it.

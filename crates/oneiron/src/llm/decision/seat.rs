@@ -50,13 +50,12 @@ impl SeatRequest {
             || self.posture == HostingPrivacyPosture::Relay
             || self.phase == SeatPhase::Light
             || !self.state.is_object()
-            || serde_json::to_vec(&self.state)
-                .map_err(|_| FatalLlmError::InvalidRequest)?
-                .len()
-                > 65_536
         {
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        // The state must serialize; its size is the producer's measurement
+        // (Rule 5), never a refusal here.
+        serde_json::to_vec(&self.state).map_err(|_| FatalLlmError::InvalidRequest)?;
         DecisionImage::check_call(&self.images, &self.state, self.question.contract.locates())?;
         DecisionAudio::check_call(&self.audio, &self.images, &self.state)?;
         match &self.question.contract {

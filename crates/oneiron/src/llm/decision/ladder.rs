@@ -97,7 +97,8 @@ impl ProviderDecision {
     }
 }
 
-/// The state bound every provider is held to.
+/// The state size a host that fits its own state fits it to. The ladder refuses no state by
+/// its size: a producer measures it at `limits.maintenance_text_bytes`.
 pub const MAX_DECISION_STATE_BYTES: usize = 65_536;
 
 /// One prepared call: the question, its access-checked evidence, the bounded state the host
@@ -112,7 +113,7 @@ pub struct DecisionCall<'a> {
     /// Audio clips the question reads, each filling the state field of its name. Only a
     /// provider that reads audio gets a call with any.
     pub audio: &'a [DecisionAudio],
-    /// A JSON object of at most [`MAX_DECISION_STATE_BYTES`]; never an implicit vault dump.
+    /// A JSON object its producer measured; never an implicit vault dump.
     pub state: &'a Value,
     /// A provider with a native deadline gets [`RetrievalDeadline::decision_time_left`], and
     /// its client waits no longer.
@@ -1472,9 +1473,11 @@ struct Route<'a> {
     deadline: &'a RetrievalDeadline,
 }
 
+/// A state is a JSON object that serializes. Its size is no refusal here (Rule 5): the
+/// producer that holds the vault measures it before it calls the ladder.
 fn validate_state(state: &Value) -> Result<()> {
-    let bytes = serde_json::to_vec(state).map_err(|_| invalid("invalid decision state"))?;
-    if !state.is_object() || bytes.len() > MAX_DECISION_STATE_BYTES {
+    serde_json::to_vec(state).map_err(|_| invalid("invalid decision state"))?;
+    if !state.is_object() {
         return Err(invalid("invalid decision state"));
     }
     Ok(())

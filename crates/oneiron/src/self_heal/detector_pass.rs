@@ -5,8 +5,8 @@
 //! afresh.
 use super::tiered::{DetectorPolicy, ProposedTier};
 use super::{
-    DiagnosticEvent, DiagnosticSourceKind, ENTITY_TYPE_DIAGNOSTIC, decode_diagnostic_event_body,
-    validate_token,
+    CentroidCorpus, DiagnosticEvent, DiagnosticSourceKind, ENTITY_TYPE_DIAGNOSTIC,
+    decode_diagnostic_event_body, validate_token,
 };
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::RetrievalRunRecord;
@@ -71,6 +71,22 @@ pub fn minted_window_key(
         ProposedTier::PromptClassifier,
         runs,
     ));
+    hash.update(revision);
+    *hash.finalize().as_bytes()
+}
+
+/// The key of one T2 window once a T2a corpus is in force (FIX 2078): its
+/// T2b key with the corpus's revision, which folds in the labels, their
+/// vectors and the threshold, so a window graded before a label or vector
+/// existed is graded afresh. An empty corpus runs no T2a and keeps the key.
+#[must_use]
+pub fn centroid_window_key(key: &[u8; 32], corpus: &CentroidCorpus) -> [u8; 32] {
+    let Some(revision) = corpus.revision() else {
+        return *key;
+    };
+    let mut hash = blake3::Hasher::new();
+    hash.update(ProposedTier::Centroid.token().as_bytes());
+    hash.update(key);
     hash.update(revision);
     *hash.finalize().as_bytes()
 }
