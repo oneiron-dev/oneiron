@@ -80,7 +80,15 @@ pub fn enqueue_confirm_invite(
     sink: &mut impl OutboundExecutionSink,
     now: u64,
 ) -> Result<IntentId, BookingError> {
-    enqueue_confirm_invite_outcome(vault, actor, grant_ref, invite, sink, now)?
+    recorded_or_refused(enqueue_confirm_invite_outcome(
+        vault, actor, grant_ref, invite, sink, now,
+    )?)
+}
+
+/// The refusal [`enqueue_confirm_invite`] answers a dispatch that recorded
+/// no intent with.
+fn recorded_or_refused(outcome: ConfirmInviteOutcome) -> Result<IntentId, BookingError> {
+    outcome
         .intent_id
         .ok_or_else(|| refused("the outbound door recorded no intent for this invite"))
 }
@@ -215,14 +223,14 @@ pub fn enqueue_confirm_invite_outcome(
 ///
 /// Every missing fact refuses, which the caller swallows: a booking with no
 /// live grant, no sending identity, or no readable binding simply sends no
-/// invite.
-pub(in crate::booking) fn dispatch_confirm_booking_invite(
+/// invite. A held invite answers with its approve-once digest (FIX 6424).
+pub(in crate::booking) fn dispatch_confirm_booking_invite_outcome(
     vault: &Vault,
     actor: EntityId,
     receipt: &ConfirmReceipt,
     sink: &mut impl OutboundExecutionSink,
     now: u64,
-) -> Result<IntentId, BookingError> {
+) -> Result<ConfirmInviteOutcome, BookingError> {
     let booking_ref = receipt.calendar.event_ref;
     let Some(binding) = confirmed_booking_binding(vault, &booking_ref)? else {
         return Err(refused(
@@ -279,7 +287,7 @@ pub(in crate::booking) fn dispatch_confirm_booking_invite(
         now,
     )
     .map_err(calendar_wrap)?;
-    enqueue_confirm_invite(
+    enqueue_confirm_invite_outcome(
         vault,
         actor,
         grant_ref,
@@ -317,6 +325,21 @@ fn recorded_intent_id(
         }
     }
     Ok(None)
+}
+
+/// [`dispatch_confirm_booking_invite_outcome`], refusing an invite the
+/// outbound door recorded no intent for, as [`enqueue_confirm_invite`] does.
+#[cfg(test)]
+pub(in crate::booking) fn dispatch_confirm_booking_invite(
+    vault: &Vault,
+    actor: EntityId,
+    receipt: &ConfirmReceipt,
+    sink: &mut impl OutboundExecutionSink,
+    now: u64,
+) -> Result<IntentId, BookingError> {
+    recorded_or_refused(dispatch_confirm_booking_invite_outcome(
+        vault, actor, receipt, sink, now,
+    )?)
 }
 
 /// The stable logical-send ref one booking's first REQUEST dispatches under.
