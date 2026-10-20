@@ -15,11 +15,14 @@
 //! still permitting an automated sender. Anything short of that holds the
 //! delivery unexported with its reason; it is never dropped. A delivery whose
 //! document or recipient ended settles instead, unsent, with its typed reason
-//! (FIX 6363, [`super::delivery_settlement`]).
+//! (FIX 6363, [`super::delivery_settlement`]). One whose document has an
+//! event awaiting its owner's answer, or whose trail no longer reads, waits
+//! on its own with its typed reason (FIX 6423); no other delivery waits on
+//! it.
 
 use super::capability::{EsignCapability, delivered_digest_in, mint_delivery_capability_in_txn};
 use super::delivery_settlement::{EsignDeliveryEndReason, settle_ended_in_txn};
-use super::ledger::state_in;
+use super::ledger::delivery_chain_in;
 use super::model::*;
 use super::notice_dispatch::EsignNotice;
 use super::outbound::{EsignOutboundVerb, OwnerSendAct, dispatch_marker_in};
@@ -46,6 +49,30 @@ pub enum EsignDeliveryMint {
     /// Nothing was minted: the delivery's document or recipient ended, so
     /// it settled unsent with this reason (FIX 6363).
     Settled(EsignDeliveryEndReason),
+    /// Nothing was minted: the delivery's document keeps this one delivery
+    /// waiting, its lease kept (FIX 6423).
+    Waits(EsignDeliveryWait),
+}
+
+/// Why a delivery's document keeps it unexported for now (FIX 6423). It
+/// waits on its own; no other delivery waits on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EsignDeliveryWait {
+    /// An event of the document awaits its owner's answer.
+    DocumentAwaitsOwner,
+    /// The document's trail no longer reads.
+    DocumentUnreadable,
+}
+
+impl EsignDeliveryWait {
+    /// The reason's code, as the exporter logs it.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::DocumentAwaitsOwner => "document_awaits_owner",
+            Self::DocumentUnreadable => "document_unreadable",
+        }
+    }
 }
 
 impl EsignNotice {
@@ -69,7 +96,9 @@ impl Vault {
     /// A row whose notice is unreadable or carries no link, or a storage
     /// failure. A delivery the mint may not serve is [`EsignDeliveryMint::Held`];
     /// one whose document or recipient ended settles, under this same writer,
-    /// as [`EsignDeliveryMint::Settled`].
+    /// as [`EsignDeliveryMint::Settled`]; one whose document's chain holds an
+    /// event for its owner's answer, or does not read, is
+    /// [`EsignDeliveryMint::Waits`].
     pub fn mint_esign_delivery_link(
         &self,
         attempt: AttemptId,
@@ -110,7 +139,16 @@ impl Vault {
             if let Some(reason) = settle_ended_in_txn(self, txn, &row, &notice, now)? {
                 return Ok(EsignDeliveryMint::Settled(reason));
             }
-            let state = state_in(self, txn, document)?;
+            let Some((state, held)) = delivery_chain_in(self, txn, document)? else {
+                return Ok(EsignDeliveryMint::Waits(
+                    EsignDeliveryWait::DocumentUnreadable,
+                ));
+            };
+            if held {
+                return Ok(EsignDeliveryMint::Waits(
+                    EsignDeliveryWait::DocumentAwaitsOwner,
+                ));
+            }
             if let Some(reason) = unsignable(&state, &notice, now) {
                 return Ok(EsignDeliveryMint::Held(reason));
             }

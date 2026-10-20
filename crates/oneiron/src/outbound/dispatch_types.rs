@@ -460,6 +460,16 @@ impl OutboundExecutionOutcome {
 /// Connector execution adapter. Per-connector transport is intentionally O6/06e.
 pub trait OutboundExecutionSink {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome;
+
+    /// Judges a new call once more under the writer that would record its
+    /// OF-327 gate decision, before any decision is recorded (FIX 6404): a
+    /// refusal records none, and the call never reaches [`Self::execute`].
+    /// By default a sink takes every call.
+    /// # Errors
+    /// The sink's own refusal, or the failure of its read.
+    fn admit_in(&self, _txn: &heed::RoTxn<'_>) -> crate::error::Result<()> {
+        Ok(())
+    }
 }
 
 /// Coarse pipeline outcome.
