@@ -34108,15 +34108,16 @@
       "ModelRoleReceipt",
       "ModelRouteRead",
       "ModelRouteReplace",
-      "ModelRouteView"
+      "ModelRouteView",
+      "OneironerBind"
      ],
      "path": "src/llm/manifest/doors.rs",
      "purpose": "Owner-proof model manifest, independent route dials and resolved role receipts",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 5,
-      "struct": 8
+      "fn": 6,
+      "struct": 9
      }
     },
     {
@@ -58475,7 +58476,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1112
+      "fn": 1113
      }
     },
     {
@@ -76351,7 +76352,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1083
+      "fn": 1084
      }
     },
     {
@@ -77566,7 +77567,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1084
+      "fn": 1085
      }
     },
     {
@@ -81653,13 +81654,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/model_manifest_doors.rs",
      "purpose": "Typed owner doors over the existing manifest, route and provider seams",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -87759,7 +87760,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/managed/state_serve/reap/host_holds.rs",
-     "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`…",
+     "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its…",
      "surface": {
       "crate-vis": 1
      }
@@ -93758,6 +93759,7 @@
       "OfficeBodyView",
       "OmittedKnowledge",
       "OmittedNeighbor",
+      "OneironerBind",
       "OnlineAxisMeasurement",
       "OnlineAxisOutcome",
       "OpaqueChange",
@@ -95280,7 +95282,7 @@
      "purpose": "—",
      "surface": {
       "enum": 892,
-      "struct": 2800
+      "struct": 2801
      }
     },
     {
@@ -95918,7 +95920,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostHoldsBytes",

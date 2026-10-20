@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1084 facade rows, 3727 declarations.
-Inputs: 1019 of 1084 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 971 of 1084 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1085 facade rows, 3728 declarations.
+Inputs: 1020 of 1085 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 972 of 1085 fully typed, 113 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
@@ -12952,6 +12952,9 @@ class TeacherProbeApproval(TypedDict):
 class ModelManifestReplace(TypedDict):
     manifest: ModelManifest
     teacher_approval: NotRequired[TeacherProbeApproval | None]
+class OneironerBind(TypedDict):
+    expected_checkpoint_sha16: NotRequired[str | None]
+    expected_stack_sha16: NotRequired[str | None]
 class ModelRouteRead(TypedDict):
     slot: ModelSlot
 class ModelRouteView(TypedDict):

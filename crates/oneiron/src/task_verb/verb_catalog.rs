@@ -753,6 +753,7 @@ pub enum AgentVerb {
     VaultSkillsOutcomesGet,
     VaultModelsManifestRead,
     VaultModelsManifestReplace,
+    VaultModelsOneironerBind,
     VaultModelsRoutesRead,
     VaultModelsRoutesReplace,
     VaultModelsRolesRead,
@@ -1860,6 +1861,7 @@ impl AgentVerb {
         Self::VaultSkillsOutcomesGet,
         Self::VaultModelsManifestRead,
         Self::VaultModelsManifestReplace,
+        Self::VaultModelsOneironerBind,
         Self::VaultModelsRoutesRead,
         Self::VaultModelsRoutesReplace,
         Self::VaultModelsRolesRead,
@@ -2990,6 +2992,7 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
             Self::VaultModelsManifestRead => "vault.models.manifest.read",
             Self::VaultModelsManifestReplace => "vault.models.manifest.replace",
+            Self::VaultModelsOneironerBind => "vault.models.oneironer.bind",
             Self::VaultModelsRoutesRead => "vault.models.routes.read",
             Self::VaultModelsRoutesReplace => "vault.models.routes.replace",
             Self::VaultModelsRolesRead => "vault.models.roles.read",
@@ -4107,6 +4110,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultModelsRolesRead
@@ -5242,6 +5246,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultModelsRolesRead
@@ -6471,6 +6476,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOutcomesGet
                 | Self::VaultModelsManifestRead
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesRead
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultModelsRolesRead
@@ -7248,6 +7254,7 @@ impl AgentVerb {
                 | Self::SelfSkillsFork
                 | Self::VaultSkillsOutcomesProject
                 | Self::VaultModelsManifestReplace
+                | Self::VaultModelsOneironerBind
                 | Self::VaultModelsRoutesReplace
                 | Self::VaultSkillsAttributionSettle
                 | Self::VaultSkillsAttributionEvidenceRecord
@@ -8239,6 +8246,7 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
             Self::VaultModelsRoutesReplace => &["spec"],
             Self::VaultModelsRolesRead => &["spec"],
@@ -9347,6 +9355,7 @@ impl AgentVerb {
             Self::VaultSkillsOutcomesGet => &["spec"],
             Self::VaultModelsManifestRead => &["spec"],
             Self::VaultModelsManifestReplace => &["spec"],
+            Self::VaultModelsOneironerBind => &["spec"],
             Self::VaultModelsRoutesRead => &["spec"],
             Self::VaultModelsRoutesReplace => &["spec"],
             Self::VaultModelsRolesRead => &["spec"],
@@ -11909,6 +11918,9 @@ impl AgentVerb {
             }
             Self::VaultModelsManifestReplace => {
                 "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."
+            }
+            Self::VaultModelsOneironerBind => {
+                "Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."
             }
             Self::VaultModelsRoutesRead => {
                 "Reads one independent model slot route with its manifest pin and effective resident narrowing."

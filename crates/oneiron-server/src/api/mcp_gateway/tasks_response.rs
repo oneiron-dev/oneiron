@@ -1743,6 +1743,7 @@ fn mcp_agent_verb_input(
         "vault.skills.outcomes.get" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.read" => a.spec.clone().ok_or_else(invalid),
         "vault.models.manifest.replace" => a.spec.clone().ok_or_else(invalid),
+        "vault.models.oneironer.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.models.routes.read" => a.spec.clone().ok_or_else(invalid),
         "vault.models.routes.replace" => a.spec.clone().ok_or_else(invalid),
         "vault.models.roles.read" => a.spec.clone().ok_or_else(invalid),
@@ -4424,6 +4425,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.models.manifest.replace" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.models.oneironer.bind" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.models.routes.read" => {
@@ -16185,6 +16189,21 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_models_manifest_replace(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.models.oneironer.bind" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.models.oneironer.bind", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::llm::manifest::doors::OneironerBind =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_models_oneironer_bind(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));

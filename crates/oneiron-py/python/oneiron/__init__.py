@@ -4072,6 +4072,9 @@ class Oneiron:
         def manifest(self) -> "Oneiron._VaultModelsManifestVerbs":
             return Oneiron._VaultModelsManifestVerbs(self._client)
         @property
+        def oneironer(self) -> "Oneiron._VaultModelsOneironerVerbs":
+            return Oneiron._VaultModelsOneironerVerbs(self._client)
+        @property
         def routes(self) -> "Oneiron._VaultModelsRoutesVerbs":
             return Oneiron._VaultModelsRoutesVerbs(self._client)
         @property
@@ -4095,6 +4098,12 @@ class Oneiron:
         def replace(self, spec):
             """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
             return json.loads(_translate(lambda: self._client.vault_models_manifest_replace(json.dumps(spec))))
+    class _VaultModelsOneironerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Binds the Oneironer this server has loaded as the on-device extraction_encoder in the current v2 model manifest under the owner proof, keeping every other binding and clearing resident route overrides."""
+            return json.loads(_translate(lambda: self._client.vault_models_oneironer_bind(json.dumps(spec))))
     class _VaultModelsRoutesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
