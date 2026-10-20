@@ -2186,6 +2186,16 @@ export_facade! {
     let output = client.vault_cleanup_run(&input)?;
     crate::codec::lift_record("vault.cleanup.run", &output)
 };
+"vault.usage.events.undecodable" => fn vault_usage_events_undecodable(&self) -> UndecodableUsageList = |client| {
+    let input: oneiron::memory::usage_repair::UsageRepairListRequest = crate::codec::lower_empty("vault.usage.events.undecodable")?;
+    let output = client.vault_usage_events_undecodable(&input)?;
+    crate::codec::lift_record("vault.usage.events.undecodable", &output)
+};
+"vault.usage.events.remove_undecodable" => fn vault_usage_events_remove_undecodable(&self, input: UsageRepairRemoveRequest) -> UsageRepairReceipt = |client| {
+    let input: oneiron::memory::usage_repair::UsageRepairRemoveRequest = crate::codec::lower_record("vault.usage.events.remove_undecodable", input)?;
+    let output = client.vault_usage_events_remove_undecodable(&input)?;
+    crate::codec::lift_record("vault.usage.events.remove_undecodable", &output)
+};
 "vault.entities.mention" => fn vault_entities_mention(&self, input: EntityMentionRequest) -> EntityResolutionWaterfallDecision = |client| {
     let input: oneiron::ingest::EntityMentionRequest = crate::codec::lower_record("vault.entities.mention", input)?;
     let output = client.vault_entities_mention(&input)?;

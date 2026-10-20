@@ -1,0 +1,107 @@
+//! The usage repair doors (FIX 6476): the stored usage events of this
+//! server's metering scope that no longer decode, and the removal of one
+//! reviewed row by the hash of its bytes. HTTP, MCP and the SDK reach the
+//! engine writer the owner's routes reach, which admits the caller's own
+//! owner proof or an agent's own Grant that names the verb, in the write
+//! itself. The scope is this server's own meter's, never a caller's. The
+//! answers derive from host rows, which are no entity's: the doors list
+//! none.
+
+use std::sync::Arc;
+
+use oneiron::authority::ActSurface;
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::usage_repair::{
+    UndecodableUsageList, UsageRepairListRequest, UsageRepairReceipt, UsageRepairRemoveRequest,
+    UsageRepairVerb,
+};
+use oneiron::memory::{Memory, MemoryResult};
+
+use super::FacadeApiError;
+use super::host_doors::{Listed, credential_listing, owner_proof};
+use crate::auth::CoreAuth;
+use crate::server::SyncServer;
+use crate::usage::UsageScope;
+
+/// `act` off the runtime on the caller's own handle, with the caller's own
+/// owner proof when its credential is owner-grade and none otherwise, and
+/// this server's metering scope.
+async fn repair<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: UsageRepairVerb,
+    act: impl FnOnce(
+        &SyncServer,
+        Memory<'_>,
+        Option<&AuthenticatedOwner>,
+        Option<&UsageScope>,
+    ) -> MemoryResult<T>
+    + Send
+    + 'static,
+) -> Listed<T> {
+    let caller = match super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)
+    {
+        Ok(caller) => caller,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let owner = if auth.is_owner_grade() {
+        match owner_proof(auth, server, verb.name()) {
+            Ok(owner) => Some(owner),
+            Err(error) => return (Err(error), Vec::new()),
+        }
+    } else {
+        None
+    };
+    let scope = UsageScope::of(server);
+    credential_listing(
+        server,
+        auth,
+        caller,
+        verb.name(),
+        move |server, _, memory| act(server, memory, owner.as_ref(), scope.as_ref()),
+    )
+    .await
+}
+
+/// `vault.usage.events.undecodable`: every stored usage event of the
+/// metering scope that does not decode, by its row ref, length and hash.
+pub(crate) async fn vault_usage_events_undecodable(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    _input: UsageRepairListRequest,
+) -> Listed<UndecodableUsageList> {
+    repair(
+        server,
+        auth,
+        UsageRepairVerb::List,
+        |server, memory, owner, scope| {
+            server
+                .usage_ledger
+                .list_undecodable_events(&memory, owner, scope)
+        },
+    )
+    .await
+}
+
+/// `vault.usage.events.remove_undecodable`: removes one listed row while it
+/// still holds the reviewed bytes and still does not decode, and answers
+/// the receipt kept in the same write. `surface` is where the call reached
+/// this install, for the receipt alone.
+pub(crate) async fn vault_usage_events_remove_undecodable(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    surface: ActSurface,
+    input: UsageRepairRemoveRequest,
+) -> Listed<UsageRepairReceipt> {
+    repair(
+        server,
+        auth,
+        UsageRepairVerb::Remove,
+        move |server, memory, owner, scope| {
+            server
+                .usage_ledger
+                .remove_undecodable_event(&memory, owner, scope, surface, &input)
+        },
+    )
+    .await
+}

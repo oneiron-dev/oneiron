@@ -432,6 +432,10 @@ side_tables! {
     /// One idempotently recorded usage-metering event for an owner/vault, keyed by its caller-
     /// supplied idempotency key. Key: hex ":" hex ":" hex (owner, vault, idempotency-key).
     USAGE_EVENT: SyncState b"usage:event:" Named;
+    /// The receipt of one owner repair that removed a stored usage event that no longer decoded
+    /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
+    /// Key: hex32 (receipt id).
+    USAGE_REPAIR_RECEIPT: SyncState b"usage:repair:receipt:" Named;
     /// Aggregated usage-metering rollup totals (cost/units) for one owner/vault pair. Key: hex ":"
     /// hex (owner, vault).
     USAGE_VAULT_ROLLUP: SyncState b"usage:rollup:vault:" Named;

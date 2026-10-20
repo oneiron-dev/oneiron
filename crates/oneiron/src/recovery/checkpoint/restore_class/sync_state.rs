@@ -131,6 +131,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SYNC_U_ROOT, LIVE),
     (&t::SYNC_U_W, CONTENT),
     (&t::USAGE_EVENT, LIVE),
+    (&t::USAGE_REPAIR_RECEIPT, LIVE),
     (&t::VAULT_IMPORT_CONTENT, CONTENT),
     (&t::VAULT_IMPORT_RECEIPT, CONTENT),
     (&t::VAULT_IMPORT_STAMPS, CONTENT),
