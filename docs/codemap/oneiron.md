@@ -3639,17 +3639,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/audit/doors.rs` | src | s | 6 struct · 6 fn | SealAttemptRequest, SealCompleteRequest, SealPendingRequest, SealReceiptView, SealRunReceipt, SealRunRequest | Typed owner doors for the seal's existing receipts and check lifecycle |
 | `src/self_heal/blocked_reports.rs` | src | s | 1 fn · 13 crate-vis | — | Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418) |
 | `src/self_heal/canonical_tests.rs` | test | s | — | — | Regressions for the released diagnostic wire grammar |
-| `src/self_heal/centroid_evidence.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | CentroidReplay | Immutable, content-addressed centroid inputs beside vault-local telemetry |
+| `src/self_heal/centroid_evidence.rs` | src | m | 2 struct · 5 fn · 1 const · 1 crate-vis | CentroidCorpus, CentroidReplay | Immutable, content-addressed centroid inputs beside vault-local telemetry |
 | `src/self_heal/consent_detector.rs` | src | s | 1 struct · 2 fn | ConsentDeniedDetector | Receipt-backed consent diagnostics; this detector never proposes or applies repairs |
-| `src/self_heal/detector_pass.rs` | src | s | 1 struct · 5 fn · 1 const | T3Finding | The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded… |
+| `src/self_heal/detector_pass.rs` | src | s | 1 struct · 6 fn · 1 const | T3Finding | The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded… |
 | `src/self_heal/detector_runner.rs` | src | s | 2 fn · 2 crate-vis | — | Deterministic detector execution: working-set validation, run loop, event ids, Vault entry points |
 | `src/self_heal/diagnostic_codec.rs` | src | m | 2 fn · 5 crate-vis | — | MessagePack codec and validators for diagnostic event bodies, refs, and tokens |
-| `src/self_heal/distillation.rs` | src | m | 5 struct · 1 enum · 8 fn · 2 crate-vis | ClosedFormPredicate, GraduatedT1, MintedExample, MintedRegistration, MintedT2, ReviewedFinding | Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof |
+| `src/self_heal/distillation.rs` | src | m | 5 struct · 1 enum · 9 fn · 3 crate-vis | ClosedFormPredicate, GraduatedT1, MintedExample, MintedRegistration, MintedT2, ReviewedFinding | Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof |
 | `src/self_heal/event.rs` | src | m | 4 struct · 4 enum · 1 trait · 10 fn · 2 const · 9 crate-vis | AgentHealthSignal, DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind +1 | Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds |
 | `src/self_heal/healer_host.rs` | src | m | 5 struct · 2 enum · 10 fn · 4 crate-vis | HealerDeployment, HealerProposalRecord, HealerRegistration, HealerRunReceipt, PatchPullRequest, ProposalBurstCheck, ProposalState | External healer capability, durable propose receipts, and human-only PR release |
 | `src/self_heal/healer_host_tests.rs` | test | m | — | — | — |
 | `src/self_heal/invariant_canonical.rs` | src | s | 2 crate-vis | — | Canonicalization of invariant field values for stable comparison |
-| `src/self_heal/mod.rs` | src | s | 8 mod · 9 re-export · 6 crate-vis | — | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
+| `src/self_heal/mod.rs` | src | s | 8 mod · 10 re-export · 6 crate-vis | — | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
 | `src/self_heal/production_tests.rs` | test | s | — | — | — |
 | `src/self_heal/receipt_serde.rs` | src | s | 12 crate-vis | — | Strict serde adapters for ids and provenance in local healer receipts |
 | `src/self_heal/repair/dev_runner.rs` | src | m | 3 struct · 1 enum · 2 fn | DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget | Dev-time Coach jobs over the existing BYO runner and human patch-review doors |
@@ -3659,6 +3659,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/repair/validation.rs` | src | s | 1 crate-vis | — | Structural checks for proposal-only output |
 | `src/self_heal/scheduled.rs` | src | s | 1 struct · 3 fn | SignedDetectorRun | Signed host-scheduled T1 runs |
 | `src/self_heal/served_signals.rs` | src | s | 1 fn · 1 const | — | The served degradation signals (ARCH-0066 §4, OF-298): every tier-1 tripwire whose facts a serving vault… |
+| `src/self_heal/session_text.rs` | src | m | 2 struct · 1 fn | SessionLine, SessionText | What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were… |
 | `src/self_heal/sweep.rs` | src | s | 1 struct · 2 fn · 1 const | Tier1Sweep | The Coach's scheduled tier-1 sweep (ARCH-0066 §4) and its proposed-only repair bridge |
 | `src/self_heal/tests.rs` | test | m | — | — | — |
 | `src/self_heal/text_tests.rs` | test | s | 1 crate-vis | — | — |

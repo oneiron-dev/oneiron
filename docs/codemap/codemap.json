@@ -46914,17 +46914,19 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "CentroidCorpus",
       "CentroidReplay"
      ],
      "path": "src/self_heal/centroid_evidence.rs",
      "purpose": "Immutable, content-addressed centroid inputs beside vault-local telemetry",
      "surface": {
+      "const": 1,
       "crate-vis": 1,
-      "fn": 2,
-      "struct": 1
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -46950,7 +46952,7 @@
      "purpose": "The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded…",
      "surface": {
       "const": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -46990,9 +46992,9 @@
      "path": "src/self_heal/distillation.rs",
      "purpose": "Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -47069,7 +47071,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 8,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -47185,6 +47187,20 @@
      "surface": {
       "const": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SessionLine",
+      "SessionText"
+     ],
+     "path": "src/self_heal/session_text.rs",
+     "purpose": "What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -64548,7 +64564,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -64893,7 +64909,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4025,
+   "source_files": 4026,
    "test_files": 902
   },
   "oneiron-android": {
