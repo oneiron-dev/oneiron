@@ -1,7 +1,8 @@
 //! Durable step execution: memo/admission/deadline orchestration with retry and lease settlement.
 
 use super::super::{
-    BudgetDenied, BudgetGuard, CallClass, LlmBackend, LlmError, LlmRequest, LlmResponse, LlmResult,
+    BudgetDenied, BudgetGuard, CallClass, FatalLlmError, LlmBackend, LlmError, LlmRequest,
+    LlmResponse, LlmResult,
 };
 use super::step_claim::{
     decode_step_claim_value, load_step_response, load_step_response_in_txn, log_terminal_step,
@@ -348,8 +349,10 @@ async fn durable_step(
     };
     let response = match generated {
         Ok(response) => response,
+        // An erased answer is terminal: it never triggers a fallback (FIX 6296).
         Err(DurableStepError::Llm(LlmError::Fatal(error)))
-            if matches!(request.envelope.class, CallClass::Durable { .. }) =>
+            if matches!(request.envelope.class, CallClass::Durable { .. })
+                && error != FatalLlmError::ResponseErased =>
         {
             let CallClass::Durable { fallback } = &request.envelope.class else {
                 unreachable!()
@@ -392,6 +395,10 @@ async fn durable_step(
                     if matches!(request.envelope.class, CallClass::BestEffort) =>
                 {
                     DurableStepError::Llm(LlmError::Fatal(source))
+                }
+                // Nor does a failure policy route it to one.
+                erased @ DurableStepError::Llm(LlmError::Fatal(FatalLlmError::ResponseErased)) => {
+                    erased
                 }
                 DurableStepError::Llm(source) => classified_failure(ctx.vault, source)?,
                 other => other,
