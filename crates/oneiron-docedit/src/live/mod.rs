@@ -24,7 +24,7 @@ pub mod pptx;
 mod reshape;
 mod svg_fallback;
 
-pub use conversion::{Conversion, effect_receipt};
+pub use conversion::{Conversion, RebuildReason, effect_receipt};
 pub use deck_export::{
     ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport,
     StepOutcome, attach_evidence, check_picture, project, relationship_changes, roundtrip_check,
