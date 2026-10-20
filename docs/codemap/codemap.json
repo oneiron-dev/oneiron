@@ -90707,7 +90707,7 @@
      "purpose": "Durable idempotent provider-list meters, aggregated only per owner and vault",
      "surface": {
       "crate-vis": 2,
-      "fn": 7,
+      "fn": 6,
       "struct": 4
      }
     },
@@ -90751,14 +90751,15 @@
       "UsageMode",
       "UsageRecordResult",
       "UsageRollup",
+      "UsageRollupStatus",
       "UsageRun",
       "UsageTokenCounts"
      ],
      "path": "src/usage/model.rs",
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
-      "crate-vis": 3,
-      "enum": 4,
+      "crate-vis": 4,
+      "enum": 5,
       "fn": 9,
       "struct": 10
      }
@@ -90770,6 +90771,17 @@
      "path": "src/usage/pricing.rs",
      "purpose": "Catalog list prices as fixed-point usage rates",
      "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/usage/rollup.rs",
+     "purpose": "The derived per-vault rollup, kept from the stamped events",
+     "surface": {
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -91856,7 +91868,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91900,7 +91912,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 963,
+   "source_files": 964,
    "test_files": 182
   },
   "oneiron-spawn": {
