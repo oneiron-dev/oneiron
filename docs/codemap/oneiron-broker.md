@@ -28,6 +28,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serve/tests.rs` | test | m | — | — | The broker end to end, on a real Unix socket against the local TLS fake: one send with the key, the… |
 | `src/shape.rs` | src | m | 1 enum · 7 fn · 2 crate-vis | Shape | The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the… |
 | `src/shape/tests.rs` | test | s | — | — | The selector parser's refusals, as `#door-reads-model` and the broker design list them: the parser reads the… |
-| `src/strip.rs` | src | m | 1 fn · 1 const · 7 crate-vis | — | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
+| `src/strip.rs` | src | m | 1 fn · 1 const · 6 crate-vis | — | The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a… |
 | `src/strip/tests.rs` | test | m | — | — | The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it… |
 | `src/testing.rs` | src | s | 3 struct · 8 fn | FakeProvider, FakeReply, SeenRequest | A local fake model provider over TLS, for the broker's own tests and the server's paid-leg fixture |
