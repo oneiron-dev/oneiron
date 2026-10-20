@@ -40,10 +40,17 @@ const LMDB_MAX_VALUE_BYTES: u64 = 4_294_967_295;
 const ERR_RECORD_PAST_VALUE_CAPACITY: &str =
     "attempt record exceeds LMDB's 4294967295-byte value capacity";
 /// The members of a row a caller authored, which the side-row wall reads beside
-/// the payload (OF-067): the failure text and the intervention, signal, ask and
-/// cancel notes. The queue's own ids, keys, states and times index the row and
-/// are never rewritten.
-const AUTHORED_MEMBERS: [&str; 5] = ["last_error", "events", "signals", "asks", "cancel_state"];
+/// the payload (OF-067): the failure text, the intervention, signal, ask and
+/// cancel notes, and the requeued failures (FIX 5240). The queue's own ids,
+/// keys, states and times index the row and are never rewritten.
+const AUTHORED_MEMBERS: [&str; 6] = [
+    "last_error",
+    "events",
+    "signals",
+    "asks",
+    "cancel_state",
+    "history",
+];
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 
 /// Checks the two axes every dedupe hit shares, on every key family.
@@ -300,6 +307,7 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     }
     validate_optional_run_id(record.run_id.as_deref())?;
     validate_optional_failure_reason(record.last_error.as_deref())?;
+    super::engine::validate_requeued_history(&record.history)?;
     validate_attempt_events(&record.events)?;
     validate_attempt_manifest(&record.manifest)?;
     validate_cancel_state(&record.cancel_state)?;

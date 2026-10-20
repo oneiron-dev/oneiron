@@ -328,6 +328,16 @@ pub enum EngineLimit {
     /// xref stream its loader decodes, or one DSS entry. Past it the row asks
     /// and the stream is decoded whole.
     SealStreamDecodeBytes,
+    /// Bytes one filtered stream of an e-sign PDF decodes to while the host
+    /// prepares, inspects or lays it out: the codec's decompression bound,
+    /// held per stream and never summed over a page or a document. A codec
+    /// bound (Rule 5), so past it the PDF is refused with this row named.
+    EsignStreamDecodeBytes,
+    /// Bytes one stream of a prepared e-sign PDF decodes to while the host
+    /// reads it to write its signature revisions: the codec's decompression
+    /// bound. A codec bound (Rule 5), so past it the revisions are refused
+    /// with this row named; below it, `seal_prepared_stream_bytes` measures.
+    EsignSealStreamCodecBytes,
     /// Tokens the seal lexes in one stream dictionary to find its `/Length`.
     /// Past it the row asks and the header is lexed to its `stream` keyword.
     SealStreamHeaderTokens,

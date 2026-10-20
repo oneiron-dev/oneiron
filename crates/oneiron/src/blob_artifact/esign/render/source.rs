@@ -140,6 +140,7 @@ pub(super) struct VisualCopy<'a> {
     pub(super) source: &'a Document,
     pub(super) ids: BTreeMap<ObjectId, ObjectId>,
     pub(super) active: BTreeSet<ObjectId>,
+    pub(super) bound: StreamBound,
 }
 impl VisualCopy<'_> {
     pub(super) fn copy(
@@ -187,7 +188,7 @@ impl VisualCopy<'_> {
                 if name(self.source, &stream.dict, b"Subtype")? == Some(b"Form")
                     || stream.dict.has(b"PatternType")
                 {
-                    let mut content = decoded(stream)?;
+                    let mut content = decoded(stream, self.bound)?;
                     content.push(b'\n');
                     check_content(&content)?;
                 }
@@ -307,7 +308,7 @@ impl VisualCopy<'_> {
                     let mut glyphs = Dictionary::new();
                     for (name, glyph) in resolved(self.source, value)?.as_dict()? {
                         let mut content = Vec::new();
-                        glyph_content(self.source, glyph, &mut content, 0)?;
+                        glyph_content(self.source, glyph, &mut content, 0, self.bound)?;
                         check_content(&content)?;
                         glyphs.set(name.clone(), self.copy(out, glyph, depth + 1)?);
                     }
@@ -323,7 +324,13 @@ impl VisualCopy<'_> {
 }
 /// A Type 3 glyph's content: its stream, or the streams an array of them
 /// names, each decoded under its own bound.
-fn glyph_content(doc: &Document, value: &Object, bytes: &mut Vec<u8>, depth: usize) -> Result<()> {
+fn glyph_content(
+    doc: &Document,
+    value: &Object,
+    bytes: &mut Vec<u8>,
+    depth: usize,
+    bound: StreamBound,
+) -> Result<()> {
     // Bounds this recursion's stack, not the content's size.
     if depth > 32 {
         return Err(PdfPreparationError::Limit);
@@ -331,14 +338,14 @@ fn glyph_content(doc: &Document, value: &Object, bytes: &mut Vec<u8>, depth: usi
     match resolved(doc, value)? {
         Object::Array(values) => {
             for v in values {
-                glyph_content(doc, v, bytes, depth + 1)?;
+                glyph_content(doc, v, bytes, depth + 1, bound)?;
             }
         }
         Object::Stream(stream) => {
             if stream.dict.has(b"F") {
                 return Err(PdfPreparationError::UnsupportedPdf);
             }
-            bytes.extend(decoded(stream)?);
+            bytes.extend(decoded(stream, bound)?);
             bytes.push(b'\n');
         }
         _ => return Err(PdfPreparationError::MalformedPdf),
@@ -362,7 +369,12 @@ impl PageContents {
     /// decodes once under its own bound, and the page's streams are checked
     /// as the one program a reader concatenates them into, in naming order,
     /// repeats included: a fragment is never checked for balance alone.
-    pub(super) fn admit(&mut self, doc: &Document, value: &Object) -> Result<Vec<ObjectId>> {
+    pub(super) fn admit(
+        &mut self,
+        doc: &Document,
+        value: &Object,
+        bound: StreamBound,
+    ) -> Result<Vec<ObjectId>> {
         let stream = |value: &Object| -> Result<ObjectId> {
             match doc.dereference(value)? {
                 (Some(id), Object::Stream(stream)) if !stream.dict.has(b"F") => Ok(id),
@@ -382,7 +394,7 @@ impl PageContents {
             let bytes = match self.decoded.entry(*id) {
                 std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
                 std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(decoded(doc.get_object(*id)?.as_stream()?)?)
+                    entry.insert(decoded(doc.get_object(*id)?.as_stream()?, bound)?)
                 }
             };
             content.extend_from_slice(bytes);

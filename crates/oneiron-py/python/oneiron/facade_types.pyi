@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1073 facade rows, 3674 declarations.
+Census: 1073 facade rows, 3677 declarations.
 Inputs: 1008 of 1073 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 962 of 1073 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
@@ -10352,11 +10352,24 @@ class OriginRegistered(TypedDict):
     default_branch: str
 class OriginRepoRequest(TypedDict):
     repo: str
+OriginMirrorNotReadyReason = Literal["lfs_objects_not_verified", "lfs_inventory_incomplete"]
+class OriginMirrorLfsObject(TypedDict):
+    oid: str
+    size: int
+class OriginMirrorReadinessReady(TypedDict):
+    state: Literal["ready"]
+class OriginMirrorReadinessNotReady(TypedDict):
+    state: Literal["not_ready"]
+    reason: OriginMirrorNotReadyReason
+    objects: list[OriginMirrorLfsObject]
+    omitted_objects: int
+OriginMirrorReadiness = OriginMirrorReadinessReady | OriginMirrorReadinessNotReady
 class OriginMirrorRun(TypedDict):
     at: int
     refs: int
     deleted: int
     failure: NotRequired[str | None]
+    readiness: NotRequired[OriginMirrorReadiness | None]
 class OriginMirrorTarget(TypedDict):
     repo: str
     url: str

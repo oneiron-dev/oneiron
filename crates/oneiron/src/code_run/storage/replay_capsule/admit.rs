@@ -7,15 +7,18 @@
 //! published from the masked bytes in the transaction that mints their
 //! custody records and puts the capsule, and its ref and digest are the
 //! masked bytes'. The live request a provider is sent is never touched, and
-//! a body past the inline bound still spills whole: nothing is capped.
+//! a body past the inline bound still spills whole: nothing is capped. A
+//! request the wall refuses outright is withheld, never stored raw: the
+//! capsule keeps the step's start without it when the start admits, so a
+//! continuation still finds its checkpoint (FIX 6254).
 
 use std::ops::Range;
 
 use heed::RwTxn;
 
 use super::super::super::replay_capsule::{
-    CapsuleContent, CapsuleDraft, ExecutorStepStart, ExposureSlot, StepCapture, StepReplayCapsule,
-    StepStartBody, StepStartCapture, StoredSpan,
+    CapsuleContent, CapsuleDraft, CapsuleRequest, ExecutorStepStart, ExposureSlot, StepCapture,
+    StepReplayCapsule, StepStartBody, StepStartCapture, StoredSpan,
 };
 use super::super::records::{REPLAY_RECORDS, finish_output};
 use super::erase::actor_gone_in_txn;
@@ -25,6 +28,7 @@ use crate::batch::secret_scan::{
 };
 use crate::code_run::{decode_code_run_replay_record, encode_code_run_replay_record};
 use crate::compaction::output::OutputRef;
+use crate::error::GateError;
 use crate::store::{BodyMint, BodySink};
 use crate::{ContentPart, EntityId, Error, LlmRequest, LlmResponse, Result, Vault};
 
@@ -165,13 +169,113 @@ fn write_capsule_in_txn(
     let key_bytes = CAPSULES.key_bytes(&key);
     let (capture, actor) = (draft.capture, draft.actor);
     let run = capture.run;
-    let request = admit_request_in_txn(vault, wtxn, &key_bytes, &draft.request)?;
+    let admitted = admit_request_or_refusal_in_txn(vault, wtxn, &key_bytes, &draft.request)?;
     let start = admit_start_in_txn(vault, wtxn, &key_bytes, capture)?;
+    // FIX 6254: a request the wall refused outright is withheld, and the
+    // capsule keeps the step's start without it. With no start to keep, it
+    // is not written, as before.
+    let request = match admitted {
+        Ok(request) => request,
+        Err(Error::Gate(GateError::GateWriteRejected { reason_codes, .. })) if start.is_some() => {
+            tracing::debug!("a step's request is withheld; its capsule keeps the start");
+            return write_withheld_in_txn(vault, wtxn, spill, draft, start, &reason_codes);
+        }
+        Err(refusal) => return Err(refusal.into()),
+    };
     let start_len = start.as_ref().map_or(0, |(bytes, _)| bytes.len());
     spill.holds(&[request.bytes.len(), start_len])?;
     let stored = &request.bytes;
     let request_ref = spill.publish_in_txn(vault, wtxn, run, &draft.request_path, stored)?;
-    let start = match start {
+    let start = publish_start_in_txn(vault, wtxn, spill, draft, start)?;
+    let capsule = StepReplayCapsule {
+        attempt: draft.attempt,
+        lease_generation: capture.lease_generation,
+        run,
+        step: capture.step,
+        host: capture.host,
+        request: CapsuleRequest::Kept {
+            body: request_ref,
+            path: draft.request_path.clone(),
+            stored_hash: *blake3::hash(stored).as_bytes(),
+        },
+        request_hash: *blake3::hash(&draft.request).as_bytes(),
+        messages_digest: draft.messages_digest,
+        exposures: stored_slots(&draft.exposures, capture.request, &request),
+        seed: request_seed(capture),
+        binding: None,
+        route_pin: None,
+        captured_at: crate::unix_seconds_now(),
+        start,
+        content: CapsuleContent::Kept { actor },
+    };
+    CAPSULES.put(vault, wtxn, &key, &capsule)?;
+    Ok(Some(capsule))
+}
+
+/// The capsule of a step whose request the wall refused outright (FIX
+/// 6254), in `wtxn`: its start published and its row put, the request
+/// withheld for `reasons`, each exposure kept without a stored span.
+fn write_withheld_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    spill: &Spill,
+    draft: &CapsuleDraft<'_>,
+    start: Option<(Vec<u8>, u64)>,
+    reasons: &[&'static str],
+) -> std::result::Result<Option<StepReplayCapsule>, Unwritten> {
+    let capture = draft.capture;
+    let start_len = start.as_ref().map_or(0, |(bytes, _)| bytes.len());
+    spill.holds(&[0, start_len])?;
+    let start = publish_start_in_txn(vault, wtxn, spill, draft, start)?;
+    let capsule = StepReplayCapsule {
+        attempt: draft.attempt,
+        lease_generation: capture.lease_generation,
+        run: capture.run,
+        step: capture.step,
+        host: capture.host,
+        request: CapsuleRequest::Withheld {
+            reasons: reasons.iter().map(|reason| (*reason).to_owned()).collect(),
+        },
+        request_hash: *blake3::hash(&draft.request).as_bytes(),
+        messages_digest: draft.messages_digest,
+        exposures: draft
+            .exposures
+            .iter()
+            .map(|slot| ExposureSlot {
+                stored: None,
+                ..slot.clone()
+            })
+            .collect(),
+        seed: request_seed(capture),
+        binding: None,
+        route_pin: None,
+        captured_at: crate::unix_seconds_now(),
+        start,
+        content: CapsuleContent::Kept { actor: draft.actor },
+    };
+    CAPSULES.put(vault, wtxn, &draft.key(), &capsule)?;
+    Ok(Some(capsule))
+}
+
+/// The sampling seed the request as sent carried, if any.
+fn request_seed(capture: &StepCapture<'_>) -> Option<u64> {
+    capture
+        .request
+        .params
+        .get("seed")
+        .and_then(serde_json::Value::as_u64)
+}
+
+/// The step's start, admitted before, published as a body the run owns.
+fn publish_start_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    spill: &Spill,
+    draft: &CapsuleDraft<'_>,
+    start: Option<(Vec<u8>, u64)>,
+) -> Result<Option<ExecutorStepStart>> {
+    let run = draft.capture.run;
+    Ok(match start {
         Some((bytes, bridge_start)) => Some(ExecutorStepStart {
             body: spill.publish_in_txn(vault, wtxn, run, &draft.start_path, &bytes)?,
             path: draft.start_path.clone(),
@@ -179,31 +283,7 @@ fn write_capsule_in_txn(
             bridge_start,
         }),
         None => None,
-    };
-    let capsule = StepReplayCapsule {
-        attempt: draft.attempt,
-        lease_generation: capture.lease_generation,
-        run,
-        step: capture.step,
-        host: capture.host,
-        request: request_ref,
-        request_path: draft.request_path.clone(),
-        request_hash: *blake3::hash(&draft.request).as_bytes(),
-        stored_request_hash: *blake3::hash(stored).as_bytes(),
-        messages_digest: draft.messages_digest,
-        exposures: stored_slots(&draft.exposures, capture.request, &request),
-        seed: capture
-            .request
-            .params
-            .get("seed")
-            .and_then(serde_json::Value::as_u64),
-        binding: None,
-        captured_at: crate::unix_seconds_now(),
-        start,
-        content: CapsuleContent::Kept { actor },
-    };
-    CAPSULES.put(vault, wtxn, &key, &capsule)?;
-    Ok(Some(capsule))
+    })
 }
 
 /// A request as the wall admitted it: its canonical bytes as stored, its
@@ -213,6 +293,25 @@ struct AdmittedRequest {
     bytes: Vec<u8>,
     request: LlmRequest,
     replaced: Option<TextReplacements>,
+}
+
+/// [`admit_request_in_txn`] in a savepoint of `wtxn`: the request as the
+/// wall admits it, or the error its admission met with nothing it wrote
+/// kept. A refusal of the wall's is a withheld request (FIX 6254).
+fn admit_request_or_refusal_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    key: &[u8],
+    sent: &[u8],
+) -> Result<std::result::Result<AdmittedRequest, Error>> {
+    let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
+    match admit_request_in_txn(vault, &mut savepoint, key, sent) {
+        Ok(admitted) => {
+            savepoint.commit()?;
+            Ok(Ok(admitted))
+        }
+        Err(error) => Ok(Err(error)),
+    }
 }
 
 /// `sent`, a request's canonical bytes as sent, through the wall's tracked

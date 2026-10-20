@@ -3,10 +3,11 @@
 
 use oneiron::attempt_queue::{AttemptId, AttemptRecord};
 use oneiron::blob_artifact::esign::EsignNotice;
+use oneiron_vault_contract::esign_delivery::esign_delivery_stem;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
-use sha2::{Digest as _, Sha256};
 
+use super::signing_links::{SigningLink, delivered_digest};
 use super::{
     ACK_SUFFIX, CHANNEL, DELIVERY_KIND, ENVELOPE_SUFFIX, FILE_PREFIX, LEASE_OWNER, LEASE_SECS,
     SCHEMA_VERSION,
@@ -24,8 +25,9 @@ struct Envelope<'a> {
     attempt_count: u32,
     leased_at: u64,
     lease_expires_at: u64,
-    payload_sha256: &'a str,
+    payload_sha256: String,
     payload: &'a RawValue,
+    signing_link: Option<&'a SigningLink>,
 }
 
 /// The lease an envelope on disk names.
@@ -66,13 +68,13 @@ impl AckStatus {
     }
 }
 
-/// What one queued intent exports: its key, its file stem and its frozen
-/// payload.
+/// What one queued intent exports: its key, its file stem, its frozen
+/// payload and whether its delivery carries a signing link.
 pub(super) struct Export<'a> {
     pub(super) dedupe_key: &'a str,
     pub(super) stem: String,
-    payload: &'a RawValue,
-    pub(super) payload_sha256: String,
+    pub(super) payload: &'a RawValue,
+    pub(super) carries_link: bool,
 }
 
 pub(super) enum FileRole {
@@ -85,21 +87,22 @@ pub(super) enum FileRole {
 pub(super) fn export(row: &AttemptRecord) -> Option<Export<'_>> {
     let dedupe_key = row.dedupe_key.as_deref()?;
     let text = std::str::from_utf8(&row.payload).ok()?;
-    if serde_json::from_str::<EsignNotice>(text).is_err() {
-        return None;
-    }
+    let notice = serde_json::from_str::<EsignNotice>(text).ok()?;
     let payload: &RawValue = serde_json::from_str(text).ok()?;
     Some(Export {
         dedupe_key,
-        stem: stem_of(dedupe_key),
+        stem: esign_delivery_stem(dedupe_key),
         payload,
-        payload_sha256: hex(&Sha256::digest(payload.get().as_bytes())),
+        carries_link: notice.carries_signing_link(),
     })
 }
 
+/// `row`'s envelope for its current lease, with `link` when its delivery
+/// carries one. `payload_sha256` is the delivered-content digest.
 pub(super) fn envelope_bytes(
     row: &AttemptRecord,
     export: &Export<'_>,
+    link: Option<&SigningLink>,
 ) -> serde_json::Result<Vec<u8>> {
     serde_json::to_vec(&Envelope {
         schema_version: SCHEMA_VERSION,
@@ -111,22 +114,27 @@ pub(super) fn envelope_bytes(
         attempt_count: row.attempt_count,
         leased_at: row.updated_at,
         lease_expires_at: row.updated_at.saturating_add(LEASE_SECS),
-        payload_sha256: &export.payload_sha256,
+        payload_sha256: hex(&delivered_digest(export.payload, link)),
         payload: export.payload,
+        signing_link: link,
     })
 }
 
 /// Whether `ack` echoes `row`'s lease whole: this outbox's owner, the lease
-/// generation, the dedupe key its file is named by, and the payload's hash.
-pub(super) fn ack_binds(ack: &Ack, row: &AttemptRecord, stem: &str) -> bool {
-    let Some(export) = export(row) else {
-        return false;
-    };
+/// generation, the dedupe key its file is named by, and `delivered`, the
+/// digest of the content that lease delivered.
+pub(super) fn ack_binds(
+    ack: &Ack,
+    row: &AttemptRecord,
+    export: &Export<'_>,
+    stem: &str,
+    delivered: &str,
+) -> bool {
     ack.lease_owner == LEASE_OWNER
         && ack.attempt_count == row.attempt_count
         && ack.dedupe_key == export.dedupe_key
         && export.stem == stem
-        && ack.payload_sha256 == export.payload_sha256
+        && ack.payload_sha256 == delivered
 }
 
 /// A well-formed ack and the try it names.
@@ -149,16 +157,6 @@ pub(super) fn parse_fence(bytes: &[u8]) -> Option<(Fence, AttemptId)> {
     let fence: Fence = serde_json::from_slice(bytes).ok()?;
     let id = parse_attempt_id(&fence.attempt_id)?;
     Some((fence, id))
-}
-
-/// The file stem of an intent: the prefix and the lower-hex BLAKE3 of
-/// `esign.delivery\0` and its dedupe key.
-fn stem_of(dedupe_key: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DELIVERY_KIND.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(dedupe_key.as_bytes());
-    format!("{FILE_PREFIX}{}", hasher.finalize().to_hex())
 }
 
 /// The stem and role of an outbox file's name; `None` for any other file

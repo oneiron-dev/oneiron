@@ -16,10 +16,20 @@
 //! the door as `refs/imported/<source>/<branch>`, which the change index
 //! stamps `mirror_import`; merges happen at origin and push outward. Imported
 //! refs are never pushed back out.
+//!
+//! Refs pushed are not readiness. A mirror clone must build without this
+//! vault (ARCH-0068), and the push sends no Git-LFS bytes, so each run that
+//! lands records an [`OriginMirrorReadiness`]: `Ready` only when the pushed
+//! refs' whole history names no LFS object, else `NotReady`, naming the
+//! objects nothing has verified at the mirror. The census behind it never
+//! fails or holds back the push.
+
+use std::collections::HashSet;
 
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
+use super::lfs::{LFS_POINTER_SIZE_CUTOFF, LfsOid, LfsPushedPointer};
 use super::publication::OriginPublicationStatus;
 use super::residence::OriginHostAuthority;
 use super::smart_http::origin_repo_dir;
@@ -41,6 +51,10 @@ pub const ORIGIN_MIRROR_DEFAULT_USER: &str = "x-access-token";
 
 /// Refs that came in from a mirror; they never go back out.
 pub const ORIGIN_MIRROR_IMPORTED_PREFIX: &str = "refs/imported/";
+
+/// The Git-LFS objects a not-ready run names; the census counts the rest and
+/// still reads every one.
+pub const ORIGIN_MIRROR_NAMED_LFS_OBJECTS: usize = 8;
 
 const MAX_URL_BYTES: usize = 2048;
 const MAX_USER_BYTES: usize = 128;
@@ -80,6 +94,52 @@ pub struct OriginMirrorRun {
     pub deleted: u64,
     /// `None` when the push landed; its redacted cause otherwise.
     pub failure: Option<String>,
+    /// Whether a clone of the mirror could stand without this vault once
+    /// these refs landed. Refs pushed are not readiness. `None` when the push
+    /// failed: `failure` names why.
+    pub readiness: Option<OriginMirrorReadiness>,
+}
+
+/// Whether a mirror holds what its pushed refs need beyond Git objects: the
+/// Git-LFS objects their history names (ARCH-0068: a mirror clone builds
+/// without vault access).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum OriginMirrorReadiness {
+    /// The pushed refs' whole history names no Git-LFS object.
+    Ready,
+    /// The mirror is not known to hold every Git-LFS object the pushed refs'
+    /// history names.
+    NotReady {
+        /// Why it is not ready.
+        reason: OriginMirrorNotReadyReason,
+        /// The first distinct objects the census met, at most
+        /// `ORIGIN_MIRROR_NAMED_LFS_OBJECTS` (8).
+        objects: Vec<OriginMirrorLfsObject>,
+        /// The further distinct objects the census counted but did not name.
+        omitted_objects: u64,
+    },
+}
+
+/// Why a mirror run is not ready.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginMirrorNotReadyReason {
+    /// The pushed refs' history names Git-LFS objects whose bytes this push
+    /// did not send and nothing has verified at the mirror.
+    LfsObjectsNotVerified,
+    /// The census of the pushed refs' Git-LFS pointers could not finish: an
+    /// object was missing or a read failed. It names what it met before.
+    LfsInventoryIncomplete,
+}
+
+/// One Git-LFS object a pushed ref's history names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OriginMirrorLfsObject {
+    /// Its SHA-256, lower hex.
+    pub oid: String,
+    /// The byte length its pointer declares.
+    pub size: u64,
 }
 
 /// What the owner sets.
@@ -313,12 +373,13 @@ impl Vault {
         let attempt = self.push_mirror_once(repo_id, target);
         let at = self.now_recorded_at();
         let (run, pushed) = match attempt {
-            Ok((refs, deleted, pushed)) => (
+            Ok((refs, deleted, pushed, readiness)) => (
                 OriginMirrorRun {
                     at,
                     refs,
                     deleted,
                     failure: None,
+                    readiness: Some(readiness),
                 },
                 Some(pushed),
             ),
@@ -328,6 +389,7 @@ impl Vault {
                     refs: 0,
                     deleted: 0,
                     failure: Some(error.to_string()),
+                    readiness: None,
                 },
                 None,
             ),
@@ -335,18 +397,21 @@ impl Vault {
         (run, pushed)
     }
 
-    /// The push itself: `(refs, deleted, the refs the mirror now holds)`.
+    /// The push itself: `(refs, deleted, the refs the mirror now holds, its
+    /// readiness)`.
     fn push_mirror_once(
         &self,
         repo_id: EntityId,
         target: &OriginMirrorTarget,
-    ) -> Result<(u64, u64, Vec<String>)> {
+    ) -> Result<(u64, u64, Vec<String>, OriginMirrorReadiness)> {
         let repo_root = origin_repo_dir(self, &target.repo)?;
         let wire = GitWire::new(self)?;
         let Some(handle) = self.mirror_handle(&wire, repo_id, &repo_root)? else {
             // No published commit to pin a handle to: the mirror has nothing
-            // to take, and keeps what it holds until there is one.
-            return Ok((0, 0, target.pushed.clone()));
+            // to take, and keeps what it holds until there is one. Nothing
+            // walked what it holds, so only a mirror holding none is ready.
+            let readiness = LfsCensus::default().readiness(target.pushed.is_empty());
+            return Ok((0, 0, target.pushed.clone(), readiness));
         };
         let refs: Vec<(GitRefName, GitOid)> = self
             .published_origin_refs_without_waiting(&wire, repo_id, &handle)?
@@ -379,12 +444,13 @@ impl Vault {
             },
         )?;
         pushed?;
+        let readiness = lfs_readiness(&wire, &handle, &refs);
         let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
         let names = refs
             .iter()
             .map(|(name, _)| name.as_str().to_owned())
             .collect();
-        Ok((count(refs.len()), count(deletions.len()), names))
+        Ok((count(refs.len()), count(deletions.len()), names, readiness))
     }
 
     /// A proven handle on the served repository, pinned to a commit one of
@@ -450,6 +516,71 @@ impl Vault {
         }
         TARGETS.put(&self.store, txn, &repo_id, &row)?;
         Ok(())
+    }
+}
+
+/// The readiness of a mirror that took exactly `refs`: a census of every
+/// Git-LFS pointer their whole history reaches, each object once. A census
+/// that cannot finish is never ready, and never fails the push.
+fn lfs_readiness(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    refs: &[(GitRefName, GitOid)],
+) -> OriginMirrorReadiness {
+    let tips: Vec<GitOid> = refs.iter().map(|(_, oid)| oid.clone()).collect();
+    let mut census = LfsCensus::default();
+    let walked =
+        wire.for_each_reachable_blob_below(handle, &tips, LFS_POINTER_SIZE_CUTOFF, |_, bytes| {
+            if let Some(pointer) = LfsPushedPointer::from_pointer_content("", bytes) {
+                census.meet(pointer.oid, pointer.size_bytes);
+            }
+        });
+    let complete = walked.unwrap_or_else(|error| {
+        tracing::warn!(kind = ?error.kind(), "mirror LFS census did not finish");
+        false
+    });
+    census.readiness(complete)
+}
+
+/// The Git-LFS objects a census met: each once, the first
+/// [`ORIGIN_MIRROR_NAMED_LFS_OBJECTS`] by name and the rest counted.
+#[derive(Default)]
+struct LfsCensus {
+    seen: HashSet<LfsOid>,
+    named: Vec<OriginMirrorLfsObject>,
+    omitted: u64,
+}
+
+impl LfsCensus {
+    fn meet(&mut self, oid: LfsOid, size: u64) {
+        if !self.seen.insert(oid) {
+            return;
+        }
+        if self.named.len() < ORIGIN_MIRROR_NAMED_LFS_OBJECTS {
+            self.named.push(OriginMirrorLfsObject {
+                oid: oid.to_hex(),
+                size,
+            });
+        } else {
+            self.omitted = self.omitted.saturating_add(1);
+        }
+    }
+
+    /// Ready only over a finished census that met no object: nothing proves
+    /// an object at the mirror yet, so each one met leaves it not ready.
+    fn readiness(self, complete: bool) -> OriginMirrorReadiness {
+        let reason = if !complete {
+            OriginMirrorNotReadyReason::LfsInventoryIncomplete
+        } else if self.seen.is_empty() {
+            return OriginMirrorReadiness::Ready;
+        } else {
+            OriginMirrorNotReadyReason::LfsObjectsNotVerified
+        };
+        OriginMirrorReadiness::NotReady {
+            reason,
+            objects: self.named,
+            omitted_objects: self.omitted,
+        }
     }
 }
 
