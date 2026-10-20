@@ -20,6 +20,7 @@ use super::widen_record::{
     PROPOSAL_INDEX, SLICE, SliceOverride, WIDEN, WidenDecline, WidenIntent, WidenLanding,
     WidenRecord, WidenRequest, WidenTarget, invalid, json, validate_proposal_id, widened_parent,
 };
+use super::workflow_record::WorkflowTaskBinding;
 use super::{
     AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
     AgentDispatcher, AgentSpawnContext, DispatchAgent,
@@ -101,11 +102,35 @@ impl AgentDispatcher<'_> {
         input: &DispatchAgent,
         spawn: &AgentSpawnContext,
     ) -> Result<Option<AgentDispatchOutcome>> {
+        if input.parent_attempt.is_none() {
+            return Ok(None);
+        }
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let proposed = self.propose_context_widen_in_txn(&mut wtxn, input, spawn, None)?;
+        if proposed.is_some() {
+            wtxn.commit()?;
+        }
+        Ok(proposed)
+    }
+
+    /// [`Self::propose_context_widen`] in the caller's writer, which commits
+    /// it. `task` is the binding of an agent's TASK-bound workflow run
+    /// (FIX 5350): the proposal keeps it, and the run takes its TASK only in
+    /// the writer that approves it.
+    pub(super) fn propose_context_widen_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        input: &DispatchAgent,
+        spawn: &AgentSpawnContext,
+        task: Option<&WorkflowTaskBinding>,
+    ) -> Result<Option<AgentDispatchOutcome>> {
         let Some(parent_id) = input.parent_attempt else {
             return Ok(None);
         };
-        let intent = WidenIntent::new(input, spawn)?;
-        let mut wtxn = self.vault.store.env.write_txn()?;
+        let intent = WidenIntent {
+            task: task.cloned(),
+            ..WidenIntent::new(input, spawn)?
+        };
         validate_context_spec(&intent.spec)?;
         self.require_sibling_result_lineage(
             Some(parent_id),
@@ -128,24 +153,24 @@ impl AgentDispatcher<'_> {
         let parent_spec = self.effective_context_spec(parent_id, &parent)?;
         let projection = self.resolve_attempt_context(parent_id)?;
         let key_hash = intent.key_hash()?;
-        if let Some(record) = WIDEN.get(&self.vault.store, &wtxn, &key_hash)? {
+        if let Some(record) = WIDEN.get(&self.vault.store, wtxn, &key_hash)? {
             if record.version != 1 || record.request.intent != intent {
                 return Err(invalid(
                     "existing widen dedupe key names a different dispatch",
                 ));
             }
             record.validate_settlement()?;
-            return self.widen_outcome(&wtxn, &record).map(Some);
+            return self.widen_outcome(wtxn, &record).map(Some);
         }
         // All target leaves must be dispatchable even when only context widens.
-        let target_fingerprint = self.widen_target_fingerprint(&wtxn, &input.target)?;
+        let target_fingerprint = self.widen_target_fingerprint(wtxn, &input.target)?;
         if validate_spec_narrows(&parent_spec, &intent.spec).is_ok()
             && validate_context_narrows(&projection, &intent.spec).is_ok()
         {
             return Ok(None);
         }
         // A request, not a grant: this transaction contains NO queue or slice write.
-        let recorded_at = crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
+        let recorded_at = crate::ports::recorded_at_in_txn(&self.vault.store, wtxn)?;
         let record = WidenRecord {
             version: 1,
             request: WidenRequest {
@@ -163,18 +188,18 @@ impl AgentDispatcher<'_> {
             declined: None,
         };
         let proposal = record.request.proposal()?;
-        WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
+        WIDEN.put(&self.vault.store, wtxn, &key_hash, &record)?;
         validate_proposal_id(&proposal.proposal_id)?;
         PROPOSAL_INDEX.put(
             &self.vault.store,
-            &mut wtxn,
+            wtxn,
             &proposal.proposal_id,
             &WIDEN.key_bytes(&key_hash),
         )?;
         // Same decision ledger and exact consent digest as approve_once. The
         // suggested catastrophe bound can NEVER become a standing grant.
         self.vault.store.append_gate_decision_in_txn(
-            &mut wtxn,
+            wtxn,
             &GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
                 decision_id: GateDecisionId::from_bytes(*self.vault.new_entity_id()?.as_bytes()),
@@ -194,7 +219,6 @@ impl AgentDispatcher<'_> {
                 redacted_at: None,
             },
         )?;
-        wtxn.commit()?;
         Ok(Some(AgentDispatchOutcome::ProposedWiden(Box::new(
             proposal,
         ))))
@@ -297,9 +321,20 @@ impl AgentDispatcher<'_> {
             AgentDispatchTarget::Custom(_) => {
                 self.dispatch_in_txn(&mut wtxn, None, input, spawn)?
             }
-            AgentDispatchTarget::Workflow(_) => {
-                self.dispatch_workflow_in_txn(&mut wtxn, input, spawn, Some(&prepared_parent))?
-            }
+            AgentDispatchTarget::Workflow(_) => match &record.request.intent.task {
+                None => {
+                    self.dispatch_workflow_in_txn(&mut wtxn, input, spawn, Some(&prepared_parent))?
+                }
+                // FIX 5350: a TASK-bound run takes its TASK only now, behind
+                // its bind gate, in the writer that lands it.
+                Some(binding) => self.approve_bound_workflow_in_txn(
+                    &mut wtxn,
+                    input,
+                    spawn,
+                    &prepared_parent,
+                    binding,
+                )?,
+            },
         };
         record.landed = Some(match &outcome {
             AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {
@@ -324,6 +359,15 @@ impl AgentDispatcher<'_> {
         )?;
         WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
         wtxn.commit()?;
+        if let Some(task) = record
+            .request
+            .intent
+            .task
+            .as_ref()
+            .and_then(|binding| EntityId::from_hex(&binding.task_ref).ok())
+        {
+            self.vault.store.notify_task_updates([task]);
+        }
         Ok(outcome)
     }
 

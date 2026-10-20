@@ -6,10 +6,12 @@
 //! lands on that same right, never on a fresh proof of the binder. How the
 //! binder's own right stands at settlement is read beside it and gates
 //! nothing: the receipt names a right that lapsed or was revoked, and the
-//! owner can requeue the TASK. The owner's run at his own door settles as
-//! it always did.
+//! owner can requeue the TASK. A member's binding keeps the slip their call
+//! presented, so a slip revoked or expired after the bind is named too
+//! (FIX 5419). The owner's run at his own door settles as it always did.
 
 use crate::Vault;
+use crate::agent_dispatch::AgentDispatcher;
 use crate::authority::TaskActorVerb;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -65,10 +67,11 @@ pub(super) fn standing_in(
 
 /// How the binder's own right stands at settlement, in the settling writer,
 /// for a run that settles on its bind: `None` while it holds; `revoked`
-/// when its authority binding was revoked; `lapsed` when a proof the
-/// settlement no longer asks now fails: the binder's live proof on the
-/// TASK, its standing as a live person, or a shared vault's content Grant
-/// at the report NOTE's position. Read only; nothing here refuses.
+/// when its authority binding, or the slip a member presented at bind, was
+/// revoked; `lapsed` when a proof the settlement no longer asks now fails:
+/// the binder's live proof on the TASK, its standing as a live person, a
+/// shared vault's content Grant at the report NOTE's position, or that
+/// slip, expired or no longer live. Read only; nothing here refuses.
 pub(super) fn binder_right_in(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
@@ -80,9 +83,16 @@ pub(super) fn binder_right_in(
     }
     let vault = memory.vault();
     let binder = end.bound_by;
+    // FIX 5419: the slip a member presented, as their binding keeps it.
+    let slip = AgentDispatcher::new(vault)
+        .workflow_task_source_in_txn(txn, &end.wrapper)
+        .ok()
+        .flatten()
+        .and_then(|bind| bind.slip)
+        .and_then(|slip| slip_right_in(vault, txn, &slip));
     let right = match vault.verify_native_write_actor_in_txn(txn, &binder) {
         Err(Error::Claim(_)) => Some(REVOKED),
-        Err(_) => Some(LAPSED),
+        Err(_) => slip.or(Some(LAPSED)),
         Ok(()) => {
             let proved = memory
                 .highway_task_actor_in(txn, end.task, TaskActorVerb::Owner, MOVES_ITS_OWN)
@@ -94,11 +104,28 @@ pub(super) fn binder_right_in(
                 vault.authorize_shared_note_write_in_txn(txn, note, &binder),
                 Err(Error::Claim(_))
             );
-            (!proved || !live || !granted).then_some(LAPSED)
+            slip.or((!proved || !live || !granted).then_some(LAPSED))
         }
     };
     if let Some(right) = right {
         tracing::info!(task = %end.task.to_hex(), right, "a workflow TASK settles on its binder's recorded right, which no longer holds");
     }
     right
+}
+
+/// How the slip a member presented at bind stands now (FIX 5419): `None`
+/// while it is live, or when its state does not read; `revoked` when the
+/// authority log revoked it or a slip it descends from; `lapsed` when it
+/// expired or no longer holds otherwise.
+fn slip_right_in(vault: &Vault, txn: &heed::RoTxn<'_>, slip: &[u8; 32]) -> Option<&'static str> {
+    if vault
+        .capability_slip_id_is_live_in_txn(txn, slip)
+        .unwrap_or(true)
+    {
+        return None;
+    }
+    let revoked = vault
+        .authority_view_readonly_in_txn(txn)
+        .is_ok_and(|fold| fold.slips.is_revoked(slip));
+    Some(if revoked { REVOKED } else { LAPSED })
 }
