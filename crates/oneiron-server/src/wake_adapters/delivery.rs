@@ -5,11 +5,20 @@ use std::time::Duration;
 
 use tokio::io::AsyncWriteExt as _;
 
+use oneiron::context_board::WakeEnvelope;
+
 use super::board_stream::BoardDelivery;
 use super::{AdapterCommand, Instance, WakeBatch};
 
 /// A stalled helper must let the next configured adapter try.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The only text a tmux pane is ever typed: this prefix, then the hex TASK
+/// id of each wake, space separated, then Enter. No label, title, frame or
+/// other body text reaches the pane, so nothing a remote author wrote can
+/// run there. The batch itself goes to the helper on stdin, or stays in the
+/// inbox for `wake inbox`.
+const PANE_NUDGE_PREFIX: &str = "oneiron wake pending";
 
 impl Instance {
     pub(crate) async fn deliver(&self, mut delivery: BoardDelivery, credential_env: &[String]) {
@@ -55,10 +64,10 @@ impl Instance {
             }
         }
         if let Some(target) = &self.config.tmux_target {
-            match terminal(target, &body, credential_env).await {
+            match pane_nudge(target, &delivery.wakes, credential_env).await {
                 Ok(()) => return,
                 Err(error) => {
-                    tracing::warn!(instance = %self.key, %error, "wake terminal delivery failed; reoffering to boot command");
+                    tracing::warn!(instance = %self.key, %error, "wake pane nudge failed; reoffering to boot command");
                 }
             }
         }
@@ -139,10 +148,29 @@ async fn send_command(
     }
 }
 
-async fn terminal(target: &str, body: &[u8], credential_env: &[String]) -> anyhow::Result<()> {
-    let literal = String::from_utf8(body.to_vec())?;
+/// The fixed pane line: the prefix and each hex TASK id. An id that is not
+/// plain hex is left out of the line, never typed.
+fn pane_line(wakes: &[WakeEnvelope]) -> String {
+    let mut line = String::from(PANE_NUDGE_PREFIX);
+    for wake in wakes {
+        let hex = !wake.task_ref.is_empty()
+            && wake.task_ref.bytes().all(|byte| byte.is_ascii_hexdigit());
+        if hex {
+            line.push(' ');
+            line.push_str(&wake.task_ref);
+        }
+    }
+    line
+}
+
+async fn pane_nudge(
+    target: &str,
+    wakes: &[WakeEnvelope],
+    credential_env: &[String],
+) -> anyhow::Result<()> {
+    let line = pane_line(wakes);
     for args in [
-        vec!["send-keys", "-t", target, "-l", "--", literal.as_str()],
+        vec!["send-keys", "-t", target, "-l", "--", line.as_str()],
         vec!["send-keys", "-t", target, "Enter"],
     ] {
         let mut command = command(std::path::Path::new("tmux"), credential_env);
