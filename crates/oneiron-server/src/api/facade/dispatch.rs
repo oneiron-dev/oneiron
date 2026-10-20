@@ -14881,6 +14881,41 @@ async fn vault_consent_registry(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_consent_failure_signals_held(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.failure_signals_held")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.failure_signals_held", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.consent.failure_signals_held", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_consent_failure_signals_held(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_consent_revoke(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -34377,6 +34412,9 @@ pub(crate) async fn call_verb(
             vault_consent_create_standing_grant(server, call, input).await
         }
         "vault.consent.registry" => vault_consent_registry(server, call, input).await,
+        "vault.consent.failure_signals_held" => {
+            vault_consent_failure_signals_held(server, call, input).await
+        }
         "vault.consent.revoke" => vault_consent_revoke(server, call, input).await,
         "vault.consent.bypass_grant_warning" => {
             vault_consent_bypass_grant_warning(server, call, input).await

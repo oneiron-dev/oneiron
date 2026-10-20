@@ -108,6 +108,21 @@ impl HistoryLedgerSnapshot {
         })
     }
 
+    /// [`Self::open`], a sealed vault's pages opened with `seal`, passed
+    /// explicitly (OF-570): how a process that never opened the vault reads
+    /// it, beside a `serve` that may hold it. With no seal it is
+    /// [`Self::open`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`]; a sealed vault this seal does not open refuses.
+    pub fn open_with_seal(
+        vault_dir: &Path,
+        seal: Option<&crate::world_keys::VaultPageSeal>,
+    ) -> Result<Self> {
+        crate::world_keys::read_sealed(vault_dir, seal, || Self::open(vault_dir))
+    }
+
     /// How many messages of `source` the ledger holds.
     ///
     /// # Errors
