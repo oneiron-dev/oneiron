@@ -26,6 +26,20 @@ pub(super) struct RunParticipant {
 }
 
 impl<'vault> OffRecordSession<'vault> {
+    /// [`Self::read_composed`] with the vault the stretch reads, for a check
+    /// that needs the composed view and the vault's own rows in one snapshot:
+    /// a no-key search's own-entry window (FIX 6488).
+    pub(crate) fn read_composed_in_vault<R>(
+        &self,
+        read: impl FnOnce(
+            &crate::Vault,
+            &crate::store::SessionStoreView<'_>,
+            &heed::RoTxn<'_>,
+        ) -> Result<R>,
+    ) -> Result<R> {
+        self.read_composed(|view, txn| read(self.vault, view, txn))
+    }
+
     /// This stretch's handle for a run acting as `actor`. In a room `actor`
     /// must be on its roster now, and every transaction the handle reads or
     /// writes the stretch in checks that again.
