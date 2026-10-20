@@ -9,12 +9,18 @@
 //! clear bytes around them.
 
 mod commitment;
+mod prelude;
 mod wire;
 
 pub use self::commitment::{
-    CHECKPOINT_SIGNATURE_EPOCH, CHECKPOINT_SIGNATURE_SUITE, COMMITMENT_VERSION, CheckpointSigner,
-    Commitment, ED25519_KEY_ID, MAX_SIGNED_FRAME, SLHDSA_KEY_ID, commitment_digest,
-    verify_commitment_signature,
+    CHECKPOINT_SIGNATURE_EPOCH, CHECKPOINT_SIGNATURE_SUITE, COMMITMENT_VERSION,
+    COMMITMENT_VERSION_V1, CheckpointSigner, Commitment, CustodyRef, ED25519_KEY_ID,
+    MAX_SIGNED_FRAME, SLHDSA_KEY_ID, commitment_digest, verify_commitment_signature,
+};
+pub use self::prelude::{
+    ARTIFACT_VERSION_V1, ARTIFACT_VERSION_V2, ArtifactPrelude, BackupHead, IDENTITY_V1_LEN,
+    IDENTITY_V2_LEN, PRELUDE_V1_LEN, PRELUDE_V2_LEN, REGISTRY_BINDING_CONTEXT, RegistryMatch,
+    inspect_backup_prefix, registry_binding,
 };
 pub use self::wire::{
     ArtifactKind, BACKUP_MAGIC, KeyHeader, KeyHeaderWrap, MAX_KEY_HEADER_LEN, VaultKeyWrapInfo,

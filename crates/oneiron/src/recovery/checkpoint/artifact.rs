@@ -3,7 +3,8 @@
 //! the vault data key (`oneiron/checkpoint-seal/v1`). One file:
 //!
 //! ```text
-//! "ONEIRONS" ‖ u16be 1 ‖ u8 kind ‖ vault id (32) ‖ snapshot id (32)
+//! "ONEIRONS" ‖ u16be 2 ‖ u8 kind ‖ vault id (32)
+//!   ‖ u8 has_registry ‖ registry binding (32) ‖ snapshot id (32)
 //!   ‖ u32be n ‖ key header (n)    the vault key's commitment and sealed wraps
 //!   ‖ frame*                      the image's chunks, then each body's in order
 //!   ‖ frame                       the sealed manifest
@@ -32,6 +33,17 @@
 //! The commitment names the sealed manifest by digest, and a reader verifies
 //! its signature against the signers its key trusts before the manifest opens
 //! (`commitment`).
+//!
+//! The registry binding (FIX 5826) ties the engine's vault id to the
+//! registry's id for the vault, where the host that took the artifact knew
+//! one: `BLAKE3-derive_key("oneiron/backup-registry-binding/v1", vault id ‖
+//! u32be id length ‖ id)`, or `0 ‖ zero (32)` where it knew none. The
+//! commitment signs the same binding, with the key header's commitment and
+//! BLAKE3 and the custody position, so a host that never opens the artifact
+//! reads them signed. A reader compares the binding with the signed one,
+//! never with where it restores to. The prelude, key header and commitment
+//! codecs are the shared ones in `oneiron_crypto::backup`; the engine reads
+//! version 2 only.
 mod sink;
 
 use std::fs::File;
@@ -39,7 +51,10 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 pub use oneiron_crypto::backup::ArtifactKind;
-use oneiron_crypto::backup::{BACKUP_MAGIC as MAGIC, MAX_KEY_HEADER_LEN as MAX_KEY_HEADER};
+use oneiron_crypto::backup::{
+    ARTIFACT_VERSION_V2 as VERSION, ArtifactPrelude, CustodyRef,
+    MAX_KEY_HEADER_LEN as MAX_KEY_HEADER, PRELUDE_V2_LEN as PRELUDE_LEN,
+};
 use oneiron_crypto::{Kek, MAX_PLAINTEXT_LEN, SuiteId};
 use serde::{Deserialize, Serialize};
 
@@ -51,7 +66,6 @@ use crate::world_keys::{
 };
 use crate::{Error, Result, Vault};
 
-const VERSION: u16 = 1;
 const SEAL_CONTEXT: &str = "oneiron/checkpoint-seal/v1";
 const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 /// The crypto epoch every artifact envelope is sealed at.
@@ -61,12 +75,17 @@ const CHUNK_LEN: usize = 4 << 20;
 const ZSTD_LEVEL: i32 = 3;
 const IMAGE_STREAM: u32 = 0;
 const MANIFEST_STREAM: u32 = u32::MAX;
-const PRELUDE_LEN: usize = MAGIC.len() + 2 + 1 + 32 + 32 + 4;
 /// No envelope's header and tag come near 64 KiB above its plaintext.
 const MAX_FRAME: u64 = MAX_PLAINTEXT_LEN as u64 + (1 << 16);
 
 fn codec() -> Error {
     Error::CorruptedIndex("sealed checkpoint artifact")
+}
+
+/// The prelude's registry binding is not the one its commitment signs: a
+/// corrupt artifact, named with no bytes of either.
+fn binding_mismatch() -> Error {
+    Error::CorruptedIndex("sealed checkpoint artifact registry binding")
 }
 
 /// The key one vault's sealed checkpoints and backups open with, derived from
@@ -258,6 +277,8 @@ struct Manifest {
 struct Prelude {
     kind: ArtifactKind,
     vault_id: [u8; 32],
+    /// The registry binding the prelude carries, if any (FIX 5826).
+    registry_binding: Option<[u8; 32]>,
     snapshot: [u8; 32],
     key_header: Vec<u8>,
     /// Where the first frame starts.
@@ -265,26 +286,20 @@ struct Prelude {
 }
 
 impl Prelude {
+    /// The shared prelude codec's read, version 2 only.
     fn read(file: &mut File) -> Result<Self> {
-        let mut fixed = [0u8; PRELUDE_LEN];
-        file.read_exact(&mut fixed).map_err(|_| codec())?;
-        let (magic, rest) = fixed.split_at(MAGIC.len());
-        if magic != MAGIC || rest[..2] != VERSION.to_be_bytes() {
-            return Err(codec());
-        }
-        let kind = ArtifactKind::from_code(rest[2]).ok_or_else(codec)?;
-        let vault_id: [u8; 32] = rest[3..35].try_into().map_err(|_| codec())?;
-        let snapshot: [u8; 32] = rest[35..67].try_into().map_err(|_| codec())?;
-        let len = u32::from_be_bytes(rest[67..71].try_into().map_err(|_| codec())?) as usize;
-        if len > MAX_KEY_HEADER {
+        let fixed = ArtifactPrelude::read(file).map_err(|_| codec())?;
+        let len = fixed.key_header_len as usize;
+        if fixed.version != VERSION || len > MAX_KEY_HEADER {
             return Err(codec());
         }
         let mut key_header = vec![0u8; len];
         file.read_exact(&mut key_header).map_err(|_| codec())?;
         Ok(Self {
-            kind,
-            vault_id,
-            snapshot,
+            kind: fixed.kind,
+            vault_id: fixed.engine_vault_id,
+            registry_binding: fixed.registry_binding,
+            snapshot: fixed.snapshot,
             key_header,
             end: (PRELUDE_LEN + len) as u64,
         })
@@ -324,10 +339,11 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
     if prelude.vault_id != key.vault_id {
         return Err(refused("the checkpoint is another vault's"));
     }
+    let carried = prelude.carried()?;
     let sealer = Sealer {
         key,
         purpose: prelude.kind.purpose(),
-        commitment: *prelude.carried()?.commitment(),
+        commitment: *carried.commitment(),
         snapshot: prelude.snapshot,
     };
     let footer_at = file
@@ -363,8 +379,16 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
         || commitment.snapshot != prelude.snapshot
         || commitment.manifest != *blake3::hash(&manifest_bytes).as_bytes()
         || manifest_at + 4 + manifest_len != signed_at
+        || commitment.key_commitment != Some(*carried.commitment())
+        || commitment.key_header_blake3 != Some(*blake3::hash(&prelude.key_header).as_bytes())
     {
         return Err(codec());
+    }
+    // The prelude's registry binding is the one the signature covers (FIX
+    // 5826), compared after the signature verifies and never with where the
+    // artifact restores to.
+    if commitment.registry_binding != prelude.registry_binding {
+        return Err(binding_mismatch());
     }
     let manifest: Manifest =
         rmp_serde::from_slice(&sealer.open(MANIFEST_STREAM, 0, &manifest_bytes)?)
@@ -376,6 +400,7 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
         || manifest.epoch != EPOCH
         || manifest.created_at != commitment.created_at
         || manifest.key_header != *blake3::hash(&prelude.key_header).as_bytes()
+        || commitment.custody_ref != custody_ref(manifest.custody.as_ref())?
     {
         return Err(codec());
     }
@@ -432,6 +457,25 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
         },
         custody: manifest.custody,
     })
+}
+
+/// The custody position a manifest's requirement names, as the commitment
+/// signs it.
+pub(super) fn custody_ref(
+    custody: Option<&crate::store::CustodyRequirement>,
+) -> Result<Option<CustodyRef>> {
+    custody
+        .map(|required| {
+            let position = required.position()?;
+            Ok(CustodyRef {
+                vault: *position.vault.as_bytes(),
+                namespace: *position.namespace.as_bytes(),
+                epoch: position.epoch.get(),
+                seq: position.seq,
+                tip: position.tip,
+            })
+        })
+        .transpose()
 }
 
 /// The commitment or signature frame at `at`: its length, and where the next

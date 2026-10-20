@@ -10,8 +10,12 @@ use crate::error::{Error, Result};
 use crate::record::{SigPurpose, SignatureRecord, VerifyPolicy, VerifyingKey};
 use crate::suite::SuiteId;
 
-/// The commitment encoding version.
-pub const COMMITMENT_VERSION: u16 = 1;
+/// The commitment version the engine writes: the artifact's prelude version,
+/// with the registry binding and the public key and custody refs signed.
+pub const COMMITMENT_VERSION: u16 = super::ARTIFACT_VERSION_V2;
+/// The commitment version written with a version 1 prelude, read only for a
+/// host that still holds artifacts written before version 2.
+pub const COMMITMENT_VERSION_V1: u16 = super::ARTIFACT_VERSION_V1;
 /// The signature suite every commitment is signed with.
 pub const CHECKPOINT_SIGNATURE_SUITE: SuiteId = SuiteId::SIG_DUAL_ED25519_SLHDSA_SHA2_256S_V1;
 /// The crypto epoch every commitment and its signature are made at.
@@ -34,7 +38,21 @@ pub struct CheckpointSigner {
     pub slhdsa: Vec<u8>,
 }
 
-/// What one artifact's signature covers. Named MessagePack.
+/// Where an artifact's exterior key custody stood when its snapshot was taken:
+/// the custody log's vault and namespace, writer epoch, sequence and tip. A
+/// position, never a key or an id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyRef {
+    pub vault: [u8; 32],
+    pub namespace: [u8; 16],
+    pub epoch: u64,
+    pub seq: u64,
+    pub tip: [u8; 32],
+}
+
+/// What one artifact's signature covers. Named MessagePack. Version 2 adds
+/// the four optional fields at the end, which version 1 never carries.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Commitment {
@@ -52,6 +70,21 @@ pub struct Commitment {
     pub manifest: [u8; 32],
     pub created_at: u64,
     pub signer: CheckpointSigner,
+    /// The prelude's registry binding, signed (FIX 5826); `None` where the
+    /// artifact was written with no registry id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_binding: Option<[u8; 32]>,
+    /// The commitment naming the vault data key the artifact is sealed under,
+    /// as its key header carries it. Always set in version 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_commitment: Option<[u8; 32]>,
+    /// BLAKE3 of the clear key header's exact bytes. Always set in version 2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_header_blake3: Option<[u8; 32]>,
+    /// Where the vault's exterior key custody stood at the snapshot; `None`
+    /// where the vault never published custody.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custody_ref: Option<CustodyRef>,
 }
 
 impl Commitment {
@@ -61,10 +94,25 @@ impl Commitment {
         rmp_serde::to_vec_named(self).map_err(|_| Error::BackupMalformed("commitment"))
     }
 
-    /// Reads a commitment's bytes. Nothing in it is trusted until its signature
-    /// verifies against a signer the reader pinned.
+    /// Reads a commitment's bytes, of either version, each with its own
+    /// fields only. Nothing in it is trusted until its signature verifies
+    /// against a signer the reader pinned.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        rmp_serde::from_slice(bytes).map_err(|_| Error::BackupMalformed("commitment"))
+        let commitment: Self =
+            rmp_serde::from_slice(bytes).map_err(|_| Error::BackupMalformed("commitment"))?;
+        let v2_refs = commitment.key_commitment.is_some() && commitment.key_header_blake3.is_some();
+        let v1_shape = commitment.registry_binding.is_none()
+            && commitment.key_commitment.is_none()
+            && commitment.key_header_blake3.is_none()
+            && commitment.custody_ref.is_none();
+        match commitment.version {
+            COMMITMENT_VERSION if v2_refs => Ok(commitment),
+            COMMITMENT_VERSION_V1 if v1_shape => Ok(commitment),
+            COMMITMENT_VERSION | COMMITMENT_VERSION_V1 => {
+                Err(Error::BackupMalformed("commitment fields"))
+            }
+            other => Err(Error::UnsupportedVersion(other)),
+        }
     }
 }
 

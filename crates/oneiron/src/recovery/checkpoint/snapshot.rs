@@ -22,6 +22,7 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         kind: ArtifactKind,
+        registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<String> {
         self.unlock_vault_key()?;
@@ -31,7 +32,7 @@ impl Vault {
             // outside any writer (KS-2A). A body written since is bound by
             // the next pass, and the snapshot taken again.
             self.bind_carried_bodies()?;
-            if let Some(id) = self.snapshot_once(path, created_at, owner, kind, budget)? {
+            if let Some(id) = self.snapshot_once(path, created_at, owner, kind, registry, budget)? {
                 return Ok(id);
             }
         }
@@ -45,6 +46,7 @@ impl Vault {
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         kind: ArtifactKind,
+        registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<Option<String>> {
         let keys = self.checkpoint_signing_keys()?;
@@ -216,6 +218,7 @@ impl Vault {
             path,
             &key,
             kind,
+            registry,
             &carried,
             &link,
             required.as_ref(),

@@ -74,7 +74,8 @@ struct RequiredId {
 }
 
 impl CustodyRequirement {
-    fn position(&self) -> Result<CustodyPosition> {
+    /// The custody position the requirement names.
+    pub(crate) fn position(&self) -> Result<CustodyPosition> {
         CustodyPosition::from_bytes(&self.position)
             .ok_or_else(|| refused("the backup's custody requirement does not parse".into()))
     }

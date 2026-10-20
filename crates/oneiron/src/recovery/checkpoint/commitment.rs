@@ -193,6 +193,17 @@ impl Link {
     }
 }
 
+/// The public refs a version 2 commitment signs beside the manifest: the
+/// prelude's registry binding (FIX 5826), the key header's commitment and
+/// BLAKE3, and the custody position the snapshot read, so a host that never
+/// opens the artifact reads them signed.
+pub(super) struct SignedRefs {
+    pub(super) registry_binding: Option<[u8; 32]>,
+    pub(super) key_commitment: [u8; 32],
+    pub(super) key_header_blake3: [u8; 32],
+    pub(super) custody_ref: Option<oneiron_crypto::backup::CustodyRef>,
+}
+
 pub(super) fn new_commitment(
     link: &Link,
     vault_id: [u8; 32],
@@ -200,6 +211,7 @@ pub(super) fn new_commitment(
     snapshot: [u8; 32],
     manifest: [u8; 32],
     created_at: u64,
+    refs: SignedRefs,
 ) -> Result<Commitment> {
     Ok(Commitment {
         version: VERSION,
@@ -212,6 +224,10 @@ pub(super) fn new_commitment(
         manifest,
         created_at,
         signer: link.keys.signer()?,
+        registry_binding: refs.registry_binding,
+        key_commitment: Some(refs.key_commitment),
+        key_header_blake3: Some(refs.key_header_blake3),
+        custody_ref: refs.custody_ref,
     })
 }
 

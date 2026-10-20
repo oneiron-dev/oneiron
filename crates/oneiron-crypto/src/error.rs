@@ -179,4 +179,7 @@ pub enum Error {
     /// A sealed artifact's clear part is not the format, at the named part.
     #[error("backup artifact is malformed at its {0}")]
     BackupMalformed(&'static str),
+    /// Reading a sealed artifact failed with this I/O error kind.
+    #[error("reading the backup artifact failed: {0:?}")]
+    BackupRead(std::io::ErrorKind),
 }

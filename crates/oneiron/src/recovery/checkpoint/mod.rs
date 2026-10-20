@@ -272,6 +272,7 @@ impl Vault {
             created_at,
             None,
             ArtifactKind::Checkpoint,
+            None,
             &write_budget::Unfloored,
         )
     }
@@ -295,19 +296,24 @@ impl Vault {
             created_at,
             Some(owner),
             ArtifactKind::Checkpoint,
+            None,
             &write_budget::Unfloored,
         )
     }
     /// An owner's backup: [`Vault::snapshot_checkpoint`] sealed as a backup,
     /// and on `owner`'s request, when given, as
-    /// [`Vault::snapshot_checkpoint_as`].
+    /// [`Vault::snapshot_checkpoint_as`]. `registry` is the registry's id for
+    /// the vault where the host knows one (a managed vault's name): the
+    /// artifact binds the vault id to it, or says it knew none (FIX 5826).
+    /// Neither is refused.
     pub fn snapshot_backup(
         &self,
         path: &Path,
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
+        registry: Option<&str>,
     ) -> Result<String> {
-        self.snapshot_backup_within(path, created_at, owner, &write_budget::Unfloored)
+        self.snapshot_backup_within(path, created_at, owner, registry, &write_budget::Unfloored)
     }
     /// [`Vault::snapshot_backup`] on a disk whose host keeps a free-space
     /// floor under its uploads (FIX 5479): the artifact's room is claimed on
@@ -319,9 +325,17 @@ impl Vault {
         path: &Path,
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
+        registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<String> {
-        self.snapshot_checkpoint_checked(path, created_at, owner, ArtifactKind::Backup, budget)
+        self.snapshot_checkpoint_checked(
+            path,
+            created_at,
+            owner,
+            ArtifactKind::Backup,
+            registry,
+            budget,
+        )
     }
     /// Restore, wake and migrate use the same fail-closed path, with no tail replay.
     /// Model-dependent vectors enter the normal pending-embedding queue; no vector

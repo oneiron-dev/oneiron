@@ -6,15 +6,16 @@ use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 use getrandom::SysRng;
+use oneiron_crypto::backup::{ArtifactPrelude, registry_binding};
 use oneiron_crypto::{
     Argon2Cost, Envelope, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy, Purpose, SealKey, SealParams,
     WrapType, seal,
 };
 
-use super::commitment::{self, ChainHead, Link};
+use super::commitment::{self, ChainHead, Link, SignedRefs};
 use super::{
-    AEAD, ArtifactKind, CHUNK_LEN, CheckpointKey, EPOCH, IMAGE_STREAM, MAGIC, MANIFEST_STREAM,
-    MAX_FRAME, MAX_KEY_HEADER, Manifest, PRELUDE_LEN, StreamEntry, VERSION, ZSTD_LEVEL, codec,
+    AEAD, ArtifactKind, CHUNK_LEN, CheckpointKey, EPOCH, IMAGE_STREAM, MANIFEST_STREAM, MAX_FRAME,
+    MAX_KEY_HEADER, Manifest, PRELUDE_LEN, StreamEntry, VERSION, ZSTD_LEVEL, codec, custody_ref,
 };
 use crate::recovery::checkpoint::write_budget::{self, RecoveryWriteBudget};
 use crate::world_keys::{CarriedVaultKey, refused};
@@ -91,8 +92,10 @@ pub(in crate::recovery::checkpoint) struct ArtifactBody {
 
 /// Writes the artifact at `path`, create-new and owner-only: the image, then
 /// each body `open_body` hands back by its place in `bodies`, then the
-/// manifest, then the commitment `link` signs. Returns the image's BLAKE3 and
-/// the chain head the signed commitment makes. A write that fails removes the
+/// manifest, then the commitment `link` signs. Its prelude and commitment
+/// carry the binding of the vault id to `registry`, the registry's id for
+/// the vault, or say none was known (FIX 5826). Returns the image's BLAKE3
+/// and the chain head the signed commitment makes. A write that fails removes the
 /// file, so no part of one is left. The artifact's room is claimed on
 /// `budget` before its first byte, at [`artifact_room`], and set to what is
 /// left before each frame (FIX 5479); a claim the floor refuses fails the
@@ -102,6 +105,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     path: &Path,
     key: &CheckpointKey,
     kind: ArtifactKind,
+    registry: Option<&str>,
     carried: &CarriedVaultKey,
     link: &Link,
     custody: Option<&crate::store::CustodyRequirement>,
@@ -127,6 +131,20 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         .ok()
         .filter(|len| *len as usize <= MAX_KEY_HEADER)
         .ok_or_else(codec)?;
+    let binding = registry
+        .map(|registry| registry_binding(&key.vault_id, registry))
+        .transpose()
+        .map_err(|_| codec())?;
+    let prelude = ArtifactPrelude {
+        version: VERSION,
+        kind,
+        engine_vault_id: key.vault_id,
+        registry_binding: binding,
+        snapshot,
+        key_header_len: len,
+    }
+    .encode()
+    .map_err(|_| codec())?;
     let mut sink = Sink {
         out: BufWriter::new(file),
         offset: 0,
@@ -140,12 +158,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         budget,
     };
     sink.claim_rest()?;
-    sink.put(MAGIC)?;
-    sink.put(&VERSION.to_be_bytes())?;
-    sink.put(&[kind.code()])?;
-    sink.put(&key.vault_id)?;
-    sink.put(&snapshot)?;
-    sink.put(&len.to_be_bytes())?;
+    sink.put(&prelude)?;
     sink.put(&key_header)?;
     let image = sink.stream(IMAGE_STREAM, &mut &image[..])?;
     let mut sealed_bodies = Vec::with_capacity(bodies.len());
@@ -185,6 +198,12 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         snapshot,
         *blake3::hash(&envelope).as_bytes(),
         created_at,
+        SignedRefs {
+            registry_binding: binding,
+            key_commitment: *carried.commitment(),
+            key_header_blake3: manifest.key_header,
+            custody_ref: custody_ref(custody)?,
+        },
     )?;
     let (commitment, signature, head) = link.sign(&commitment)?;
     sink.frame(&commitment)?;

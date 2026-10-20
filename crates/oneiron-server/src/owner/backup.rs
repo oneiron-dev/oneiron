@@ -76,6 +76,11 @@ pub(crate) struct BackupPlan {
     /// this vault's backups and rehearsals claim their writes on it
     /// ([`write_budget`], FIX 5479); `None` on a stopped vault.
     floor: Option<DiskFloor>,
+    /// The registry's id for this vault, which each backup binds its vault id
+    /// to (FIX 5826): a managed vault's name. `None` where this host knows
+    /// none (plain serve, the stopped CLI), and the backup says so; nothing
+    /// is refused either way, and nothing of it is kept.
+    pub(crate) registry: Option<String>,
 }
 
 impl BackupPlan {
@@ -86,6 +91,7 @@ impl BackupPlan {
             keep,
             custody: custody::CustodyPlan::default(),
             floor: None,
+            registry: None,
         }
     }
 }
@@ -176,7 +182,13 @@ pub(crate) fn take_as(
     let floors = write_budget::landing_floors(plan.floor.as_ref(), &plan.dir);
     let snapshot = vault.ensure_vault_key().and_then(|()| {
         let room = write_budget::WriteClaim::on_each(&floors);
-        vault.snapshot_backup_within(&partial, vault.now_recorded_at(), owner, &room)
+        vault.snapshot_backup_within(
+            &partial,
+            vault.now_recorded_at(),
+            owner,
+            plan.registry.as_deref(),
+            &room,
+        )
     });
     let checkpoint_id = match snapshot {
         Ok(id) => id,
