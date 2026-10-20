@@ -274,8 +274,8 @@ fn rule_on_proposal(
         &crate::skill_optimize::labels::skill_label_anchor(vault, inputs.target)?,
         incumbent.as_ref().map(|incumbent| incumbent.judge.as_str()),
     );
-    // Freeze the response-only preference before ANY rubric-aware callback.
-    // The same frozen sample is used to measure both instruction versions.
+    // Pair responses by their common-rubric scores and freeze the preference
+    // before either version's instructions or a label is read; both share it.
     let blind = scorer.blind_preference(current_case.skill_id, &inputs.held_out)?;
     let measurements = measure(
         scorer,
