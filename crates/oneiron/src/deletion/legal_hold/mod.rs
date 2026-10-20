@@ -351,6 +351,8 @@ impl Vault {
             super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
             Ok((actor, kept, lifting.into_keys().collect::<Vec<_>>()))
         })?;
+        // The lifts committed: a delete they deferred asks again (FIX 1488).
+        self.note_backup_hold_recheck();
         let memory = self.memory(actor, EdgeActorClass::Human);
         let hard = crate::memory::SafeDeleteReason::UserHardDelete;
         let now = self.store.clock.now_recorded_at();
@@ -470,6 +472,8 @@ impl Vault {
             )?;
             Ok(hold)
         })?;
+        // The release committed: a delete it deferred asks again (FIX 1488).
+        self.note_backup_hold_recheck();
         self.run_due_legal_hold_erases()?;
         Ok(hold)
     }
@@ -575,6 +579,9 @@ impl Vault {
             }
             Ok(lapsed)
         })?;
+        // Each pass, once its lapses committed: a delete a lapsed order
+        // deferred asks again (FIX 1488).
+        self.note_backup_hold_recheck();
         Ok(LegalHoldMaintenance {
             lapsed,
             erased: self.run_due_legal_hold_erases()?,

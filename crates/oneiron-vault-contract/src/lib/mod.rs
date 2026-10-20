@@ -90,8 +90,9 @@ pub use self::limits::{
     READY_BYTE, TOKEN_LEN,
 };
 pub use self::managed_backup::{
-    CheckpointSignerObservation, CheckpointSignerUnavailable, MANAGED_BACKUP_SCHEMA_VERSION,
-    ManagedBackupFacts,
+    BackupCoverageWire, CheckpointSignerObservation, CheckpointSignerUnavailable,
+    IDLE_REAP_PREPARATION_SECS, IDLE_REAP_SCHEMA_VERSION, IdleBackupFailure, IdleBackupState,
+    IdleBackupWire, IdleReapWire, MANAGED_BACKUP_SCHEMA_VERSION, ManagedBackupFacts,
 };
 pub use self::managed_holder::{
     MANAGED_OWNER_ACTION_HEADER, MANAGED_OWNER_BOUND_HEADERS, MANAGED_VOICE_MAX_SKEW_SECS,

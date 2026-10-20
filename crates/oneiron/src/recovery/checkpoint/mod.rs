@@ -51,7 +51,7 @@ pub(crate) use admission::{Rejected, because};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey};
 pub use commitment::CheckpointSigner;
 pub use custody_head::*;
-pub use host_holds::HostOrderHolds;
+pub use host_holds::{BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -60,8 +60,8 @@ use std::{
 };
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
-    BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupSnapshotReceipt, BackupWatermark,
-    inspect_backup, last_backed_up, verify_with_pins,
+    BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSnapshotReceipt,
+    BackupWatermark, backup_marker, inspect_backup, last_backed_up, verify_with_pins,
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
