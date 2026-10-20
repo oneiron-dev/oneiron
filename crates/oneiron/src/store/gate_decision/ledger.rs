@@ -22,6 +22,7 @@ use super::types::{
 use super::vet::vet_gate_decision_record;
 
 mod custody;
+mod erasure_scan;
 
 /// The stored value is plain named MessagePack or encrypted ORCB bytes;
 /// the Store door decodes with its current custody after this typed read.
