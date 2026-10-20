@@ -19,6 +19,7 @@
 )]
 
 pub(crate) mod instance;
+pub(crate) mod rows;
 
 use heed::RwTxn;
 use oneiron_crypto::Purpose;

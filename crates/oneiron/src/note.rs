@@ -445,6 +445,7 @@ pub(crate) fn ordinary_entity_visible(
 #[cfg(test)]
 mod tests;
 
+pub(crate) mod checkpoint;
 mod citation_erase;
 mod delete;
 mod pin_index;

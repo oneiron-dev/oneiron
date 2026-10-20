@@ -18,6 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
+pub(crate) mod checkpoint;
 
 /// Where a body's bytes live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

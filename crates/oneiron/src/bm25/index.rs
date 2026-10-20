@@ -16,6 +16,7 @@ use super::codec::{
 };
 use super::diagnostics::Bm25DiagnosticKind;
 use super::{DOC_META_LEN, ENTITY_ID_LEN, FIELD_STATS_LEN};
+pub(crate) mod checkpoint;
 
 /// Canonical caller-supplied text fields backing one document's bm25 index,
 /// keyed by doc id, used to rebuild postings on restore.

@@ -13,6 +13,7 @@ pub(crate) use pending_index::{
 };
 pub(crate) use phonetic::{defer_phonetic, index_name_phonetic};
 mod storage;
+pub(crate) use storage::checkpoint;
 mod turn_text;
 #[cfg(test)]
 pub(crate) use turn_text::HISTORY_SEARCHES;

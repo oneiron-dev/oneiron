@@ -7,6 +7,7 @@ use crate::{
     error::{Error, Result},
 };
 use heed::RoTxn;
+pub(crate) mod checkpoint;
 
 impl<T: ManifestDbs> Transactions for T {
     type Read<'a> = heed::RoTxn<'a>;

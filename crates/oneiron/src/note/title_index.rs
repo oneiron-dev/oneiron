@@ -10,6 +10,7 @@ use super::sync_rows::SYNC_DS_E;
 use crate::side_table::{self, HexId, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
+pub(super) mod checkpoint;
 
 /// One author's reservation of a normalized title, keyed by
 /// `hex32(author) ":" hex64(blake3(normalized title))`; the value is the owning NOTE.

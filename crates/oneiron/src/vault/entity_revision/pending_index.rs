@@ -5,6 +5,7 @@ use crate::embed::EmbeddingProvenance;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{ManifestDbs, Store};
 use crate::{EntityId, Result};
+pub(super) mod checkpoint;
 
 const PENDING: SideTable<EntityId, Pending, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_PENDING_INDEX_INPUTS);
