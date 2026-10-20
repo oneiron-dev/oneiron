@@ -1,16 +1,21 @@
 //! What the pipe keeps of its pages for an engine switch (FIX 6680,
-//! BROWSER-SPLIT PR3): the page each watched session drives, the web
-//! origins each page committed at its top level, and the one-shot seed
-//! document a switch loads a carried origin's storage into.
+//! BROWSER-SPLIT PR3, PR3b): the page each watched session drives, the web
+//! origins each page committed at its top level, the one it stands at, and
+//! the one-shot seed document a switch loads a carried origin's storage
+//! into.
 //!
 //! The registry rides the routing of both transports: a top-level
 //! `Page.frameNavigated` (a frame with no parent) of a watched session
 //! queues its page's origin, once each, in the order first committed; a
-//! seed document's commit is never a visit. Nothing here calls CDP from the
-//! reader. A page whose target is destroyed, or whose session detached or
-//! was pruned with its tab, drops its binding, its queued origins and its
-//! navigation count (FIX 6767); the session keeps the history of the tabs it
-//! drained, outside the pipe and the engine.
+//! seed document's commit is never a visit. Where the session keeps storage
+//! snapshots, a commit no switch carries storage of is named to them, value
+//! free: an in-page frame of another origin than its page's, a top-level
+//! document at an opaque origin, and a non-web one (`about:` documents and
+//! the browser's error pages hold none of their own). Nothing here calls
+//! CDP from the reader. A page whose target is destroyed, or whose session
+//! detached or was pruned with its tab, drops its binding, its queued
+//! origins and its navigation count (FIX 6767); the session keeps the
+//! history of the tabs it drained, outside the pipe and the engine.
 //!
 //! The seed slot holds at most one armed document: one page session, its
 //! main frame, one exact HTTP(S) URL. The `Fetch.requestPaused` of that URL
@@ -20,7 +25,8 @@
 //! before.
 
 use super::Pipe;
-use crate::session::switch::switch_state_limits;
+use crate::SwitchLoss;
+use crate::session::storage::switch_state_limits;
 use base64::Engine as _;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -63,6 +69,8 @@ pub(super) struct Pages {
     bound: HashMap<String, String>,
     /// Each page's origins not yet drained.
     visits: HashMap<String, Visits>,
+    /// The web origin each page's top frame committed last.
+    tops: HashMap<String, String>,
     /// The seed URLs armed on this pipe: their commits are no visits.
     seeds: HashSet<String>,
 }
@@ -105,22 +113,21 @@ impl Pipe {
         }
     }
 
-    /// Queues the web origin a watched page's main frame committed.
+    /// Queues the web origin a watched page's main frame committed, and
+    /// names a commit no switch carries storage of.
     fn visit(&self, event: &Value) {
         let frame = &event["params"]["frame"];
-        if frame
+        let inner = frame
             .get("parentId")
-            .is_some_and(|parent| !parent.is_null())
-        {
+            .is_some_and(|parent| !parent.is_null());
+        if inner && !self.collects() {
             return;
         }
         let session = event["sessionId"].as_str();
         let (Some(session), Some(url)) = (session, frame["url"].as_str()) else {
             return;
         };
-        let Some(origin) = web_origin(url) else {
-            return;
-        };
+        let origin = web_origin(url);
         let Ok(mut pages) = self.pages.lock() else {
             return;
         };
@@ -130,8 +137,50 @@ impl Pipe {
         let Some(target) = pages.bound.get(session).cloned() else {
             return;
         };
-        let bound = switch_state_limits().origins;
-        pages.visits.entry(target).or_default().add(origin, bound);
+        let (named, reason) = match origin {
+            Some(origin) if inner => {
+                let other = pages.tops.get(&target) != Some(&origin);
+                (other.then_some(origin), SwitchLoss::CrossOriginFrame)
+            }
+            Some(origin) => {
+                pages.tops.insert(target.clone(), origin.clone());
+                let opaque = frame["securityOrigin"].as_str() == Some("null");
+                let named = opaque.then(|| origin.clone());
+                let bound = switch_state_limits().origins;
+                pages
+                    .visits
+                    .entry(target.clone())
+                    .or_default()
+                    .add(origin, bound);
+                (named, SwitchLoss::OpaqueOrigin)
+            }
+            None if inner => (None, SwitchLoss::NotWebPage),
+            None => {
+                pages.tops.remove(&target);
+                (non_web(url), SwitchLoss::NotWebPage)
+            }
+        };
+        drop(pages);
+        if let Some(named) = named {
+            self.exclude(&target, named, reason);
+        }
+    }
+
+    /// The page target watched session `session` drives.
+    pub(super) fn page_of(&self, session: &str) -> Option<String> {
+        self.pages.lock().ok()?.bound.get(session).cloned()
+    }
+
+    /// The web origin page `tab`'s top frame committed last.
+    pub(crate) fn top_origin(&self, tab: &str) -> Option<String> {
+        self.pages.lock().ok()?.tops.get(tab).cloned()
+    }
+
+    /// Whether `url` is a seed document's, armed on this pipe.
+    pub(super) fn is_seed(&self, url: &str) -> bool {
+        self.pages
+            .lock()
+            .is_ok_and(|pages| pages.seeds.contains(url))
     }
 
     /// Drops page `session`: its binding and its navigation count, and its
@@ -145,6 +194,7 @@ impl Pipe {
             && !pages.bound.values().any(|bound| *bound == target)
         {
             pages.visits.remove(&target);
+            pages.tops.remove(&target);
         }
     }
 
@@ -163,6 +213,7 @@ impl Pipe {
         }
         if let Ok(mut pages) = self.pages.lock() {
             pages.visits.remove(target);
+            pages.tops.remove(target);
         }
     }
 
@@ -261,6 +312,17 @@ pub(super) fn fulfill_seed(pipe: Pipe, session: String, id: String, seed: Seed, 
         };
         let _ = seed.done.send(answered);
     });
+}
+
+/// The scheme of a top-level document with no web origin, as storage no
+/// switch carries is named (`file:`, `data:`); none for `about:` documents,
+/// which hold their creator's origin's storage or none, and for the
+/// browser's error pages.
+fn non_web(url: &str) -> Option<String> {
+    let (scheme, _) = url.split_once(':')?;
+    let scheme = scheme.to_ascii_lowercase();
+    let own = !matches!(scheme.as_str(), "about" | "chrome-error");
+    own.then(|| format!("{scheme}:"))
 }
 
 /// The web origin of `url` as a browser writes it: `scheme://host`, with a

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3781 declarations.
+// Census: 1120 code-mode rows (1095 host rows, 25 run rows), 3782 declarations.
 // Replies: 1000 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -2927,9 +2927,10 @@ declare namespace Sdk {
   type NoEffectReason = "no_observable_change";
   type ActionFact = { kind: "click_no_effect"; engine: BrowserEngine; target: ActionTarget; reason: NoEffectReason; window_ms: number } | { kind: "type_no_effect"; engine: BrowserEngine; target: ActionTarget; reason: NoEffectReason; window_ms: number } | { kind: "navigate_no_effect"; engine: BrowserEngine; url: string; reason: NoEffectReason; window_ms: number };
   type SwitchComponent = "url" | "cookies" | "cookie" | "local_storage" | "session_storage" | "storage" | "scroll" | "tab";
-  type SwitchCarried = { component: SwitchComponent; origin?: string | null; count?: number | null };
-  type SwitchLoss = "not_collected" | "engine_refuses" | "engine_ignores" | "limit" | "host_capacity" | "read_failed" | "seed_failed" | "readback_mismatch" | "redirected" | "not_web_page" | "other_tab";
-  type SwitchNotCarried = { component: SwitchComponent; origin?: string | null; cookies?: string[]; attribute?: string | null; count?: number | null; reason: SwitchLoss };
+  type StoragePhase = "pre_input" | "post_act" | "exit" | "hand_back" | "switch_export";
+  type SwitchCarried = { component: SwitchComponent; origin?: string | null; count?: number | null; phase?: StoragePhase | null; after_receipt?: number | null };
+  type SwitchLoss = "never_sampled" | "context_lost" | "read_exception" | "departure_tail_unobserved" | "evicted_oldest" | "cross_origin_frame" | "opaque_origin" | "effective_origin_mismatch" | "engine_refuses" | "engine_ignores" | "limit" | "host_capacity" | "read_failed" | "seed_failed" | "readback_mismatch" | "redirected" | "not_web_page" | "other_tab";
+  type SwitchNotCarried = { component: SwitchComponent; origin?: string | null; cookies?: string[]; attribute?: string | null; count?: number | null; phase?: StoragePhase | null; after_receipt?: number | null; reason: SwitchLoss };
   type SwitchStage = "start" | "attach" | "cookies" | "navigate";
   type SwitchOutcome = { state: "switched" } | { state: "unchanged" } | { state: "failed"; stage: SwitchStage; code: string; detail: string };
   type EngineSwitchRecord = { from: BrowserEngine; to: BrowserEngine; reason: string; url: string; carried?: SwitchCarried[]; not_carried?: SwitchNotCarried[]; outcome: SwitchOutcome };
