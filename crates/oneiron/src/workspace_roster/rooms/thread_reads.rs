@@ -6,13 +6,14 @@
 //! turn held back from it, which carries no word of that turn.
 //!
 //! A held-back turn is a bare copy of its room row: its id, its room, the
-//! turn it answers and its trunk anchor. It names no actor, addressed agent,
-//! message, task, quote or project, and its time is 0, so a fold reads no
-//! activity from it and no count holds it. Only the thread fold and the
-//! root map walk it; nothing serves it.
+//! turn it answers, its trunk anchor and the project its thread became
+//! (FIX 5656: a place, read under CURRENT, so a converted thread lists as
+//! converted). It names no actor, addressed agent, message, task or quote,
+//! and its time is 0, so a fold reads no activity from it and no count holds
+//! it. Only the thread fold and the root map walk it; nothing serves it.
 
 use super::audience::{private_members_readable_in, resolved_root_in, root_audience_in};
-use super::audience_events::fold_audience_in;
+use super::audience_events::{FoldedAudience, fold_audience_in};
 use super::*;
 use crate::claim::ScopedRead;
 use crate::registry::ENTITY_TYPE_TURN;
@@ -98,10 +99,15 @@ fn bare(turn: &RoomTurn) -> RoomTurn {
         thread_of: turn.thread_of.clone(),
         at: 0,
         task_ids: Vec::new(),
-        converted_project: None,
+        converted_project: turn.converted_project.clone(),
         quotes: BTreeMap::new(),
     }
 }
+
+/// Each private root one read has met, with its room and folded audience
+/// (`None` off a private thread), kept for that read's one snapshot (FIX
+/// 5659): a root's edits fold once, not once per turn under it.
+pub(super) type RootFolds = BTreeMap<EntityId, Option<(EntityId, FoldedAudience)>>;
 
 /// The ids among `turns` that may be places: each turn, and each turn one
 /// answers or hangs under, that `content` does not read.
@@ -159,6 +165,17 @@ impl Memory<'_> {
         room: EntityId,
         turn: EntityId,
     ) -> Result<bool> {
+        self.thread_turn_held_back_folded_in(txn, room, turn, &mut RootFolds::new())
+    }
+
+    /// [`Self::thread_turn_held_back_in`], each root folded once in `folds`.
+    fn thread_turn_held_back_folded_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        room: EntityId,
+        turn: EntityId,
+        folds: &mut RootFolds,
+    ) -> Result<bool> {
         let LiveEntityRow::Live {
             entity_type: ENTITY_TYPE_TURN,
             body,
@@ -169,11 +186,18 @@ impl Memory<'_> {
         let Some(binding) = thread_binding(&body)? else {
             return Ok(false);
         };
-        let cut = match root_audience_in(self.vault(), txn, room, binding.root) {
-            Ok(Some(folded)) => folded.cuts(turn),
-            Ok(None) | Err(Error::EntityNotFound) => false,
-            Err(error) => return Err(error),
-        };
+        if !folds.contains_key(&binding.root) {
+            let folded = match root_audience_in(self.vault(), txn, room, binding.root) {
+                Ok(folded) => folded.map(|folded| (room, folded)),
+                Err(Error::EntityNotFound) => None,
+                Err(error) => return Err(error),
+            };
+            folds.insert(binding.root, folded);
+        }
+        let cut = folds
+            .get(&binding.root)
+            .and_then(Option::as_ref)
+            .is_some_and(|(_, folded)| folded.cuts(turn));
         Ok(cut && self.thread_reach_in(txn, room, turn)? == ThreadPlace::Private(binding.root))
     }
 
@@ -185,9 +209,11 @@ impl Memory<'_> {
         ids: &BTreeSet<String>,
     ) -> MemoryResult<BTreeSet<String>> {
         let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let mut folds = RootFolds::new();
         let mut held = BTreeSet::new();
         for id in ids {
-            if self.thread_turn_held_back_in(&txn, room, EntityId::from_hex(id)?)? {
+            let turn = EntityId::from_hex(id)?;
+            if self.thread_turn_held_back_folded_in(&txn, room, turn, &mut folds)? {
                 held.insert(id.clone());
             }
         }
@@ -206,6 +232,17 @@ pub(crate) fn turn_held_back_for_in(
     txn: &heed::RoTxn<'_>,
     turn: EntityId,
 ) -> Result<bool> {
+    turn_held_back_folded_for_in(read, txn, turn, &mut RootFolds::new())
+}
+
+/// [`turn_held_back_for_in`], each root folded once in `folds`, which holds
+/// this one read's roots only.
+pub(super) fn turn_held_back_folded_for_in(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    turn: EntityId,
+    folds: &mut RootFolds,
+) -> Result<bool> {
     let vault = read.vault();
     let dbs = read.store_read();
     let viewers: Vec<_> = read
@@ -223,19 +260,24 @@ pub(crate) fn turn_held_back_for_in(
     let Some(root) = thread_binding(&body)?.map(|binding| binding.root) else {
         return Ok(false);
     };
-    let Some(ThreadBinding {
-        room,
-        audience: Some(seed),
-        ..
-    }) = resolved_root_in(&dbs, txn, root)?
-    else {
+    if !folds.contains_key(&root) {
+        let folded = match resolved_root_in(&dbs, txn, root)? {
+            Some(ThreadBinding {
+                room,
+                audience: Some(seed),
+                ..
+            }) => Some((room, fold_audience_in(vault, txn, root, &seed)?)),
+            _ => None,
+        };
+        folds.insert(root, folded);
+    }
+    let Some((room, folded)) = folds.get(&root).and_then(Option::as_ref) else {
         return Ok(false);
     };
-    let folded = fold_audience_in(vault, txn, root, &seed)?;
     if !folded.cuts(turn) {
         return Ok(false);
     }
-    match private_members_readable_in(vault, txn, room, Some(&folded.current()), &viewers) {
+    match private_members_readable_in(vault, txn, *room, Some(&folded.current()), &viewers) {
         Err(Error::EntityNotFound) => Ok(false),
         result => result,
     }

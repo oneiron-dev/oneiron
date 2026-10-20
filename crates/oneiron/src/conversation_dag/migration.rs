@@ -82,6 +82,11 @@ pub(crate) fn migrate_in_txn(
             )?;
         }
         let parent = graph::parent(&vault.store, txn, &id)?;
+        // FIX 5644: a thread audience edit is a parentless TURN about its
+        // root, never a trunk turn; adoption leaves it out of the walk.
+        if parent.is_none() && carries_audience_edit(&body) {
+            continue;
+        }
         all_parents.insert(id, parent);
         let thread = graph::is_thread_record(&vault.store, txn, &id)?;
         let sub_session =
@@ -253,6 +258,17 @@ pub(crate) fn migrate_in_txn(
     }
     MIGRATED.put(&vault.store, txn, conversation, &[1])?;
     Ok(true)
+}
+
+/// Whether a TURN's MessagePack `body` carries a thread audience edit.
+fn carries_audience_edit(body: &[u8]) -> bool {
+    let mut bytes = body;
+    matches!(
+        rmpv::decode::read_value(&mut bytes),
+        Ok(rmpv::Value::Map(fields)) if fields
+            .iter()
+            .any(|(key, _)| key.as_str() == Some(crate::workspace_roster::ROOM_THREAD_AUDIENCE_KEY))
+    )
 }
 
 impl Vault {
