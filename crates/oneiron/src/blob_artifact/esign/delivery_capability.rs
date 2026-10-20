@@ -10,7 +10,8 @@
 //!
 //! A mint runs under the send's authority as it stands under the mint
 //! writer, never under the queued row alone: the vault owner's own recorded
-//! act, or a Grant still live that covers the send, with the principal dial
+//! act or his recorded one-time press on the send (FIX 6362), or a Grant
+//! still live that covers the send, with the principal dial
 //! still permitting an automated sender. Anything short of that holds the
 //! delivery unexported with its reason; it is never dropped. A delivery whose
 //! document or recipient ended settles instead, unsent, with its typed reason
@@ -21,7 +22,7 @@ use super::delivery_settlement::{EsignDeliveryEndReason, settle_ended_in_txn};
 use super::ledger::state_in;
 use super::model::*;
 use super::notice_dispatch::EsignNotice;
-use super::outbound::{EsignOutboundVerb, dispatch_marker_in};
+use super::outbound::{EsignOutboundVerb, OwnerSendAct, dispatch_marker_in};
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
 use crate::{EntityId, Result, Vault};
 
@@ -152,9 +153,10 @@ impl Vault {
     }
 
     /// Why the send's authority no longer covers minting this delivery's
-    /// link, or `None` when it does: the vault owner's own recorded act, or
-    /// a Grant live under this writer that covers the admitted call, with an
-    /// automated sender's principal dial still at autonomous-in-envelope.
+    /// link, or `None` when it does: the vault owner's own recorded act or
+    /// his recorded one-time press on the send, or a Grant live under this
+    /// writer that covers the admitted call, with an automated sender's
+    /// principal dial still at autonomous-in-envelope.
     fn delivery_unauthorized_in(
         &self,
         txn: &heed::RwTxn<'_>,
@@ -180,11 +182,23 @@ impl Vault {
             return Ok(Some("the send's admitted call does not cover the delivery"));
         }
         // The owner's own act, recorded with his revalidated proof, covers
-        // every delivery it queued.
-        let owner_act = marker.owner_act.as_ref().is_some_and(|act| {
-            call.actor_entity_ref
-                .is_some_and(|actor| actor.to_hex() == act.actor)
-        });
+        // every delivery it queued; so does his one-time press on an agent's
+        // send, when it is the proof this same admitted call carries
+        // (FIX 6362). An agent sender is not the owner, so the press is
+        // matched by its proof, never by actor.
+        let owner_act = match &marker.owner_act {
+            Some(OwnerSendAct::Direct { actor, .. }) => call
+                .actor_entity_ref
+                .is_some_and(|entity| entity.to_hex() == *actor),
+            Some(OwnerSendAct::Approved {
+                intent_ref,
+                effect_digest,
+            }) => call.admitted_approval.is_some_and(|proof| {
+                crate::entity_id::bytes_to_hex_lower(&proof.intent_id()) == *intent_ref
+                    && proof.effect_digest().to_hex() == *effect_digest
+            }),
+            None => false,
+        };
         if owner_act {
             return Ok(None);
         }

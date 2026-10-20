@@ -5,7 +5,10 @@
 //! mint writer reads here the send's canonical admitted call, and whether a
 //! Grant live under that same writer still covers its effect, through the
 //! chokepoint's own grant matching
-//! ([`crate::gate::live_grant_covering_effect_in_txn`]).
+//! ([`crate::gate::live_grant_covering_effect_in_txn`]). The owner's one-send
+//! press the gate spent admitting the send rides its ledger row as a typed
+//! proof (FIX 6362); the call carries it, and the ledger validates it against
+//! the digest the frozen call recomposes here.
 
 use serde::Deserialize;
 
@@ -18,7 +21,7 @@ use crate::gate::{
 use crate::outbound::capability::outbound_verb_contract;
 use crate::outbound::outbound_dispatch_attempt_id;
 use crate::outbound_intent_ledger::{
-    IntentLedgerError, IntentState, read_intent_for_attempt_in_txn,
+    AdmittedApproval, IntentLedgerError, IntentState, read_intent_for_attempt_in_txn,
 };
 
 /// One e-sign send's admitted call, as its frozen ledger payload holds it:
@@ -30,6 +33,10 @@ pub(crate) struct EsignDeliveryCall {
     pub(crate) verb: String,
     pub(crate) target: String,
     pub(crate) content_ref: Option<String>,
+    /// The owner's one-send press the gate spent admitting this call, as
+    /// its ledger row records it (FIX 6362); `None` for a send no press
+    /// released.
+    pub(crate) admitted_approval: Option<AdmittedApproval>,
     actor_ref: Option<String>,
     channel: String,
     job_ref: Option<String>,
@@ -91,16 +98,41 @@ pub(crate) fn esign_delivery_call_in_txn(
     if frozen.channel != "esign" {
         return Ok(None);
     }
+    frozen_call(frozen, dispatch_ref, record.admitted_approval).map(Some)
+}
+
+/// The digest an owner's one-send press on the e-sign `tool` call frozen in
+/// `payload` approves: the gate's approve-once composer over the call's
+/// actor, act, channel and brief, as the gate built them for the send.
+/// `None` for a payload that is no frozen e-sign `tool` call.
+pub(crate) fn esign_approval_digest_from_frozen_payload(
+    payload: &[u8],
+    tool: &str,
+) -> Option<crate::consent::EffectDigest> {
+    let frozen: FrozenCall = serde_json::from_slice(payload).ok()?;
+    if frozen.channel != "esign" || frozen.verb != tool {
+        return None;
+    }
+    let call = frozen_call(frozen, "", None).ok()?;
+    crate::gate::external_effect_approval_digest(&call_effect(&call).ok()?)
+}
+
+fn frozen_call(
+    frozen: FrozenCall,
+    send_ref: &str,
+    admitted_approval: Option<AdmittedApproval>,
+) -> Result<EsignDeliveryCall> {
     let entity = |value: Option<String>| -> Result<Option<EntityId>> {
         value.map(|hex| EntityId::from_hex(&hex)).transpose()
     };
-    Ok(Some(EsignDeliveryCall {
+    Ok(EsignDeliveryCall {
         actor_class: frozen.actor_class,
         actor_entity_ref: entity(frozen.actor_entity_ref)?,
         on_behalf_of: frozen.on_behalf_of,
         verb: frozen.verb,
         target: frozen.target,
         content_ref: frozen.content_ref,
+        admitted_approval,
         actor_ref: frozen.actor_ref,
         channel: frozen.channel,
         job_ref: frozen.job_ref,
@@ -113,8 +145,8 @@ pub(crate) fn esign_delivery_call_in_txn(
         } else {
             ExternalEffectPolicyRisk::HoldToProposal
         },
-        send_ref: dispatch_ref.to_owned(),
-    }))
+        send_ref: send_ref.to_owned(),
+    })
 }
 
 /// The Grant live on THIS writer that covers `call`'s effect, as the gate
@@ -125,9 +157,16 @@ pub(crate) fn esign_delivery_grant_in_txn(
     wtxn: &heed::RwTxn<'_>,
     call: &EsignDeliveryCall,
 ) -> Result<Option<String>> {
+    let effect = call_effect(call)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, wtxn)?;
+    crate::gate::live_grant_covering_effect_in_txn(&vault.store, wtxn, &effect, &policy)
+}
+
+/// The gate effect `call` was admitted as, as the gate built it for the send.
+fn call_effect(call: &EsignDeliveryCall) -> Result<ExternalEffectGateInput> {
     let contract = outbound_verb_contract(&call.channel, &call.verb)
         .map_err(|_| Error::InvariantViolation("e-sign dispatch verb"))?;
-    let effect = ExternalEffectGateInput {
+    Ok(ExternalEffectGateInput {
         actor: GateActor {
             actor_class: call.actor_class.clone(),
             actor_ref: call.actor_ref.clone(),
@@ -156,7 +195,5 @@ pub(crate) fn esign_delivery_grant_in_txn(
         has_permission: call.has_permission,
         policy_risk: call.policy_risk,
         send_autonomy: None,
-    };
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, wtxn)?;
-    crate::gate::live_grant_covering_effect_in_txn(&vault.store, wtxn, &effect, &policy)
+    })
 }
