@@ -1582,6 +1582,9 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.turn_ref {
                 map.insert("after".to_owned(), json!(value));
             }
+            if let Some(value) = &a.thread_ref {
+                map.insert("thread_ref".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "vault.rooms.participants" => {
@@ -4198,6 +4201,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("after") {
                 arguments.insert("turn_ref".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("thread_ref") {
+                arguments.insert("thread_ref".to_owned(), value.clone());
             }
         }
         "vault.rooms.participants" => {
@@ -15556,7 +15562,7 @@ async fn execute_agent_verb_row(
             mcp_agent_verb_output(output, source)
         }
         "vault.rooms.messages" => {
-            let input: oneiron::task_verb::sdk::RoomRequest =
+            let input: oneiron::workspace_roster::RoomMessagesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_messages(&memory, input)
                 .map_err(mcp_facade_error)?;
