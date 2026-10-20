@@ -14,12 +14,18 @@
 //! at its own latest frontiers** (`ExportMode::shallow_snapshot`): the live
 //! state survives byte-exactly, the op history before the frontier — the
 //! dominant residual byte carrier — is dropped, and, critically, the doc
-//! IDENTITY and version vector are preserved. The rejected alternative (a
-//! fresh doc rebuilt from live state) shares zero history with every peer
-//! replica, so the first post-sweep delta exchange would re-import the
-//! ENTIRE pre-sweep history — erased payload included — and silently undo
-//! the sweep. With the shallow snapshot, peer echoes of pre-sweep ops are
-//! VV-dominated no-ops and the dropped history can never be re-imported.
+//! IDENTITY is kept, VV extended by exactly one barrier op. Loro roots a
+//! shallow snapshot only at a single-head version (FIX 6520), so a window
+//! with several heads first takes one payload-free operation over every
+//! head, the removal of a key no row can take; a window with one head
+//! takes none. The cut is written only once the root it encodes is proved
+//! to be that tip and the version it ends at the window's own. The
+//! rejected alternative (a fresh doc rebuilt from live state) shares zero
+//! history with every peer replica, so the first post-sweep delta exchange
+//! would re-import the ENTIRE pre-sweep history — erased payload included —
+//! and silently undo the sweep. With the shallow snapshot, peer echoes of
+//! pre-sweep ops are VV-dominated no-ops and the dropped history can never
+//! be re-imported.
 //!
 //! Wire/SLA implication (pinned): a swept window can no longer SERVE
 //! deltas to peers behind the shallow start (the ops are gone), so the
@@ -70,6 +76,8 @@
 //!   replaced between the read phase and the compaction write txn, the
 //!   write txn is ABORTED uncommitted — never overwriting a newer carrier —
 //!   and the run defers. A quiesced re-run compacts cleanly.
+//! * UNPROVED cuts are DEFERRED (FIX 6520): a cut whose encoded root is not
+//!   the window's tip writes nothing, and the obligation stays.
 //! * Builds WITHOUT the `sync` feature fail closed: if any CRDT carrier
 //!   rows exist (`d:w:`/`u:w:`/`q:`), every job is deferred loudly (the
 //!   executor cannot parse Loro docs without the feature). A vault that

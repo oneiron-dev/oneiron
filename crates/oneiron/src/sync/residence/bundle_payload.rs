@@ -610,7 +610,7 @@ fn without_key_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
         map_delete(&entities, key)?;
     }
     crate::sync::row_birth::drop_orphan_births(&doc)?;
-    export_history_free_window_snapshot(&doc)
+    export_history_free_window_snapshot(&doc).map(|cut| cut.bytes)
 }
 
 /// What a base section holds.

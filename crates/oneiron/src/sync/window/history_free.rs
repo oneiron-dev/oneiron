@@ -20,8 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use loro::json::{JsonOpContent, MapOp};
 use loro::{
-    CommitOptions, ContainerID, ContainerType, ExportMode, Frontiers, LoroDoc, LoroValue,
-    VersionVector,
+    CommitOptions, ContainerID, ContainerType, Frontiers, LoroDoc, LoroValue, VersionVector,
 };
 
 use super::super::local_claims::claim_sync_allowed;
@@ -38,7 +37,7 @@ use super::egress::{
 use super::reverse::{is_delegated_channel_identity_carrier, is_unsyncable_secret_custody};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncEngineContext, SyncError, SyncProtocolValidation};
+use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 
 /// What a full-window version-vector export sends.
 #[derive(Debug)]
@@ -371,17 +370,25 @@ pub(crate) fn history_free_snapshot(
 }
 
 /// The history-free snapshot a pinned window is persisted as: [`history_free_snapshot`] when a
-/// root passes `check`, else the snapshot rooted at its newest operation, as before the check
-/// existed. Persistence never fails for want of a clean root; no export ships the stored root
-/// without checking it again.
+/// root passes `check`, else the strict cut at its newest operation (FIX 6520): a barrier merges
+/// its heads first, so no older root keeps history a scrub took out. Persistence never fails for
+/// want of a clean root or a proved cut: a cut an import raced is stored as before, and window
+/// `key` owes the erasure sweep a compaction. No export ships the stored root without checking it
+/// again.
 pub(crate) fn persisted_history_free_snapshot(
+    vault: &Vault,
+    key: &WindowKey,
     doc: &LoroDoc,
     check: &HistoryCheck,
 ) -> Result<Vec<u8>> {
     match history_free_snapshot(doc, Some(check), None) {
         Err(Error::Sync(SyncError::SyncProtocolError {
             context: SyncProtocolValidation::HistoryFreeRootUnavailable,
-        })) => newest_rooted_snapshot(doc).map(|(bytes, _, _)| bytes),
+        })) => {
+            let cut = super::shallow::strict_window_cut(doc)?;
+            super::shallow::owe_unproved_cut(vault, key, &cut)?;
+            Ok(cut.bytes)
+        }
         other => other,
     }
 }
@@ -395,17 +402,8 @@ fn root_unavailable() -> Error {
 /// A snapshot of `doc` rooted at its newest operation, with the root Loro actually encoded: the
 /// version operations start after, and the root's frontiers.
 fn newest_rooted_snapshot(doc: &LoroDoc) -> Result<(Vec<u8>, VersionVector, Frontiers)> {
-    doc.commit();
-    let bytes = doc
-        .export(ExportMode::shallow_snapshot(&doc.oplog_frontiers()))
-        .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportShallowSnapshot, e))?;
-    let meta = LoroDoc::decode_import_blob_meta(&bytes, false).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "decode history-free snapshot root",
-            source,
-        })
-    })?;
-    Ok((bytes, meta.partial_start_vv, meta.start_frontiers))
+    let cut = super::shallow::tip_rooted_cut(doc)?;
+    Ok((cut.bytes, cut.start, cut.frontiers))
 }
 
 /// The replacement an empty receiver gets of a window whose history inserted something a

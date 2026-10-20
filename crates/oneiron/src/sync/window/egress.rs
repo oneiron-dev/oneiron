@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 use crate::sync::local_claims::{
     claim_sync_allowed, local_claim_sync_allowed, withheld_claim_carriers,
 };
-use loro::{CommitOptions, ExportMode, LoroDoc};
+use loro::{CommitOptions, LoroDoc};
 
 /// THE SYNC WINDOW-PACKING EGRESS DOOR (ARCH-0052 P6, owner ruling
 /// R-20260807-06).
@@ -485,19 +485,15 @@ pub(super) fn scrub_redacted_attribution_carriers(
     Ok(!keys.is_empty())
 }
 
-/// The window's state with no history at all: a snapshot rooted at its newest operation, for local
-/// persistence only. Nothing exports it: every snapshot a peer or a promotion receives is cut and
-/// checked by [`super::history_free`].
-pub(crate) fn export_history_free_window_snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
-    doc.commit();
-    let frontiers = doc.oplog_frontiers();
-    doc.export(ExportMode::shallow_snapshot(&frontiers))
-        .map_err(|e| {
-            Error::sync_engine(
-                crate::error::SyncEngineContext::LoroExportShallowSnapshot,
-                e,
-            )
-        })
+/// The window's state with no history behind its newest operation: the strict cut of
+/// [`super::shallow`], a barrier merging its heads first (FIX 6520), for local persistence only.
+/// Its bytes are stored proved or not; a caller storing an unproved cut owes the erasure sweep a
+/// compaction of the window. Nothing exports it: every snapshot a peer or a promotion receives is
+/// cut and checked by [`super::history_free`].
+pub(crate) fn export_history_free_window_snapshot(
+    doc: &LoroDoc,
+) -> Result<super::shallow::StrictCut> {
+    super::shallow::strict_window_cut(doc)
 }
 
 /// Scrubs the live state and persists it: a pinned window keeps only the history
@@ -536,7 +532,7 @@ pub(in crate::sync) fn export_scrubbed_window_snapshot(
     }
     if history_free_window_required(vault, key)? {
         let check = super::history_free::HistoryCheck::read(vault, key, doc)?;
-        super::history_free::persisted_history_free_snapshot(doc, &check)
+        super::history_free::persisted_history_free_snapshot(vault, key, doc, &check)
     } else {
         // A shallow doc's snapshot keeps its own root.
         export_snapshot(doc)
