@@ -56,6 +56,7 @@ use sha2::{Digest, Sha256};
 
 use super::mail_placement::PlacementPolicy;
 use super::mailbox_cursor::{MailboxCursor, MailboxPageToken, validate_mailbox_cursor};
+use super::mailbox_skipped::GmailSkippedMessage;
 
 use super::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
@@ -722,10 +723,15 @@ pub struct GmailInboxPollConfig {
     pub placement_policy: PlacementPolicy,
 }
 
-/// Result of one successfully admitted page.
+/// Result of one successfully admitted page: each of its messages was
+/// admitted or durably set aside.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GmailMailboxRunOutcome {
+    /// The messages inbound routing admitted, not the page's length.
     pub messages_admitted: usize,
+    /// The messages this page set aside, as stored (FIX 6007);
+    /// [`super::mailbox_skipped::gmail_skipped_messages`] lists every one kept.
+    pub skipped: Vec<GmailSkippedMessage>,
     pub progress: MailboxCursor,
 }
 
