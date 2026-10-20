@@ -6606,24 +6606,25 @@
      "path": "src/blob_artifact/esign/delivery_capability.rs",
      "purpose": "Fresh signing links at delivery export (FIX 5238 option 3, the owner's KEY STORE = A ruling: no recoverable…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 4,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignDeliveryEndReason",
-      "EsignDeliveryReceipt"
+      "EsignDeliveryReceipt",
+      "EsignDeliveryReceiptState"
      ],
      "path": "src/blob_artifact/esign/delivery_settlement.rs",
      "purpose": "An ended delivery settles (OF-415, FIX 6363, Engine ruling 10-20)",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 3,
+      "enum": 2,
       "fn": 2,
       "struct": 1
      }
@@ -40787,7 +40788,7 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 3
      }
     },
@@ -40808,7 +40809,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -91222,6 +91223,8 @@
       "EsignCreateRequest",
       "EsignDeliveryEndReason",
       "EsignDeliveryReceipt",
+      "EsignDeliveryReceiptState",
+      "EsignDeliveryWait",
       "EsignDispatchRequest",
       "EsignDispatchView",
       "EsignDocument",
@@ -93743,7 +93746,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 879,
+      "enum": 881,
       "struct": 2781
      }
     },
