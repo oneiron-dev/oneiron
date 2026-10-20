@@ -124,8 +124,8 @@ fn stable_send_ref(request: &OutboundDispatchRequest) -> &str {
 /// mirror door's names its operation too, through `linear_mirror`, which the
 /// door sets (both of that door's asks:
 /// [`crate::Vault::linear_outbound_door_approval_digests`]). A request a
-/// durable LLM step dispatches also freezes that step, which this request
-/// does not carry. A digest composed by hand from
+/// durable LLM step dispatches freezes that step too: its digest is
+/// [`outbound_step_approve_once_digest`]. A digest composed by hand from
 /// [`crate::consent::EffectFacts`] with no target releases none of these
 /// families' sends. It reads and records nothing else.
 /// # Errors
@@ -141,6 +141,28 @@ pub fn outbound_approve_once_digest(
     )?))
 }
 
+/// FIX 6424 part 2a: [`outbound_approve_once_digest`] for `request` as a
+/// durable LLM step dispatches it
+/// ([`crate::Vault::dispatch_outbound_intent_from_step`] with the same
+/// `attempt_id` and `step_request`): its frozen payload carries that step, so
+/// a Linear send's digest pins those exact bytes. It reads and records
+/// nothing else.
+/// # Errors
+/// As [`outbound_approve_once_digest`], or the step's own binding failure.
+pub fn outbound_step_approve_once_digest(
+    vault: &Vault,
+    attempt_id: crate::attempt_queue::AttemptId,
+    step_request: &crate::llm::LlmRequest,
+    request: &OutboundDispatchRequest,
+) -> Result<Option<EffectDigest>, OutboundDispatchError> {
+    let binding = crate::llm::StepEffectBinding::for_request(attempt_id, step_request)?;
+    Ok(pinned_approval_digest(&prepared_gate_effect(
+        vault,
+        request,
+        Some(binding),
+    )?))
+}
+
 /// FIX 6679: `request`'s Gate input as the dispatch pipeline prepares it,
 /// the one its approve-once digest and the Gate's decisions on it are
 /// composed over, so a caller can tell the Gate's own decisions on exactly
@@ -152,11 +174,21 @@ pub(crate) fn outbound_gate_effect(
     vault: &Vault,
     request: &OutboundDispatchRequest,
 ) -> Result<ExternalEffectGateInput, OutboundDispatchError> {
+    prepared_gate_effect(vault, request, None)
+}
+
+/// [`outbound_gate_effect`] for a request dispatched with `step_binding`
+/// (FIX 6424 part 2a), prepared as that dispatch prepares it.
+fn prepared_gate_effect(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    step_binding: Option<crate::llm::StepEffectBinding>,
+) -> Result<ExternalEffectGateInput, OutboundDispatchError> {
     let prepared = super::request_binding::PreparedOutboundDispatch::prepare(
         vault,
         request.clone(),
         None,
-        None,
+        step_binding,
     )?;
     // FIX 6424 part 2a: a Linear send pins the bytes its dispatch freezes;
     // no other family reads them here.

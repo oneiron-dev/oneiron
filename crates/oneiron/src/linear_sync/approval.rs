@@ -6,8 +6,11 @@
 //! their own digest, both over the same operation (its id, the nonce), TASK,
 //! linked issue and mirrored fields (CALLS `FIX 6424 Linear dual actor
 //! asks`). A held mutation names the actor that held it and that actor's
-//! digest, on its typed outcome and on the refusal it has always returned
-//! ([`LinearSyncError::approval_hold`]). Both asks are composed with the
+//! digest on its typed outcome
+//! ([`crate::Vault::authorize_linear_effect_outcome`]); the refusals it has
+//! always returned keep their variants (the recorded outbound door's names
+//! the digest in its message, after its unchanged text). Both asks are
+//! composed with the
 //! Gate's own composer by each admission's own constructor: the direct
 //! admission's by [`crate::Vault::linear_effect_approval_digests`], the
 //! recorded outbound door's (whose scheduler asks over its dispatch request)
@@ -57,6 +60,15 @@ impl LinearEffectRole {
         match self {
             Self::Scheduler => 1,
             Self::Writer => 2,
+        }
+    }
+
+    /// The role's name: `scheduler` or `writer`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Scheduler => "scheduler",
+            Self::Writer => "writer",
         }
     }
 }

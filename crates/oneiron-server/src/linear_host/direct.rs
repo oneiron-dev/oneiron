@@ -133,14 +133,11 @@ pub(super) async fn spawn(
                     );
                 }
                 Ok(Err(error)) => {
-                    // FIX 6424 part 2a: a mutation held for the owner's
-                    // approve-once press names the digest to press.
-                    let hold = error.approval_hold();
+                    // FIX 6424 part 2a: a mutation the door held for the
+                    // owner's approve-once press names the digest to press.
                     tracing::warn!(
                         reason = "linear_sync_failed",
-                        approval_digest = ?hold.and_then(|hold| hold.approval_digest.as_deref()),
-                        approval_role = ?hold.map(|hold| hold.role),
-                        gate_decision = ?hold.map(|hold| hold.gate_decision_ref.as_str()),
+                        approve_once = ?oneiron_linear::held_approve_once(&error),
                         "Linear direct mirror pass failed; will retry"
                     );
                 }

@@ -379,40 +379,6 @@ pub enum LinearSyncError {
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),
-    /// FIX 6424 part 2a: `error`, the refusal a Linear mutation the Gate
-    /// holds for the owner's approve-once press has always returned
-    /// ([`Self::AuthorizationDenied`] from the direct admission, the recorded
-    /// outbound door's [`Self::Transport`]), with that `hold`: the actor
-    /// whose decision held it and the digest that actor's press names. It
-    /// reads exactly as `error`, and every caller that set `error`'s kind
-    /// aside sets this aside the same way.
-    #[error("{error}")]
-    Held {
-        error: Box<LinearSyncError>,
-        hold: Box<super::LinearEffectHold>,
-    },
-}
-
-impl LinearSyncError {
-    /// `error` carrying the owner hold that caused it (FIX 6424 part 2a).
-    #[must_use]
-    pub fn held(error: Self, hold: super::LinearEffectHold) -> Self {
-        Self::Held {
-            error: Box::new(error),
-            hold: Box::new(hold),
-        }
-    }
-
-    /// The owner hold this refusal carries: the actor whose decision held
-    /// the mutation and the approve-once digest its press names. `None` for
-    /// every other error.
-    #[must_use]
-    pub fn approval_hold(&self) -> Option<&super::LinearEffectHold> {
-        match self {
-            Self::Held { hold, .. } => Some(hold),
-            _ => None,
-        }
-    }
 }
 
 /// One page of normalized inbound changes.

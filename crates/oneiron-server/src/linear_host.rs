@@ -442,15 +442,9 @@ async fn spawn_bridge(
                         "Linear mirror pass"
                     );
                 }
-                Ok(Err(error)) => {
-                    // FIX 6424 part 2a: a mutation held for the owner's
-                    // approve-once press names the digest to press.
-                    let hold = error.approval_hold();
+                Ok(Err(_)) => {
                     tracing::warn!(
                         reason = "linear_sync_failed",
-                        approval_digest = ?hold.and_then(|hold| hold.approval_digest.as_deref()),
-                        approval_role = ?hold.map(|hold| hold.role),
-                        gate_decision = ?hold.map(|hold| hold.gate_decision_ref.as_str()),
                         "Linear mirror pass failed; will retry"
                     );
                     // A policy read failure cannot authorize a provider call.

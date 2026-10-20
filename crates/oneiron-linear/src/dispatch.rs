@@ -71,6 +71,27 @@ impl<'v, T> VaultLinearOutboundDoor<'v, T> {
     }
 }
 
+/// The door's refusal of a call it did not deliver.
+const DID_NOT_DELIVER: &str = "Linear outbound dispatch did not deliver";
+/// What follows [`DID_NOT_DELIVER`] when the Gate holds the call for the
+/// owner's approve-once press (FIX 6424 part 2a): the digest, then the role.
+const HELD_DIGEST: &str = "; approve-once digest ";
+
+/// FIX 6424 part 2a: the approve-once digest and role
+/// (`<64 lower-hex> (<scheduler|writer>)`) a [`VaultLinearOutboundDoor`]
+/// refusal names when the Gate held the call for the owner's press; `None`
+/// for every other error. The refusal keeps its variant and its text; this
+/// reads the part it adds.
+#[must_use]
+pub fn held_approve_once(error: &LinearSyncError) -> Option<&str> {
+    let LinearSyncError::Transport(message) = error else {
+        return None;
+    };
+    message
+        .strip_prefix(DID_NOT_DELIVER)?
+        .strip_prefix(HELD_DIGEST)
+}
+
 struct LinearSink<'a, T> {
     journal: &'a mut LinearResponseJournal<T>,
     operation_id: [u8; 32],
@@ -252,14 +273,16 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
             .dispatch_linear_outbound_intent_recorded(request, &effect, &mut sink)
             .map_err(|_| invalid("Linear outbound dispatch failed"))?;
         if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
-            // FIX 6424 part 2a: a hold for the owner's press carries the
-            // blocking actor's digest, copied from the result, on the same
-            // refusal.
-            let refusal = invalid("Linear outbound dispatch did not deliver");
-            return Err(match LinearEffectHold::of_door_result(&result, &effect) {
-                Some(hold) => LinearSyncError::held(refusal, hold),
-                None => refusal,
-            });
+            // FIX 6424 part 2a: the same refusal; a hold for the owner's
+            // press names the blocking actor's digest, copied from the
+            // result, after its unchanged text.
+            let mut refusal = DID_NOT_DELIVER.to_owned();
+            if let Some(hold) = LinearEffectHold::of_door_result(&result, &effect)
+                && let Some(digest) = hold.approval_digest.as_deref()
+            {
+                refusal.push_str(&format!("{HELD_DIGEST}{digest} ({})", hold.role.as_str()));
+            }
+            return Err(invalid(&refusal));
         }
         // The door's own admission is the push row's gate ref (OF-427 C9).
         if let Some(gate_ref) = result.gate_decision_id.as_deref() {

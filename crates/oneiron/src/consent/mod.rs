@@ -126,8 +126,9 @@ pub use crate::campaign::enrollment::enrollment_outbound_approval_digest;
 /// FIX 6424: the approve-once digest an owner's press on one held outbound
 /// send names, for a prepared request, by the Gate's own composer; an e-sign
 /// act's is [`crate::Vault::esign_approve_once_digest`]. Held responses carry
-/// it as `approval_digest`.
-pub use crate::outbound::outbound_approve_once_digest;
+/// it as `approval_digest`. A request a durable LLM step dispatches:
+/// `outbound_step_approve_once_digest`.
+pub use crate::outbound::{outbound_approve_once_digest, outbound_step_approve_once_digest};
 
 pub(crate) use self::bound::bound_exceeded;
 pub(crate) use self::doors::{

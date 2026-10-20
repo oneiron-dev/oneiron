@@ -176,27 +176,31 @@ impl Vault {
     /// rechecks live grants but does not charge the same operation's effector
     /// budget twice. Raw/replayed TASK writes have no writer stamp.
     ///
-    /// FIX 6424 part 2a: a mutation the Gate holds for the owner's press is
-    /// refused as before, carrying that hold (the actor that held it and the
-    /// digest its press names, [`LinearSyncError::approval_hold`]);
-    /// [`Self::authorize_linear_effect_outcome`] returns it typed.
+    /// FIX 6424 part 2a: a mutation the Gate does not admit is refused
+    /// exactly as before, and logged with the actor whose decision held it
+    /// and the approve-once digest that actor's press names;
+    /// [`Self::authorize_linear_effect_outcome`] returns that hold typed.
     ///
     /// # Errors
     /// [`LinearSyncError::AuthorizationDenied`] when the request is not the
     /// exact current mirror operation, the TASK revision has no verified
-    /// writer, or either actor's grant or connector budget refuses it; that
-    /// same refusal inside [`LinearSyncError::Held`] when an actor's decision
-    /// holds it for the owner.
+    /// writer, or either actor's grant or connector budget refuses it.
     pub fn authorize_linear_effect(
         &self,
         request: &LinearEffectRequest,
     ) -> LinearSyncResult<String> {
         match self.authorize_linear_effect_outcome(request)? {
             LinearEffectAdmission::Admitted { gate_ref } => Ok(gate_ref),
-            LinearEffectAdmission::Held(hold) if hold.gate_outcome == "pending" => Err(
-                LinearSyncError::held(LinearSyncError::AuthorizationDenied, hold),
-            ),
-            LinearEffectAdmission::Held(_) => Err(LinearSyncError::AuthorizationDenied),
+            LinearEffectAdmission::Held(hold) => {
+                tracing::info!(
+                    role = hold.role.as_str(),
+                    gate_decision = %hold.gate_decision_ref,
+                    gate_outcome = %hold.gate_outcome,
+                    approval_digest = ?hold.approval_digest,
+                    "Linear mutation not admitted; a pending one names the approve-once digest to press"
+                );
+                Err(LinearSyncError::AuthorizationDenied)
+            }
         }
     }
 
