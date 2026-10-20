@@ -113,6 +113,8 @@ impl<F: ScoreFetch> ScoreScraper<F> {
                 source: source.id.clone(),
                 fetched_at: now,
                 observations,
+                // A public benchmark page: no vault row is read (FIX 5760).
+                source_rows: Some(Vec::new()),
             });
         }
         let diffs = vault.apply_model_score_snapshots(&snapshots)?;

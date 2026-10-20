@@ -192,7 +192,10 @@ impl Vault {
             ));
         }
         let training_jsonl = self.read_training_artifact(&run.corpus.training)?;
+        // The connector's input is the run's corpus: its call reads the
+        // run's rows (FIX 5760).
         let permit = admission
+            .sourced(run.source_rows.clone())
             .admit_paid(binding, run.compute.quantity)
             .map_err(|e| invalid(&e.to_string()))?;
         self.with_write_txn_grouped(|txn| {
@@ -322,6 +325,15 @@ impl Vault {
             for file in training.files.iter().chain(&exported.files) {
                 read_pin(self, txn, &file.content)?;
             }
+            // The connector's result is the files it handed back (FIX 5760).
+            let returned = training
+                .files
+                .iter()
+                .chain(&exported.files)
+                .map(|file| file.content.artifact)
+                .collect::<Vec<_>>();
+            run.source_rows =
+                crate::skill_optimize::union_source_rows([run.source_rows.take(), Some(returned)]);
             let checks = check_export(&run, &output, &training, &exported)?;
             run.result = Some(TrainingResult {
                 training_checkpoint: training,

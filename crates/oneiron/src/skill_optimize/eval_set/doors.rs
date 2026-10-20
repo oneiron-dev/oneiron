@@ -214,7 +214,8 @@ pub fn record_case(
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
-        record_case_in_txn(vault, txn, &input, now)
+        // The owner's receipts name no rows they were read from (FIX 5761).
+        record_case_in_txn(vault, txn, &input, None, now)
     })
 }
 

@@ -7,6 +7,24 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::skill_optimize::{offer_doors, offer_pilot};
 use std::sync::Arc;
 
+/// While this holds, the offer doors list a known set their snapshots now
+/// keep (FIX 5760). False (as before): a known nonempty set lists unknown,
+/// as every offer listed before its producers carried their rows, so no
+/// answer an off-device read released before is held by them.
+const COACH_OFFER_ROWS_NARROW_ANSWERS: bool = false;
+
+/// While this holds, the pilot doors list the rows a pilot's frozen sets
+/// keep (FIX 5761): prepare its released cases' and labels', complete and
+/// get its measurement's. False (as before): prepare lists unknown and
+/// complete and get list none, so no off-device answer they gave changes.
+const PILOT_ROWS_NARROW_ANSWERS: bool = false;
+
+/// `rows`, as the offer doors listed them before their producers carried
+/// rows ([`COACH_OFFER_ROWS_NARROW_ANSWERS`]).
+fn as_before(rows: Option<Vec<oneiron::EntityId>>) -> Option<Vec<oneiron::EntityId>> {
+    rows.filter(|rows| COACH_OFFER_ROWS_NARROW_ANSWERS || rows.is_empty())
+}
+
 async fn owned<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -49,17 +67,17 @@ async fn owned_sourced<T: Send + 'static>(
     (answer, rows)
 }
 
-/// [`owned`] for a door that serves derived content whose rows are not
-/// kept: the pilot prepare serves the cohort's released eval cases, and a
-/// released case keeps none of the rows its text derives from (FIX 4780). It
-/// lists (`host_door_lists`), but its list is unknown (`None`), never `[]`.
-async fn owned_unlisted<T: Send + 'static>(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    verb: &'static str,
-    act: impl FnOnce(&oneiron::Vault, &AuthenticatedOwner) -> oneiron::Result<T> + Send + 'static,
+/// A pilot door's answer beside its listing as before, or, while
+/// [`PILOT_ROWS_NARROW_ANSWERS`] holds, the pilot's frozen set (FIX 5761).
+fn pilot_listed<T>(
+    (answer, before): Listed<T>,
+    pilot: impl FnOnce(&T) -> Option<Vec<oneiron::EntityId>>,
 ) -> MaybeListed<T> {
-    (owned(server, auth, verb, act).await, None)
+    let rows = match &answer {
+        Ok(found) if PILOT_ROWS_NARROW_ANSWERS => pilot(found),
+        _ => Some(before),
+    };
+    (answer, rows)
 }
 
 pub(crate) async fn vault_coach_training_offers(
@@ -72,7 +90,7 @@ pub(crate) async fn vault_coach_training_offers(
         auth,
         "vault.coach.training_offers",
         move |vault, owner| offer_doors::list(vault, owner, input),
-        |views: &Vec<offer_doors::OfferView>| offer_doors::listed_views(views),
+        |views: &Vec<offer_doors::OfferView>| as_before(offer_doors::listed_views(views)),
     )
     .await
 }
@@ -87,7 +105,9 @@ pub(crate) async fn vault_coach_training_offers_get(
         auth,
         "vault.coach.training_offers.get",
         move |vault, owner| offer_doors::get(vault, owner, input),
-        |view: &Option<offer_doors::OfferView>| offer_doors::listed_views(view.as_slice()),
+        |view: &Option<offer_doors::OfferView>| {
+            as_before(offer_doors::listed_views(view.as_slice()))
+        },
     )
     .await
 }
@@ -116,7 +136,9 @@ pub(crate) async fn vault_coach_training_offers_result(
         auth,
         "vault.coach.training_offers.result",
         move |vault, owner| offer_doors::result(vault, owner, input),
-        |pass: &Option<offer_doors::OfferPassResult>| offer_doors::listed_pass(pass.as_ref()),
+        |pass: &Option<offer_doors::OfferPassResult>| {
+            as_before(offer_doors::listed_pass(pass.as_ref()))
+        },
     )
     .await
 }
@@ -182,11 +204,18 @@ pub(crate) async fn vault_coach_training_offers_pilots_prepare(
     auth: &CoreAuth,
     input: offer_pilot::OfferPilotPrepare,
 ) -> MaybeListed<oneiron::skill_optimize::offer_pilot::OfferPilotPrepared> {
-    owned_unlisted(
+    // The release commits whole; its rows are read from the answer, so no
+    // source failure fails the prepare (FIX 5761).
+    owned_sourced(
         server,
         auth,
         "vault.coach.training_offers.pilots.prepare",
         move |vault, owner| offer_pilot::prepare_pilot(vault, owner, input),
+        |prepared: &offer_pilot::OfferPilotPrepared| {
+            PILOT_ROWS_NARROW_ANSWERS
+                .then(|| offer_pilot::listed_prepared(prepared))
+                .flatten()
+        },
     )
     .await
 }
@@ -195,26 +224,33 @@ pub(crate) async fn vault_coach_training_offers_pilots_complete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_pilot::OfferPilotComplete,
-) -> Listed<oneiron::skill_optimize::offer_pilot::OfferPilot> {
-    owned_control(
+) -> MaybeListed<oneiron::skill_optimize::offer_pilot::OfferPilot> {
+    let answer = owned_control(
         server,
         auth,
         "vault.coach.training_offers.pilots.complete",
         move |vault, owner| offer_pilot::complete_pilot(vault, owner, input),
     )
-    .await
+    .await;
+    pilot_listed(answer, offer_pilot::listed_pilot)
 }
 
 pub(crate) async fn vault_coach_training_offers_pilots_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: offer_pilot::OfferPilotRef,
-) -> Listed<Option<oneiron::skill_optimize::offer_pilot::OfferPilot>> {
-    owned_control(
+) -> MaybeListed<Option<oneiron::skill_optimize::offer_pilot::OfferPilot>> {
+    let answer = owned_control(
         server,
         auth,
         "vault.coach.training_offers.pilots.get",
         move |vault, owner| offer_pilot::pilot(vault, owner, input),
     )
-    .await
+    .await;
+    // No pilot found lists none.
+    pilot_listed(answer, |found: &Option<offer_pilot::OfferPilot>| {
+        found
+            .as_ref()
+            .map_or(Some(Vec::new()), offer_pilot::listed_pilot)
+    })
 }

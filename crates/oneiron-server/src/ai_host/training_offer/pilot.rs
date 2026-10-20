@@ -20,8 +20,9 @@ pub(super) fn brief(
             continue;
         };
         if let Some(pilot) = latest_pilot(vault, &candidate)? {
-            // A pilot's measurement names its receipts by key (FIX 5482).
-            sources.unknown();
+            // The pilot's measurement, with its release, as it froze their
+            // rows (FIX 5760).
+            sources.set(pilot.measurement_source_rows.as_deref());
             choice.data["pilot"] = serde_json::json!({
                 "pilot": pilot.id,
                 "cohort": pilot.exposure.cohort,
@@ -53,9 +54,13 @@ pub(super) fn ground(vault: &Vault, draft: &mut TrainingOfferDraft) -> oneiron::
         let grounds = (candidate.setup.candidate == draft.candidate
             && candidate.setup.destination == draft.destination)
             || draft.alternatives.iter().any(|option| option.model == *pin);
-        // A pilot's measurement names its receipts by key (FIX 5482).
+        // The offer reads the pilot's measurement and release as it froze
+        // their rows (FIX 5760).
         if grounds {
-            draft.source_rows = None;
+            draft.source_rows = oneiron::skill_optimize::union_source_rows([
+                draft.source_rows.as_deref(),
+                pilot.measurement_source_rows.as_deref(),
+            ]);
         }
         // A USD list-price projection cannot absorb another currency's
         // one-off cost. It stays unknown rather than treating it as zero.

@@ -105,6 +105,17 @@ pub struct EvalRelease {
     pub cases: Vec<EvalCase>,
 }
 
+impl EvalRelease {
+    /// The rows every released case and every label on it were read from
+    /// (FIX 5761); `None` when any of them is unknown.
+    #[must_use]
+    pub fn source_rows(&self) -> Option<Vec<EntityId>> {
+        crate::skill_optimize::union_source_rows(
+            self.cases.iter().map(EvalCase::content_source_rows),
+        )
+    }
+}
+
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
 )]
@@ -405,6 +416,23 @@ impl Vault {
     pub fn eval_cohort_exposure(&self, cohort: &EntityId) -> Result<EvalExposureCounts> {
         let txn = self.store.env.read_txn()?;
         exposure_in_txn(self, &txn, cohort)
+    }
+
+    /// The rows a cohort's cases and their labels were read from (FIX
+    /// 5761), as the ledger keeps them: ids only, so no case is served and
+    /// no exposure is counted. `None` when any of them is unknown.
+    /// # Errors
+    /// A missing cohort, a case gone from the ledger, or storage errors.
+    pub fn eval_cohort_source_rows(&self, cohort: &EntityId) -> Result<Option<Vec<EntityId>>> {
+        let txn = self.store.env.read_txn()?;
+        let row = cohort_in_txn(self, &txn, cohort)?;
+        let mut sets = Vec::with_capacity(row.cases.len());
+        for case in &row.cases {
+            let case = super::case_in_txn(self, &txn, case)?
+                .ok_or(Error::CorruptedIndex("eval cohort case"))?;
+            sets.push(case.content_source_rows());
+        }
+        Ok(crate::skill_optimize::union_source_rows(sets))
     }
 
     /// A seat's cohorts, in cut order.

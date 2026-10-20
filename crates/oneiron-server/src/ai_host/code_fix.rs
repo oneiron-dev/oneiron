@@ -190,10 +190,35 @@ impl<'a> HostModels<'a> {
         Ok(self.generate_served(role, messages)?.map(|(text, _)| text))
     }
 
+    /// [`Self::generate`] for messages fixed code assembled from `rows`
+    /// (FIX 5760): the call's permit and its metered settlement carry them.
+    /// `None` is unknown.
+    pub(super) fn generate_sourced(
+        &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+        rows: Option<Vec<EntityId>>,
+    ) -> oneiron::Result<Option<String>> {
+        Ok(self
+            .served_on(&self.run.sourced(rows), role, messages)?
+            .map(|(text, _)| text))
+    }
+
     /// [`Self::generate`], with the model of the rung that answered,
     /// fallback included.
     pub(super) fn generate_served(
         &self,
+        role: ModelRole,
+        messages: Vec<LlmMessage>,
+    ) -> oneiron::Result<Option<(String, String)>> {
+        self.served_on(&self.run, role, messages)
+    }
+
+    /// [`Self::generate_served`] admitted through `run`, this run or a
+    /// sourced handle on it.
+    fn served_on(
+        &self,
+        run: &RunAdmission,
         role: ModelRole,
         messages: Vec<LlmMessage>,
     ) -> oneiron::Result<Option<(String, String)>> {
@@ -224,7 +249,7 @@ impl<'a> HostModels<'a> {
         };
         let (response, served) = self
             .handle
-            .block_on(call.ladder.generate_served(&self.run, call.request, None))
+            .block_on(call.ladder.generate_served(run, call.request, None))
             .map_err(|error| Error::InvalidConfig(format!("a Coach call failed: {error}")))?;
         let text = response
             .message

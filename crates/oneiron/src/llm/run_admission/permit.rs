@@ -123,6 +123,7 @@ impl RunInner {
         revision: u32,
         call: RunCall<'_>,
         request_digest: Option<String>,
+        source_rows: Option<Vec<crate::EntityId>>,
     ) -> Result<RunPermit, RunDenied> {
         let RunCall {
             selector,
@@ -231,6 +232,7 @@ impl RunInner {
                     .metered_seat()
                     .map(|tier| tier.0.clone()),
                 rules_enforced,
+                source_rows,
             },
             revision,
             lease,
@@ -250,6 +252,7 @@ impl RunInner {
         revision: u32,
         connector: &PaidConnector,
         quantity: u64,
+        source_rows: Option<Vec<crate::EntityId>>,
     ) -> Result<RunPermit, RunDenied> {
         if !declaration.admits_connector(&connector.connector) {
             return Err(RunDenied::UndeclaredConnector {
@@ -314,6 +317,7 @@ impl RunInner {
                 attribution: self.attribution.clone(),
                 seat: None,
                 rules_enforced,
+                source_rows,
             },
             revision,
             lease,

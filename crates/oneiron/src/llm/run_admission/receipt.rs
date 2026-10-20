@@ -147,6 +147,11 @@ pub struct PermitFacts {
     /// False when the run's teacher and budget rules do not hold for this
     /// call: a BYO seat, or a T1 key the owner allowed.
     pub rules_enforced: bool,
+    /// The rows the call's input was assembled from, as the host code that
+    /// assembled it named them (`RunAdmission::sourced`, FIX 5760). `None`,
+    /// unknown, for a call no such code named them for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// Where a run admission writes its receipts. The host persists or ships

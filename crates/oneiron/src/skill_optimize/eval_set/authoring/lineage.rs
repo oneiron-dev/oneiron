@@ -60,6 +60,10 @@ pub(in crate::skill_optimize::eval_set) struct ReceiptLineage {
     /// A TURN behind it lives in an off-record session, which derives
     /// nothing.
     pub(in crate::skill_optimize::eval_set) off_record: bool,
+    /// The rows the receipt's attempt read, when the receipt keeps a
+    /// complete set of them (FIX 5761). A pack receipt keeps none, so this
+    /// stays `None`, unknown: the links above are inputs, not that set.
+    pub(in crate::skill_optimize::eval_set) sources: Option<Vec<EntityId>>,
 }
 
 /// The existing readers' links, read once per pass: the amendments grounded
@@ -118,9 +122,13 @@ impl LineageReader {
             lineage.roots.insert(link.receipt.clone());
             lineage.artifacts.insert(link.artifact);
             if let Some(outcome) = link.outcome {
-                lineage
-                    .labels
-                    .push(world_label(outcome, &link.receipt, link.at));
+                // The measured edit is read from the proposal artifact.
+                lineage.labels.push(world_label(
+                    outcome,
+                    &link.receipt,
+                    link.at,
+                    Some(vec![link.artifact]),
+                ));
             }
             if let Some(proposal) =
                 finalized_proposal_text(vault, ProposalArtifactRef::new(link.artifact))?
@@ -145,9 +153,10 @@ impl LineageReader {
             } else {
                 NOT_PREFERRED
             };
+            // The pair names its responses by receipt key only: unknown.
             lineage
                 .labels
-                .push(world_label(value, &pick.pair_ref, pick.picked_at));
+                .push(world_label(value, &pick.pair_ref, pick.picked_at, None));
         }
         // The run's derived-from chain, as its close witnessed it. A receipt
         // no host attributed carries none.
@@ -179,13 +188,19 @@ impl LineageReader {
     }
 }
 
-fn world_label(value: &str, reference: &str, at: u64) -> CandidateLabel {
+fn world_label(
+    value: &str,
+    reference: &str,
+    at: u64,
+    source_rows: Option<Vec<EntityId>>,
+) -> CandidateLabel {
     CandidateLabel {
         kind: EvalLabelKind::WorldOutcome,
         value: value.to_owned(),
         reference: reference.to_owned(),
         at,
         held: false,
+        source_rows,
     }
 }
 

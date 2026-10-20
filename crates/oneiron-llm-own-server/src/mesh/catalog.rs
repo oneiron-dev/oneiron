@@ -71,6 +71,8 @@ pub(super) fn mesh_row(peer: MachineId, mut entry: LlmCatalogEntry) -> Option<Mo
         fetched_at: BTreeMap::new(),
         tokens_per_o200k: None,
         stale_since: None,
+        // A peer's answer names no row its entry was read from (FIX 5760).
+        source_rows: None,
     };
     row.validate().ok().map(|()| row)
 }

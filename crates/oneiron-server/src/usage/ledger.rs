@@ -1,5 +1,6 @@
 //! Durable idempotent provider-list meters, aggregated only per owner and vault.
 use super::{codec::*, keys::*, model::*};
+use oneiron::EntityId;
 use oneiron::agent_dispatch::budget_doors::{RunRungSettlement, UsageEventOrigin};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -12,12 +13,27 @@ impl UsageLedger {
         Self { vault }
     }
     /// Records `event` once under its idempotency key, billed as `source`
-    /// and written by `origin`, the engine or a usage post.
+    /// and written by `origin`, the engine or a usage post. A posted event
+    /// names no row its facts were read from: its rows stay unknown.
     pub fn record_event(
         &self,
         event: UsageEvent,
         source: UsageMode,
         origin: UsageEventOrigin,
+    ) -> Result<UsageRecordResult, UsageError> {
+        self.record_event_sourced(event, source, origin, None)
+    }
+
+    /// [`Self::record_event`] for the engine's own settlement, with the rows
+    /// the call's facts were read from as its admission froze them: its
+    /// input's and its list price's (FIX 5760). `None` is unknown. A replay
+    /// keeps the first write's rows.
+    pub(crate) fn record_event_sourced(
+        &self,
+        event: UsageEvent,
+        source: UsageMode,
+        origin: UsageEventOrigin,
+        source_rows: Option<Vec<EntityId>>,
     ) -> Result<UsageRecordResult, UsageError> {
         event.validate()?;
         // A meter records facts for every payer. A source never turns a
@@ -75,6 +91,7 @@ impl UsageLedger {
                     origin,
                     cost: cost.clone(),
                     recorded_at: now_secs(),
+                    source_rows,
                 };
                 self.vault
                     .sync_state_put_in_write_txn(txn, &key, &encode_entry(&stored)?)?;
@@ -280,6 +297,11 @@ pub(super) struct StoredUsageEvent {
     pub origin: UsageEventOrigin,
     pub cost: Option<Money>,
     pub recorded_at: u64,
+    /// The rows the call's facts were read from, as the engine's settlement
+    /// froze them (FIX 5760); `None`, unknown, on a posted event and on an
+    /// older record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 // Use the stamped money, never today's rate table, when rebuilding the derived view.
@@ -359,6 +381,12 @@ pub struct SeatUsage {
     /// Every window call's idempotency key, the counted-out calls' too,
     /// newest first.
     pub refs: Vec<String>,
+    /// The rows the window's calls, the counted-out ones too, were read
+    /// from, as each call's settlement froze them (FIX 5760); `None` when
+    /// any one's are unknown or a stored event does not decode. Another
+    /// seat's call adds only its time to `metered_since`, which no row of
+    /// its makes.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 impl SeatUsage {
     /// The window's calls not priced and summed in `currency`, each counted
@@ -417,6 +445,8 @@ impl UsageLedger {
         validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
         let mut usage = SeatUsage::default();
         let mut refs = Vec::new();
+        // `None` once one counted call's rows are unknown.
+        let mut sources: Option<Vec<EntityId>> = Some(Vec::new());
         self.vault
             .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
                 self.vault.sync_state_visit_prefix_in_write_txn(
@@ -430,6 +460,7 @@ impl UsageLedger {
                             usage.calls += 1;
                             usage.unclassified += 1;
                             usage.undecodable += 1;
+                            sources = None;
                             return Ok(());
                         };
                         let at = stored.event.occurred_at.unwrap_or(stored.recorded_at);
@@ -437,6 +468,14 @@ impl UsageLedger {
                             Some(usage.metered_since.map_or(at, |since| since.min(at)));
                         if stored.event.role.as_deref() != Some(seat) || at < from || at >= until {
                             return Ok(());
+                        }
+                        match stored.source_rows.as_deref() {
+                            Some(read) => {
+                                if let Some(rows) = &mut sources {
+                                    rows.extend_from_slice(read);
+                                }
+                            }
+                            None => sources = None,
                         }
                         if model.is_some_and(|model| stored.event.model.as_deref() != Some(model)) {
                             usage.counted_out += 1;
@@ -500,6 +539,7 @@ impl UsageLedger {
             );
         }
         usage.complete = usage.gap_calls() == 0;
+        usage.source_rows = oneiron::skill_optimize::union_source_rows([sources]);
         refs.sort_unstable();
         usage.refs = refs
             .into_iter()

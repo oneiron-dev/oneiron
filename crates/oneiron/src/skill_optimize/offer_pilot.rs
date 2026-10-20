@@ -10,6 +10,7 @@ use super::{
 };
 use crate::ModelLocality;
 use crate::consent::AuthenticatedOwner;
+use crate::limit_ask::EngineLimit;
 use crate::llm::manifest::read_manifest;
 use crate::llm::registry::ModelRegistryRow;
 use crate::side_table::{self, Named, SideTable};
@@ -92,6 +93,39 @@ pub struct OfferPilot {
     pub measurement: Option<OfferPilotMeasurement>,
     pub card: Option<SufficiencyCard>,
     pub completed_at: Option<u64>,
+    /// The rows the released cohort's cases and labels were read from,
+    /// frozen in the exposure's own transaction (FIX 5761); `None` when any
+    /// of them is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_source_rows: Option<Vec<EntityId>>,
+    /// The rows the measurement was read from: the release's, with the
+    /// evaluator's own trace of its receipts, scores, costs and sufficiency
+    /// (FIX 5761). `None` until measured, and when either is unknown; an
+    /// evaluator's receipt keys are never read as rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_source_rows: Option<Vec<EntityId>>,
+}
+
+/// The rows a prepared pilot's answer was read from: its released cases and
+/// their labels, and the pilot's frozen set (FIX 5761); `None` when any is
+/// unknown.
+#[must_use]
+pub fn listed_prepared(prepared: &OfferPilotPrepared) -> Option<Vec<EntityId>> {
+    super::union_source_rows([
+        prepared.release.source_rows(),
+        prepared.pilot.release_source_rows.clone(),
+    ])
+}
+
+/// The rows a pilot's answer was read from (FIX 5761): its measurement's
+/// once measured, its release's before; `None` when unknown.
+#[must_use]
+pub fn listed_pilot(pilot: &OfferPilot) -> Option<Vec<EntityId>> {
+    if pilot.measurement.is_some() {
+        pilot.measurement_source_rows.clone()
+    } else {
+        pilot.release_source_rows.clone()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -325,6 +359,8 @@ pub fn prepare_pilot(
             measurement: None,
             card: None,
             completed_at: None,
+            release_source_rows: release.source_rows(),
+            measurement_source_rows: None,
         };
         PILOTS.put(&vault.store, txn, &id, &pilot)?;
         Ok(OfferPilotPrepared { pilot, release })
@@ -336,6 +372,21 @@ pub fn complete_pilot(
     owner: &AuthenticatedOwner,
     input: OfferPilotComplete,
 ) -> Result<OfferPilot> {
+    // The owner's evaluator names its receipts by key only (FIX 5761).
+    complete_pilot_traced(vault, owner, input, None)
+}
+
+/// [`complete_pilot`] for an evaluator whose host holds the complete trace
+/// of the rows its measurement was read from (FIX 5761). The pilot keeps it
+/// beside its release's; `None` is unknown.
+/// # Errors
+/// As [`complete_pilot`].
+pub fn complete_pilot_traced(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferPilotComplete,
+    trace: Option<Vec<EntityId>>,
+) -> Result<OfferPilot> {
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
@@ -346,10 +397,15 @@ pub fn complete_pilot(
         let candidate = CANDIDATES.get(&vault.store, txn, &pilot.candidate)?.ok_or(Error::EntityNotFound)?;
         validate(vault, txn, &candidate.setup)?;
         let measurement = input.measurement;
+        // Every receipt the evaluator names is kept whole (Rule 5): their
+        // count and length are measured, never cut.
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, measurement.receipt_refs.len() as u64);
+        let longest = measurement.receipt_refs.iter().map(String::len).max().unwrap_or(0);
+        let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         if measurement.sufficiency.families != pilot.families
             || measurement.sufficiency.floor_slices != pilot.floor_slices
-            || measurement.receipt_refs.is_empty() || measurement.receipt_refs.len() > 64
-            || measurement.receipt_refs.iter().any(|reference| reference.trim().is_empty() || reference.len() > 256)
+            || measurement.receipt_refs.is_empty()
+            || measurement.receipt_refs.iter().any(|reference| reference.trim().is_empty())
             || measurement.currency.trim().is_empty() || measurement.currency.len() > 16
             || [measurement.one_off_cost, measurement.incumbent_score, measurement.candidate_score]
                 .into_iter().flatten().any(|value| !value.is_finite() || value < 0.0)
@@ -361,6 +417,8 @@ pub fn complete_pilot(
         pilot.card = Some(sufficiency_card(sufficiency)?);
         pilot.measurement = Some(measurement);
         pilot.completed_at = Some(now);
+        pilot.measurement_source_rows =
+            super::union_source_rows([pilot.release_source_rows.clone(), trace]);
         PILOTS.put(&vault.store, txn, &pilot.id, &pilot)?;
         Ok(pilot)
     })

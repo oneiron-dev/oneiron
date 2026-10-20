@@ -154,18 +154,21 @@ impl Unverifiable {
 
     /// Closes the check with `alone`, a reason it read no call at all: no
     /// meter, no Bound run, or no model role.
+    /// `sources` are the rows the check read before it stopped: the offer's,
+    /// and a handed-off run's (FIX 5760).
     pub(super) fn unread(
         alone: Alone,
         vault: &Vault,
         admitted: &DreamerAdmittedAttempt,
         offer: &TrainingOffer,
+        sources: Sources,
         now: u64,
     ) -> oneiron::Result<()> {
         let outcome = Self {
             alone: Some(alone),
             ..Self::default()
         };
-        outcome.record(vault, admitted, offer, "", Vec::new(), now)
+        outcome.record(vault, admitted, offer, "", Vec::new(), sources, now)
     }
 
     /// The calls of one kind.
@@ -253,7 +256,10 @@ impl Unverifiable {
     /// nor broken, so the offer skill gets no evidence from it. The note
     /// starts with a code that stands alone, or with [`MIXED_MODEL`] when
     /// calls were counted out and then each kind's code present, in
-    /// [`Gap::ORDER`], with its calls; the counted-out calls close it.
+    /// [`Gap::ORDER`], with its calls; the counted-out calls close it. It
+    /// keeps `sources`, the rows the check read: the offer's, a handed-off
+    /// run's and the meter's, as each froze them (FIX 5760).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn record(
         self,
         vault: &Vault,
@@ -261,6 +267,7 @@ impl Unverifiable {
         offer: &TrainingOffer,
         approved: &str,
         refs: Vec<String>,
+        sources: Sources,
         now: u64,
     ) -> oneiron::Result<()> {
         let days = WINDOW_SECS / DAY_SECS;
@@ -280,10 +287,6 @@ impl Unverifiable {
             None => self.gap_note(approved, days, &promised),
         };
         let note = format!("{note}{}", counted_out(self.counted_out));
-        // Read as a pass or fail check reads (FIX 5482).
-        let mut sources = Sources::new();
-        sources.set(offer.source_rows.as_deref());
-        sources.unknown();
         vault.run_coach_offer_check(
             admitted,
             OfferCheckInput {

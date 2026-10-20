@@ -11,99 +11,22 @@ use serde::Serialize;
 use super::super::media::{MediaBackend, MediaRequest};
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
-    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, RetryableLlmError,
-    SingleRouteBackend,
+    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
 };
-use super::declaration::{DeclarationEditor, LeaseUnit, RunDeclaration};
+use super::declaration::{DeclarationEditor, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
-use super::host::{AllocationRefusal, HostAccount, OfferBinding, PaidConnector, PayerPerson};
+use super::host::{HostAccount, OfferBinding, PaidConnector, PayerPerson};
 use super::media::MediaGate;
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
 
+mod denied;
+pub use denied::RunDenied;
+
 /// The subject of the `Denied` row for a selector the run could not resolve:
 /// the row keeps none of the selector's bytes.
 pub const UNRESOLVED_SELECTOR: &str = "unresolved-selector";
-
-/// Why the run admission refused a call or an edit. Every refusal comes
-/// before any byte leaves and leaves no reservation behind.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, thiserror::Error)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum RunDenied {
-    #[error("the run did not declare teacher {model}")]
-    UndeclaredTeacher { model: ModelId },
-    /// The selector names no model id and no alias the run froze. A caller
-    /// may pass any text there, so the denial keeps only its length.
-    #[error("the run knows no model or alias by the {len}-byte selector given")]
-    UnknownSelector { len: usize },
-    #[error("the offer binds another model than the call names")]
-    OfferMismatch,
-    #[error("no offer on this host serves {model}")]
-    NoOffer { model: ModelId },
-    #[error("the call's locality differs from its route's")]
-    LocalityMismatch,
-    #[error("the call picks its model or route through {key}")]
-    RouteOverride { key: String },
-    #[error("the route's backend refused the call before sending it")]
-    BackendRefused,
-    #[error("a declared run keeps its paid keys at T0")]
-    KeyAtT1,
-    #[error("the run did not declare connector {connector}")]
-    UndeclaredConnector { connector: String },
-    #[error("no rate converts {from:?} into {to:?}")]
-    UnitMismatch { from: LeaseUnit, to: LeaseUnit },
-    #[error("budget: {denied}")]
-    Budget { denied: BudgetDenied },
-    #[error("the host has delivered no allocation")]
-    NoAllocation,
-    #[error("the allocation is spent")]
-    AllocationExhausted,
-    #[error("the host refused a fresh allocation: {reason:?}")]
-    AllocationRefused { reason: AllocationRefusal },
-    #[error("dispatch refused: {refused}")]
-    Dispatch { refused: DispatchRefused },
-    #[error("a run never edits its own declaration")]
-    DeclarationEditRefused,
-    /// A fallback to this offer would take the call's work off the device
-    /// while its world stays here, for a content-free reason (FIX 4939):
-    /// the owner's recipient choice for that world, or an integrity hold.
-    #[error("the call's world stays on this device: {reason}")]
-    KeptOnDevice { reason: &'static str },
-}
-
-impl From<RunDenied> for LlmError {
-    fn from(denied: RunDenied) -> Self {
-        match denied {
-            RunDenied::Budget { denied } => Self::BudgetDenied(denied),
-            RunDenied::NoAllocation
-            | RunDenied::AllocationExhausted
-            | RunDenied::AllocationRefused { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
-            RunDenied::Dispatch { refused } => Self::BudgetDenied(refused.into()),
-            // A privacy hold stays one: never a budget refusal.
-            RunDenied::KeptOnDevice { reason } => {
-                Self::Retryable(RetryableLlmError::KeptOnDevice {
-                    retry_after: None,
-                    resets_at: Vec::new(),
-                    reason: Some(reason.to_owned()),
-                })
-            }
-            RunDenied::UndeclaredTeacher { .. }
-            | RunDenied::UnknownSelector { .. }
-            | RunDenied::OfferMismatch
-            | RunDenied::NoOffer { .. }
-            | RunDenied::LocalityMismatch
-            | RunDenied::RouteOverride { .. }
-            | RunDenied::BackendRefused
-            | RunDenied::KeyAtT1
-            | RunDenied::UndeclaredConnector { .. }
-            | RunDenied::UnitMismatch { .. }
-            | RunDenied::DeclarationEditRefused => {
-                Self::BudgetDenied(BudgetDenied::AdmissionDenied)
-            }
-        }
-    }
-}
 
 /// One model call a run asks to make.
 #[derive(Debug, Clone, Copy)]
@@ -132,6 +55,10 @@ pub enum RunCallError {
 #[derive(Clone)]
 pub struct RunAdmission {
     inner: Arc<RunInner>,
+    /// The rows the calls admitted through this handle had their input
+    /// assembled from, as the host code that assembled it named them
+    /// ([`Self::sourced`], FIX 5760); `None`, unknown, on the run itself.
+    sources: Option<Vec<crate::EntityId>>,
 }
 
 pub(super) struct RunInner {
@@ -285,6 +212,7 @@ impl RunAdmission {
                 calls: Mutex::new(BTreeMap::new()),
                 paid: Mutex::new(BTreeSet::new()),
             }),
+            sources: None,
         }
     }
 
@@ -304,6 +232,19 @@ impl RunAdmission {
     #[must_use]
     pub fn attribution(&self) -> Option<&RunAttribution> {
         self.inner.attribution.as_ref()
+    }
+
+    /// This run, for calls whose input the host code that assembled it read
+    /// from `rows` (FIX 5760): every permit admitted through the handle, to
+    /// a model or a paid connector, carries them in its facts and on its
+    /// `Admitted` receipt. `None` is unknown, as on the run itself. The run,
+    /// its line, its permits and its receipts are the same run's.
+    #[must_use]
+    pub fn sourced(&self, rows: Option<Vec<crate::EntityId>>) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            sources: rows,
+        }
     }
 
     /// The run's budget line as its meter reads now.
@@ -385,9 +326,13 @@ impl RunAdmission {
             ..call
         };
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self
-            .inner
-            .admit_model(&declaration, revision, call, request_digest);
+        let admitted = self.inner.admit_model(
+            &declaration,
+            revision,
+            call,
+            request_digest,
+            self.sources.clone(),
+        );
         self.inner.receipt_for(
             revision,
             call.selector,
@@ -405,9 +350,13 @@ impl RunAdmission {
         quantity: u64,
     ) -> Result<RunPermit, RunDenied> {
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self
-            .inner
-            .admit_connector(&declaration, revision, connector, quantity);
+        let admitted = self.inner.admit_connector(
+            &declaration,
+            revision,
+            connector,
+            quantity,
+            self.sources.clone(),
+        );
         self.inner
             .receipt_for(revision, None, &connector.connector, admitted, None)
     }
@@ -462,7 +411,9 @@ impl RunAdmission {
         };
         let (revision, declaration) = self.inner.snapshot();
         let declaration = declaration.with_reserve(reserve_units);
-        let admitted = self.inner.admit_model(&declaration, revision, call, None);
+        let admitted =
+            self.inner
+                .admit_model(&declaration, revision, call, None, self.sources.clone());
         self.inner.receipt_for(
             revision,
             selector,

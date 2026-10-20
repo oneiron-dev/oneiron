@@ -69,7 +69,7 @@ impl CatalogSeed {
             .iter()
             .find(|file| file.path == "knowledge/catalog.json")
             .ok_or_else(|| invalid("model catalog data file missing"))?;
-        let seed = Self::from_json(&bytes.content)?;
+        let mut seed = Self::from_json(&bytes.content)?;
         let vendors: BTreeSet<_> = seed
             .rows
             .iter()
@@ -77,6 +77,11 @@ impl CatalogSeed {
             .collect();
         if seed.rows.len() < 40 || vendors.len() < 40 {
             return Err(invalid("model catalog must have at least 40 vendors"));
+        }
+        // Each row the pack ships is read from its installed source, and from
+        // nothing the pack's own bytes claim (FIX 5760).
+        for row in &mut seed.rows {
+            row.source_rows = Some(vec![id]);
         }
         Ok(seed)
     }

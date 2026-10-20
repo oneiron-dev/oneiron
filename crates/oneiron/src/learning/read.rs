@@ -7,6 +7,7 @@
 //! assembled here at read: it never mints a claim.
 
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning_setting::{self, LEARNING_BORROWED_PRIOR_RUNS};
 
@@ -40,6 +41,21 @@ pub fn learning_estimate(vault: &Vault, cell: &LearningCell) -> Result<Option<Es
     own_estimate_in_txn(vault, &rtxn, cell)
 }
 
+/// [`learning_estimate`] beside the rows it was read from, from one snapshot
+/// (FIX 5760): the claim of the very head it chose. `None` when the cell has
+/// no own head.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn learning_estimate_with_sources(
+    vault: &Vault,
+    cell: &LearningCell,
+) -> Result<Option<(Estimate, Vec<EntityId>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(own_head_in_txn(vault, &rtxn, cell)?.map(|(estimate, _, claim)| (estimate, vec![claim])))
+}
+
 /// [`learning_estimate`] inside the caller's transaction. With two heads
 /// after a sync, the richer one reads.
 pub(crate) fn own_estimate_in_txn(
@@ -47,23 +63,24 @@ pub(crate) fn own_estimate_in_txn(
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Option<Estimate>> {
-    Ok(own_head_in_txn(vault, txn, cell)?.map(|(estimate, _)| estimate))
+    Ok(own_head_in_txn(vault, txn, cell)?.map(|(estimate, _, _)| estimate))
 }
 
-/// The head [`own_estimate_in_txn`] reads, with the time it was projected.
+/// The head [`own_estimate_in_txn`] reads, with the time it was projected
+/// and its claim.
 fn own_head_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
-) -> Result<Option<(Estimate, u64)>> {
+) -> Result<Option<(Estimate, u64, EntityId)>> {
     Ok(active_heads_in_txn(vault, txn, cell)?
         .into_iter()
-        .filter_map(|(_, body, at)| {
+        .filter_map(|(claim, body, at)| {
             StoredEstimateClaim::from_value(&body.value)
                 .ok()
-                .map(|stored| (stored.estimate, at))
+                .map(|stored| (stored.estimate, at, claim))
         })
-        .filter(|(estimate, _)| estimate.ver == super::estimate::ESTIMATOR_VERSION)
+        .filter(|(estimate, _, _)| estimate.ver == super::estimate::ESTIMATOR_VERSION)
         .max_by(|a, b| a.0.runs.total_cmp(&b.0.runs)))
 }
 
@@ -81,7 +98,7 @@ pub(crate) fn measured_outcomes_in_txn(
     txn: &heed::RoTxn<'_>,
     cell: &LearningCell,
 ) -> Result<Option<(f64, f64)>> {
-    let Some((estimate, at)) = own_head_in_txn(vault, txn, cell)? else {
+    let Some((estimate, at, _)) = own_head_in_txn(vault, txn, cell)? else {
         return Ok(None);
     };
     let digest = cell.digest();

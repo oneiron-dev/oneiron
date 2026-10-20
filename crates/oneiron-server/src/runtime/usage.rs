@@ -38,6 +38,9 @@ pub struct VaultUsage {
 struct AdmittedCall {
     facts: PermitFacts,
     rates: Option<UsageCostRates>,
+    /// The rows `rates` was read from: the catalog row's, none for the
+    /// host's override (FIX 5760).
+    price_sources: Option<Vec<EntityId>>,
     /// The billing owner the call's usage lands on, fixed at admission.
     owner: String,
 }
@@ -118,7 +121,12 @@ impl VaultUsage {
                     .expect("usage rates lock poisoned")
                     .get(&facts.offer)
                     .cloned();
-                let rates = overridden.or_else(|| self.catalog.snapshot(facts));
+                // The host's override reads no row; the catalog's price, the
+                // rows its row was read from (FIX 5760).
+                let (rates, price_sources) = match overridden {
+                    Some(rates) => (Some(rates), Some(Vec::new())),
+                    None => self.catalog.snapshot(facts),
+                };
                 // A room-paid call bills its payer PERSON's own account, which
                 // for a live Owner is the vault's; the vault's too when the
                 // owners approved that on its payer-needed ask; a call no
@@ -137,6 +145,7 @@ impl VaultUsage {
                         AdmittedCall {
                             facts: *facts.clone(),
                             rates,
+                            price_sources,
                             owner,
                         },
                     );
@@ -161,6 +170,7 @@ impl VaultUsage {
                 let Some(AdmittedCall {
                     facts,
                     rates,
+                    price_sources,
                     owner,
                 }) = facts.filter(|_| *dispatched)
                 else {
@@ -224,6 +234,12 @@ impl VaultUsage {
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
                 let bound = facts.attribution.as_ref();
+                // The call's facts read its input's rows and its price's,
+                // frozen beside the settlement (FIX 5760).
+                let source_rows = oneiron::skill_optimize::union_source_rows([
+                    facts.source_rows.as_deref(),
+                    price_sources.as_deref(),
+                ]);
                 let event = UsageEvent {
                     owner,
                     vault_id: self.vault_id.clone(),
@@ -277,7 +293,7 @@ impl VaultUsage {
                 };
                 if self
                     .ledger
-                    .record_event(event, source, UsageEventOrigin::Engine)
+                    .record_event_sourced(event, source, UsageEventOrigin::Engine, source_rows)
                     .is_err()
                 {
                     tracing::error!("served run usage could not be persisted");

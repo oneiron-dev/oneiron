@@ -6,9 +6,9 @@
 //! pin's price, a selling price, tax or an exchange rate.
 use std::sync::Arc;
 
-use oneiron::ModelId;
 use oneiron::llm::LlmCatalogCost;
 use oneiron::llm::run_admission::PermitFacts;
+use oneiron::{EntityId, ModelId};
 
 use crate::usage::{UsageCostRates, catalog_cost_rates};
 
@@ -30,21 +30,35 @@ impl CatalogPrices {
     }
 
     /// The admitted model's list price as the registry reads now, stamped
-    /// for `facts`' exact offer, route and catalog revision. `None` for a
-    /// paid connector, a model with no readable registry row, or a quoted
-    /// rate that does not convert: the call keeps its quantities and no money
-    /// is invented. A failed read never fails the admission.
-    pub(super) fn snapshot(&self, facts: &PermitFacts) -> Option<UsageCostRates> {
-        let model = facts.model.as_ref()?;
+    /// for `facts`' exact offer, route and catalog revision, beside the rows
+    /// that price was read from (FIX 5760). The price is `None` for a paid
+    /// connector, a model with no readable registry row, or a quoted rate
+    /// that does not convert: the call keeps its quantities and no money is
+    /// invented. A failed read never fails the admission.
+    pub(super) fn snapshot(
+        &self,
+        facts: &PermitFacts,
+    ) -> (Option<UsageCostRates>, Option<Vec<EntityId>>) {
+        // A paid connector reads no catalog row.
+        let Some(model) = facts.model.as_ref() else {
+            return (None, Some(Vec::new()));
+        };
         let row = match self.vault.model_registry_row(model) {
-            Ok(row) => row?,
+            Ok(Some(row)) => row,
+            // No row: the absence is the installed pack's, when one is.
+            Ok(None) => {
+                let pack = self.vault.model_catalog_source();
+                return (None, pack.ok().map(|pack| pack.into_iter().collect()));
+            }
             Err(_) => {
                 tracing::debug!("an admitted model's list price could not be read");
-                return None;
+                return (None, None);
             }
         };
-        let cost = row.catalog.cost.as_ref()?;
-        catalog_cost_rates(cost, CATALOG_CURRENCY, snapshot_id(facts, model, cost))
+        let rates = row.catalog.cost.as_ref().and_then(|cost| {
+            catalog_cost_rates(cost, CATALOG_CURRENCY, snapshot_id(facts, model, cost))
+        });
+        (rates, row.source_rows)
     }
 }
 

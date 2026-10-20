@@ -338,6 +338,13 @@ pub struct TrainingRun {
     pub authorization: Option<TrainingAuthorization>,
     /// Read while the run waits on the host; dispatch clears it.
     pub hold: Option<TrainingHold>,
+    /// The rows the run was prepared, trained and scored from (FIX 5760):
+    /// its corpus pairs with their skills and TURNs, its pinned checkpoint
+    /// files, its cohort's cases and labels, the files its connector handed
+    /// back and its verifier logs. `None`, unknown, once any of them is. The
+    /// run's id and its artifact strings are not among them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// The owner picks the recipe, a sealed source-family cohort and compute per run.
