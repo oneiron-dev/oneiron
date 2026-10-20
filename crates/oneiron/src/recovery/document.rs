@@ -17,7 +17,7 @@ use super::canonical::parse_id;
 use super::canonical::{ByteBudget, CanonicalSnapshot, id, invalid, pack};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{ArtifactError, Result};
 use crate::note::{NoteFork, NoteLandingReceipt, NoteReviewBundle};
 use crate::side_table::{self, HexId, Named, Raw, SideKey, SideTable};
 
@@ -68,8 +68,8 @@ pub struct CanonicalDocument {
     pub authorship: Vec<crate::note::NoteAuthorship>,
 }
 impl CanonicalDocument {
-    /// The bytes this document holds: its ids, text, title and authorship,
-    /// each record's actor only while it names one.
+    /// The bytes this document holds: its ids, text, title, birth and
+    /// authorship, each actor only while it names one (FIX 6540).
     fn held(&self) -> usize {
         let authorship = self.authorship.iter().map(|record| {
             16 + record.actor.id().map_or(0, |_| 16)
@@ -81,7 +81,12 @@ impl CanonicalDocument {
             + self.head.len()
             + self.text.len()
             + self.title.as_ref().map_or(0, String::len)
+            + self.birth_held()
             + authorship.sum::<usize>()
+    }
+    /// The bytes its birth holds: its actor while it names one, and its time.
+    fn birth_held(&self) -> usize {
+        self.birth_actor.map_or(0, |actor| actor.len()) + size_of_val(&self.birth_at)
     }
     pub(super) fn key(&self) -> String {
         // All callers validate the UUID bytes before they reach storage.
@@ -140,6 +145,7 @@ pub(super) fn capture(
         .filter(|row| row.blob.len() > crate::batch::ENTITY_METADATA_HEADER_LEN)
         .map(|row| row.id)
         .collect();
+    let mut overrun = None;
     for entity in &snapshot.entity_blobs {
         let header = crate::batch::EntityMetadataHeader::parse(&entity.blob)
             .ok_or(invalid("entity header"))?;
@@ -165,7 +171,7 @@ pub(super) fn capture(
             core.author_ref.id().map(|author| *author.as_bytes()),
             header.learned_at,
         )?;
-        budget.take(row.held())?;
+        take_document(budget, &row, &mut overrun)?;
         snapshot.doc_snapshots.push(row);
         snapshot.document_heads.push(CanonicalHead {
             entity_id: entity.id,
@@ -187,9 +193,12 @@ pub(super) fn capture(
                 core.author_ref.id().map(|author| *author.as_bytes()),
                 header.learned_at,
             )?;
-            budget.take(row.held())?;
+            take_document(budget, &row, &mut overrun)?;
             snapshot.doc_snapshots.push(row);
         }
+    }
+    if let Some(overrun) = overrun {
+        tracing::warn!(%overrun, "canonical recovery measured NOTE births past its budget");
     }
     for row in NOTE_RECEIPT.iter_from(&vault.store, txn, &[])? {
         let (receipt_id, receipt) = row?;
@@ -215,6 +224,22 @@ pub(super) fn capture(
     snapshot.document_heads.sort_by_key(|row| row.entity_id);
     snapshot.head_move_receipts.sort_by_key(|row| row.id);
     workflow::capture(vault, txn, snapshot, &ids, budget)?;
+    Ok(())
+}
+/// Takes `row` from `budget`: what it held before its birth was counted, as
+/// a refusal answers for it, and its birth only measured (Rule 5, FIX 6540),
+/// so no NOTE that recovered before refuses now. The overrun the measure
+/// passes, if any, is kept in `overrun`.
+fn take_document(
+    budget: &mut ByteBudget,
+    row: &CanonicalDocument,
+    overrun: &mut Option<ArtifactError>,
+) -> Result<()> {
+    let birth = row.birth_held();
+    budget.take(row.held().saturating_sub(birth))?;
+    if let Some(over) = budget.measure(birth) {
+        *overrun = Some(over);
+    }
     Ok(())
 }
 pub(super) fn from_doc(
