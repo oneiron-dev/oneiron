@@ -15,8 +15,9 @@ use std::collections::HashSet;
 pub struct ScopeSummaryBody {
     /// Codec version: 1, or 2 for a composed body.
     pub v: u8,
-    /// Selector resolved in the mint transaction.
-    pub scope: ScopeSelector,
+    /// Selector resolved in the mint transaction; `None` (a nil `scope`) for
+    /// a NOTE set's summary (FIX 5757), which is in no conversation.
+    pub scope: Option<ScopeSelector>,
     /// The body as its producer wrote it, never rewritten by the engine.
     pub text: String,
     /// Validated producer's 32-hex entity id.
@@ -162,13 +163,21 @@ fn validate(body: &ScopeSummaryBody) -> Result<()> {
     if unique.len() != body.covers.len() {
         return Err(invalid("duplicate covered record"));
     }
-    if let ScopePath::SubSession(session) = body.scope.path
-        && body.scope.session.is_some_and(|id| id != session)
+    // A NOTE set's summary is composed from the NOTEs it covers, and NOTEs
+    // carry no MESSAGEs.
+    let Some(scope) = &body.scope else {
+        if body.v != 2 || body.covers.is_empty() || !body.messages.is_empty() {
+            return Err(invalid("a NOTE set's summary is composed from its NOTEs"));
+        }
+        return Ok(());
+    };
+    if let ScopePath::SubSession(session) = scope.path
+        && scope.session.is_some_and(|id| id != session)
     {
         return Err(invalid("conflicting summary session selectors"));
     }
-    if matches!(body.scope.path, ScopePath::BranchSpan { .. })
-        && (body.scope.include_forks || body.covers.is_empty())
+    if matches!(scope.path, ScopePath::BranchSpan { .. })
+        && (scope.include_forks || body.covers.is_empty())
     {
         return Err(invalid("branch span requires nonempty no-forks covers"));
     }
@@ -205,7 +214,10 @@ pub fn encode_scope_summary_body(body: &ScopeSummaryBody) -> Result<Vec<u8>> {
     validate(body)?;
     let mut entries = vec![
         (Value::from("v"), Value::from(body.v)),
-        (Value::from("scope"), scope_value(&body.scope)),
+        (
+            Value::from("scope"),
+            body.scope.as_ref().map_or(Value::Nil, scope_value),
+        ),
         (Value::from("text"), Value::from(body.text.clone())),
         (Value::from("actor"), Value::from(body.actor.clone())),
         (
@@ -292,7 +304,11 @@ pub fn decode_scope_summary_body(bytes: &[u8]) -> Result<ScopeSummaryBody> {
             .as_u64()
             .and_then(|v| u8::try_from(v).ok())
             .ok_or_else(|| invalid("invalid summary version"))?,
-        scope: parse_scope(v[1])?,
+        scope: if v[1].is_nil() {
+            None
+        } else {
+            Some(parse_scope(v[1])?)
+        },
         text: v[2]
             .as_str()
             .ok_or_else(|| invalid("text must be a string"))?
