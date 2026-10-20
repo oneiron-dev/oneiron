@@ -1,12 +1,17 @@
 //! ChannelIdentity lifecycle verbs through the ExternalEffect door (OF-347 CID-2).
 //!
-//! FIX 6424 part 3: a request with a request ref pins its approve-once press
-//! to exactly that request (`approval`).
+//! FIX 6424 part 3: every landing is a request with a request ref, minted
+//! before its ask, and its approve-once press approves exactly that request
+//! (`approval`).
 
 mod approval;
 
 pub use self::approval::channel_identity_lifecycle_approve_once_digest;
-pub(crate) use self::approval::{LifecycleCall, LifecycleCallState, lifecycle_input_digest};
+pub(crate) use self::approval::{
+    LifecycleApplied, LifecycleCall, LifecycleCallState, RecordedIdentityView,
+    drop_lifecycle_requests_of_identity_in_txn, erase_lifecycle_request_actor_in_txn,
+    lifecycle_input_digest, retire_lifecycle_requests_in_txn,
+};
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -237,6 +242,23 @@ pub struct ChannelIdentityLifecycleResult {
     pub request_ref: Option<EntityId>,
 }
 
+impl ChannelIdentityLifecycleResult {
+    /// FIX 6424 part 3: `; approve-once digest <hex> (request <ref>)` for a
+    /// request the Gate held naming one, else nothing: what a landing that
+    /// reports a hold in words appends after its own, unchanged.
+    #[must_use]
+    pub fn held_approval_note(&self) -> String {
+        match (self.approval_digest.as_deref(), self.request_ref) {
+            (Some(digest), Some(request_ref)) => format!(
+                "; approve-once digest {digest} (request {})",
+                request_ref.to_hex()
+            ),
+            (Some(digest), None) => format!("; approve-once digest {digest}"),
+            (None, _) => String::new(),
+        }
+    }
+}
+
 /// The outcome of a lifecycle request the Gate held.
 const LIFECYCLE_HELD: &str = "held";
 /// The outcome of a lifecycle request the Gate denied.
@@ -271,37 +293,57 @@ struct AppliedLifecycle {
 
 impl Vault {
     /// Evaluates a typed identity lifecycle intent through the ExternalEffect
-    /// gate. It names no request ref, so its approve-once press pins no
-    /// request (FIX 6424 part 3): [`Self::apply_channel_identity_lifecycle_request`]
-    /// does.
+    /// gate. FIX 6424 part 3: as a request of its own, under a fresh request
+    /// ref minted and kept before its ask: its result names that ref and,
+    /// while the Gate holds it, the approve-once digest that releases
+    /// exactly it, on a retry naming that ref
+    /// ([`Self::apply_channel_identity_lifecycle_request`]).
     pub fn apply_channel_identity_lifecycle_intent(
         &self,
         request: ChannelIdentityLifecycleRequest,
     ) -> Result<ChannelIdentityLifecycleResult> {
-        self.apply_channel_identity_lifecycle(request, None)
+        Ok(self
+            .apply_channel_identity_lifecycle_kept(request, None)?
+            .into_result())
     }
 
     /// FIX 6424 part 3: [`Self::apply_channel_identity_lifecycle_intent`] as
     /// the request `request_ref` names, its nonce: the owner's approve-once
     /// press on its hold (the result's `approval_digest`) releases exactly
-    /// this request, so a retry must name the same ref, identity and intent.
-    /// The memory door's lifecycle verbs keep the request by its ref and
-    /// answer a completed one's receipt again.
+    /// this request, so a retry names the same ref, identity and intent. A
+    /// request that completed answers its recorded result and applies
+    /// nothing again.
+    ///
+    /// # Errors
+    /// As [`Self::apply_channel_identity_lifecycle_intent`], and a ref that
+    /// names another request.
     pub fn apply_channel_identity_lifecycle_request(
         &self,
         request: ChannelIdentityLifecycleRequest,
         request_ref: EntityId,
     ) -> Result<ChannelIdentityLifecycleResult> {
-        self.apply_channel_identity_lifecycle(request, Some(request_ref))
+        Ok(self
+            .apply_channel_identity_lifecycle_kept(request, Some(request_ref))?
+            .into_result())
     }
 
-    fn apply_channel_identity_lifecycle(
+    /// The Gate's own decision on `request`, pinned to `request_ref` when it
+    /// names one, and its apply in the same writer (FIX 6424 part 3: a
+    /// request another call of the same ref completed first answers that
+    /// receipt; one this apply completes is kept in this writer).
+    pub(crate) fn apply_channel_identity_lifecycle_gated(
         &self,
         request: ChannelIdentityLifecycleRequest,
         request_ref: Option<EntityId>,
-    ) -> Result<ChannelIdentityLifecycleResult> {
+    ) -> Result<LifecycleApplied> {
         let identity_id = request.intent.identity_id();
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(request_ref) = request_ref
+            && let Some(done) =
+                approval::recorded_in_txn(&self.store, &wtxn, request_ref, identity_id)
+        {
+            return Ok(done);
+        }
         let snapshot = match &request.intent {
             ChannelIdentityLifecycleIntent::Provision(intent) => intent.identity.clone(),
             _ => self.read_channel_identity_in_txn(&wtxn, &identity_id)?,
@@ -370,9 +412,8 @@ impl Vault {
                 request_ref,
             },
         )?;
-        wtxn.commit()?;
-
-        Ok(ChannelIdentityLifecycleResult {
+        let allowed = decision.outcome() == GateOutcome::Allow;
+        let result = ChannelIdentityLifecycleResult {
             receipt_id: lifecycle_receipt_ref(receipt.receipt_id),
             gate_receipt_id: Some(format!("gate:{}", gate_decision_id.to_hex())),
             outcome: receipt.outcome,
@@ -383,7 +424,22 @@ impl Vault {
             identity_retiring: receipt.identity_retiring,
             approval_digest,
             request_ref,
-        })
+        };
+        // FIX 6424 part 3: the receipt a completed request answered is kept
+        // with its apply.
+        if let Some(request_ref) = request_ref
+            && allowed
+        {
+            approval::record_completion_in_txn(
+                &self.store,
+                &mut wtxn,
+                request_ref,
+                identity_id,
+                &result,
+            )?;
+        }
+        wtxn.commit()?;
+        Ok(LifecycleApplied::Applied(result))
     }
 
     /// Marks a pending or rotating identity fulfilled and receipts the transition to ACTIVE.

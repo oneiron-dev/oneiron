@@ -15,13 +15,19 @@
 //! preparation (no grant, key, approved manifest or pinned protocol), and a
 //! code consent wait's own code-bound press, name none.
 //!
-//! A held call's row keeps the prepared request its approvable hold asked
-//! about ([`HeldConnectorAsk`]: the digest, the frozen bytes' digest and the
-//! endpoint; ids and digests, no bytes), from its first approvable hold
-//! (CALLS `FIX 6424 pre-ask prepared snapshot retention`, MCP half). Each
-//! retry prepares the call again and is gated on its own bytes: the same
-//! request names the same digest and the kept one stands; a changed target
-//! or body is a new ask, which the row keeps in its place. The code-wait
+//! A held call's row keeps the prepared request its approvable holds asked
+//! about ([`ConnectorCallApproval`], each a [`HeldConnectorAsk`]: the
+//! digest, the frozen bytes' digest and the endpoint's digest; digests only,
+//! no bytes, no address) (CALLS `FIX 6424 pre-ask prepared snapshot
+//! retention`, MCP half): the CURRENT ask, the one its last pass held as
+//! approvable, which its status and its owner question name (an
+//! administrative or uncertain-only hold clears it), and the last approvable
+//! one any pass named. Each retry prepares the call again and is gated on
+//! its own bytes, rebuilt live: the same request names the same digest; a
+//! changed target or body is a new ask, and a question already put is put
+//! again, at the next version, naming it. That metadata reads tolerantly: a
+//! value that does not decode reads as absent (today's path, no digest),
+//! while the request itself decodes as strictly as before. The code-wait
 //! digest, the grant checks and every grant-backed path never read any of
 //! it. A press the call's admission spent is kept beside its ledger row for
 //! its retry (`outbound_intent_ledger::pinned_approval`).
@@ -90,7 +96,7 @@ pub fn scoped_mcp_approve_once_digest(
 }
 
 /// The prepared request one approvable hold of a connector call asked the
-/// owner to press for: ids and digests only.
+/// owner to press for: digests only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct HeldConnectorAsk {
@@ -98,8 +104,8 @@ pub(super) struct HeldConnectorAsk {
     pub(super) approval_digest: String,
     /// BLAKE3 of the bytes the call's preparation froze, 64 lower-hex.
     pub(super) payload_digest: String,
-    /// The endpoint the call was prepared for.
-    pub(super) endpoint: String,
+    /// BLAKE3 of the endpoint the call was prepared for, 64 lower-hex.
+    pub(super) endpoint_digest: String,
 }
 
 impl HeldConnectorAsk {
@@ -109,24 +115,79 @@ impl HeldConnectorAsk {
         Some(Self {
             approval_digest: approval_digest?,
             payload_digest: bytes_to_hex_lower(&frozen_digest(prepared)),
-            endpoint: prepared.call().resolved_endpoint.clone(),
+            endpoint_digest: bytes_to_hex_lower(
+                blake3::hash(prepared.call().resolved_endpoint.as_bytes()).as_bytes(),
+            ),
         })
     }
 }
 
-/// Keeps `ask`, this pass's approvable hold, on the held row `row`: the
-/// first one saves it, the same request keeps it, and a changed target or
-/// body is a new ask the row keeps in its place. A hold that names none (an
-/// administrative one) leaves the kept ask, which still names the call's
-/// prepared request.
+/// The approvable asks a held call's passes named: see the module docs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ConnectorCallApproval {
+    /// The ask the call's last pass held as approvable: what its status and
+    /// its owner question name. `None` once a pass held it otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) current: Option<HeldConnectorAsk>,
+    /// The last approvable ask any pass named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last: Option<HeldConnectorAsk>,
+    /// How many distinct approvable asks the call made: its owner
+    /// question's version counts up with it.
+    #[serde(default)]
+    pub(super) revision: u32,
+}
+
+impl ConnectorCallApproval {
+    /// The approve-once digest the call's current ask names, if any.
+    pub(super) fn current_digest(approval: Option<&Self>) -> Option<&str> {
+        approval?
+            .current
+            .as_ref()
+            .map(|ask| ask.approval_digest.as_str())
+    }
+}
+
+/// A held call's approval metadata as stored, or a value that does not
+/// decode, which reads as absent.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredApproval {
+    Read(ConnectorCallApproval),
+    Unread(serde::de::IgnoredAny),
+}
+
+/// Reads a held call's approval metadata tolerantly: a value that does not
+/// decode reads as absent, so the call keeps today's path and names no
+/// digest. The request around it decodes as strictly as before.
+pub(super) fn tolerant_approval<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ConnectorCallApproval>, D::Error> {
+    Ok(match Option::<StoredApproval>::deserialize(deserializer)? {
+        Some(StoredApproval::Read(approval)) => Some(approval),
+        Some(StoredApproval::Unread(_unread)) | None => None,
+    })
+}
+
+/// Keeps `ask`, this pass's hold's approvable ask (`None` for an
+/// administrative or uncertain-only hold, which clears the current one), as
+/// the held row `row`'s current ask. A new approvable ask (the first, or a
+/// changed target or body) after the owner's question was put has it put
+/// again, naming this one.
 pub(super) fn retain_held_ask(row: &mut PendingConnectorCall, ask: Option<&HeldConnectorAsk>) {
     let Some(ask) = ask else {
+        if let Some(approval) = row.approval.as_mut() {
+            approval.current = None;
+        }
         return;
     };
-    if row.held_ask.as_ref() == Some(ask) {
+    let approval = row.approval.get_or_insert_default();
+    approval.current = Some(ask.clone());
+    if approval.last.as_ref() == Some(ask) {
         return;
     }
-    if row.held_ask.is_some() {
+    if approval.last.is_some() {
         tracing::info!(
             reason = "connector_call_new_ask",
             attempt = %bytes_to_hex_lower(row.attempt_id.as_bytes()),
@@ -135,5 +196,11 @@ pub(super) fn retain_held_ask(row: &mut PendingConnectorCall, ask: Option<&HeldC
              a new ask"
         );
     }
-    row.held_ask = Some(ask.clone());
+    approval.last = Some(ask.clone());
+    approval.revision = approval.revision.saturating_add(1);
+    // The question already put names another ask, or none: put it again. A
+    // code consent wait asks its own.
+    if row.code_consent_wait.is_none() {
+        row.owner_ask_seq = None;
+    }
 }

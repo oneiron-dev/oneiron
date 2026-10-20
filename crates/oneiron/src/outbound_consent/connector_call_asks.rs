@@ -24,6 +24,7 @@ use crate::llm::decision::{
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 
+use super::approval::ConnectorCallApproval;
 use super::connector_call::{PENDING_CALLS, PendingConnectorCall};
 use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
 
@@ -35,7 +36,8 @@ const CONNECTOR_CALL_ASK_QUEUE_VERSION: &str = "v1";
 const CONNECTOR_CALL_ASK_VERSION: u32 = 1;
 
 /// The version of the question that also names the approve-once digest to
-/// press (FIX 6424 part 3): its wording adds that one sentence.
+/// press (FIX 6424 part 3): its wording adds that one sentence. A call's
+/// later approvable asks put it again at the next versions.
 const CONNECTOR_CALL_ASK_DIGEST_VERSION: u32 = 2;
 
 /// The most characters of a connector or tool name the ask quotes.
@@ -96,18 +98,18 @@ fn connector_call_ask(
     pending: &PendingConnectorCall,
     reasons: &[String],
 ) -> HumanDecisionRequest {
-    let approval_digest = pending
-        .held_ask
-        .as_ref()
-        .map(|ask| ask.approval_digest.as_str());
+    // FIX 6424 part 3: the call's current ask only; each new one is the
+    // next version of the question.
+    let approval = pending.approval.as_ref();
+    let approval_digest = ConnectorCallApproval::current_digest(approval);
     HumanDecisionRequest {
         question: DecisionQuestion {
             // One question per held call: its own ref names it.
             id: *call_ref,
-            version: if approval_digest.is_some() {
-                CONNECTOR_CALL_ASK_DIGEST_VERSION
-            } else {
-                CONNECTOR_CALL_ASK_VERSION
+            version: match approval.filter(|_| approval_digest.is_some()) {
+                Some(approval) => CONNECTOR_CALL_ASK_DIGEST_VERSION
+                    .saturating_add(approval.revision.saturating_sub(1)),
+                None => CONNECTOR_CALL_ASK_VERSION,
             },
             text: connector_call_ask_text(
                 call_ref,

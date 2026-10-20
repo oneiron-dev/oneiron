@@ -8,9 +8,9 @@ use crate::channel_identity::{
 use crate::channel_identity_lifecycle::{
     BindIntent, ChannelIdentityFulfillmentInput, ChannelIdentityLifecycleActor,
     ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent, ChannelIdentityLifecycleRequest,
-    ChannelIdentityLifecycleResult, ChannelIdentityLifecycleVerb, LifecycleCall,
-    LifecycleCallState, ProvisionIntent, ReleaseIntent, RotateIntent, RouteInboundIntent,
-    lifecycle_input_digest,
+    ChannelIdentityLifecycleResult, ChannelIdentityLifecycleVerb, LifecycleApplied, LifecycleCall,
+    LifecycleCallState, ProvisionIntent, RecordedIdentityView, ReleaseIntent, RotateIntent,
+    RouteInboundIntent, lifecycle_input_digest,
 };
 
 /// Creates an engine-held address, handle or shared presence. Delegated
@@ -244,58 +244,70 @@ impl Memory<'_> {
         })
     }
 
-    /// FIX 6424 part 3: the lifecycle request this call names, resolved
-    /// before its ask: `request_ref`, else the one its host's invocation
-    /// fixes for this input, else a fresh one. A ref that names another
-    /// request (another owner, verb or input) is refused.
+    /// FIX 6424 part 3: the lifecycle request this call names, kept before
+    /// its ask: `request_ref`, else the one its host's invocation fixes for
+    /// this input, else a fresh one, with the identity `mint` gives a new
+    /// request. A completed one answers the receipt it answered then; a ref
+    /// that names another request (another owner, verb or input) is refused.
     fn channel_lifecycle_call(
         &self,
         actor: EntityId,
         verb: ChannelIdentityLifecycleVerb,
         request_ref: Option<EntityId>,
         input: &impl Serialize,
-    ) -> MemoryResult<LifecycleCall> {
-        let call = self.vault.channel_identity_lifecycle_call(
+        mint: impl Fn() -> crate::error::Result<(EntityId, u64)>,
+    ) -> MemoryResult<DoorCall> {
+        let LifecycleCall { request_ref, state } = self.vault.begin_channel_identity_lifecycle(
             actor,
             verb.as_str(),
             request_ref,
             self.invocation(),
             lifecycle_input_digest(verb.as_str(), input),
-        );
-        if matches!(call.state, LifecycleCallState::Conflict) {
-            return Err(MemoryError::bad_request(
-                "request_ref names another channel identity lifecycle request",
-            ));
-        }
-        Ok(call)
-    }
-
-    /// The recorded receipt a completed request answers again, if `call`'s
-    /// request completed: nothing applies twice.
-    fn channel_lifecycle_replay(
-        &self,
-        call: &LifecycleCall,
-    ) -> Option<MemoryResult<ChannelIdentityLifecycleReceipt>> {
-        match &call.state {
+            mint,
+        )?;
+        match state {
+            LifecycleCallState::Ready {
+                identity_id,
+                requested_at,
+            } => Ok(DoorCall::Ready {
+                request_ref,
+                identity_id,
+                requested_at,
+            }),
             LifecycleCallState::Completed {
                 identity_id,
                 result,
-            } => Some(self.channel_lifecycle_receipt(*identity_id, (**result).clone())),
-            _ => None,
+                view,
+            } => Ok(DoorCall::Answered(Box::new(recorded_receipt(
+                identity_id,
+                *result,
+                view,
+            )))),
+            LifecycleCallState::Conflict => Err(MemoryError::bad_request(
+                "request_ref names another channel identity lifecycle request",
+            )),
         }
+    }
+
+    /// A fresh identity id and the time it is requested at.
+    fn channel_lifecycle_mint(&self) -> crate::error::Result<(EntityId, u64)> {
+        Ok((
+            self.vault.store.clock.entity_id()?,
+            self.vault.now_recorded_at(),
+        ))
     }
 
     fn channel_lifecycle_as(
         &self,
         owner: &AuthenticatedOwner,
-        call: &LifecycleCall,
-        requested_at: u64,
+        request_ref: EntityId,
         intent: ChannelIdentityLifecycleIntent,
     ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         let actor = self.channel_lifecycle_actor(owner)?;
         let id = intent.identity_id();
-        // FIX 6424 part 3: the Gate pins this request by its ref.
-        let result = self.vault.apply_channel_identity_lifecycle_request(
+        // FIX 6424 part 3: the Gate pins this request by its ref, kept
+        // before this ask.
+        let applied = self.vault.apply_channel_identity_lifecycle_gated(
             ChannelIdentityLifecycleRequest {
                 actor,
                 // Opt-in and permission come from the owner's live proof, not
@@ -304,11 +316,12 @@ impl Memory<'_> {
                 requested_at: self.vault.now_recorded_at(),
                 intent,
             },
-            call.request_ref,
+            Some(request_ref),
         )?;
-        self.vault
-            .keep_channel_identity_lifecycle_request(call, id, requested_at, &result)?;
-        self.channel_lifecycle_receipt(id, result)
+        match applied {
+            LifecycleApplied::Applied(result) => self.channel_lifecycle_receipt(id, result),
+            LifecycleApplied::Replayed(result, view) => Ok(recorded_receipt(id, result, view)),
+        }
     }
 
     pub fn channel_identity_provision_as(
@@ -323,21 +336,17 @@ impl Memory<'_> {
             ChannelIdentityLifecycleVerb::Provision,
             input.request_ref,
             &input,
+            || self.channel_lifecycle_mint(),
         )?;
-        if let Some(replay) = self.channel_lifecycle_replay(&call) {
-            return replay;
-        }
         // FIX 6424 part 3: a retry of a kept request rebuilds the identity
         // it first requested, under the id it was given.
-        let (identity_id, requested_at) = match &call.state {
-            LifecycleCallState::Retained {
+        let (request_ref, identity_id, requested_at) = match call {
+            DoorCall::Ready {
+                request_ref,
                 identity_id,
                 requested_at,
-            } => (*identity_id, *requested_at),
-            _ => (
-                self.vault.store.clock.entity_id()?,
-                self.vault.now_recorded_at(),
-            ),
+            } => (request_ref, identity_id, requested_at),
+            DoorCall::Answered(receipt) => return Ok(*receipt),
         };
         let identity = ChannelIdentity::requested(
             input.channel,
@@ -348,8 +357,7 @@ impl Memory<'_> {
         );
         self.channel_lifecycle_as(
             owner,
-            &call,
-            requested_at,
+            request_ref,
             ChannelIdentityLifecycleIntent::Provision(ProvisionIntent {
                 identity_id,
                 identity,
@@ -372,73 +380,69 @@ impl Memory<'_> {
                 self.channel_binding_readable(*binding)?;
             }
         }
+        let existing = match &input {
+            ChannelIdentityBindRequest::Existing { identity_ref, .. } => Some(*identity_ref),
+            ChannelIdentityBindRequest::Delegated { .. } => None,
+        };
+        // A delegated bind's request is given a fresh id for the row it
+        // provisions; an existing one's names its row.
         let call = self.channel_lifecycle_call(
             actor,
             ChannelIdentityLifecycleVerb::Bind,
             input.request_ref(),
             &input,
+            || match existing {
+                Some(id) => Ok((id, self.vault.now_recorded_at())),
+                None => self.channel_lifecycle_mint(),
+            },
         )?;
-        if let Some(replay) = self.channel_lifecycle_replay(&call) {
-            return replay;
-        }
-        let kept = match &call.state {
-            LifecycleCallState::Retained {
+        let (request_ref, identity_id, requested_at) = match call {
+            DoorCall::Ready {
+                request_ref,
                 identity_id,
                 requested_at,
-            } => Some((*identity_id, *requested_at)),
-            _ => None,
+            } => (request_ref, identity_id, requested_at),
+            DoorCall::Answered(receipt) => return Ok(*receipt),
         };
-        let (identity_id, requested_at, fulfillment_mode) = match (input, kept) {
-            (
-                ChannelIdentityBindRequest::Existing {
-                    identity_ref,
-                    fulfillment_mode,
-                    ..
-                },
-                kept,
-            ) => (
-                identity_ref,
-                kept.map_or_else(|| self.vault.now_recorded_at(), |(_, at)| at),
+        let fulfillment_mode = match input {
+            ChannelIdentityBindRequest::Existing {
+                fulfillment_mode, ..
+            } => fulfillment_mode,
+            ChannelIdentityBindRequest::Delegated {
+                channel,
+                address_or_handle,
+                binding,
+                grant,
                 fulfillment_mode,
-            ),
-            // FIX 6424 part 3: a retry of a kept delegated bind binds the row
-            // its first call provisioned; it is never provisioned twice.
-            (
-                ChannelIdentityBindRequest::Delegated {
-                    fulfillment_mode, ..
-                },
-                Some((id, at)),
-            ) => (id, at, fulfillment_mode),
-            (
-                ChannelIdentityBindRequest::Delegated {
-                    channel,
-                    address_or_handle,
-                    binding,
-                    grant,
-                    fulfillment_mode,
-                    ..
-                },
-                None,
-            ) => {
-                let id = self.vault.store.clock.entity_id()?;
-                let at = self.vault.now_recorded_at();
-                self.vault.provision_delegated_identity(
-                    &id,
-                    DelegatedProvisionRequest {
-                        channel,
-                        address_or_handle,
-                        binding,
-                        grant,
-                    },
-                    at,
-                )?;
-                (id, at, fulfillment_mode)
+                ..
+            } => {
+                // FIX 6424 part 3: a retry of a kept delegated bind binds the
+                // row its first call provisioned; it is never provisioned
+                // twice.
+                let provisioned = self
+                    .vault
+                    .get_channel_identity(&identity_id)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if !provisioned {
+                    self.vault.provision_delegated_identity(
+                        &identity_id,
+                        DelegatedProvisionRequest {
+                            channel,
+                            address_or_handle,
+                            binding,
+                            grant,
+                        },
+                        requested_at,
+                    )?;
+                }
+                fulfillment_mode
             }
         };
         self.channel_lifecycle_as(
             owner,
-            &call,
-            requested_at,
+            request_ref,
             ChannelIdentityLifecycleIntent::Bind(BindIntent {
                 identity_id,
                 fulfillment_mode,
@@ -527,14 +531,68 @@ impl Memory<'_> {
         intent: ChannelIdentityLifecycleIntent,
     ) -> MemoryResult<ChannelIdentityLifecycleReceipt> {
         let actor = self.channel_owner(owner)?;
-        let call = self.channel_lifecycle_call(actor, verb, request_ref, input)?;
-        if let Some(replay) = self.channel_lifecycle_replay(&call) {
-            return replay;
+        let id = intent.identity_id();
+        let call = self.channel_lifecycle_call(actor, verb, request_ref, input, || {
+            Ok((id, self.vault.now_recorded_at()))
+        })?;
+        match call {
+            DoorCall::Ready { request_ref, .. } => {
+                self.channel_lifecycle_as(owner, request_ref, intent)
+            }
+            DoorCall::Answered(receipt) => Ok(*receipt),
         }
-        let requested_at = match &call.state {
-            LifecycleCallState::Retained { requested_at, .. } => *requested_at,
-            _ => self.vault.now_recorded_at(),
-        };
-        self.channel_lifecycle_as(owner, &call, requested_at, intent)
+    }
+}
+
+/// One lifecycle door call, as its request stood before its ask (FIX 6424
+/// part 3).
+enum DoorCall {
+    /// To be gated as `request_ref`, with the identity it was given and when
+    /// that identity was requested.
+    Ready {
+        request_ref: EntityId,
+        identity_id: EntityId,
+        requested_at: u64,
+    },
+    /// Its request completed: the receipt it answered then.
+    Answered(Box<ChannelIdentityLifecycleReceipt>),
+}
+
+/// The receipt a completed request answered, exactly as it was returned:
+/// the identity as that apply committed it, no live read.
+fn recorded_receipt(
+    id: EntityId,
+    result: ChannelIdentityLifecycleResult,
+    view: Option<RecordedIdentityView>,
+) -> ChannelIdentityLifecycleReceipt {
+    ChannelIdentityLifecycleReceipt {
+        identity_ref: id,
+        receipt_ref: result.receipt_id,
+        gate_receipt_ref: result.gate_receipt_id,
+        outcome: result.outcome,
+        reason_codes: result.reason_codes,
+        owner_visible_state: result.owner_visible_state,
+        identity: view.map(|view| ChannelIdentityView {
+            identity_ref: id,
+            channel: view.channel,
+            address_or_handle: view.address_or_handle,
+            shape: view.shape,
+            binding: view.binding,
+            custody: if view.delegated {
+                ChannelIdentityCustody::Delegated
+            } else {
+                ChannelIdentityCustody::SelfHeld
+            },
+            state: view.state,
+            pending_fulfillment: view.pending_fulfillment,
+            state_changed_at: view.state_changed_at,
+            quarantine_until: view.quarantine_until,
+            outbound_eligible: view.outbound_eligible,
+            occupies_assignment_key: view.occupies_assignment_key,
+        }),
+        outbound_closed: result.outbound_closed,
+        identity_retiring: result.identity_retiring,
+        approval_digest: result.approval_digest,
+        request_ref: result.request_ref,
     }
 }

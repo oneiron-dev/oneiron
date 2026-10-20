@@ -323,11 +323,14 @@ pub(super) struct PendingConnectorCall {
     /// are not known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_rows: Option<Vec<EntityId>>,
-    /// The prepared request the call's approvable hold asked the owner to
-    /// press for (FIX 6424 part 3, `approval`): kept from its first one, a
-    /// changed one in its place. Ids and digests only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) held_ask: Option<super::approval::HeldConnectorAsk>,
+    /// The approvable asks the call's holds named (FIX 6424 part 3,
+    /// `approval`): digests only, read tolerantly (undecodable is absent).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::approval::tolerant_approval"
+    )]
+    pub(super) approval: Option<super::approval::ConnectorCallApproval>,
     /// This pass's code consent context (`connector_call_code`); never
     /// stored.
     #[serde(skip)]
@@ -613,7 +616,7 @@ impl Vault {
             grant,
             code_consent_wait: None,
             source_rows: Some(Vec::new()),
-            held_ask: None,
+            approval: None,
             code: None,
         };
         let Some(named) = named else {
@@ -901,8 +904,8 @@ impl Vault {
                 reasons,
                 ask,
             } => {
-                // FIX 6424 part 3: the row keeps the prepared request this
-                // hold asked about.
+                // FIX 6424 part 3: the row keeps this hold's ask as its
+                // current one (none for an administrative hold).
                 let mut row = pending.clone();
                 super::approval::retain_held_ask(&mut row, ask.as_ref());
                 // A hold for consent alone binds a code consent wait in the
@@ -1445,10 +1448,11 @@ impl Vault {
         if let Some(pending) = PENDING_CALLS.get(&self.store, &txn, call_ref)? {
             return Ok(Some(ConnectorCallState {
                 settled: pending.settled.as_ref().map(SettledConnectorCall::outcome),
-                approval_digest: pending
-                    .held_ask
-                    .filter(|_| pending.settled.is_none())
-                    .map(|ask| ask.approval_digest),
+                approval_digest: super::approval::ConnectorCallApproval::current_digest(
+                    pending.approval.as_ref(),
+                )
+                .filter(|_| pending.settled.is_none())
+                .map(str::to_owned),
                 principal_ref: pending.principal_ref,
                 name: pending.name,
                 tool: pending.tool,
