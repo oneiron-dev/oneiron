@@ -12,7 +12,7 @@
 //! goes out as before.
 
 use super::delivery_capability::{DELIVERY_KIND, delivery_key, notice_of};
-use super::ledger::read_in;
+use super::ledger::delivery_chain_in;
 use super::model::{DocumentStatus, EsignState, SigningStatus, invalid};
 use super::notice_dispatch::EsignNotice;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, FailAttempt};
@@ -74,9 +74,10 @@ impl Vault {
     /// go, or when the row no longer reads as that lease of a bound
     /// invitation or reminder. It mints nothing and writes nothing outside
     /// the vault. A read decides first, so a delivery that may still go
-    /// opens no writer.
+    /// opens no writer. A document whose trail does not read has not ended
+    /// here: its mint holds that delivery alone (FIX 6423).
     /// # Errors
-    /// A storage failure, or a document whose trail does not read.
+    /// A storage failure.
     pub fn settle_esign_delivery_if_ended(
         &self,
         attempt: AttemptId,
@@ -209,7 +210,8 @@ fn bound_delivery_in(
     Ok(bound.then_some((row, notice)))
 }
 
-/// Why `notice`'s delivery ended at `now`, or `None` while it may still go.
+/// Why `notice`'s delivery ended at `now`, or `None` while it may still go
+/// or its document's trail does not read.
 fn ended_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -219,7 +221,9 @@ fn ended_in(
     let Ok(document) = EntityId::from_hex(&notice.document) else {
         return Ok(None);
     };
-    let (state, _, held) = read_in(vault, txn, document)?;
+    let Some((state, held)) = delivery_chain_in(vault, txn, document)? else {
+        return Ok(None);
+    };
     Ok(ended_reason(&state, held, notice, now))
 }
 
