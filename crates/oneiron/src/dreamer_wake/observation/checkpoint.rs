@@ -1,11 +1,13 @@
 //! The wake observation's Checkpoint half: the cut a park's own write
 //! records, the check the deadline lane arms on, and the later pass's
-//! checked resume of a park an ended pass cut.
+//! checked resume of a park an ended pass cut. A pass whose process died, or
+//! whose root dropped, before it recorded its end has ended all the same
+//! (FIX 5172): its parks resume at the next pass, not only at a boot.
 
 use super::{
     ATTEMPTS, CALLS, CHECKPOINTS, LATEST, WAKES, WakeCallState, WakeObservedAttempt,
-    WakeObservedCheckpoint, WakeObservedResume, WakeRef, attempt_key, checkpoint_key, holds_lease,
-    in_savepoint, latest_key, row_key, skipped, wake_key,
+    WakeObservedCheckpoint, WakeObservedHeader, WakeObservedResume, WakeRef, attempt_key,
+    checkpoint_key, holds_lease, in_savepoint, latest_key, row_key, skipped, wake_key,
 };
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -118,9 +120,10 @@ pub(crate) struct CheckpointCut {
 }
 
 /// The cut a Checkpoint park records, when the pass that cut it has ended
-/// and `record` (its queue row) still holds that pass's lease at the
-/// generation it observed: what the deadline lane arms on and the resume
-/// rechecks. `None` for any other park, and for one no pass observed.
+/// (`pass_over`) and `record` (its queue row) still holds that pass's
+/// lease at the generation it observed: what the deadline lane arms on and
+/// the resume rechecks. `None` for any other park, and for one no pass
+/// observed.
 pub(crate) fn checkpoint_resumable_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -151,11 +154,28 @@ pub(crate) fn checkpoint_resumable_in_txn(
     }
     let ended = WAKES
         .get(&vault.store, txn, &wake_key(row.wake))?
-        .is_some_and(|header| header.ended.is_some());
+        .is_some_and(|header| pass_over(vault, row.wake, &header));
     Ok(ended.then_some(CheckpointCut {
         park: park_ref,
         row,
     }))
+}
+
+/// Whether the pass `wake` names runs no more (FIX 5172): it recorded its
+/// end, or it never will. A pass whose process died first, or whose root
+/// dropped without its end, leaves its header open for good. Such a pass is
+/// over when this process holds the vault's writer lease, so no other
+/// process runs a pass on it, and no root on this vault runs `wake`. The
+/// live registry holds a pass from before its header is visible until its
+/// last deadline clone is gone, and every call of the pass runs under one,
+/// so a pass with a call still running is never over here. Nothing is timed
+/// and no clock is read.
+fn pass_over(vault: &Vault, wake: WakeRef, header: &WakeObservedHeader) -> bool {
+    header.ended.is_some()
+        || (vault
+            .writer_lease()
+            .is_some_and(crate::store::VaultWriterLease::held_by_current_process)
+            && vault.active_wakes.get(wake).is_none())
 }
 
 /// The later pass resuming ended Checkpoint parks: its wake, its node and
