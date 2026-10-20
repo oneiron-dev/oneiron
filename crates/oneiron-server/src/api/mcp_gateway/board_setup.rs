@@ -1,6 +1,6 @@
 //! Board state, setup grammar, and page preflight.
 
-use super::device_release::{mcp_carrier_releases, mcp_release_result, mcp_snapshot_releases};
+use super::device_release::{mcp_carrier_releases, mcp_release_listed, mcp_snapshot_releases};
 use super::stream_reads::{mcp_live_task_lines, mcp_own_task_lines};
 use super::{
     McpCallContext, McpGatewayError, mcp_actor_result, mcp_credential_reads, mcp_engine_error,
@@ -1115,7 +1115,8 @@ pub(crate) async fn execute_mcp_setup(
             source,
             health,
             keyframe: Some(keyframe.clone()),
-            rows: board.rows.clone(),
+            // A board's rows are known (FIX 5988).
+            rows: Some(board.rows.clone()),
         };
         hooks = Some(board.hooks);
         rider = Some((board.changes, board.epoch));
@@ -1177,7 +1178,7 @@ pub(crate) async fn execute_mcp_setup(
         carrier_policy,
     )
     .await;
-    let result = mcp_release_result(server, actor, &snapshot.rows, continued, result);
+    let result = mcp_release_listed(server, actor, snapshot.rows.as_deref(), continued, result);
     // Page one went out: each hook block it carried spends a delivery. A
     // continuation restates that keyframe and spends nothing again.
     if result.is_ok()

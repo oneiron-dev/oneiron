@@ -1,6 +1,6 @@
 //! Overlay lifecycle state machine, leases, seal/rearm/close.
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 
 use arc_swap::ArcSwap;
 
@@ -79,6 +79,16 @@ pub(crate) struct SessionOverlay {
     lease_drained: Condvar,
     pub(super) segment_available: Condvar,
     pub(super) budget_bytes: usize,
+    /// A room stretch's charge on its host's retained-memory line, bound
+    /// once at entry (FIX 5991): moved to what the overlay holds as it
+    /// changes, and dropped with the overlay.
+    charge: OnceLock<OverlayCharge>,
+}
+
+/// The host's charge beside the bytes its stretch holds before any row.
+struct OverlayCharge {
+    charge: Box<dyn crate::off_record::RetainedCharge>,
+    entered: usize,
 }
 
 impl SessionOverlay {
@@ -97,7 +107,36 @@ impl SessionOverlay {
             lease_drained: Condvar::new(),
             segment_available: Condvar::new(),
             budget_bytes,
+            charge: OnceLock::new(),
         })
+    }
+
+    /// The bytes an overlay holds before any row: itself and its empty
+    /// state.
+    pub(crate) fn empty_bytes() -> usize {
+        std::mem::size_of::<Self>().saturating_add(std::mem::size_of::<OverlayState>())
+    }
+
+    /// Binds a room stretch's charge, reserved for the `entered` bytes it
+    /// holds before any row, and moves it to what the overlay holds now
+    /// (FIX 5991). A second charge is dropped unbound.
+    pub(crate) fn bind_charge(
+        &self,
+        charge: Box<dyn crate::off_record::RetainedCharge>,
+        entered: usize,
+    ) {
+        let bytes = self.state.load().bytes_used;
+        if self.charge.set(OverlayCharge { charge, entered }).is_ok() {
+            self.charge_to(bytes);
+        }
+    }
+
+    /// Moves a bound charge to the overlay's `bytes` beside its entry's. It
+    /// never waits and never refuses; an unbound overlay charges nothing.
+    pub(super) fn charge_to(&self, bytes: usize) {
+        if let Some(bound) = self.charge.get() {
+            bound.charge.charge(bound.entered.saturating_add(bytes));
+        }
     }
 
     /// The currently published mode generation, read under the state lock.
