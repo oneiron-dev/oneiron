@@ -1,5 +1,6 @@
-//! The CDP driver: one page in a Chromium guest, read as an outline and acted
-//! on by ref.
+//! The CDP driver: one page in a browser guest, read as an outline and acted
+//! on by ref. The guest runs Lightpanda or Chromium; `lightpanda` holds
+//! where a Lightpanda guest is driven differently.
 //!
 //! Every action waits for the page to settle before it returns, on the values
 //! arc-cua measured for Chromium over CDP: up to 0.6 s for the page to start
@@ -26,6 +27,7 @@
 
 mod change;
 mod handles;
+mod lightpanda;
 pub(crate) mod pages;
 
 use crate::capture::{self, Capture, Captures};
@@ -215,7 +217,9 @@ impl CdpDriver {
             let deadline = Instant::now() + CALL;
             driver.pipe.claim_network(&target);
             crate::cdp::enable_network(&driver.pipe, &driver.session, deadline)?;
-            crate::cdp::follow_pages(&driver.pipe, deadline)?;
+            if driver.follows_pages() {
+                crate::cdp::follow_pages(&driver.pipe, deadline)?;
+            }
         }
         Ok(driver)
     }
@@ -243,6 +247,7 @@ impl CdpDriver {
             {
                 continue;
             }
+            self.chromium_only("a second tab")?;
             let session = attach_tab(&self.pipe, &id)?;
             let opener = info
                 .get("openerId")
@@ -372,6 +377,7 @@ impl CdpDriver {
 
     /// Opens a blank tab in front, once every tab closed.
     fn open_tab(&mut self) -> Result<(), BrowserError> {
+        self.chromium_only("a new tab once every tab closed")?;
         let created = self.pipe.call(
             None,
             "Target.createTarget",
@@ -615,6 +621,7 @@ impl CdpDriver {
     /// element there, or from its nearest ancestor that makes one. None when
     /// no row covers the point.
     pub(crate) fn row_at(&mut self, x: f64, y: f64) -> Result<Option<Row>, BrowserError> {
+        self.chromium_only("click_at")?;
         let hit = self.page(
             "DOM.getNodeForLocation",
             json!({"x": x.round() as i64, "y": y.round() as i64, "ignorePointerEventsNone": true}),
@@ -849,8 +856,10 @@ impl CdpDriver {
             _ => Ok(()),
         };
         // A look at the tabs that fails leaves the front where it was: the
-        // act's effect stands either way, and its receipt with it.
-        let moved = self.follow().unwrap_or_default();
+        // act's effect stands either way, and its receipt with it. A tab a
+        // Lightpanda guest cannot follow is the act's answer only once the
+        // page it acted on no longer reads.
+        let (moved, refused) = self.follow_or_refusal();
         match moved {
             None => {
                 acted?;
@@ -867,7 +876,9 @@ impl CdpDriver {
                 let _ = self.settle(before, Instant::now());
             }
         }
-        let mut observation = self.observation(base)?;
+        let mut observation = self
+            .observation(base)
+            .map_err(|error| refused.unwrap_or(error))?;
         // A tab the act opened or closed is an effect: no fact stands.
         observation.fact = fact.filter(|_| moved.is_none());
         Ok(observation)
@@ -1012,7 +1023,7 @@ impl CdpDriver {
         let mut pressed = Ok(());
         for (bit, spec) in &held {
             modifiers |= bit;
-            pressed = self.key_event("rawKeyDown", spec, modifiers);
+            pressed = self.key_down_bare(spec, modifiers);
             if pressed.is_err() {
                 break;
             }
@@ -1035,7 +1046,11 @@ impl CdpDriver {
     /// modifier other than shift is held.
     fn key_press(&self, key: &KeySpec, modifiers: u32) -> Result<(), BrowserError> {
         let typed = modifiers & !SHIFT == 0 && key.text.is_some();
-        self.key_event(if typed { "keyDown" } else { "rawKeyDown" }, key, modifiers)?;
+        if typed {
+            self.key_event("keyDown", key, modifiers)?;
+        } else {
+            self.key_down_bare(key, modifiers)?;
+        }
         self.key_event("keyUp", key, modifiers)
     }
 
@@ -1283,6 +1298,7 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
+        self.chromium_only("click_at")?;
         let (x, y) = self.point(&input)?;
         self.click_point(x, y, None, &Base::of(input.base))
     }
