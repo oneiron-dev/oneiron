@@ -38627,7 +38627,7 @@
      "path": "src/off_record/lifecycle/participant.rs",
      "purpose": "A run's session handle, bound to the participant it acts as (Codex burn engine-prs-01)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
