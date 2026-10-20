@@ -18,8 +18,10 @@ impl OfferLadder {
         let rung = &self.rungs[0];
         let (bound, permit) = self.admit(run, rung, &request, None, false)?;
         let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
+        let warmth = super::cache_warmth::Sending::of(rung, &bound);
         match gate.generate(bound, permit.lease()).await {
             Ok(mut response) => {
+                warmth.answered(&self.rests);
                 permit.settle(CallOutcome::Answered(&response.usage))?;
                 response.usage = self.answered(0, &Walk::default(), response.usage);
                 rung.note_answered(&request);

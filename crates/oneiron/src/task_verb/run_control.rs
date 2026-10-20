@@ -9,7 +9,10 @@
 //! grants no read keeps both through owner authority, judged by that slip in
 //! the same writer. Any other caller needs the TASK binding: the branch
 //! realizes a TASK whose Owner standing L02's rule proves for it
-//! ([`Memory::highway_task_actor_in`]). Nothing else narrows: the queue's
+//! ([`Memory::highway_task_actor_in`]). A host credential that acts as no
+//! person, the host's root or a slip it holds, keeps both as the owner does,
+//! and nothing else of his (FIX 6429): it holds every other root power, and
+//! paused and resumed before. Nothing else narrows: the queue's
 //! own pause and resume run as they always did, so a leased branch still
 //! refuses a pause, and a repeat answers `already_paused` or
 //! `already_resumed` and writes nothing.
@@ -34,6 +37,8 @@ use crate::memory::{
 /// What a caller neither the owner nor the TASK's owner should do instead.
 const RUN_CONTROL_FIX: &str =
     "Pause or resume a branch of a TASK you own; the vault owner reaches any branch.";
+/// The holder the host root names, and every slip cut from it keeps.
+const HOST_HOLDER: &str = "host";
 
 /// One branch to pause or resume, by the attempt id its run tree names.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -145,26 +150,14 @@ impl Memory<'_> {
         // Built before the writer, so its snapshot never nests in it, and
         // judged again there. A credential that grants no read has no key.
         let key = self.read_key().ok();
-        let queue = AttemptQueue::new(self.vault());
-        let now = self.vault().store.clock.now_recorded_at();
-        let outcome = self.vault().try_with_write_txn_grouped(|wtxn| {
-            let record = queue
-                .get_in_write_txn(wtxn, branch)?
-                .ok_or(Error::EntityNotFound)?;
-            self.admit_run_control_in(wtxn, key.as_ref(), &record)?;
-            Ok::<_, MemoryError>(queue.intervene_in_txn(
-                wtxn,
-                InterveneAttempt {
-                    id: branch,
-                    kind: control.kind(),
-                    actor: self.actor().to_hex(),
-                    note,
-                    now,
-                },
-            )?)
-        })?;
-        self.vault().store.notify_attempt_observers();
-        Ok(outcome)
+        intervene_admitted(
+            self.vault(),
+            branch,
+            control,
+            self.actor().to_hex(),
+            note,
+            |txn, record| self.admit_run_control_in(txn, key.as_ref(), record),
+        )
     }
 
     /// The doors' admission of this surface's caller on `record`, in `txn`:
@@ -217,6 +210,77 @@ impl Memory<'_> {
                 && self.vault().capability_slip_is_live_in_txn(txn, slip)?,
         )
     }
+}
+
+impl crate::Vault {
+    /// Pauses or resumes `branch` for a host credential that acts as no
+    /// person (FIX 6429): the host's root where it acts as nobody, or a slip
+    /// cut from it. For these two controls alone it stands as the owner
+    /// does, admitted in the writer on `proof`, a slip the host holds that
+    /// grants a write and is live there. The event names `actor`, the label
+    /// the door authenticated it under. Every other caller takes
+    /// [`Memory::control_run`].
+    ///
+    /// # Errors
+    ///
+    /// `NOT_FOUND` for a branch no row names; `FORBIDDEN` for a slip the
+    /// host does not hold, one that grants no write, or one no longer live;
+    /// the queue's refusal of the transition; storage errors.
+    pub fn control_run_as_host(
+        &self,
+        proof: &VerifiedSlip,
+        branch: AttemptId,
+        control: RunControl,
+        actor: &str,
+        note: Option<String>,
+    ) -> MemoryResult<InterveneOutcome> {
+        intervene_admitted(self, branch, control, actor.to_owned(), note, |txn, _| {
+            if proof.claims().holder_ref == HOST_HOLDER
+                && (proof.allows_verb("write") || proof.allows_verb("core:write"))
+                && self.capability_slip_is_live_in_txn(txn, proof)?
+            {
+                return Ok(());
+            }
+            Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "only a live host credential that grants a write pauses or resumes as the host",
+                &[RUN_CONTROL_FIX],
+            ))
+        })
+    }
+}
+
+/// Pauses or resumes `branch` in one writer that admits its caller by
+/// `admit` first, and answers the queue's own outcome. The event names
+/// `actor`.
+fn intervene_admitted(
+    vault: &crate::Vault,
+    branch: AttemptId,
+    control: RunControl,
+    actor: String,
+    note: Option<String>,
+    admit: impl FnOnce(&heed::RoTxn<'_>, &AttemptRecord) -> MemoryResult<()>,
+) -> MemoryResult<InterveneOutcome> {
+    let queue = AttemptQueue::new(vault);
+    let now = vault.store.clock.now_recorded_at();
+    let outcome = vault.try_with_write_txn_grouped(|wtxn| {
+        let record = queue
+            .get_in_write_txn(wtxn, branch)?
+            .ok_or(Error::EntityNotFound)?;
+        admit(wtxn, &record)?;
+        Ok::<_, MemoryError>(queue.intervene_in_txn(
+            wtxn,
+            InterveneAttempt {
+                id: branch,
+                kind: control.kind(),
+                actor,
+                note,
+                now,
+            },
+        )?)
+    })?;
+    vault.store.notify_attempt_observers();
+    Ok(outcome)
 }
 
 /// The attempt id `branch` names: thirty-two hex digits.

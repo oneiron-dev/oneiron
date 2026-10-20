@@ -33,8 +33,10 @@ use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-/// The producer a private thread's notices are recorded under.
-const THREAD_NOTICE_PRODUCER: &str = "rooms.private_thread";
+/// The producer a private thread's notices are recorded under; a read
+/// admits such a notice to its recipient and the thread's readers alone
+/// (FIX 6473).
+pub(crate) const THREAD_NOTICE_PRODUCER: &str = "rooms.private_thread";
 
 /// What a private thread's members are told (FIX 6381, 6383; owner ruling
 /// RT-EXPORT). Each names what it tells of, so a notice is written once per

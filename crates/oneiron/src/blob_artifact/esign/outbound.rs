@@ -218,6 +218,8 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         self.actor.clone(),
                         self.now,
                     )?;
+                    // FIX 6219: the act its staged notices go out under.
+                    super::notice_send_act::record_send_act_in_txn(self.vault, txn, id, request)?;
                     state
                         .document
                         .recipients

@@ -178,7 +178,6 @@ pub(crate) use project::{
 mod rooms;
 pub(crate) use rooms::RoomRegenerationPermit;
 pub(crate) use rooms::admit_witness as admit_room_witness;
-pub(crate) use rooms::notify_thread_members_in_txn;
 pub(crate) use rooms::{
     AUDIENCE_EDIT_BOUND, erase_audience_actor_in_txn, erase_audience_edit,
     reject_audience_edit_delete, reject_audience_edit_unlink, scrub_room_audience,
@@ -202,6 +201,7 @@ pub use rooms::{
     RoomThreadList, RoomThreadPage, RoomThreadPolicy, RoomThreadWait, RoomThreads, RoomTrunk,
     RoomTrunkHeader, RoomTrunkItem, RoomTurn, RoomWaitKind,
 };
+pub(crate) use rooms::{THREAD_NOTICE_PRODUCER, notify_thread_members_in_txn};
 pub use rooms::{
     ThreadAudienceAddRequest, ThreadAudienceHistory, ThreadAudienceOpenFullHistoryRequest,
     ThreadAudienceReceipt, ThreadAudienceRemoveRequest, ThreadNotice,
@@ -237,7 +237,7 @@ pub(crate) use rooms::{
     replicated_turn_in,
 };
 pub(crate) use rooms::{erase_host_pin_actor_in_txn, erase_offer_actor_in_txn};
-pub(crate) use rooms::{project_room_audience_in, room_join_audience_in};
+pub(crate) use rooms::{own_room_windows_in_txn, project_room_audience_in, room_join_audience_in};
 
 pub(crate) use rooms::{Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn};
 pub use rooms::{JoinCause, ParticipantView, ParticipantsPage, ParticipantsRequest};
