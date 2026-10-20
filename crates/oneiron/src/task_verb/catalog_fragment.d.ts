@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1107 code-mode rows (1082 host rows, 25 run rows), 3722 declarations.
+// Census: 1107 code-mode rows (1082 host rows, 25 run rows), 3723 declarations.
 // Replies: 989 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
@@ -31,7 +31,7 @@ declare namespace Sdk {
   type CommitmentFulfillmentSource = { kind: "user_done" } | { kind: "brief_completion"; brief_ref: string } | { kind: "checklist_tick" };
   type CommitmentLifecycleReceipt = { fulfillment_source?: CommitmentFulfillmentSource | null; commitment_ref: string; status: CommitmentStatus; learned_at: number; evidence_turn_refs: string[] };
   type CommitmentView = { commitment_ref: string; obligor: CommitmentObligor; beneficiary: string; content: CommitmentContent; schedule: CommitmentSchedule; lead_seconds?: number | null; strength: CommitmentStrength; status: CommitmentStatus; birth_provenance: CommitmentBirthProvenance; series_ref?: string | null; occurrence?: CommitmentOccurrence | null; occurred_at: number; learned_at: number; evidence_turn_refs: string[]; receipt: CommitmentLifecycleReceipt };
-  type CommitmentIndexOutcome = { outcome: "indexed"; project_at: number; next_due: number } | { outcome: "stored_rrule"; route: string };
+  type CommitmentIndexOutcome = { outcome: "indexed"; project_at: number; next_due: number } | { outcome: "stored_rrule"; route: string } | { outcome: "stored_awaiting_approval" };
   type CommitmentCreateReceipt = { commitment: CommitmentView; index: CommitmentIndexOutcome };
   type CommitmentRefRequest = { commitment_ref: string };
   type CommitmentWakePhase = "lead" | "due";
@@ -2396,7 +2396,8 @@ declare namespace Sdk {
   type DeckOutlineProposeRequest = { outline: DeckOutline };
   type KeptOutline = { note: EntityId; frontier: number[]; version: string; bytes: number[]; content_hash: number[]; kept_by: EntityId; kept_at: number };
   type OutlineFreshness = "fresh" | "not_kept" | "edited" | { evidence_moved: { pins: number[] } };
-  type DeckOutlineView = { outline_ref: string; frontier: number[]; outline: DeckOutline; kept?: KeptOutline | null; freshness: OutlineFreshness };
+  type KeptOutlineOmissionReason = "sources_unreadable" | "invalid_frozen_outline";
+  type DeckOutlineView = { outline_ref: string; frontier: number[]; outline: DeckOutline; kept?: KeptOutline | null; freshness: OutlineFreshness; kept_omission?: KeptOutlineOmissionReason | null };
   type DeckOutlineRefRequest = { outline_ref: string };
   type DeckOutlineSettleRequest = { outline_ref: string; expected_frontier: number[] };
   type DeckOutlineDeclined = { outline_ref: string; declined: boolean };

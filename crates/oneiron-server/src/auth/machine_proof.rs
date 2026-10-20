@@ -106,6 +106,19 @@ pub(crate) fn required_machine_proof(
         .filter(|token| token.starts_with("v2.slip."))
         .ok_or_else(ApiError::unauthorized)?;
     let binding = BindingProof::from_headers(headers)?;
+    machine_proof_over(headers, token, &binding)
+}
+
+/// [`required_machine_proof`] over the slip `token` and holder proof
+/// `binding` a door already took (the binding door, FIX 4559): the machine
+/// and signature `x-oneiron-machine` names, with that token and `binding`'s
+/// timestamp and nonce, raw. Nothing is verified here. A missing or
+/// malformed claim refuses.
+pub(super) fn machine_proof_over(
+    headers: &HeaderMap,
+    token: &str,
+    binding: &BindingProof,
+) -> Result<OwnerDeviceRenewalProof, ApiError> {
     let claim = headers
         .get(oneiron::authority::MACHINE_PROOF_HEADER)
         .and_then(|value| value.to_str().ok())
@@ -118,7 +131,7 @@ pub(crate) fn required_machine_proof(
     Ok(OwnerDeviceRenewalProof {
         token: token.to_owned(),
         timestamp: binding.timestamp,
-        nonce: binding.nonce,
+        nonce: binding.nonce.clone(),
         machine,
         signature,
     })

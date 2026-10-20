@@ -50,6 +50,7 @@
 //! 1` by reschedule and cancel. [`BookingError`](crate::booking::BookingError) wraps calendar failures
 //! opaquely; no `CalendarError` variant is matched or restated here.
 
+mod authorship;
 mod claim;
 mod confirmation_state;
 mod door;
@@ -66,6 +67,7 @@ mod types;
 #[cfg(test)]
 mod tests;
 
+pub(in crate::booking) use self::authorship::counts_in_txn as booking_head_counts_in_txn;
 pub use self::claim::{
     BookingConfirmationContext, booking_claim_class_descriptors, booking_confirmation_context,
     claim_class_descriptors, is_booking_family_claim_predicate,

@@ -68,7 +68,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
 | `src/lib.rs` | src | s | 1 struct · 1 enum · 11 fn · 15 mod · 5 re-export | DoceditError, DocxAnchorBlock | Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck… |
-| `src/live/chart_labels.rs` | src | s | 1 crate-vis | — | A chart's data-label ranges (`c15:datalabelsRange`, Office 2013's "Value From Cells") unlinked when its data… |
+| `src/live/chart_labels.rs` | src | m | 1 crate-vis | — | A chart's data-label ranges (`c15:datalabelsRange`, Office 2013's "Value From Cells") unlinked when its data… |
 | `src/live/conversion.rs` | src | s | 1 enum · 2 fn | Conversion | What a deck edit or export did PowerPoint's way, named on its receipt (OF-510; the Office ruling of 10-18) |
 | `src/live/convert.rs` | src | m | 12 crate-vis | — | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
 | `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 11 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
@@ -108,7 +108,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pptx_comments/xml.rs` | src | m | 18 crate-vis | — | Namespace-aware XML spans for surgical edits |
 | `src/retained_opc/mod.rs` | src | s | 1 enum · 1 type · 2 re-export | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | L | 2 struct · 1 enum · 8 fn · 1 re-export | Editability, Limits, Package | ZIP central-directory reader and copy-through writer |
-| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 12 fn · 5 crate-vis | Relationship | The add-part and remove-part doors |
+| `src/retained_opc/package/parts.rs` | src | m | 1 struct · 12 fn · 6 crate-vis | Relationship | The add-part and remove-part doors |
 | `src/retained_opc/xml/ffi.rs` | src | s | 17 crate-vis | — | Minimal Expat C ABI |
 | `src/retained_opc/xml/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
 | `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
