@@ -15891,7 +15891,7 @@
       "ConversationTurnSpan"
      ],
      "path": "src/compaction/conversation.rs",
-     "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts on its own live fork",
+     "purpose": "A conversation's self-written compaction (FIX 4465 D): a self agent's chat turn compacts as the agent",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
@@ -73761,6 +73761,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnthropicCacheTier",
       "AnthropicProviderOptions",
       "AnthropicThinkingOptions"
      ],
@@ -73768,7 +73769,8 @@
      "purpose": "Namespaced provider options and thinking controls with wire-field projection",
      "surface": {
       "const": 1,
-      "fn": 4,
+      "enum": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -78081,7 +78083,7 @@
      "path": "src/ai_host/compaction/live_fork.rs",
      "purpose": "The agent's own compaction from its live context (FIX 4465 C)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -78101,7 +78103,7 @@
      "path": "src/ai_host/compaction/serve.rs",
      "purpose": "The house compaction route's call (moved from `compaction.rs`): one pass's request, admitted on the role's…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -87047,9 +87049,19 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/cache_warmth.rs",
+     "purpose": "Prompt-cache warmth (FIX 6029): this runtime's own note, in memory, of which reusable prefix each route…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -89741,7 +89753,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89883,7 +89895,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 903,
+   "source_files": 904,
    "test_files": 182
   },
   "oneiron-spawn": {
