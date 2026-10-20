@@ -21,8 +21,13 @@ use std::time::{Duration, Instant};
 
 /// How long the relay keeps trying the browser's port while it starts.
 const CONNECT_WITHIN: Duration = Duration::from_secs(10);
-/// How long the relay waits between two tries: a cadence, not a bound.
+/// How long the relay waits after its first try; each later wait doubles,
+/// up to [`CONNECT_RETRY_MAX`]. A cadence, not a bound: inside the fence
+/// every missed try is one loopback refusal receipt, so a slow start writes
+/// a few, not one per 50 ms.
 const CONNECT_RETRY: Duration = Duration::from_millis(50);
+/// The longest wait between two tries.
+const CONNECT_RETRY_MAX: Duration = Duration::from_millis(400);
 
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -63,6 +68,7 @@ fn main() -> ExitCode {
 fn connect(port: u16, child: &mut Child) -> io::Result<TcpStream> {
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let deadline = Instant::now() + CONNECT_WITHIN;
+    let mut pause = CONNECT_RETRY;
     loop {
         let error = match TcpStream::connect(address) {
             Ok(stream) => return Ok(stream),
@@ -74,7 +80,8 @@ fn connect(port: u16, child: &mut Child) -> io::Result<TcpStream> {
         if Instant::now() >= deadline {
             return Err(error);
         }
-        std::thread::sleep(CONNECT_RETRY);
+        std::thread::sleep(pause);
+        pause = (pause * 2).min(CONNECT_RETRY_MAX);
     }
 }
 
