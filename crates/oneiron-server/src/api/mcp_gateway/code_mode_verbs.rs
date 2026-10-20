@@ -1294,8 +1294,8 @@ async fn run_code_mode_verb(
         .map_err(mcp_tool_validation_error)?;
     admit(server, tool, &arguments, actor)?;
     mcp_verb_gate(server, tool, &arguments, actor)?;
-    // A run's call is answered once and never continued; its rows are
-    // unknown once a producer's path lists none (FIX 5988).
+    // A run's call is answered once and never continued; it tracks whether
+    // a producer's path listed none (FIX 5988).
     let mut served = super::McpServed::default();
     let mut board_hooks = None;
     let origin = run.origin.clone();
@@ -1319,6 +1319,6 @@ async fn run_code_mode_verb(
         hooks.spend(server);
     }
     // An act whose rows are unknown answers off this device only that it
-    // ran (FIX 5988); a read's stay unknown for the run's release.
-    super::served_rows::unknown_act_answer(tool.name, actor, output, served.into_rows())
+    // ran (FIX 5988); a read releases as before.
+    super::served_rows::unknown_act_answer(tool.name, actor, output, served)
 }

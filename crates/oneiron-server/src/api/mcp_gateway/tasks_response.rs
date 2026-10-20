@@ -136,7 +136,7 @@ pub(crate) async fn execute_mcp_generated_verb(
         continuable,
     )
     .await?;
-    // Unknown once a producer's path lists none (FIX 5988).
+    // It tracks whether a producer's path listed none (FIX 5988).
     let mut served = McpServed::default();
     // The hook blocks a fresh board read's answer shows; a continuation
     // restates a retained answer and spends nothing again.
@@ -200,13 +200,9 @@ pub(crate) async fn execute_mcp_generated_verb(
                 (output, source, carrier, epoch.or(task_epoch))
             };
             // An act whose rows are unknown answers off this device only that
-            // it ran (FIX 5988); a read keeps them unknown for its release.
-            let (output, rows) = super::served_rows::unknown_act_answer(
-                args.tool.name,
-                actor,
-                output,
-                served.into_rows(),
-            )?;
+            // it ran (FIX 5988); a read releases as before.
+            let (output, rows) =
+                super::served_rows::unknown_act_answer(args.tool.name, actor, output, served)?;
             let snapshot = McpPageSnapshot {
                 output: output.clone(),
                 source,
