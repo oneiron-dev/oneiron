@@ -57,7 +57,7 @@ impl CustodyVaultId {
 /// | tag    | kind                | client                                   |
 /// |--------|---------------------|------------------------------------------|
 /// | `0x01` | `ClaimDecision`     | claim-bound Gate decision rows (ORCB)    |
-/// | `0x02` | `BodyInstance`      | reserved: KS-2 body instances            |
+/// | `0x02` | `BodyInstance`      | body instances (KS-2A)                   |
 /// | `0x03` | `KnownValueIndex`   | reserved: KS-3 known-value index key     |
 /// | `0x04` | `KnownValueEntry`   | reserved: KS-3 known-value holder entries |
 /// | `0x05` | `WorldPad`          | reserved: KS-5 world pads                |
@@ -72,6 +72,11 @@ pub(crate) enum CustodyKind {
     /// The per-claim key of claim-bound Gate decision rows: item = claim id
     /// (16 bytes), secret = AES-256-GCM key (32 bytes).
     ClaimDecision,
+    /// One body instance's key (KS-2A): item = the instance's random id (16
+    /// bytes) then its scope byte, never the body's digest, so a later body
+    /// of the same bytes never shares a retired instance's lifetime; secret =
+    /// the body file's data key (32 bytes).
+    BodyInstance,
     /// One owner's compartment of a checkpoint's ordinary payload (KS-7):
     /// item = subtype (1) | canonical owner (32) | incarnation (16), secret
     /// = the compartment's sealing key (32 bytes).
@@ -87,6 +92,7 @@ impl CustodyKind {
     pub(crate) const fn tag(self) -> u8 {
         match self {
             Self::ClaimDecision => 0x01,
+            Self::BodyInstance => 0x02,
             Self::CheckpointPayload => 0x07,
             Self::TrainingLink => 0x08,
         }
@@ -95,6 +101,7 @@ impl CustodyKind {
     pub(crate) fn from_tag(tag: u8) -> Option<Self> {
         match tag {
             0x01 => Some(Self::ClaimDecision),
+            0x02 => Some(Self::BodyInstance),
             0x07 => Some(Self::CheckpointPayload),
             0x08 => Some(Self::TrainingLink),
             _ => None,
@@ -105,6 +112,7 @@ impl CustodyKind {
     pub(crate) const fn item_len(self) -> usize {
         match self {
             Self::ClaimDecision => 16,
+            Self::BodyInstance => 17,
             Self::CheckpointPayload => 49,
             Self::TrainingLink => 0,
         }
@@ -114,7 +122,10 @@ impl CustodyKind {
     /// is damaged, never replaced.
     pub(crate) const fn secret_len(self) -> usize {
         match self {
-            Self::ClaimDecision | Self::CheckpointPayload | Self::TrainingLink => 32,
+            Self::ClaimDecision
+            | Self::BodyInstance
+            | Self::CheckpointPayload
+            | Self::TrainingLink => 32,
         }
     }
 
@@ -123,6 +134,7 @@ impl CustodyKind {
     pub(crate) fn corrupt(self) -> Error {
         match self {
             Self::ClaimDecision => Error::CorruptedIndex("gate decision ORCB"),
+            Self::BodyInstance => Error::CorruptedIndex("body file key custody"),
             Self::CheckpointPayload => Error::CorruptedIndex("checkpoint payload custody"),
             Self::TrainingLink => Error::CorruptedIndex("training link key"),
         }
@@ -243,7 +255,15 @@ pub(crate) struct CustodyBinding {
     root: PathBuf,
 }
 
-const BINDING_VERSION: u8 = 1;
+/// A binding's first byte names the platform its root path is spelled for:
+/// Unix bytes, or Windows UTF-16LE. Both are this build's formats; a binding
+/// of the other platform's still parses, its root naming nothing here.
+const BINDING_UNIX: u8 = 1;
+const BINDING_WINDOWS: u8 = 2;
+#[cfg(unix)]
+const BINDING_NATIVE: u8 = BINDING_UNIX;
+#[cfg(not(unix))]
+const BINDING_NATIVE: u8 = BINDING_WINDOWS;
 
 impl CustodyBinding {
     /// A new custody beside the vault at `root`, in a fresh namespace, for
@@ -317,10 +337,14 @@ fn fresh_namespace() -> CustodyNamespace {
     CustodyNamespace(namespace)
 }
 
-/// `1 | namespace (16) | vault (32) | native absolute root path`.
+/// `platform (1 Unix, 2 Windows) | namespace (16) | vault (32) | absolute
+/// root path in that platform's spelling`. A binding written on the other
+/// platform keeps its namespace and vault and names no root here (an empty
+/// path): a restore rebinds it beside its destination before any host path
+/// is used, and nothing finds custody at it.
 impl RawValue for CustodyBinding {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut out = vec![BINDING_VERSION];
+        let mut out = vec![BINDING_NATIVE];
         out.extend_from_slice(&self.namespace.0);
         out.extend_from_slice(&self.vault.0);
         out.extend(encode_native_path(&self.root).ok_or_else(custody_corrupt)?);
@@ -329,46 +353,81 @@ impl RawValue for CustodyBinding {
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
         let decoded = (|| {
-            let (&BINDING_VERSION, rest) = bytes.split_first()? else {
+            let (&platform, rest) = bytes.split_first()?;
+            let path = rest.get(48..)?;
+            let root = if platform == BINDING_NATIVE {
+                decode_native_path(path)?
+            } else if platform == BINDING_UNIX || platform == BINDING_WINDOWS {
+                (!path.is_empty()).then(PathBuf::new)?
+            } else {
                 return None;
             };
             Some(Self {
                 namespace: CustodyNamespace(rest.get(..16)?.try_into().ok()?),
                 vault: CustodyVaultId(rest.get(16..48)?.try_into().ok()?),
-                root: decode_native_path(rest.get(48..)?)?,
+                root,
             })
         })();
         decoded.ok_or_else(|| custody_corrupt().into())
     }
 }
 
-/// A native absolute path's bytes; `None` for a relative one, or off unix.
+/// A native absolute path, losslessly: its bytes on Unix, its UTF-16 code
+/// units little-endian on Windows; `None` for a relative one.
 pub(in crate::store) fn encode_native_path(path: &Path) -> Option<Vec<u8>> {
+    if !path.is_absolute() {
+        return None;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
-        path.is_absolute()
-            .then(|| path.as_os_str().as_bytes().to_vec())
+        Some(path.as_os_str().as_bytes().to_vec())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = path;
+        use std::os::windows::ffi::OsStrExt;
+        Some(
+            path.as_os_str()
+                .encode_wide()
+                .flat_map(u16::to_le_bytes)
+                .collect(),
+        )
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
         None
     }
 }
 
-/// The absolute path `raw` spells: at most 4096 bytes; `None` otherwise, or
-/// off unix.
+/// The absolute path `raw` spells in this platform's encoding
+/// ([`encode_native_path`]); `None` for an empty, relative or ill-formed
+/// one. On Unix at most 4096 bytes, its path bound; Windows takes any
+/// length.
 pub(in crate::store) fn decode_native_path(raw: &[u8]) -> Option<PathBuf> {
+    if raw.is_empty() {
+        return None;
+    }
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
         let path = Path::new(std::ffi::OsStr::from_bytes(raw));
-        (!raw.is_empty() && raw.len() <= 4096 && path.is_absolute()).then(|| path.to_path_buf())
+        (raw.len() <= 4096 && path.is_absolute()).then(|| path.to_path_buf())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        let _ = raw;
+        use std::os::windows::ffi::OsStringExt;
+        if !raw.len().is_multiple_of(2) {
+            return None;
+        }
+        let wide: Vec<u16> = raw
+            .chunks_exact(2)
+            .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
+            .collect();
+        let path = PathBuf::from(std::ffi::OsString::from_wide(&wide));
+        path.is_absolute().then_some(path)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
         None
     }
 }

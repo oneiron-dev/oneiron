@@ -265,6 +265,11 @@ struct WakeState {
     pending_turns: std::collections::BTreeMap<String, u64>,
     pending_records: std::collections::BTreeMap<String, u64>,
     pending_nightly: std::collections::BTreeMap<String, u64>,
+    /// The curator's cadence slot the idle trigger last asked for (OF-191):
+    /// an idle host asks once per slot, never again for a slot whose pass
+    /// already ran.
+    #[serde(default)]
+    idle_curator_slot: Option<u64>,
 }
 
 fn row_error(error: Error, invalid_row: Error) -> Error {

@@ -145,7 +145,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                 .as_ref()
                 .filter(|text| !text.trim().is_empty())
                 .unwrap_or(&definition.desc);
-            let messages = vec![
+            let mut messages = vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
@@ -165,6 +165,19 @@ impl WavePlanner for ModelWavePlanner<'_> {
                     }],
                 },
             ];
+            // FIX 5777: the plan speaks with its planner's instructions for
+            // its requester, so it carries both crafts, each attributed: the
+            // planner's here, after the instructions; the requester's after
+            // it, as every step's travels. Payer and actor stay the
+            // requester's.
+            if let Some(craft) = super::resident_craft::planner_craft(
+                self.vault,
+                &planner,
+                &self.actor.entity_ref(),
+                super::unix_now(),
+            ) {
+                super::resident_craft::join_craft(&mut messages, craft);
+            }
             let bytes = self
                 .runner
                 .generate(

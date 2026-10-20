@@ -32,7 +32,10 @@ use crate::store::key_custody::{
 use crate::store::root_directory::{
     FileIdentity, file_identity, named_directory_identity, refuse_shared_vault_root,
 };
-use crate::store::{Store, not_an_existing_root, read_existing_vault_meta};
+use crate::store::{
+    BODY_KEYS, INLINE_ASSETS, Store, body_instances_in_rows, not_an_existing_root,
+    prune_retired_bodies_in_rows, read_existing_vault_meta, require_body_instances,
+};
 
 pub(crate) use self::destination::MadeDestination;
 use super::keys::GATE_DECISION_KEY_PREFIX;
@@ -362,6 +365,12 @@ impl CheckpointCustody {
     pub(crate) fn dropped(&self) -> Vec<(GateDecisionId, [u8; 16])> {
         self.erased.iter().chain(&self.lost).copied().collect()
     }
+
+    /// The plan the restore's body instances are required through too, so
+    /// one fork copies claim and body keys alike (KS-2A).
+    pub(crate) fn plan_mut(&mut self) -> &mut CustodyPlan {
+        &mut self.plan
+    }
 }
 
 /// CALLS CUSTODY_NO_HEAD_GATE_ROWS (Engine 10-20 04:0x): a new-host restore
@@ -481,7 +490,7 @@ pub(crate) fn preflight_checkpoint_rows(
 /// `destination`. One already there, left by a vault removed without its
 /// custody, is refused before the destination is created, never merged.
 pub(crate) fn refuse_custody_beside(destination: &Path) -> Result<()> {
-    if cfg!(unix) && key_custody::custody_present(&std::path::absolute(destination)?)? {
+    if key_custody::custody_present(&std::path::absolute(destination)?)? {
         return Err(Error::InvalidConfig(
             "key custody already exists beside the restore destination; restore elsewhere".into(),
         ));
@@ -533,8 +542,7 @@ impl Store {
         custody: &CheckpointCustody,
         root: &Path,
     ) -> Result<Option<ForkedCustodyDir>> {
-        let Some(source) = custody.plan.source().filter(|_| cfg!(unix)) else {
-            // No exterior custody exists here, so there is none to fork.
+        let Some(source) = custody.plan.source() else {
             return Ok(None);
         };
         let binding = source.fork_to(root.to_path_buf());
@@ -552,10 +560,6 @@ impl Store {
     /// vault it replaces, in the restore's first transaction: until a swap
     /// puts it there, every open of it is archived.
     pub(crate) fn mark_live_only_at_in_txn(&self, wtxn: &mut RwTxn<'_>, home: &Path) -> Result<()> {
-        if cfg!(not(unix)) {
-            // No exterior custody exists here, so none is shared.
-            return Ok(());
-        }
         ARCHIVED.put(self, wtxn, &(), &live_only_at(home)?)
     }
 
@@ -564,11 +568,9 @@ impl Store {
     /// writes its rows; the custody it shares with the vault at `home` stays
     /// out of its reach, as it opened archived.
     pub(crate) fn unseal_replacement(&self, home: &Path) -> Result<()> {
-        if cfg!(unix) {
-            let mark = ARCHIVED.get(self, &self.env.read_txn()?, &())?;
-            if mark != Some(live_only_at(home)?) || !self.core.key_custody.archived_at_open() {
-                return Err(Error::InvariantViolation("a replacement's archive mark"));
-            }
+        let mark = ARCHIVED.get(self, &self.env.read_txn()?, &())?;
+        if mark != Some(live_only_at(home)?) || !self.core.key_custody.archived_at_open() {
+            return Err(Error::InvariantViolation("a replacement's archive mark"));
         }
         self.env.unseal();
         Ok(())
@@ -599,13 +601,6 @@ impl Store {
         fence: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         swap: impl FnOnce() -> std::io::Result<()>,
     ) -> Result<()> {
-        if cfg!(not(unix)) {
-            // No exterior custody exists here, so none is shared.
-            let txn = self.env.write_txn()?;
-            fence(&txn)?;
-            drop(txn);
-            return Ok(swap()?);
-        }
         let mark = live_only_at(self.env.path())?;
         if ARCHIVED.get(replacement, &replacement.env.read_txn()?, &())? != Some(mark.clone()) {
             return Err(Error::InvalidConfig(
@@ -720,9 +715,14 @@ impl Store {
             }
             let mut prefixes = live_custody_prefixes();
             prefixes.push(GATE_DECISION_KEY_PREFIX);
+            prefixes.extend([BODY_KEYS.decl().prefix, INLINE_ASSETS.decl().prefix]);
             vault_meta_rows(&self.env, &txn, &prefixes)?
         };
-        let custody = preflight_checkpoint_rows(&rows, Some(source))?;
+        let mut custody = preflight_checkpoint_rows(&rows, Some(source))?;
+        // Its body instances fork with its claim keys (KS-2A): a missing one
+        // refuses; a retired one's rows go before the archive is lifted.
+        let retired = require_body_instances(&body_instances_in_rows(&rows)?, custody.plan_mut())?;
+        let pruned = prune_retired_bodies_in_rows(&mut rows.clone(), &retired)?.row_keys();
         // The environment's path is the canonical root it was opened at.
         let root = self.env.path().to_path_buf();
         refuse_custody_beside(&root)?;
@@ -732,8 +732,8 @@ impl Store {
         }
         let mut wtxn = self.env.past_seal_write_txn()?;
         let forked = self.fork_gate_custody_to_in_txn(&mut wtxn, &custody, &root)?;
-        let committed = self
-            .drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased())
+        let committed = destination::delete_vault_meta_in_txn(&self.env, &mut wtxn, &pruned)
+            .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
             .and_then(|()| self.read_back_in_txn(&wtxn))
             .and_then(|()| crate::identity::drop_machine_identity_in_txn(self, &mut wtxn))
             // The orders standing on its source now, not the ones it had.

@@ -4,11 +4,14 @@
 //! The cycle stamps each item's binding in the commit that queues it; the
 //! binding, never the model's words or the run's name, says which agent,
 //! cycle, item and spend scope the work is. The for-human item lands its
-//! suggestion as a Proposed claim of the agent's own and its note to its
-//! human; the own-time item is the resident's dreaming, or rest when the
-//! agent chose rest. Its real spend lands on its own scope under the cycle's
-//! root in the commit that settles its wake reservation, and its terminal
-//! settles that scope in the commit that ends it.
+//! suggestion as a Proposed claim of the agent's own, about its human when it
+//! read its human's context (FIX 5663), and its note to its human; the
+//! own-time item is the resident's dreaming, or rest when the agent chose
+//! rest. Its real spend lands on its own scope under the cycle's root in the
+//! commit that settles its wake reservation, and its terminal settles that
+//! scope in the commit that ends it. An erase of the agent since the item
+//! read lands none of its copies (FIX 5664): each writer rechecks the erase
+//! in its own commit.
 
 use serde::{Deserialize, Serialize};
 
@@ -189,12 +192,24 @@ pub(crate) struct FreeTimeForHumanReply {
     pub(crate) own_time: Option<FreeTimeOwnTimeChoice>,
 }
 
+/// What a for-human item read of its human's context (FIX 5663), for what
+/// it lands: the human its suggestion is about when that context read, and
+/// the code of a read that failed, noted on its receipt. The default is the
+/// item as it ran before: about the agent, nothing noted.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct FreeTimeForHumanContext {
+    pub(crate) human: Option<EntityId>,
+    pub(crate) unread: Option<String>,
+}
+
 /// Lands what an agent's free time for its human came back with (FIX 4453):
 /// its suggestion as a Proposed claim of its own, then in one commit the
 /// item's receipt (Completed only with a landed proposal, else Failed), its
 /// note to its human and its choice for its own time. A choice of rest ends
 /// the own-time item with no call, no spend and no text. `reply` is `None`
-/// when the reply held no block. A replay lands nothing twice.
+/// when the reply held no block. A replay lands nothing twice. `context` is
+/// what the item read of its human's context: a read that failed is noted on
+/// the receipt and fails nothing (FIX 5663).
 ///
 /// # Errors
 /// A store read or write that fails.
@@ -202,13 +217,14 @@ pub(crate) fn land_free_time_for_human(
     vault: &Vault,
     binding: &FreeTimeItemBinding,
     reply: Option<&FreeTimeForHumanReply>,
+    context: &FreeTimeForHumanContext,
 ) -> Result<()> {
     let suggestion = reply
         .and_then(|reply| reply.suggestion.as_deref())
         .map(str::trim)
         .filter(|suggestion| !suggestion.is_empty());
     let proposal = match suggestion {
-        Some(suggestion) => propose_suggestion(vault, binding, suggestion)?,
+        Some(suggestion) => propose_suggestion(vault, binding, suggestion, context.human)?,
         None => None,
     };
     vault.with_write_txn_grouped(|txn| {
@@ -218,7 +234,10 @@ pub(crate) fn land_free_time_for_human(
         } else {
             FreeTimeItemOutcome::Failed
         };
-        let receipt = FreeTimeItemReceipt::of(binding, outcome, proposal, at);
+        let mut receipt = FreeTimeItemReceipt::of(binding, outcome, proposal, at);
+        receipt.context_unread.clone_from(&context.unread);
+        // The receipt's writer rechecks the agent's erase (FIX 5664): an
+        // erased agent records no receipt here, so no note or choice lands.
         if !record_receipt_in_txn(vault, txn, &receipt)? {
             return Ok(());
         }
@@ -269,11 +288,15 @@ pub(crate) fn land_free_time_for_human(
 
 /// Proposes `suggestion` as the agent's own Generated claim, Proposed and
 /// never applied, under one id per item so a replay proposes nothing twice.
-/// A refusal is logged and lands nothing: the item then has no proposal.
+/// It is about `human` when the item read its human's context (FIX 5663); a
+/// proposal about its human that does not land is proposed about the agent,
+/// as it was before. A refusal is logged and lands nothing: the item then has
+/// no proposal.
 fn propose_suggestion(
     vault: &Vault,
     binding: &FreeTimeItemBinding,
     suggestion: &str,
+    human: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
     let id = crate::codebase::entity_id_from_hash_material(
         b"oneiron:free_time:suggestion:v1",
@@ -282,10 +305,29 @@ fn propose_suggestion(
     if vault.get_claim(&id)?.is_some() {
         return Ok(Some(id));
     }
+    for subject in human.into_iter().chain(std::iter::once(binding.agent)) {
+        if propose_about(vault, binding, id, suggestion, subject) {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}
+
+/// One proposal of the suggestion `id` about `subject`; whether it landed.
+/// In the claim's own writer the agent must not be erased (FIX 5664): an
+/// erase that removed it since the item read keeps no copy, and a call
+/// already made settles as it did.
+fn propose_about(
+    vault: &Vault,
+    binding: &FreeTimeItemBinding,
+    id: EntityId,
+    suggestion: &str,
+    subject: EntityId,
+) -> bool {
     let input = ClaimInput {
         id: Some(id.to_hex()),
         predicate: SUGGESTION_PREDICATE.to_owned(),
-        subject_ref: binding.agent.to_hex(),
+        subject_ref: subject.to_hex(),
         value: serde_json::Value::String(suggestion.to_owned()),
         confidence: 1.0,
         source: ClaimSource::Generated.as_str().to_owned(),
@@ -298,18 +340,25 @@ fn propose_suggestion(
         learned_at: None,
         salience: None,
     };
+    let agent = binding.agent;
+    let about_agent = subject == agent;
     match vault
-        .memory(binding.agent, EdgeActorClass::Agent)
-        .claim_propose(&input)
-    {
-        Ok(_) => Ok(Some(id)),
+        .memory(agent, EdgeActorClass::Agent)
+        .claim_propose_guarded(&input, &|txn: &heed::RoTxn<'_>| {
+            if crate::ports::removed_in_txn(&vault.store, txn, &agent)? {
+                return Err(Error::EntityNotFound);
+            }
+            Ok(())
+        }) {
+        Ok(_) => true,
         Err(error) => {
             tracing::warn!(
                 code = %error.code,
-                agent = %binding.agent.to_hex(),
+                agent = %agent.to_hex(),
+                about_agent,
                 "a free-time suggestion was not proposed"
             );
-            Ok(None)
+            false
         }
     }
 }
@@ -349,6 +398,7 @@ fn rest_in_txn(
             outcome: FreeTimeItemOutcome::Rested,
             attempt: item.attempt,
             proposal: None,
+            context_unread: None,
             at,
         },
     )?;

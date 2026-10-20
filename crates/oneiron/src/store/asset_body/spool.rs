@@ -110,7 +110,9 @@ impl AssetBodySpool {
             at: 0,
             len: self.received,
         };
-        let staged = vault.stage_asset_body(body, mime, known)?;
+        // KS-2A: a body file is one vault instance minted before its writer;
+        // a receiver that files bodies hands its mint here (FIX line).
+        let staged = vault.stage_asset_body(body, mime, known, None)?;
         if staged.facts() != self.offered {
             return Err(Error::CorruptedIndex("received asset body digest"));
         }
@@ -160,7 +162,7 @@ impl crate::Vault {
     /// Filesystem errors, and a sealed vault whose key is not admitted.
     pub(crate) fn asset_body_spool(&self, offered: AssetBodyFacts) -> Result<AssetBodySpool> {
         let dir = self.store.body_dir()?;
-        let spill = BodySpill::create(&dir)?;
+        let spill = BodySpill::ephemeral(&dir)?;
         Ok(AssetBodySpool {
             dir,
             spill: Some(spill),

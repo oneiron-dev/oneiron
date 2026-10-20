@@ -1,35 +1,41 @@
-//! Body files on a sealed vault (FIX 5348, L01 FIX 3677 follow-up).
+//! Body files and their instances (FIX 5348; KS-2A, FIX 5683 part A).
 //!
-//! A vault whose pages are sealed (the maximum tier) keeps every body file
-//! it writes, a code-run result's and an ASSET's alike, as an envelope: the
-//! file's own random data key seals it in E0 chunks ([`frames`]), and that
-//! key rests only wrapped, under the vault's body-file wrap key
-//! (`oneiron/body-file-wrap/v1`, derived from the vault data key, never the
-//! page key), in one `PROVENANCE_BODY_KEY` row per digest ([`rows`]). A
-//! sealed vault holds its data key from the moment it opens, so this adds no
-//! unlock; a vault whose pages are plain keeps plain body files, as before.
+//! Every body a vault keeps is one instance whose key typed custody holds
+//! ([`custody`]), on either tier. A vault whose pages are sealed (the
+//! maximum tier) keeps every body file it writes, a code-run result's and
+//! an ASSET's alike, as an envelope under its instance's key, in E0 chunks
+//! ([`frames`]); a vault whose pages are plain keeps plain body files, read
+//! with no key. One `PROVENANCE_BODY_KEY` row per digest names the instance
+//! ([`rows`]); it holds no key and no wrap of one, so no checkpoint that
+//! carries it recovers a key.
 //!
-//! - A writer stages the ciphertext under a name of its own,
-//!   `<digest>-<instance>`, and commits the key row in the transaction that
-//!   writes the row or descriptor naming the body. A digest that already has
-//!   a committed pair keeps it: the new file is an orphan for the collector,
-//!   and no committed file is ever overwritten with fresh-key ciphertext.
-//! - A reader resolves the key row in the snapshot that found the body's
-//!   row and holds the opened key until it closes the file ([`BodyFile`]):
-//!   whole reads, sequential reads and range reads each authenticate every
-//!   chunk they touch before returning a byte of it. No plaintext reaches a
-//!   temp file.
-//! - An off-record session's files wrap their keys for the off-record scope
-//!   and their rows stay in the session's overlay; promotion copies the
-//!   ciphertext and rewraps the key for the vault before the holder commits.
+//! - A writer mints the instance outside any writer, stages the file under
+//!   a name of its own (`<digest>-<instance>` when sealed) and commits the
+//!   instance row, pinning the custody binding, in the transaction that
+//!   writes the row or descriptor naming the body. A digest that already
+//!   has a committed pair keeps it: the new file is an orphan for the
+//!   collector, its instance unnamed debris.
+//! - A reader of a sealed file resolves the instance row in the snapshot
+//!   that found the body's row, under the custody read guard, and holds the
+//!   opened key until it closes the file ([`BodyFile`]): whole, sequential
+//!   and range reads each authenticate every chunk they touch first. A
+//!   plain file's local read takes no key. No plaintext reaches a temp file.
+//! - An off-record session's files are sealed under keys of their own,
+//!   wrapped for the off-record scope in rows that stay in the session's
+//!   overlay; promotion re-seals the body under a vault instance before the
+//!   holder commits.
 //! - The derived `.lines` index is sealed under a key of its own domain,
-//!   derived from the file's data key, and is never checkpointed.
-//! - The collector that releases a body's final holder deletes its key row
-//!   in the same transaction, then unlinks the file once no reader pins it
-//!   ([`BODY_FILE_SHRED_SCOPE`]: the live vault only).
+//!   derived from the file's key, and is never checkpointed.
+//! - The collector that releases a body's final holder deletes its
+//!   instance row in the same transaction and unlinks the file once no
+//!   reader pins it; the key stays in custody (a delete keeps it, GC is never
+//!   an erase). An erase retires it (`retention`).
 
+mod custody;
 mod frames;
+mod plan;
 mod reader;
+mod retention;
 mod rows;
 mod spill;
 
@@ -38,8 +44,15 @@ use std::sync::{Arc, PoisonError, RwLock};
 use oneiron_crypto::Kek;
 use zeroize::Zeroizing;
 
-pub(crate) use self::frames::SealedStream;
+pub(crate) use self::custody::{
+    BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
+};
+pub(crate) use self::frames::{FileKey, SealedStream, SealingStream};
+pub(crate) use self::plan::{
+    body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
+};
 pub(crate) use self::reader::BodyFile;
+pub(crate) use self::retention::{INLINE_ASSETS, erase_bodies_in_txn, release_body_in_txn};
 pub(crate) use self::rows::{
     BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn, retire_body_key_in_txn,
 };
@@ -53,15 +66,15 @@ use crate::error::{Error, Result};
 /// key.
 pub(crate) const BODY_FILE_WRAP_CONTEXT: &str = "oneiron/body-file-wrap/v1";
 
-/// How far retiring a body file's key reaches (Engine 10-19, CALLS
-/// "BODY_FILE_SHRED_SCOPE", open).
+/// How far retiring a body instance's key reaches (Engine 10-19, CALLS
+/// "BODY_FILE_SHRED_SCOPE"; KS-2A).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BodyFileShredScope {
-    /// The live vault's key row and file go when the final holder is
-    /// released. A checkpoint image or backup taken before keeps its copy of
-    /// both until it ages out; reaching those needs the key outside every
-    /// checkpoint artifact (exterior custody, the owner's card).
-    LiveVaultUntilExteriorCustody,
+    /// Every instance's key rests in typed custody, outside every image: an
+    /// erase's retirement reaches each kept copy, older checkpoints and
+    /// backups included, which carry its bytes sealed under that key only.
+    /// It is complete once every required custody target acknowledged it.
+    EveryKeptCopy,
 }
 
 impl BodyFileShredScope {
@@ -69,18 +82,19 @@ impl BodyFileShredScope {
     /// backups included, so it may be reported complete.
     pub(crate) const fn reaches_kept_copies(self) -> bool {
         match self {
-            Self::LiveVaultUntilExteriorCustody => false,
+            Self::EveryKeptCopy => true,
         }
     }
 }
 
-/// FIX 5348 (CALLS "BODY_FILE_SHRED_SCOPE"): what a body file's key
-/// retirement reaches.
-pub(crate) const BODY_FILE_SHRED_SCOPE: BodyFileShredScope =
-    BodyFileShredScope::LiveVaultUntilExteriorCustody;
+/// CALLS "BODY_FILE_SHRED_SCOPE": what a body instance's key retirement
+/// reaches.
+pub(crate) const BODY_FILE_SHRED_SCOPE: BodyFileShredScope = BodyFileShredScope::EveryKeptCopy;
 
-/// A sealed vault's body-file wrap key, with the vault id every wrap and
-/// chunk binds. In memory only, wiped on drop, never printed.
+/// A sealed vault's body-file wrap key, with the vault id every wrap binds:
+/// what an off-record session's file keys wrap under, in its overlay. In
+/// memory only, wiped on drop, never printed; no vault row and no image
+/// holds a wrap under it.
 pub(crate) struct BodySeal {
     vault_id: [u8; 32],
     wrap: Kek,
@@ -140,13 +154,16 @@ impl KeyScope {
     }
 }
 
-/// A sealed vault's body directory: its scope, and the seal its keys wrap
-/// under, which is absent until the vault's data key is admitted. Every
-/// write and read through it fails closed while the seal is absent.
+/// A sealed vault's body directory: its scope; the seal an off-record
+/// session's keys wrap under, absent until the vault's data key is admitted
+/// (every off-record write and read through it fails closed until then);
+/// and the custody binding a vault directory's instance keys are read
+/// under, absent until the vault's first publication.
 #[derive(Clone)]
 pub(crate) struct DirSeal {
     scope: KeyScope,
     seal: Option<Arc<BodySeal>>,
+    custody: Option<crate::store::key_custody::CustodyBinding>,
 }
 
 impl DirSeal {
@@ -175,6 +192,7 @@ impl Store {
         heed::Env::is_sealed(&self.env).then(|| DirSeal {
             scope,
             seal: self.body_seal.get(),
+            custody: self.body_custody(),
         })
     }
 
@@ -198,10 +216,11 @@ impl Store {
 }
 
 impl BodyDir {
-    /// The body `digest` of `len` bytes, as `row` (its key row, read in the
-    /// snapshot that found the body's row) names it: an envelope read through
-    /// its opened key, or with no key row the plain file. `None` when this
-    /// directory does not hold it, or the key is another scope's.
+    /// The body `digest` of `len` bytes, as `row` (its instance row, read in
+    /// the snapshot that found the body's row) names it: in a sealed
+    /// directory an envelope read through its instance's key, in a plain one
+    /// the plain file, whatever its row, read with no key. `None` when this
+    /// directory does not hold it, or the row is another scope's.
     ///
     /// # Errors
     ///
@@ -213,13 +232,10 @@ impl BodyDir {
         len: u64,
         row: Option<&BodyKeyRow>,
     ) -> Result<Option<BodyFile>> {
-        let Some(row) = row else {
+        let (Some(sealed), Some(row)) = (&self.sealed, row) else {
             return Ok(self
                 .open_body(digest, len)?
                 .map(|file| BodyFile::plain(file, len)));
-        };
-        let Some(sealed) = &self.sealed else {
-            return Ok(None);
         };
         if row.len != len {
             return Err(Error::CorruptedIndex("body file key length"));
@@ -233,15 +249,20 @@ impl BodyDir {
         BodyFile::sealed(file, key, digest, len).map(Some)
     }
 
-    /// Whether `row`, the key row of the body `digest`, is a committed pair
-    /// in this sealed directory: wrapped for its scope, its file here.
+    /// Whether `row`, the instance row of the body `digest`, is a committed
+    /// pair in this directory: a file row of its scope, its file here (a
+    /// sealed directory's under the row's instance, a plain one's under the
+    /// digest).
     ///
     /// # Errors
     ///
     /// A row that does not parse, and filesystem errors.
     pub(crate) fn holds_pair(&self, digest: &[u8; 32], row: Option<&BodyKeyRow>) -> Result<bool> {
-        let (Some(row), Some(sealed)) = (row, &self.sealed) else {
+        let Some(row) = row.filter(|row| !row.inline) else {
             return Ok(false);
+        };
+        let Some(sealed) = &self.sealed else {
+            return Ok(self.open_named(&super::body_file_name(digest))?.is_some());
         };
         Ok(row.wrapped_for(sealed.scope)?
             && self
@@ -258,10 +279,10 @@ impl BodyDir {
         len: u64,
         row: Option<&BodyKeyRow>,
     ) -> Option<Vec<u64>> {
-        let Some(row) = row else {
+        let (Some(row), Some(sealed)) = (row, &self.sealed) else {
             return self.read_line_index(digest, len);
         };
-        let key = row.open(digest, self.sealed.as_ref()?).ok()??;
+        let key = row.open(digest, sealed).ok()??;
         let file = self
             .open_named(&format!(
                 "{}{}",
