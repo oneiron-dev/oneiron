@@ -1008,8 +1008,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let (embedder, gpu_poller) =
         crate::commands::build_embedder(&vault, &config, broker.as_ref()).await?;
     // The tagger slot `[oneironer]` names, as plain serve builds it; its
-    // worker starts under the write admission too.
-    let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone()).await?;
+    // worker starts under the write admission too. Its engine rows sit in
+    // the data directory: managed mode reads no HOME or XDG (FIX 6873).
+    let rows = managed.data_dir.join("oneironer").join("engines.json");
+    let tagger =
+        crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), Some(rows)).await?;
     // The browser and desktop guests, as plain serve attaches them: each
     // section's own checks decide, and a run with no guest is refused.
     // Managed mode reads no environment, so the feedback destination carries

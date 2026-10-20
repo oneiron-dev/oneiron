@@ -8,6 +8,7 @@
 
 #[cfg(test)]
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use oneiron::memory::extraction::{EncoderInput, EncoderOutput, ExtractionEncoder};
@@ -19,6 +20,7 @@ use crate::config::{OneironerConfig, OneironerProvider};
 pub(crate) mod endpoint;
 pub(crate) mod engines;
 mod local;
+pub(crate) mod release;
 
 #[cfg(test)]
 mod tests;
@@ -205,7 +207,18 @@ impl TaggerSlot {
 /// `None` and an absent section build nothing. Native artifacts are verified
 /// and loaded before the listener binds. A reachable endpoint that is not
 /// the configured tagger stops `serve`; an unreachable one is probed again.
+/// The engine rows sit at their XDG/HOME default ([`build_slot_with_rows`]).
 pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Option<TaggerSlot>> {
+    build_slot_with_rows(config, None)
+}
+
+/// [`build_slot`], with the engine rows file the caller names: a managed
+/// vault's sits under its data directory, never HOME, XDG, a shared model
+/// root or a bundle. `None` keeps the XDG/HOME default.
+pub(crate) fn build_slot_with_rows(
+    config: Option<&OneironerConfig>,
+    rows_location: Option<&Path>,
+) -> anyhow::Result<Option<TaggerSlot>> {
     let Some(config) = config.filter(|config| config.is_active()) else {
         return Ok(None);
     };
@@ -213,7 +226,7 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     let mut serving = None;
     let tagger = match config.provider {
         OneironerProvider::Local => {
-            let (tagger, engine) = engines::load(config)?;
+            let (tagger, engine) = engines::load(config, rows_location)?;
             tracing::info!(
                 engine = %engine.engine.id(),
                 pick = engine.pick.as_str(),
@@ -261,9 +274,13 @@ pub(crate) fn build_slot(config: Option<&OneironerConfig>) -> anyhow::Result<Opt
     Ok(Some(slot))
 }
 
-/// [`build_slot`] off the async runtime: native loading and HTTP are blocking.
+/// [`build_slot_with_rows`] off the async runtime: native loading and HTTP
+/// are blocking. `rows_location` is the engine rows file, `None` for the
+/// XDG/HOME default.
 pub(crate) async fn build_slot_off_runtime(
     config: Option<OneironerConfig>,
+    rows_location: Option<PathBuf>,
 ) -> anyhow::Result<Option<TaggerSlot>> {
-    crate::logging::off_runtime("tagger slot task", move || build_slot(config.as_ref())).await?
+    let build = move || build_slot_with_rows(config.as_ref(), rows_location.as_deref());
+    crate::logging::off_runtime("tagger slot task", build).await?
 }
