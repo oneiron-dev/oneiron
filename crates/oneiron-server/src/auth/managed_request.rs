@@ -4,10 +4,12 @@
 //! Managed ingress forwards a caller's own slip, its holder proof and its
 //! machine claim unchanged. The binding door verifies them and spends the
 //! proof's nonce, once; every check after it reads the same slip again
-//! without spending anything. A request that carries a slip is its slip's
-//! caller: its own principal, class, scope, exact instrument and live Grant,
-//! never the host's root (FIX 2222). A slip that fails is refused, never
-//! replaced by the owner's or the root's credential.
+//! without spending anything, but the renewal door, which takes the caller
+//! the binding door admitted ([`AdmittedCaller`], FIX 4559). A request that
+//! carries a slip is its slip's caller: its own principal, class, scope,
+//! exact instrument and live Grant, never the host's root (FIX 2222). A slip
+//! that fails is refused, never replaced by the owner's or the root's
+//! credential.
 //!
 //! A request that carries no slip, where its supervisor attested the
 //! vault's owner for it (`ManagedOwnerAction`), is that owner himself (FIX
@@ -28,6 +30,7 @@
 
 use axum::http::header::AUTHORIZATION;
 use axum::http::{Extensions, HeaderMap, request::Parts};
+use oneiron::authority::OwnerDeviceRenewalProof;
 
 use super::{BindingProof, CoreAuth, bearer_token, caller_locality, proved_peer};
 use crate::error::{ApiError, ApiErrorDetails};
@@ -42,6 +45,29 @@ const MCP_CREDENTIAL_HEADER: &str = "x-oneiron-mcp-credential";
 
 /// The header a slip's holder proof rides in.
 const BINDING_HEADER: &str = "x-oneiron-binding";
+
+/// The caller the binding door admitted on a managed vault (FIX 4559): the
+/// auth its consuming admission of the request's slip returned, and the
+/// machine proof the request carries over that same token and the timestamp
+/// and nonce of the holder proof it spent, raw, or `None` when the request
+/// carries none or a malformed one. Only that door builds one, once it spent
+/// the proof's nonce, and it lives on that one request alone: never stored,
+/// never sent. It says where the request came from, not that it still
+/// stands: the engine's writer judges the slip, the proof's freshness and
+/// admission and the machine again.
+#[derive(Clone)]
+pub(super) struct AdmittedCaller {
+    auth: CoreAuth,
+    machine: Option<OwnerDeviceRenewalProof>,
+}
+
+impl AdmittedCaller {
+    /// The caller `auth` the binding door admitted, with the `machine` proof
+    /// it read over the same token and holder proof.
+    pub(super) fn new(auth: CoreAuth, machine: Option<OwnerDeviceRenewalProof>) -> Self {
+        Self { auth, machine }
+    }
+}
 
 /// The capability slip `headers` carry as their bearer, if any. Any other
 /// bearer is not a caller's credential here: managed ingress strips it.
@@ -349,6 +375,40 @@ impl CoreAuth {
     ) -> Option<Result<Self, ApiError>> {
         attested_owner(extensions, server)?;
         Self::for_managed_request(headers, extensions, path, server)
+    }
+
+    /// [`Self::for_managed_request`]'s caller at the device-renewal door
+    /// (FIX 4559), with the machine proof that door requires: the caller the
+    /// binding door admitted ([`AdmittedCaller`]), as its admission returned
+    /// it, and the machine proof it kept, neither read from the headers
+    /// again. Beside another person's attestation it is refused, as there. A
+    /// request with no admitted slip keeps that door's caller, the attested
+    /// owner or anonymous, with no machine proof; a slip the binding door did
+    /// not admit is refused, never read from the headers. `None` on any
+    /// other vault.
+    pub(crate) fn for_managed_renewal(
+        headers: &HeaderMap,
+        extensions: &Extensions,
+        path: &str,
+        server: &SyncServer,
+    ) -> Option<Result<(Self, Option<OwnerDeviceRenewalProof>), ApiError>> {
+        server.managed_issuer.as_ref()?;
+        let Some(admitted) = extensions.get::<AdmittedCaller>() else {
+            if carries_caller_slip(headers) {
+                return Some(Err(caller_binding_refused()));
+            }
+            return Self::for_managed_request(headers, extensions, path, server)
+                .map(|caller| caller.map(|auth| (auth, None)));
+        };
+        // The caller's own slip stays the caller; the attestation lends it
+        // nothing.
+        if let Some(holder) = attested_owner(extensions, server)
+            && admitted.auth.principal_ref() != Some(holder.to_hex().as_str())
+        {
+            return Some(Err(caller_conflicts_with_owner()));
+        }
+        let auth = admitted.auth.clone().placed(headers, extensions, path);
+        Some(Ok((auth, admitted.machine.clone())))
     }
 
     /// This request's one caller ([`Self::for_request`]), placed.
