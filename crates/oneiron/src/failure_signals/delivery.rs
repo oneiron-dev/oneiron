@@ -217,7 +217,7 @@ impl Vault {
         if !config.exports() {
             self.keep_failure_signal_participation(sender, false, now)?;
             // Drops whatever still waits: it may not leave now.
-            self.retire_failure_signal_batch()?;
+            self.retire_failure_signal_batch(false)?;
             self.pending_code_fix_records(0)?;
             return Ok(FailureSignalDelivery::Idle);
         }
@@ -259,7 +259,7 @@ impl Vault {
         let retired = sink.retired.get();
         if retired {
             // Nothing left: it goes with no ack (FIX 6679).
-            self.retire_failure_signal_batch()?;
+            self.retire_failure_signal_batch(true)?;
         }
         let result = dispatched?;
         let outcome = result.outcome;
@@ -284,7 +284,7 @@ impl Vault {
                 if !retired {
                     match self.next_failure_signal_stage(&held, &result)? {
                         Some(stage) => self.keep_failure_signal_batch(&held, stage)?,
-                        None => self.retire_failure_signal_batch()?,
+                        None => self.retire_failure_signal_batch(false)?,
                     }
                 }
                 Ok(FailureSignalDelivery::NotDelivered {
@@ -313,7 +313,7 @@ impl Vault {
         if on {
             return Ok(());
         }
-        self.retire_failure_signal_batch()
+        self.retire_failure_signal_batch(false)
     }
 
     /// Keeps the participation grant in step with `on`: one active grant

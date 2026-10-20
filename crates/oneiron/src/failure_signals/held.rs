@@ -34,14 +34,14 @@ use super::{
 use crate::consent::{CONSENT_CONTENT_KIND, CONSENT_REASON_DENIED};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
-use crate::gate::GateOutcome;
+use crate::gate::{ExternalEffectGateInput, GateOutcome, external_effect_decision_on};
 use crate::outbound::{
     OutboundDispatchError, OutboundDispatchRequest, OutboundDispatchResult,
-    outbound_approve_once_digest, outbound_dispatch_attempt_id,
+    outbound_approve_once_digest, outbound_dispatch_attempt_id, outbound_gate_effect,
 };
 use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentLedgerRecord, IntentResolution, IntentState, RecordedOutboundOutcome,
-    UnconfirmedDelivery, read_intent_for_attempt_in_txn,
+    RetryDisposition, UnconfirmedDelivery, read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionId, GateDecisionRecord};
@@ -246,13 +246,14 @@ impl Vault {
             None => return Ok(None),
             Some(Some(held)) => held,
             Some(None) => {
-                self.retire_failure_signal_batch()?;
+                self.retire_failure_signal_batch(false)?;
                 return Ok(None);
             }
         };
         let request = batch_request(sender, &held, now);
         let approval_digest =
             outbound_approve_once_digest(self, &request)?.map(|digest| digest.to_hex());
+        let effect = outbound_gate_effect(self, &request)?;
         let carry = {
             let _custody = self.store.gate_custody_read_guard()?;
             let txn = self.store.env.read_txn().map_err(Error::from)?;
@@ -263,13 +264,13 @@ impl Vault {
                     && held.eligible_in(self, &txn, approval_digest.as_deref())?)
             };
             match read_intent_for_attempt_in_txn(self, &txn, attempt, 0)? {
-                None => may_leave(owner_held_in(self, &txn, &held, sender)?)?,
+                None => may_leave(owner_held_in(self, &txn, &held, &effect)?)?,
                 Some(row) if retryable(&row) => may_leave(row.admitted_approval.is_some())?,
                 Some(_) => true,
             }
         };
         if !carry {
-            self.retire_failure_signal_batch()?;
+            self.retire_failure_signal_batch(false)?;
             return Ok(None);
         }
         Ok(Some(BatchSend {
@@ -324,8 +325,11 @@ impl Vault {
     /// have landed) is acked first in the same writer, with no wire, so
     /// retiring never sends again what left. Every other signal stays
     /// queued. A pass, or the participation reconcile, calls this under the
-    /// delivery lock, so no send of it is under way.
-    pub(super) fn retire_failure_signal_batch(&self) -> Result<()> {
+    /// delivery lock, so no send of it is under way: an admitted send that
+    /// recorded no outcome is read as its replay reads it, possibly
+    /// delivered, so its counts are acked, unless its own pass knows it
+    /// `unsent` (its sink refused it before the wire).
+    pub(super) fn retire_failure_signal_batch(&self, unsent: bool) -> Result<()> {
         let carried = {
             let txn = self.store.env.read_txn()?;
             HELD.get_bytes(&self.store, &txn, &())?.is_some()
@@ -335,7 +339,7 @@ impl Vault {
         }
         self.with_write_txn_grouped(|txn| {
             if let Some(held) = HELD.get_lenient(&self.store, &*txn, &())?
-                && let Some(delivered) = settled_in(self, &*txn, &held)?
+                && let Some(delivered) = settled_in(self, &*txn, &held, !unsent)?
             {
                 settle_in_txn(self, txn, &held, delivered)?;
             }
@@ -428,10 +432,17 @@ fn settle_in_txn(
 }
 
 /// What `held`'s ledger row settled for good, read in `txn`: `Some(true)`
-/// delivered, `Some(false)` stopped with its delivery unresolved, `None`
-/// for no row, a row still Pending, one stopped undelivered, or one that
-/// does not read.
-fn settled_in(vault: &Vault, txn: &heed::RoTxn<'_>, held: &HeldBatch) -> Result<Option<bool>> {
+/// delivered, `Some(false)` stopped with its delivery unresolved, or, when
+/// it is `orphaned` (no send of it is under way), admitted with no outcome
+/// recorded and no retry of its own, which its replay would stop as
+/// possibly delivered; `None` for no row, any other row still Pending, one
+/// stopped undelivered, or one that does not read.
+fn settled_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    held: &HeldBatch,
+    orphaned: bool,
+) -> Result<Option<bool>> {
     let Ok(attempt) = outbound_dispatch_attempt_id(&held.send_ref()) else {
         return Ok(None);
     };
@@ -446,6 +457,10 @@ fn settled_in(vault: &Vault, txn: &heed::RoTxn<'_>, held: &HeldBatch) -> Result<
             delivery: UnconfirmedDelivery::Unresolved,
             ..
         })) => Some(false),
+        Some(Ok(IntentResolution::Pending {
+            delivery: UnconfirmedDelivery::Unresolved,
+            retry: RetryDisposition::NoAutomaticRetry,
+        })) if orphaned => Some(false),
         _ => None,
     })
 }
@@ -471,34 +486,27 @@ fn owner_denied_in(
     Ok(found.is_some())
 }
 
-/// The content kind of the Gate's decision on an outbound send
-/// (`GateContentKind::ExternalEffect`).
-const SEND_DECISION_KIND: &str = "external_effect";
-
 /// Whether the Gate holds `held` for its owner, read in `txn`, for a batch
-/// no send of which was admitted (FIX 6679). The newest of the Gate's
-/// decisions on a send by `sender` since it was staged says so: one batch
-/// per vault is in flight, and every pass sends it until it is settled or
-/// retired, so each such decision since its floor is on it. A pending one
-/// is the owner's hold; a Gate Deny, or any other decision, is none, and
-/// no ledger row alone is no hold. Where no such decision is left, a batch
+/// no send of which was admitted (FIX 6679). The newest of the Gate's own
+/// decisions on exactly its send since it was staged says so: a row whose
+/// binding is `effect`'s, its send ref among it, so no other send's
+/// decision, by its actor or any other, counts. A pending one is the
+/// owner's hold; a Gate Deny, or any other decision, is none, and no
+/// ledger row alone is no hold. Where no decision on it is left, a batch
 /// the Gate held on an earlier pass (its stage says so) still waits, and
 /// one only ever staged was never shown.
 fn owner_held_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     held: &HeldBatch,
-    sender: EntityId,
+    effect: &ExternalEffectGateInput,
 ) -> Result<bool> {
-    let actor = sender.to_hex();
     let mut newest = None;
     vault.store.find_gate_decision_after_in_txn(
         txn,
         GateDecisionId::from_bytes(held.floor),
         |record: &GateDecisionRecord| {
-            if record.content_kind == SEND_DECISION_KIND
-                && record.actor_ref.as_deref() == Some(actor.as_str())
-            {
+            if external_effect_decision_on(record, effect) {
                 newest = Some(record.outcome == GateOutcome::Pending.as_str());
             }
             false
@@ -533,7 +541,7 @@ pub(crate) fn erase_held_batch_actor_in_txn(
         HELD.delete(&vault.store, wtxn, &())?;
         return Ok(());
     };
-    match settled_in(vault, &*wtxn, &held)? {
+    match settled_in(vault, &*wtxn, &held, false)? {
         Some(delivered) => {
             settle_in_txn(vault, wtxn, &held, delivered)?;
             HELD.delete(&vault.store, wtxn, &())?;

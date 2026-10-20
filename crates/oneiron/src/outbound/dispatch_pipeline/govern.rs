@@ -97,17 +97,33 @@ pub fn outbound_approve_once_digest(
     vault: &Vault,
     request: &OutboundDispatchRequest,
 ) -> Result<Option<EffectDigest>, OutboundDispatchError> {
+    Ok(pinned_approval_digest(&outbound_gate_effect(
+        vault, request,
+    )?))
+}
+
+/// FIX 6679: `request`'s Gate input as the dispatch pipeline prepares it,
+/// the one its approve-once digest and the Gate's decisions on it are
+/// composed over, so a caller can tell the Gate's own decisions on exactly
+/// this send ([`crate::gate::external_effect_decision_on`]). It reads and
+/// records nothing else.
+/// # Errors
+/// As [`outbound_approve_once_digest`].
+pub(crate) fn outbound_gate_effect(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+) -> Result<ExternalEffectGateInput, OutboundDispatchError> {
     let prepared = super::request_binding::PreparedOutboundDispatch::prepare(
         vault,
         request.clone(),
         None,
         None,
     )?;
-    Ok(pinned_approval_digest(&gate_input(
+    Ok(gate_input(
         &prepared.request,
         prepared.verb_contract,
         prepared.policy_risk,
-    )))
+    ))
 }
 
 /// FIX 6424: the approve-once digest a held `effect` names, 64 lower-hex,
