@@ -242,6 +242,7 @@ impl Vault {
                 .collect(),
             custody_note: None,
             training_note: vault.training_link_restore_notice(),
+            home_table_notes: Vec::new(),
         };
         Ok((made, forked, vault, report))
     }

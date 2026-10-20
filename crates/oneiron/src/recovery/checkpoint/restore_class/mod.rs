@@ -480,6 +480,9 @@ pub(super) struct Classes {
     /// manages. They restore live, so an old export never comes back over
     /// later spend.
     home_managed: BTreeMap<&'static str, BTreeSet<Vec<u8>>>,
+    /// The home tables whose live rows did not read or decode: each keeps
+    /// its own class, so the image wins where that is content.
+    home_unreadable: Vec<&'static str>,
 }
 
 impl Classes {
@@ -523,11 +526,14 @@ impl Classes {
             .unwrap_or_default();
         drop(txn);
         #[cfg(feature = "sync")]
-        let home_managed = crate::sync::home_handoff::restore_managed_keys(current, image)?;
+        let crate::sync::home_handoff::HomeManaged {
+            keys: home_managed,
+            unreadable: home_unreadable,
+        } = crate::sync::home_handoff::restore_managed_keys(current, image)?;
         #[cfg(not(feature = "sync"))]
-        let home_managed = {
+        let (home_managed, home_unreadable) = {
             let _ = image;
-            BTreeMap::new()
+            (BTreeMap::new(), Vec::new())
         };
         Ok(Self {
             vault_meta,
@@ -538,7 +544,19 @@ impl Classes {
             serving_machine,
             revoked_agent_grants,
             home_managed,
+            home_unreadable,
         })
+    }
+
+    /// The restore's note for each home table whose live rows did not read
+    /// (FIX 5661 C2b): it came from the image.
+    pub(super) fn home_notes(&self) -> Vec<super::HomeTableNote> {
+        self.home_unreadable
+            .iter()
+            .map(|table| super::HomeTableNote::Unreadable {
+                table: (*table).to_owned(),
+            })
+            .collect()
     }
 
     /// The class of one canonical row of `database`, and the length of the

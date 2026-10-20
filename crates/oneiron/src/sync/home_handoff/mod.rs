@@ -62,7 +62,7 @@ pub(crate) use envelope::{
 pub(crate) use registry::{
     froze_home_state_in_txn, home_tables, pending_move_in_txn, takes_home_write_in_txn,
 };
-pub(crate) use restore::{keep_move_through, restore_managed_keys};
+pub(crate) use restore::{HomeManaged, keep_move_through, restore_managed_keys};
 pub(crate) use store::{handoff_status_in_txn, incomplete_in_txn, record_incomplete_in_txn};
 pub(crate) use table::{HomeTable, HomeTableRegistration, ImageRows, TableAdopt};
 pub(crate) use transfer::{ack_in_txn, adopt, freeze_export, guard_in_txn, request_move_in_txn};

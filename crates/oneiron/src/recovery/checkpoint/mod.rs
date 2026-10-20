@@ -274,6 +274,26 @@ pub struct RestoreReport {
     /// when the vault had a training link key and the restore brought none,
     /// so a fresh one is made at its next training write.
     pub training_note: Option<String>,
+    /// The tables a home move carries that this restore took from the image
+    /// because the live vault's rows did not read (FIX 5661 C2b).
+    pub home_table_notes: Vec<HomeTableNote>,
+}
+/// What a restore over a live vault says about a table a home move carries
+/// (FIX 5661 C2b).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HomeTableNote {
+    /// The live vault's rows of `table` did not read or decode, so the table
+    /// kept its own restore class and its rows came from the image.
+    Unreadable { table: String },
+}
+impl std::fmt::Display for HomeTableNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unreadable { table } => {
+                write!(f, "home table {table} unreadable: restored from image")
+            }
+        }
+    }
 }
 fn codec_error() -> Error {
     Error::CorruptedIndex("canonical checkpoint image")
@@ -571,6 +591,7 @@ impl Vault {
             dropped_gate_decisions,
             custody_note: vault.activation_custody_note(),
             training_note: vault.training_link_restore_notice(),
+            home_table_notes: Vec::new(),
         })
     }
     /// Historical content restore beside a live vault: the image's content
@@ -650,7 +671,8 @@ impl Vault {
         let installed = current.installed_pack_sources()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements.
-        authority_plane::carry_current_authority(&mut image.databases, current)?;
+        let home_table_notes =
+            authority_plane::carry_current_authority(&mut image.databases, current)?;
         // A Live family's response row came with it, and its binding: the
         // image's copy is passed over (KS-2B2).
         response_rows::supersede_live(&mut image, current)?;
@@ -660,7 +682,7 @@ impl Vault {
         if let Custody::Fork(_) = custody {
             image.drop_machine_identity();
         }
-        let (made, forked, mut vault, report) = Self::restore_image(
+        let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
             checkpoint_id,
             bodies,
@@ -672,6 +694,8 @@ impl Vault {
             &erased,
             &write_budget::Unfloored,
         )?;
+        // A home table whose live rows did not read came from the image.
+        report.home_table_notes = home_table_notes;
         // A live install the image does not hold halts its routes (FIX 6034).
         vault.halt_departed_pack_routes(&installed, restored_at)?;
         #[cfg(test)]
