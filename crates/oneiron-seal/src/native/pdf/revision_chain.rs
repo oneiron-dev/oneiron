@@ -2,8 +2,11 @@
 //! Marker-looking bytes in streams never create extra revisions. A chain of
 //! any length is followed whole; its length, the prefix bytes it parsed and
 //! each classic section's tokens go to the invocation's counts (Rule 5).
-use crate::api::{Counter, STREAM_DECODE_BYTES, SealResourceLimits};
-use lopdf::{Document, LoadOptions, Object};
+//! The CR/LF run after a revision's `%%EOF` belongs to that revision however
+//! long it is: only CR and LF bytes, never the next revision's content.
+use super::decode;
+use crate::api::{Counter, SealResourceLimits};
+use lopdf::{Document, Object};
 
 fn eol(b: u8) -> bool {
     matches!(b, b'\r' | b'\n')
@@ -34,42 +37,33 @@ pub(crate) fn bind_range(
     })
 }
 
-/// A signature may cover the EOF marker itself or as many as four EOL bytes
-/// immediately after it. This is the same boundary law used by classification
-/// and the coverage ladder. The following revision's glue is not signed.
+/// A signature may cover the EOF marker itself or any run of EOL bytes
+/// immediately after it, which holds no content (Rule 5: no count of them
+/// refuses). This is the same boundary law used by classification and the
+/// coverage ladder. The following revision's glue is not signed.
 pub(crate) fn owns_eof(bytes: &[u8], eof_end: usize, covers_to: u64) -> bool {
     let Ok(end) = usize::try_from(covers_to) else {
         return false;
     };
     end >= eof_end
-        && end - eof_end <= 4
         && bytes
             .get(eof_end..end)
             .is_some_and(|s| s.iter().all(|b| eol(*b)))
 }
 
-/// A signed range may leave at most four final EOL bytes unsigned.
+/// A signed range may leave the file's final run of EOL bytes unsigned,
+/// however long, and nothing else.
 pub(crate) fn file_tail_covered(bytes: &[u8], covers_to: u64) -> bool {
     let Ok(end) = usize::try_from(covers_to) else {
         return false;
     };
-    bytes
-        .get(end..)
-        .is_some_and(|s| s.len() <= 4 && s.iter().all(|b| eol(*b)))
+    bytes.get(end..).is_some_and(|s| s.iter().all(|b| eol(*b)))
 }
 
-/// A strict snapshot, each stream decoded under the per-stream codec bound,
-/// and refused only past the ISO object bound.
+/// A strict snapshot, each stream decoded whole, refused only past the ISO
+/// object bound.
 pub(crate) fn load_snapshot(bytes: &[u8], limits: &SealResourceLimits) -> Option<Document> {
-    let doc = Document::load_mem_with_options(
-        bytes,
-        LoadOptions {
-            strict: true,
-            max_decompressed_size: Some(STREAM_DECODE_BYTES),
-            ..LoadOptions::default()
-        },
-    )
-    .ok()?;
+    let doc = decode::load_strict(bytes, &limits.observed).ok()?;
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
     (doc.objects.len() <= limits.max_pdf_objects).then_some(doc)
 }
@@ -118,11 +112,8 @@ fn find_end(
             continue;
         }
         let end = pos + 5;
-        if final_section {
-            let tail = &bytes[end..stop];
-            if tail.len() > 4 || !tail.iter().all(|b| eol(*b)) {
-                continue;
-            }
+        if final_section && !bytes[end..stop].iter().all(|b| eol(*b)) {
+            continue;
         }
         let Some(doc) = load_snapshot(&bytes[..end], limits) else {
             continue;
