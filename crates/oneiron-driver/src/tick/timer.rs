@@ -176,12 +176,20 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                         }
                     },
                 };
-                // The bucket rule is MACRO consolidation's: a free-time try
-                // admission takes here never reads it, on any node.
-                if !eligible
-                    || (!macro_ready.contains(&attempt.id)
-                        && !free_time.tries.contains(&attempt.id))
-                {
+                // The bucket rule is MACRO consolidation's alone (FIX 6576):
+                // cleanup, the NOTE review and a resident's nightly dreaming
+                // arm on the home gate. A free-time try admission takes here
+                // never reads it, on any node; one admission does not take
+                // here (a fenced home) stays unarmed, of either kind.
+                let held = !free_time.tries.contains(&attempt.id)
+                    && if attempt.kind == DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND {
+                        !macro_ready.contains(&attempt.id)
+                    } else {
+                        attempt.kind
+                            == oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
+                            || oneiron::dreamer_runner::is_free_time_try(&attempt)
+                    };
+                if !eligible || held {
                     continue;
                 }
             }

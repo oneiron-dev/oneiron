@@ -87,6 +87,12 @@ pub(crate) fn free_time_line(record: &AttemptRecord) -> Option<String> {
     Some(format!("free_time/{}", resident.to_hex()))
 }
 
+/// Whether `record` is a free-time item's try, of either kind (FIX 6576):
+/// the host timer arms one only when this node's admission takes it.
+pub fn is_free_time_try(record: &AttemptRecord) -> bool {
+    free_time_line(record).is_some()
+}
+
 /// `attempt`'s binding: its own, else the try it retries.
 fn binding_in_txn(
     vault: &Vault,

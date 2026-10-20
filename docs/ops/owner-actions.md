@@ -662,6 +662,53 @@ The Dreamer's nightly strength archive works the same way: it archives a quiet g
 of its own at once, keeps the scored snapshot and leaves one receipt naming the claim, and
 `/v1/owner/cleanup/restore` brings it back.
 
+## Run the Dreamer's night step now
+
+The Dreamer runs its night step on its own timer. To run one now, ask for a Timer wake:
+
+```
+oneiron api call host.wake --data '{"wake_kind":"timer","queue_head":[]}'
+```
+
+Over MCP it is the `host.wake` tool with `{"spec": {"wake_kind": "timer", "queue_head": []}}`;
+over HTTP, `POST /v1/core/facade/host.wake`. It takes an owner credential with write scope over
+the whole vault. The call queues the step and returns at once; nothing is held open. Keep two
+fields of its reply:
+
+- `attempt`: the step's root job (its `dreamer.timer.plan`). Everything the step asked for is
+  queued beneath it: cleanup, skill optimization, the Coach's and the Dreamer's nightly
+  maintenance, and the plan's own consolidation spending.
+- `request_id`: 32 hex digits, the run id every one of those jobs carries. A retry of the same
+  call while its root is still queued returns the same `attempt` and `request_id`, with
+  `already_queued: true`.
+
+The resident Dreamer picks the step up at once: its deadline watch reads the queue again after
+every `host.wake`. Poll the root until `outcome.state` is not `running`:
+
+```
+oneiron api call vault.sieve.settlements.get --data '{"wake":"<attempt>"}'
+```
+
+(Over MCP, the `vault.sieve.settlements.get` tool with `{"spec": {"wake": "<attempt>"}}`.)
+`jobs` lists every job under the root; `outcome` says what they came to:
+
+- `running`: a job is still queued, leased, landing or scheduled (`outcome.waiting_on`).
+- `succeeded`: every job completed. `outcome.result_refs` and `outcome.conclusions` are what
+  they produced.
+- `partial`: nothing is running, but a job is parked or paused (`parked`, with its cause), was
+  cancelled or abandoned (`stopped`), or is the nightly remainder left for later (`deferred`,
+  with its `due` time). What did complete is still listed in `result_refs` and `conclusions`.
+- `failed`: nothing is running, and a job failed with no retry in its place (`failed`).
+
+A try that a retry replaced counts in none of these. `settled: true` only says every job
+ended; on its own it never means success.
+
+One night step is one budget-bounded snapshot. It spends what the nightly limits allow and
+leaves what the interest queue still holds as one remainder job, due a policy interval later.
+The step reports that remainder as `deferred` and does not wait for it. A lane job that another
+wake already holds queued (one Coach host job per kind, one curator slot, one remainder) stays
+under that wake's root, not this one.
+
 ## Revert anything the Dreamer changed
 
 The Dreamer applies its own work at once and keeps what it replaced as history. You take any one

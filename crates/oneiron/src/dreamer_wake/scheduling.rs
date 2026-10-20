@@ -3,6 +3,7 @@
 use rmpv::Value;
 
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerConsolidationScope, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
@@ -78,55 +79,12 @@ pub(crate) fn request_wake_in_txn(
     }
     let scope = trigger.default_scope();
     if trigger == WakeTrigger::Timer {
-        // The queue dedupe domain includes the kind, so sharing the wake key
-        // coalesces each lane without one lane swallowing the other.
-        store.enqueue_vault_cleanup_in_txn(
-            txn,
-            EnqueueDreamerVaultCleanupAttempt {
-                trigger,
-                input: Value::Nil,
-                parent_attempt: payload.parent_attempt,
-                dedupe_key: dedupe_key.clone(),
-                run_id: run_id.clone(),
-                now,
-            },
-        )?;
-        store.enqueue_skill_optimize_in_txn(
-            txn,
-            crate::dreamer_runner::EnqueueDreamerSkillOptimizeAttempt {
-                input: Value::Nil,
-                parent_attempt: payload.parent_attempt,
-                dedupe_key: dedupe_key.clone(),
-                run_id: run_id.clone(),
-                now,
-            },
-        )?;
-        store.enqueue_coach_retrieval_tune_in_txn(
+        request_timer_maintenance_in_txn(
+            store,
             txn,
             payload.parent_attempt,
             dedupe_key.as_deref(),
-            run_id.clone(),
-            now,
-        )?;
-        store.enqueue_honesty_audits_in_txn(
-            txn,
-            payload.parent_attempt,
-            dedupe_key.as_deref(),
-            run_id.clone(),
-            now,
-        )?;
-        store.enqueue_coach_nightly_in_txn(
-            txn,
-            payload.parent_attempt,
-            dedupe_key.as_deref(),
-            run_id.clone(),
-            now,
-        )?;
-        store.enqueue_dreamer_nightly_in_txn(
-            txn,
-            payload.parent_attempt,
-            dedupe_key.as_deref(),
-            run_id.clone(),
+            run_id.as_deref(),
             now,
         )?;
         // A Timer wake that names no partition plans the existing Nightly
@@ -154,6 +112,73 @@ pub(crate) fn request_wake_in_txn(
             run_id,
             now,
         },
+    )
+}
+
+/// Every maintenance lane a Timer wake asks for, in its one order, each
+/// under `parent_attempt` and `run_id`: cleanup, skill optimize, the Coach's
+/// retrieval tune and honesty audits, the Coach's nightly jobs, then the
+/// Dreamer's. A resident Timer wake asks before its plan, under its own
+/// parent and run; a night step asks after its plan, beneath it (FIX
+/// 6903).
+pub(super) fn request_timer_maintenance_in_txn(
+    store: &DreamerRunnerStore<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    parent_attempt: Option<AttemptId>,
+    dedupe_key: Option<&str>,
+    run_id: Option<&str>,
+    now: u64,
+) -> Result<()> {
+    // The queue dedupe domain includes the kind, so sharing the wake key
+    // coalesces each lane without one lane swallowing the other.
+    store.enqueue_vault_cleanup_in_txn(
+        txn,
+        EnqueueDreamerVaultCleanupAttempt {
+            trigger: WakeTrigger::Timer,
+            input: Value::Nil,
+            parent_attempt,
+            dedupe_key: dedupe_key.map(str::to_owned),
+            run_id: run_id.map(str::to_owned),
+            now,
+        },
+    )?;
+    store.enqueue_skill_optimize_in_txn(
+        txn,
+        crate::dreamer_runner::EnqueueDreamerSkillOptimizeAttempt {
+            input: Value::Nil,
+            parent_attempt,
+            dedupe_key: dedupe_key.map(str::to_owned),
+            run_id: run_id.map(str::to_owned),
+            now,
+        },
+    )?;
+    store.enqueue_coach_retrieval_tune_in_txn(
+        txn,
+        parent_attempt,
+        dedupe_key,
+        run_id.map(str::to_owned),
+        now,
+    )?;
+    store.enqueue_honesty_audits_in_txn(
+        txn,
+        parent_attempt,
+        dedupe_key,
+        run_id.map(str::to_owned),
+        now,
+    )?;
+    store.enqueue_coach_nightly_in_txn(
+        txn,
+        parent_attempt,
+        dedupe_key,
+        run_id.map(str::to_owned),
+        now,
+    )?;
+    store.enqueue_dreamer_nightly_in_txn(
+        txn,
+        parent_attempt,
+        dedupe_key,
+        run_id.map(str::to_owned),
+        now,
     )
 }
 
