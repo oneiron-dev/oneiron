@@ -77,28 +77,40 @@ impl SummaryEdit {
 }
 
 impl Memory<'_> {
-    /// The caller can declare only a scope it can read. The Dreamer's existing
-    /// producer independently admits its evidence and alone mints the body.
+    /// The caller can declare only a scope, or NOTEs, it can read. The
+    /// Dreamer's existing producer independently admits its evidence and
+    /// alone mints the body.
     pub fn create_summary(&self, input: &SummaryCreateRequest) -> MemoryResult<SummaryQueued> {
-        let scope = input.scope.selector(self)?;
-        let resolved = self.vault().resolve_dag_scope(&scope)?;
-        for record in resolved.records {
-            self.require_summary_source(&record.to_hex())?;
-        }
-        self.require_summary_source(&scope.conversation.to_hex())?;
-        if let Some(turn) = &input.land_on {
-            self.require_summary_source(turn)?;
-        }
+        let target = match &input.scope {
+            Some(scope) if input.note_refs.is_empty() => {
+                let scope = scope.selector(self)?;
+                let resolved = self.vault().resolve_dag_scope(&scope)?;
+                for record in resolved.records {
+                    self.require_summary_source(&record.to_hex())?;
+                }
+                self.require_summary_source(&scope.conversation.to_hex())?;
+                if let Some(turn) = &input.land_on {
+                    self.require_summary_source(turn)?;
+                }
+                super::ScopeSummaryTarget::Scope {
+                    scope,
+                    land_on: input
+                        .land_on
+                        .as_deref()
+                        .map(|value| crate::memory::resolve_entity_ref(self.vault(), value))
+                        .transpose()?,
+                    as_record: input.as_record,
+                }
+            }
+            None if !input.note_refs.is_empty() => self.note_summary_target(input)?,
+            _ => {
+                return Err(MemoryError::bad_request(
+                    "a summary declares a conversation scope or NOTE ids, exactly one",
+                ));
+            }
+        };
         let request = super::ScopeSummaryRequest {
-            target: super::ScopeSummaryTarget::Scope {
-                scope,
-                land_on: input
-                    .land_on
-                    .as_deref()
-                    .map(|value| crate::memory::resolve_entity_ref(self.vault(), value))
-                    .transpose()?,
-                as_record: input.as_record,
-            },
+            target,
             requester: WriteActor::new(self.actor(), self.actor_class()),
         };
         let queued = match &input.purpose {
@@ -170,6 +182,32 @@ impl Memory<'_> {
         .value
         .ok_or_else(absent)?;
         crate::memory::resolve_entity_ref(self.vault(), reference)
+    }
+
+    /// A NOTE set (FIX 5757): each NOTE read on the caller's own lane before
+    /// the declaration queues, and again by the planner, which also refuses
+    /// any id that is not a live NOTE. Its summary lands on no turn.
+    fn note_summary_target(
+        &self,
+        input: &SummaryCreateRequest,
+    ) -> MemoryResult<super::ScopeSummaryTarget> {
+        if input.land_on.is_some() || input.as_record {
+            return Err(MemoryError::bad_request(
+                "a NOTE set's summary lands on no turn",
+            ));
+        }
+        let sources = input
+            .note_refs
+            .iter()
+            .map(|note| {
+                self.require_summary_source(note)?;
+                crate::memory::resolve_entity_ref(self.vault(), note)
+            })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(super::ScopeSummaryTarget::Sources {
+            scope: None,
+            sources,
+        })
     }
 
     fn require_summary_source(&self, reference: &str) -> MemoryResult<String> {

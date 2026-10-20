@@ -430,7 +430,7 @@ impl SealedBundleSection {
         }
         let tag = section_digest(SECTION_TAG_CONTEXT, vault_id, key);
         let params = seal_params(BUNDLE.purpose, vault_id, &tag, SECTION_RECIPIENT);
-        let kek = Kek::from_bytes(section_digest(SECTION_KEY_CONTEXT, vault_id, key));
+        let kek = section_kek(vault_id, key);
         let mut parts = Vec::with_capacity(count);
         seal_parts(
             &params,
@@ -447,7 +447,7 @@ impl SealedBundleSection {
 
     fn open(&self, vault_id: &[u8; 32], key: &WorldKey) -> Result<OpenedBundleSection> {
         let policy = symmetric_policy(BUNDLE.purpose, vault_id, &self.tag, SECTION_RECIPIENT);
-        let kek = Kek::from_bytes(section_digest(SECTION_KEY_CONTEXT, vault_id, key));
+        let kek = section_kek(vault_id, key);
         let body = open_parts(&policy, &kek, &self.parts)?;
         decode_section_body(vault_id, key.id(), &body)
     }
@@ -1291,7 +1291,7 @@ fn seal_outer(
 ) -> Result<Vec<u8>> {
     let too_large = || refused("the sealed object outgrows its size");
     let id = generation.to_bytes();
-    let kek = Kek::from_bytes(*outer);
+    let kek = Kek::from_bytes_ref(outer);
     let params = seal_params(kind.purpose, vault_id, &id, BODY_RECIPIENT);
     let mut bytes = Vec::new();
     bytes.extend_from_slice(kind.magic);
@@ -1514,7 +1514,7 @@ fn open_framed(
 ) -> Result<OpenedOuter> {
     let id = frame.generation.to_bytes();
     let policy = symmetric_policy(kind.purpose, vault_id, &id, BODY_RECIPIENT);
-    let body = open_parts(&policy, &Kek::from_bytes(*outer), &frame.parts)?;
+    let body = open_parts(&policy, &Kek::from_bytes_ref(&outer), &frame.parts)?;
     Ok(OpenedOuter {
         generation: frame.generation,
         slots: frame.slots,
@@ -1732,14 +1732,30 @@ fn signed_digest(
 /// `BLAKE3-derive_key(context, vault ‖ key id ‖ world key)`: a section's key or
 /// its tag. Only a holder of the world key computes either.
 fn section_digest(context: &str, vault_id: &[u8; 32], key: &WorldKey) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    section_digest_into(context, vault_id, key, &mut out);
+    out
+}
+
+/// The section's key, derived as [`section_digest`] under
+/// [`SECTION_KEY_CONTEXT`] straight into guarded storage (FIX 6048).
+fn section_kek(vault_id: &[u8; 32], key: &WorldKey) -> Kek {
+    let mut out = Zeroizing::new([0u8; 32]);
+    section_digest_into(SECTION_KEY_CONTEXT, vault_id, key, &mut out);
+    Kek::from_zeroizing(out)
+}
+
+/// `BLAKE3-derive_key(context, vault id ‖ key id ‖ key)`, written into `out`.
+fn section_digest_into(context: &str, vault_id: &[u8; 32], key: &WorldKey, out: &mut [u8; 32]) {
     let mut hasher = blake3::Hasher::new_derive_key(context);
     hasher.update(vault_id);
     hasher.update(&key.id().envelope_key_id());
     hasher.update(key.expose());
-    let out = *hasher.finalize().as_bytes();
-    // The hasher's block buffer still holds the key's bytes.
+    let mut reader = hasher.finalize_xof();
+    reader.fill(out);
+    // The hasher's block buffer and the reader's state still hold the key's bytes.
     zeroize::Zeroize::zeroize(&mut hasher);
-    out
+    zeroize::Zeroize::zeroize(&mut reader);
 }
 
 /// A section body's padded size: a power of two from 4 KiB, then whole chunks.

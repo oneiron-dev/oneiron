@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1108 code-mode rows (1083 host rows, 25 run rows), 3727 declarations.
+// Census: 1108 code-mode rows (1083 host rows, 25 run rows), 3730 declarations.
 // Replies: 990 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
@@ -2164,7 +2164,10 @@ declare namespace Sdk {
   type OriginRegisterRequest = { repo: string; default_branch: string };
   type OriginRegistered = { repo: string; repo_id: EntityId; default_branch: string };
   type OriginRepoRequest = { repo: string };
-  type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null };
+  type OriginMirrorNotReadyReason = "lfs_objects_not_verified" | "lfs_inventory_incomplete";
+  type OriginMirrorLfsObject = { oid: string; size: number };
+  type OriginMirrorReadiness = { state: "ready" } | { state: "not_ready"; reason: OriginMirrorNotReadyReason; objects: OriginMirrorLfsObject[]; omitted_objects: number };
+  type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null; readiness?: OriginMirrorReadiness | null };
   type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[] };
   type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null };
   type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number };
@@ -3488,7 +3491,7 @@ declare namespace Sdk {
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
   type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
   type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
-  type SummaryCreateRequest = { scope: SummaryScope; purpose?: string | null; land_on?: string | null; as_record?: boolean };
+  type SummaryCreateRequest = { scope?: SummaryScope | null; note_refs?: string[]; purpose?: string | null; land_on?: string | null; as_record?: boolean };
   type SummaryQueued = { attempt: string; status: string; coalesced: boolean };
   type SummarySpan = { start: number; end: number };
   type SummaryReadRequest = { summary_ref: string; spans?: SummarySpan[] };
@@ -4738,7 +4741,7 @@ declare const vault: Sdk.VaultHost & {
         clear(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorCleared | StoredResult>;
         /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
         get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorView | StoredResult>;
-        /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+        /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them. */
         push(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorRun | StoredResult>;
         /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
         set(input: Sdk.OriginMirrorSetRequest): Promise<Sdk.OriginMirrorTarget | StoredResult>;

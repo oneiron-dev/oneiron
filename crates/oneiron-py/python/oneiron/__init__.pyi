@@ -2316,7 +2316,7 @@ class Oneiron:
         def clear(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorCleared:
             """Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."""
         def push(self, spec: Facade.OriginRepoRequest) -> Facade.OriginMirrorRun:
-            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."""
+            """Push one origin's published Git refs to its configured mirror now, recording the real outcome; refs pushed are not readiness, which names the LFS objects the pushed history needs and stays not_ready until the mirror is verified to hold them."""
     class _VaultCodeOriginAuthorityVerbs:
         def get(self, spec: Facade.OriginRepoRequest) -> Facade.OriginAuthorityView:
             """Read one served origin authority and this host identity under the owner credential."""
