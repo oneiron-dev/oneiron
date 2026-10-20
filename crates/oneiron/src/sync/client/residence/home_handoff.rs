@@ -4,7 +4,9 @@
 //! move's target machine. `residence.home_handoff.status` reads where the
 //! target stands, `.part` stages one part of at most
 //! `HOME_HANDOFF_PART_BYTES` in order, and `.commit` answers the ack the
-//! target saved. The source verifies that ack before it keeps it.
+//! target saved. The source verifies that ack before it keeps it. `.cancel`
+//! (FIX 5931) fences a handoff the source takes back, in the target's
+//! adopting writer, or answers the ack when the target adopted it first.
 
 use std::time::Duration;
 
@@ -29,6 +31,14 @@ pub(crate) enum TargetStanding {
     Staged(u32),
 }
 
+/// What the target answers a cancel with, from its adopting writer.
+pub(crate) enum TargetCancel {
+    /// Adopted there first: the ack it saved, still to verify here.
+    Adopted(HomeAck),
+    /// Never adopted there, and fenced now: no commit lands it after.
+    Fenced,
+}
+
 #[derive(Deserialize)]
 struct StatusReply {
     #[serde(default)]
@@ -45,6 +55,14 @@ struct PartReply {
 #[derive(Deserialize)]
 struct CommitReply {
     ack: String,
+}
+
+#[derive(Deserialize)]
+struct CancelReply {
+    #[serde(default)]
+    fenced: Option<bool>,
+    #[serde(default)]
+    ack: Option<String>,
 }
 
 fn ack_from(text: &str) -> Result<HomeAck, TransportError> {
@@ -156,6 +174,29 @@ impl HandoffLane {
                 ack_from(&reply.ack).map(Some)
             }
             Err(_) => Ok(None),
+        }
+    }
+
+    /// Cancels handoff `id` at the target (FIX 5931): fenced there, or the
+    /// ack it saved when it adopted first; `None` when it refused.
+    pub(crate) async fn cancel(
+        &mut self,
+        id: &[u8; 32],
+        digest: &[u8; 32],
+    ) -> Result<Option<TargetCancel>, TransportError> {
+        let params = json!({"id": sealed_digest_hex(id), "digest": sealed_digest_hex(digest)});
+        let reply = match self
+            .rpc
+            .call("residence.home_handoff.cancel", params)
+            .await?
+        {
+            Ok(reply) => serde_json::from_value::<CancelReply>(reply).map_err(|_| refused())?,
+            Err(_) => return Ok(None),
+        };
+        match (reply.ack, reply.fenced) {
+            (Some(ack), _) => Ok(Some(TargetCancel::Adopted(ack_from(&ack)?))),
+            (None, Some(true)) => Ok(Some(TargetCancel::Fenced)),
+            (None, _) => Err(refused()),
         }
     }
 }

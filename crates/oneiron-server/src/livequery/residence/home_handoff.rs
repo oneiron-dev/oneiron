@@ -1,17 +1,19 @@
-//! `residence.home_handoff.status`, `.part` and `.commit`: this node as the
-//! new home a home handoff moves to (FIX 5661 C2a). The old home, a machine
-//! of the owner's its socket proved, reads where the handoff stands here
-//! (the staged position, or the saved ack), stages its sealed bytes in parts
-//! and commits; the commit adopts every registered table in one transaction
-//! and answers the ack this node signed and saved. The engine's doors own
-//! every check and write; this file only reads the parameters. Sealed bytes,
-//! ids and acks only. A refused call looks missing.
+//! `residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this
+//! node as the new home a home handoff moves to (FIX 5661 C2a, C2b). The old
+//! home, a machine of the owner's its socket proved, reads where the handoff
+//! stands here (the staged position, or the saved ack), stages its sealed
+//! bytes in parts and commits; the commit adopts every registered table in
+//! one transaction and answers the ack this node signed and saved. A cancel
+//! (FIX 5931) fences the handoff in the adopting writer, or answers the ack
+//! when it adopted first. The engine's doors own every check and write; this
+//! file only reads the parameters. Sealed bytes, ids and acks only. A
+//! refused call looks missing.
 
 use base64::Engine;
 use oneiron::authority::PeerMachine;
 use oneiron::sync::residence::{
-    HomeHandoffStanding, home_handoff_commit, home_handoff_part, home_handoff_status,
-    sealed_digest_from_hex,
+    HomeHandoffCancel, HomeHandoffStanding, home_handoff_cancel, home_handoff_commit,
+    home_handoff_part, home_handoff_status, sealed_digest_from_hex,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -69,6 +71,10 @@ pub(super) fn run(
             auth.require(CoreScope::Write)?;
             commit(server, peer, params)
         }
+        "residence.home_handoff.cancel" => {
+            auth.require(CoreScope::Write)?;
+            cancel(server, peer, params)
+        }
         _ => Err(AppError::bad_request(
             "unknown residence RPC",
             Some("method"),
@@ -113,4 +119,16 @@ fn commit(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answe
     let ack = home_handoff_commit(&server.vault, peer, hash(&input.id)?, hash(&input.digest)?)
         .map_err(missing)?;
     Ok((json!({"ack": encode(&ack)}), Some(Vec::new())))
+}
+
+fn cancel(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
+    let input: HandoffRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let answer = home_handoff_cancel(&server.vault, peer, hash(&input.id)?, hash(&input.digest)?)
+        .map_err(missing)?;
+    let reply = match answer {
+        HomeHandoffCancel::Fenced => json!({"fenced": true}),
+        HomeHandoffCancel::Adopted { ack } => json!({"ack": encode(&ack)}),
+    };
+    Ok((reply, Some(Vec::new())))
 }
