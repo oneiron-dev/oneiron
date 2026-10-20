@@ -56,23 +56,23 @@ impl LoroActorCodec for EntityDocActors {
     const FAMILY: &'static str = "entity_doc";
 
     fn split_message(&self, message: &str) -> Split<String> {
-        let cut = cut_stamp(message).ok_or(NOT_A_STAMP)?;
-        if cut.id == ERASED_CALL_IDENTITY {
+        let (head, id, tail) = cut_stamp(message).ok_or(NOT_A_STAMP)?;
+        if id == ERASED_CALL_IDENTITY {
             return Ok(SplitValue::kept(message.to_owned()));
         }
-        let actor = hex_id(cut.id).ok_or(NOT_A_STAMP)?;
+        let actor = hex_id(id).ok_or(NOT_A_STAMP)?;
         Ok(SplitValue {
-            no_one: format!("{}{ERASED_CALL_IDENTITY}{}", cut.head, cut.tail),
+            no_one: format!("{head}{ERASED_CALL_IDENTITY}{tail}"),
             actors: vec![(STAMP_ACTOR.to_owned(), actor)],
         })
     }
 
     fn fill_message(&self, no_one: &str, path: &str, actor: EntityId) -> Result<String> {
-        let cut = cut_stamp(no_one).ok_or_else(rows::bad_part)?;
-        if path != STAMP_ACTOR || cut.id != ERASED_CALL_IDENTITY {
+        let (head, id, tail) = cut_stamp(no_one).ok_or_else(rows::bad_part)?;
+        if path != STAMP_ACTOR || id != ERASED_CALL_IDENTITY {
             return Err(rows::bad_part());
         }
-        Ok(format!("{}{}{}", cut.head, actor.to_hex(), cut.tail))
+        Ok(format!("{head}{}{tail}", actor.to_hex()))
     }
 
     fn split_map_insert(

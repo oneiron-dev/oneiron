@@ -347,42 +347,33 @@ enum Stamped {
     NotStamped,
 }
 
+/// The one stamp grammar the reader and the checkpoint split share: what
+/// one reads as a stamp is what the other cuts.
 fn parse_stamp(message: Option<&str>) -> Stamped {
-    let Some((id, class)) = message.and_then(stamp_token) else {
+    let Some((_, id, tail)) = message.and_then(cut_stamp) else {
         return Stamped::NotStamped;
     };
     if id == ERASED_CALL_IDENTITY {
         return Stamped::Erased;
     }
-    let class = crate::edit_distance::actor_class_from_token(class);
-    match (EntityId::from_hex(id), class) {
+    match (EntityId::from_hex(id), stamp_class(tail)) {
         (Ok(id), Some(class)) => Stamped::Live(WriteActor::new(id, class)),
         _ => Stamped::NotStamped,
     }
 }
 
-/// The id and class an engine stamp's actor token names.
-fn stamp_token(message: &str) -> Option<(&str, &str)> {
-    let mut tokens = message.split_whitespace();
-    if tokens.next()? != STAMP {
-        return None;
-    }
-    let _verb = tokens.next()?;
-    tokens.next()?.strip_prefix("actor=")?.split_once('.')
+/// The actor class a stamp names after its id: `.<class>`, to the next
+/// space.
+fn stamp_class(tail: &str) -> Option<crate::EdgeActorClass> {
+    let class = tail.strip_prefix('.')?.split(' ').next()?;
+    crate::edit_distance::actor_class_from_token(class)
 }
 
-/// An engine stamp cut around its actor id, spelled exactly as [`stamp`]
-/// writes it: the message before the id, the id (an actor's, or
-/// [`ERASED_CALL_IDENTITY`]), and the rest from the class on.
-pub(super) struct StampCut<'m> {
-    pub(super) head: &'m str,
-    pub(super) id: &'m str,
-    pub(super) tail: &'m str,
-}
-
-/// `message` cut around its actor id, when it is an engine stamp:
-/// `oneiron.entity_doc.v1 <verb> actor=<id>.<class> op=...`, single spaced.
-pub(super) fn cut_stamp(message: &str) -> Option<StampCut<'_>> {
+/// `message` cut around its actor id, when it is an engine stamp spelled
+/// as [`stamp`] writes it (`oneiron.entity_doc.v1 <verb> actor=<id>.<class>
+/// op=...`, single spaced): the message before the id, the id (an actor's,
+/// or [`ERASED_CALL_IDENTITY`]), and the rest from the class on.
+pub(super) fn cut_stamp(message: &str) -> Option<(&str, &str, &str)> {
     let rest = message.strip_prefix(STAMP)?.strip_prefix(' ')?;
     let (verb, rest) = rest.split_once(' ')?;
     if verb.is_empty() {
@@ -392,5 +383,5 @@ pub(super) fn cut_stamp(message: &str) -> Option<StampCut<'_>> {
     let (id, _) = id_on.split_once('.')?;
     let head = message.get(..message.len() - id_on.len())?;
     let tail = id_on.get(id.len()..)?;
-    Some(StampCut { head, id, tail })
+    Some((head, id, tail))
 }
