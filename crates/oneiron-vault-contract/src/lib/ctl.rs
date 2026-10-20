@@ -405,6 +405,15 @@ pub enum CtlResponse {
     /// rides v3 with no version move, and a vault built before it sends
     /// none. A block that does not parse or validate reads as `None` too:
     /// unknown, nothing to pin, and never a failed `Ping`.
+    /// `settings_paths_revision` is the revision of the owner-path rule the
+    /// vault boots by
+    /// ([`SETTINGS_PATHS_REVISION`](crate::settings_paths::SETTINGS_PATHS_REVISION),
+    /// FIX 5187), and `artifact_public_slug_revision` that of its artifact
+    /// origin's public slug binding
+    /// ([`ARTIFACT_PUBLIC_SLUG_REVISION`](crate::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION),
+    /// FIX 5389), never the slug itself. Each rides v3 with a build floor:
+    /// a vault built before it sends none, which reads as unknown, never as
+    /// revision 1, and so does a value that is not a u32.
     Ping {
         ok: bool,
         vault: String,
@@ -417,6 +426,18 @@ pub enum CtlResponse {
             deserialize_with = "super::managed_backup::observed"
         )]
         managed_backup: Option<ManagedBackupFacts>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::version::observed_revision"
+        )]
+        settings_paths_revision: Option<u32>,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "super::version::observed_revision"
+        )]
+        artifact_public_slug_revision: Option<u32>,
     },
     Ok {
         ok: bool,

@@ -1,5 +1,7 @@
 //! The ctl dispatcher: every parsed ctl request a managed vault answers.
 
+use oneiron_vault_contract::artifact_origin::ARTIFACT_PUBLIC_SLUG_REVISION;
+use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
 use oneiron_vault_contract::{
     CONTRACT_VERSION, CtlRequest, CtlResponse, LegalHoldsNotProven, LegalHoldsWire,
 };
@@ -28,6 +30,8 @@ impl ManagedState {
                 contract_version: CONTRACT_VERSION,
                 readiness: self.readiness.clone(),
                 managed_backup: self.backup_facts.clone(),
+                settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
+                artifact_public_slug_revision: Some(ARTIFACT_PUBLIC_SLUG_REVISION),
             }),
             CtlRequest::Shed { cause, waited_secs } => {
                 self.guard_write()?;

@@ -1,4 +1,7 @@
-//! Wire version constants and SLIM gating.
+//! Wire version constants, SLIM gating and the revisions of the additive
+//! extensions a v3 vault reports on `Ping`.
+
+use serde::{Deserialize, Deserializer};
 
 /// First contract version carrying the SLIM rung. The v1 -> v2 bump is
 /// additive-only: every v1 request and response keeps byte-identical semantics
@@ -24,7 +27,12 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// managed backup facts on `Ping`
 /// ([`ManagedBackupFacts`](crate::ManagedBackupFacts)) carry a build floor
 /// too: a v3 vault built before it sends none, which a supervisor reads as
-/// unknown. Supervisor and vault move to v3 together; no v2 reader is kept.
+/// unknown. So do the revisions of the shared owner-path rule
+/// (`settings_paths_revision`, FIX 5187) and of the artifact origin's public
+/// slug binding (`artifact_public_slug_revision`, FIX 5389) on `Ping`; the
+/// latter's `--artifact-public-slug` flag is passed only to an installed
+/// engine at or after its floor, since a `Ping` comes after the flags are
+/// parsed. Supervisor and vault move to v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
@@ -33,4 +41,17 @@ pub const CONTRACT_VERSION: u32 = 3;
 #[must_use]
 pub const fn supports_slim(version: u32) -> bool {
     version >= SLIM_CONTRACT_VERSION
+}
+
+/// One extension's revision on `Ping` as a supervisor reads it: a value that
+/// is not a whole number a u32 holds reads as `None`, unknown, and never
+/// fails the `Ping` it rides.
+pub(super) fn observed_revision<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<u32>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value
+        .as_ref()
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|revision| u32::try_from(revision).ok()))
 }

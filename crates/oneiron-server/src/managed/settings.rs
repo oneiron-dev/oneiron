@@ -10,50 +10,25 @@
 //! contract's tables in
 //! [`oneiron_vault_contract::settings_policy`], which the supervisor reads
 //! too) and a key the schema does not have are refused by presence alone,
-//! and every owner path must lie in this vault's own storage. The rest is
+//! and every owner path must lie in this vault's own storage, by the rule
+//! the supervisor checks at intake too
+//! ([`oneiron_vault_contract::settings_paths`]). The rest is
 //! settled over the configuration argv built, through the config file's own
 //! apply and validators ([`crate::config::merge::settle_managed_settings`]).
 //! Nothing here reads the environment, HOME or a default config path.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use oneiron_vault_contract::settings_paths::{
+    check_owner_path, is_owner_path, owner_roots, queue_reads_default_root,
+};
 use oneiron_vault_contract::settings_policy::{ENVIRONMENT_KEYS, SUPERVISOR_OWNED, matches_any};
 
 use crate::config::merge::{settings_schema_keys, settle_managed_settings};
 use crate::config::{EmbedderProvider, KeystoreBackend, ServeArgs, ServeConfig};
 
 use super::args::{ManagedArgs, ManagedError, SettingsRefusal};
-
-/// The leaves that name a file or directory the server reads or writes. An
-/// array's items are its own leaf's.
-const OWNER_PATHS: &[&str] = &[
-    "dict_search_paths",
-    "embedder.model_dir",
-    "embedder.models_dir",
-    "oneironer.model_dir",
-    "oneironer.tiers.*.model_dir",
-    "backup.dir",
-    "import.queue_dir",
-    "import.claude_code_root",
-    "import.codex_root",
-    "import.hook_transcript_roots",
-    "failure_signals.candidates.*.instructions_file",
-    "device_sync.credential_file",
-    "browser.runtime",
-    "desktop.runtime",
-    "models.prompt_file",
-    "models.roles.*.prompt_file",
-    "models.roles.*.rungs.prompt_file",
-    "models.dreamer.summary_prompt_file",
-    "models.dreamer.resident_prompt_file",
-    "models.dreamer.task_prompt_file",
-    "models.dreamer.person_about_prompt_file",
-    "models.code_mode.prompt_package",
-    "models.code_mode.check.microsoft_tsc",
-    "models.decision_read.recipe",
-    "models.voice.extraction_prompt_file",
-];
 
 /// The reason token of the notice that the owner's voice settings name no
 /// socket to listen on (FIX 5017).
@@ -137,7 +112,7 @@ pub(super) fn prepare(
     let roots = owner_roots(&managed.data_dir, path.parent());
     visit(&table, &mut Vec::new(), &mut |field, value| match value {
         toml::Value::String(text)
-            if matches_any(field, OWNER_PATHS) && !in_vault(Path::new(text), &roots) =>
+            if is_owner_path(field) && check_owner_path(Path::new(text), &roots).is_err() =>
         {
             Err(refused(field, SettingsRefusal::OutsideVault))
         }
@@ -325,7 +300,7 @@ fn refuse_default_import_roots(table: &toml::Table) -> Result<(), ManagedError> 
         return Ok(());
     };
     let queue = import.get("queue").and_then(toml::Value::as_bool) == Some(true);
-    if queue && !(import.contains_key("claude_code_root") && import.contains_key("codex_root")) {
+    if queue_reads_default_root(queue, |leaf| import.contains_key(leaf)) {
         return Err(refused(&["import", "queue"], SettingsRefusal::OutsideVault));
     }
     Ok(())
@@ -360,34 +335,6 @@ fn visit_value(
             .try_for_each(|item| visit_value(item, field, check)),
         _ => Ok(()),
     }
-}
-
-/// The vault's data directory and the settings file's own directory, links
-/// resolved. One that does not exist yet, or is the filesystem root, holds
-/// no owner path.
-fn owner_roots(data_dir: &Path, settings_dir: Option<&Path>) -> Vec<PathBuf> {
-    [Some(data_dir), settings_dir]
-        .into_iter()
-        .flatten()
-        .filter_map(|dir| dir.canonicalize().ok())
-        .filter(|dir| dir.parent().is_some())
-        .collect()
-}
-
-/// Whether an owner path lies in this vault's own storage: absolute, with
-/// no `~` or `..` part, present, and under one of `roots` once its links are
-/// resolved.
-fn in_vault(path: &Path, roots: &[PathBuf]) -> bool {
-    let plain = path.is_absolute()
-        && path.components().all(|part| match part {
-            Component::ParentDir => false,
-            Component::Normal(name) => !name.as_encoded_bytes().starts_with(b"~"),
-            _ => true,
-        });
-    plain
-        && path
-            .canonicalize()
-            .is_ok_and(|real| roots.iter().any(|root| real.starts_with(root)))
 }
 
 /// The typed refusal of one dotted field; its section is the first key of a
