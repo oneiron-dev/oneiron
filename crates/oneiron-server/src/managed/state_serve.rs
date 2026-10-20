@@ -1582,10 +1582,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let _ = builtin_host.await;
     coach_host.abort();
     let _ = coach_host.await;
-    if let Some(failure_signals) = failure_signals {
-        failure_signals.abort();
-        let _ = failure_signals.await;
-    }
+    failure_signals.abort();
+    let _ = failure_signals.await;
     for worker in ladder_workers {
         worker.abort();
         let _ = worker.await;
