@@ -10,7 +10,7 @@ use crate::agent_def::AgentAuthorLease;
 use crate::attempt_queue::AttemptRecord;
 use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunReplayGeneration, CodeRunReplayRecord};
-use crate::code_run::storage::ExecutorStorage;
+use crate::code_run::storage::{ExecutorStorage, stamp_response_owner_in_txn};
 use crate::code_run::types::{
     SelfAgentVerbCall, SelfCall, SelfDispatchOutcome, SelfEffect, SelfFailedResult,
 };
@@ -111,19 +111,28 @@ impl<'a> HostSelfDispatcher<'a> {
         }))
     }
 
-    /// Puts a verb write's receipt. A program's write binds its step in the
-    /// reservation's commit (`settles` false), under its live lease, and
-    /// settles the step in the commit that keeps the answer (`settles`
-    /// true), which nothing about the step can fail. Every other run's put is
-    /// the one it had.
+    /// Puts a verb write's receipt, for the write run `run` made. A
+    /// program's write binds its step in the reservation's commit
+    /// (`settles` false), under its live lease, and settles the step in the
+    /// commit that keeps the answer (`settles` true), which nothing about
+    /// the step can fail. Every other run's put is the one it had. A
+    /// reservation names whose replies the receipt holds, `run`'s under this
+    /// dispatcher's actor (FIX 5718).
     pub(super) fn put_write_receipt(
         &self,
         receipt: &CodeRunReplayRecord,
         expected: Option<CodeRunReplayGeneration>,
         program: Option<&ProgramWrite>,
         settles: bool,
+        run: EntityId,
     ) -> Result<CodeRunReplayGeneration> {
+        let actor = self.actor.entity_ref();
         let (Some(write), ExecutorStorage::Canonical(vault)) = (program, &self.storage) else {
+            if !settles {
+                return self
+                    .storage
+                    .put_owned_code_run_replay_record(receipt, expected, run, actor);
+            }
             return self
                 .storage
                 .put_code_run_replay_record_if_generation_with_heal(receipt, expected, None);
@@ -135,7 +144,10 @@ impl<'a> HostSelfDispatcher<'a> {
                 receipt,
                 expected,
                 None,
-                |wtxn| bind_program_write_in_txn(vault, wtxn, write, now),
+                |wtxn| {
+                    stamp_response_owner_in_txn(vault, wtxn, receipt.run_id, run, actor)?;
+                    bind_program_write_in_txn(vault, wtxn, write, now)
+                },
             );
         }
         let digest = answer_digest(receipt);

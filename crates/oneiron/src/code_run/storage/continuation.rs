@@ -97,6 +97,7 @@ pub(crate) fn seed_continuation_run(
         for output in inherited {
             vault.retain_inherited_result_in_txn(txn, child.run_id, source, output)?;
         }
-        Ok(())
+        // The child's replies are its source's actor's (FIX 5718).
+        super::response_owners::inherit_response_owner_in_txn(vault, txn, child.run_id, &source)
     })
 }

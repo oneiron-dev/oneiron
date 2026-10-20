@@ -1477,6 +1477,13 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         ))?;
         // The run's recorded outputs hold what its calls read.
         self.admit_result_read(storage)?;
+        // Once an erase of the run's actor took its replies, none is read
+        // back (FIX 5718).
+        if storage.code_run_response_erased(self.run_id)? {
+            return Err(Error::InvalidConfig(
+                "recorded output read refused: response_erased".into(),
+            ));
+        }
         if path.starts_with(RESULT_READ_ROOT) {
             return self.read_stored_result(storage, path);
         }

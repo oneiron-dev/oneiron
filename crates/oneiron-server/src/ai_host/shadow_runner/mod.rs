@@ -19,19 +19,26 @@
 //! its effect collector. No vault write path, gated write, lease, auth
 //! header or secret resolver reaches it, and nothing installs or promotes
 //! anything.
+//!
+//! An arm's bodies are its source run's kept content (FIX 5718): the
+//! runner's sweep releases each live arm whose source actor an erase or
+//! actor scrub took, every `ARM_SOURCE_SWEEP`, and until it does each
+//! read and publication of the arm asks, in a short read of its own, whether
+//! the actor is still here, and answers typed unavailable once it is not.
 
 mod arm_store;
 mod model;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::Duration;
 
 use oneiron::code_run::shadow_runner::{
     PreparedShadowStep, SHADOW_PROTOCOL_VERSION, ShadowArmLease, ShadowIsolationRequired,
     ShadowRequestDigest, ShadowRunFuture, ShadowRunRequest, ShadowRunResult, ShadowRunner,
-    ShadowSandboxBinding, ShadowScope, ShadowSource, ShadowStatus, ShadowStepIdentity,
-    ShadowStepRun, ShadowTarget, ShadowUnavailable, ShadowUnavailableReason as Reason,
-    prepare_shadow_step_source,
+    ShadowSandboxBinding, ShadowScope, ShadowSource, ShadowSourceHold, ShadowStatus,
+    ShadowStepIdentity, ShadowStepRun, ShadowTarget, ShadowUnavailable,
+    ShadowUnavailableReason as Reason, prepare_shadow_step_source, shadow_source_gone,
 };
 use oneiron::code_run::{ExecutorStepStart, step_replay_capsules};
 use oneiron::compaction::output::OutputRef;
@@ -55,6 +62,12 @@ type Cancels = Arc<Mutex<CancelMap>>;
 
 /// An arm's source, or why it has none.
 type Outcome<T> = std::result::Result<T, ShadowUnavailable>;
+
+/// How often a runner releases each live arm whose source actor is gone
+/// (FIX 5718; CALLS "shadow arm release sweep"): an erase reaches a live
+/// arm within it, without waiting for a reader, and every read and
+/// publication of the arm before then is unavailable.
+const ARM_SOURCE_SWEEP: Duration = Duration::from_secs(30);
 
 /// The host's runner of shadow arms.
 pub struct ServerShadowRunner {
@@ -80,26 +93,39 @@ impl ServerShadowRunner {
         handle: tokio::runtime::Handle,
         runtimes: ShadowRuntimes,
     ) -> Result<Self> {
+        let arms = Arc::new(ArmRegistry::open()?);
+        handle.spawn(sweep_gone_sources(Arc::downgrade(&arms), server.clone()));
         Ok(Self {
             server,
             handle,
             runtimes,
-            arms: Arc::new(ArmRegistry::open()?),
+            arms,
             cancels: Cancels::default(),
         })
     }
 
     /// The whole body `body` of the arm `lease` holds, while it holds it:
     /// how a caller adopts an arm's evidence before it releases the lease.
+    /// Unavailable once the lease holds no arm or the arm no such body
+    /// (`SourceMissing`), and once an erase or actor scrub of the arm's
+    /// source actor took its content (`SourceWithheld`, FIX 5718), which
+    /// releases the arm.
     ///
     /// # Errors
     ///
     /// The arm's store failing, and a body that is not its digest.
-    pub fn read_body(&self, lease: &ShadowArmLease, body: OutputRef) -> Result<Option<Vec<u8>>> {
+    pub fn read_body(&self, lease: &ShadowArmLease, body: OutputRef) -> Result<Outcome<Vec<u8>>> {
         let Some(arm) = self.arms.get(lease) else {
-            return Ok(None);
+            return Ok(Err(ShadowUnavailable::new(Reason::SourceMissing, "lease")));
         };
-        arm.store().read(body)
+        if let Some(withheld) = arm.store().source_withheld() {
+            self.arms.release(lease);
+            return Ok(Err(withheld));
+        }
+        Ok(arm
+            .store()
+            .read(body)?
+            .ok_or_else(|| ShadowUnavailable::new(Reason::SourceMissing, "body")))
     }
 
     /// Releases `lease`: its arm's bodies go once no reader holds them.
@@ -222,7 +248,10 @@ impl Arm {
             return Ok(ShadowStatus::Unavailable { unavailable });
         }
         let lease = ShadowArmLease::mint();
-        let arm = self.arms.open_arm(lease)?;
+        let source_actor = prepared.source_actor();
+        let arm = self
+            .arms
+            .open_arm(lease, source_actor, source_hold(&vault, source_actor))?;
         result.lease = Some(lease);
         let gateway = Gateway {
             server: &server,
@@ -236,17 +265,44 @@ impl Arm {
         result.model_receipts.push(called.receipt);
         let answer = match called.answer {
             Ok(answer) => answer,
-            Err(unavailable) => return Ok(ShadowStatus::Unavailable { unavailable }),
+            Err(unavailable) => return Ok(self.withheld_or(result, unavailable)),
         };
-        let ran = match self.run_step(prepared, answer, arm).await? {
+        let ran = match self.run_step(prepared, answer, Arc::clone(&arm)).await? {
             Ok(ran) => ran,
-            Err(unavailable) => return Ok(ShadowStatus::Unavailable { unavailable }),
+            Err(unavailable) => return Ok(self.withheld_or(result, unavailable)),
         };
+        // An erase that took the source's content while the arm ran leaves
+        // nothing of it to publish (FIX 5718).
+        if let Some(withheld) = arm.store().source_withheld() {
+            return Ok(self.withheld_or(result, withheld));
+        }
         result.outputs = ran.outputs;
         result.effect_trace = Some(ran.effect_trace);
         result.bridge_trace = Some(ran.bridge_trace);
         result.bridge = Some(ran.bridge);
         Ok(ran.status)
+    }
+
+    /// The status of an arm that stopped for `unavailable`. One whose
+    /// source an erase or actor scrub took by now is `SourceWithheld` for
+    /// `response_erased` (FIX 5718), and its arm is released at once: its
+    /// receipts stay in `result`, and no lease to its bodies does.
+    fn withheld_or(
+        &self,
+        result: &mut ShadowRunResult,
+        unavailable: ShadowUnavailable,
+    ) -> ShadowStatus {
+        let held = result.lease.and_then(|lease| self.arms.get(&lease));
+        let withheld = held.and_then(|arm| arm.store().source_withheld());
+        let Some(withheld) = withheld else {
+            return ShadowStatus::Unavailable { unavailable };
+        };
+        if let Some(lease) = result.lease.take() {
+            self.arms.release(&lease);
+        }
+        ShadowStatus::Unavailable {
+            unavailable: withheld,
+        }
     }
 
     /// Heals `answer` and runs its program for `prepared`'s step, on a
@@ -373,6 +429,44 @@ fn prepare_step(vault: &Vault, step: ShadowStepIdentity) -> Result<Outcome<Prepa
         )));
     };
     prepare_shadow_step_source(vault, &capsule)
+}
+
+/// What an arm of a step `actor`'s source run is for asks at each read and
+/// publication (FIX 5718): whether the actor is still here, in a short read
+/// of the vault of its own. A vault that is gone holds nothing.
+fn source_hold(vault: &Arc<Vault>, actor: EntityId) -> ShadowSourceHold {
+    let vault = Arc::downgrade(vault);
+    ShadowSourceHold::new(move || {
+        vault
+            .upgrade()
+            .is_some_and(|vault| !shadow_source_gone(&vault, &actor))
+    })
+}
+
+/// The runner's sweep (FIX 5718): every `ARM_SOURCE_SWEEP`, each live arm
+/// of `arms` whose source actor is gone is released, its gone check run on
+/// a blocking worker. It ends with the runner's arms.
+async fn sweep_gone_sources(arms: Weak<ArmRegistry>, server: Weak<SyncServer>) {
+    let mut tick = tokio::time::interval(ARM_SOURCE_SWEEP);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let Some(arms) = arms.upgrade() else {
+            return;
+        };
+        let Some(vault) = server.upgrade().map(|server| Arc::clone(server.vault())) else {
+            continue;
+        };
+        let swept = tokio::task::spawn_blocking(move || {
+            arms.release_gone(|actor| shadow_source_gone(&vault, actor))
+        })
+        .await;
+        match swept {
+            Ok(0) => {}
+            Ok(released) => tracing::debug!(released, "shadow arms of a gone actor were released"),
+            Err(error) => tracing::debug!(%error, "a shadow arm sweep did not finish"),
+        }
+    }
 }
 
 /// `reason`, caused by `cause`, as an arm's status.

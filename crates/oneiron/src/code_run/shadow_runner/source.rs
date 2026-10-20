@@ -21,7 +21,7 @@ use crate::code_run::{
 };
 use crate::limit_ask::EngineLimit;
 use crate::secret_rotation::ArtifactTaintState;
-use crate::{LlmRequest, Result, Vault};
+use crate::{EntityId, LlmRequest, Result, Vault};
 
 /// An arm's source, or why it has none.
 type Outcome<T> = std::result::Result<T, ShadowUnavailable>;
@@ -41,6 +41,9 @@ pub(crate) struct FrozenBody {
 /// calls to their end, and the bodies the step's program may read back.
 pub struct PreparedShadowStep {
     pub(crate) step: ShadowStepIdentity,
+    /// The actor whose step the capsule holds: the arm's content is its
+    /// source run's, and goes with an erase of this actor (FIX 5718).
+    pub(crate) source_actor: EntityId,
     pub(crate) request: LlmRequest,
     pub(crate) request_digest: ShadowRequestDigest,
     pub(crate) binding: Option<CapsuleRungBinding>,
@@ -64,6 +67,13 @@ impl PreparedShadowStep {
     #[must_use]
     pub const fn step(&self) -> &ShadowStepIdentity {
         &self.step
+    }
+
+    /// The actor whose step its source run is (FIX 5718): an erase or
+    /// actor scrub of it releases every arm of the step.
+    #[must_use]
+    pub const fn source_actor(&self) -> EntityId {
+        self.source_actor
     }
 
     /// The step's request as stored, each secret in it its custody handle.
@@ -155,8 +165,16 @@ pub fn prepare_shadow_step_source(
     vault: &Vault,
     capsule: &StepReplayCapsule,
 ) -> Result<Outcome<PreparedShadowStep>> {
-    if capsule.content.actor().is_none() {
+    let Some(source_actor) = capsule.content.actor() else {
         return Ok(Err(unavailable(Reason::SourceWithheld, "capsule_erased")));
+    };
+    // An actor gone by now took its step's content, though its scrub has
+    // yet to reach this capsule (FIX 5718).
+    if shadow_source_gone(vault, &source_actor) {
+        return Ok(Err(unavailable(
+            Reason::SourceWithheld,
+            crate::code_run::RESPONSE_ERASED,
+        )));
     }
     let Some(request_digest) = ShadowRequestDigest::of_capsule(capsule) else {
         return Ok(Err(unavailable(Reason::SourceWithheld, "request_withheld")));
@@ -185,6 +203,7 @@ pub fn prepare_shadow_step_source(
     let bridge_end = window.bridge_calls.len() as u64;
     Ok(Ok(PreparedShadowStep {
         step: ShadowStepIdentity::of(capsule),
+        source_actor,
         request,
         request_digest,
         binding: capsule.binding.clone(),
@@ -326,6 +345,15 @@ fn freeze_bodies(
         "a shadow step's earlier bodies are frozen"
     );
     Ok(Ok(frozen))
+}
+
+/// Whether `actor`, the actor an arm's source run is for, is gone here
+/// (FIX 5718): soft-deleted or erased, read in a short read transaction of
+/// its own, as each read and publication of the arm asks it. A read that
+/// fails counts as gone.
+#[must_use]
+pub fn shadow_source_gone(vault: &Vault, actor: &EntityId) -> bool {
+    crate::code_run::storage::actor_gone(vault, actor)
 }
 
 impl ShadowRequestDigest {

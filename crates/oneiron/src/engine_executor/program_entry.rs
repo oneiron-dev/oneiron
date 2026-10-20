@@ -282,9 +282,11 @@ impl<'a> EngineNativeExecutor<'a> {
             return Ok((record, Some(generation)));
         }
         let record = CodeRunReplayRecord::new(config.run_id, config.determinism);
-        let generation = self
-            .storage
-            .put_code_run_replay_record_if_generation_with_heal(&record, None, None)?;
+        // The program's replies are its actor's (FIX 5718).
+        let actor = self.gated_write.actor().entity_ref();
+        let generation =
+            self.storage
+                .put_owned_code_run_replay_record(&record, None, config.run_id, actor)?;
         Ok((record, Some(generation)))
     }
 

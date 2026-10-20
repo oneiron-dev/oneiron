@@ -825,6 +825,10 @@ pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<Enti
         {
             rows.extend(answer.rows?);
         }
+        // An answer an erase took keeps the rows it was served from (FIX 5718).
+        if let Some(kept) = super::wait_rows::erased_answer_rows(&call.outcome) {
+            rows.extend(kept?);
+        }
         // A parked call's delivered reply's rows, once the run resumed from
         // it (FIX 5455).
         rows.extend(

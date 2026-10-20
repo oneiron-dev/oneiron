@@ -35,8 +35,8 @@ use std::pin::Pin;
 
 pub(crate) use self::bridge::{ArmReads, ShadowBridgeHost};
 pub use self::frames::{ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame};
-pub use self::source::{PreparedShadowStep, prepare_shadow_step_source};
-pub use self::store::ShadowBodyStore;
+pub use self::source::{PreparedShadowStep, prepare_shadow_step_source, shadow_source_gone};
+pub use self::store::{ShadowBodyStore, ShadowSourceHold};
 pub use self::types::{
     ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef,
     ShadowBridgeWindow, ShadowDeterminism, ShadowIsolation, ShadowIsolationRequired,

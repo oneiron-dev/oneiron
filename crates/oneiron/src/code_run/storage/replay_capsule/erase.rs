@@ -6,7 +6,11 @@
 //! runs this scrub too, so it retires no body instance: the erase cause
 //! comes from the provenance door alone (KS-2B1), and a release keeps the
 //! restore window. A restore runs this again for every erased actor, so a
-//! restored capsule stays erased.
+//! restored capsule stays erased. It is also the one callback the actor's
+//! erase reaches its runs' reply content by (FIX 5718,
+//! `response_erase`); the hard erase's retirement of the same bodies comes
+//! from the provenance door, which reads them here first
+//! ([`capsule_bodies_in_txn`], FIX 6278).
 //!
 //! The same tombstone fences every later write: a late capture, a finalize
 //! and a fork answer's publication read it in their own writer and keep
@@ -15,11 +19,13 @@
 use super::super::super::replay::{CodeRunRawOutput, ResultOccurrence};
 use super::super::super::replay_capsule::{CapsuleContent, CapsuleRequest, StepReplayCapsule};
 use super::super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
+use super::super::response_erase::erase_actor_responses_in_txn;
 use super::{CAPSULES, FORKS, ForkRow};
 use crate::compaction::output::OutputRef;
-use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::provenance::body::release_body_in_txn;
-use crate::side_table::SideKey;
+use crate::side_table::{SideKey, SideTableDbs};
+use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 
 /// A capsule's key: its attempt, lease generation and step.
@@ -28,7 +34,9 @@ type CapsuleKey = (EntityId, u64, u64);
 /// Erases `actor` from the capsules of its steps: each keeps what the step
 /// was ([`erased`]) and releases every body it named. A capsule erased
 /// before is left as it is, and a row that does not decode names no actor
-/// and stays as it is. An id whose entity is no actor scans nothing.
+/// and stays as it is. An id whose entity is no actor scans nothing. The
+/// reply content of the actor's runs, these capsules' runs among them, is
+/// erased beside them first (FIX 5718), release only as here.
 ///
 /// # Errors
 ///
@@ -38,11 +46,63 @@ pub(crate) fn erase_capsule_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    if names_no_actor(vault, wtxn, actor)? {
+    if names_no_actor(&vault.store, wtxn, actor)? {
         return Ok(());
     }
+    let owned = owned_capsules_in_txn(&vault.store, wtxn, actor)?;
+    let runs: Vec<EntityId> = owned.iter().map(|(_, capsule)| capsule.run).collect();
+    erase_actor_responses_in_txn(vault, wtxn, actor, &runs)?;
+    if owned.is_empty() {
+        return Ok(());
+    }
+    let answers = fork_answers_in_txn(&vault.store, wtxn)?;
+    for (key, capsule) in owned {
+        let bodies = capsule_bodies(&key, &capsule, &answers);
+        release_bodies_in_txn(vault, wtxn, capsule.run, &bodies)?;
+        CAPSULES.put(vault, wtxn, &key, &erased(capsule))?;
+    }
+    Ok(())
+}
+
+/// Every body `actor`'s capsules name, with the run that owns it: each
+/// kept request, each start and each fork answer, read before the erase
+/// releases them, so the provenance door's hard erase retires their
+/// instances (FIX 6278). A capsule erased before names none.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(in crate::code_run::storage) fn capsule_bodies_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<Vec<(EntityId, OutputRef, String)>> {
+    let owned = owned_capsules_in_txn(store, txn, actor)?;
+    if owned.is_empty() {
+        return Ok(Vec::new());
+    }
+    let answers = fork_answers_in_txn(store, txn)?;
+    let mut bodies = Vec::new();
+    for (key, capsule) in &owned {
+        let run = capsule.run;
+        bodies.extend(
+            capsule_bodies(key, capsule, &answers)
+                .into_iter()
+                .map(|(body, path)| (run, body, path)),
+        );
+    }
+    Ok(bodies)
+}
+
+/// The capsules that hold `actor`'s steps, by their keys. A row that does
+/// not decode names no actor.
+fn owned_capsules_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> Result<Vec<(CapsuleKey, StepReplayCapsule)>> {
     let mut owned = Vec::new();
-    for row in CAPSULES.iter_raw_from(&vault.store, wtxn, &[])? {
+    for row in CAPSULES.iter_raw_from(dbs, txn, &[])? {
         let (key, bytes) = row?;
         let Some(key) = <CapsuleKey as SideKey>::decode_key(&key) else {
             continue;
@@ -53,29 +113,31 @@ pub(crate) fn erase_capsule_actor_in_txn(
             owned.push((key, capsule));
         }
     }
-    if owned.is_empty() {
-        return Ok(());
+    Ok(owned)
+}
+
+/// The bodies the capsule at `key` names: its request when it kept one
+/// (a withheld request kept none, FIX 6254), its start, and each fork answer
+/// among `answers` that regenerated it.
+fn capsule_bodies(
+    key: &CapsuleKey,
+    capsule: &StepReplayCapsule,
+    answers: &[(CapsuleKey, OutputRef, String)],
+) -> Vec<(OutputRef, String)> {
+    let mut bodies = Vec::new();
+    if let CapsuleRequest::Kept { body, path, .. } = &capsule.request {
+        bodies.push((*body, path.clone()));
     }
-    let answers = fork_answers_in_txn(vault, wtxn)?;
-    for (key, capsule) in owned {
-        // A withheld request kept no body (FIX 6254): only its start is.
-        let mut bodies = Vec::new();
-        if let CapsuleRequest::Kept { body, path, .. } = &capsule.request {
-            bodies.push((*body, path.clone()));
-        }
-        if let Some(start) = &capsule.start {
-            bodies.push((start.body, start.path.clone()));
-        }
-        bodies.extend(
-            answers
-                .iter()
-                .filter(|(at, _, _)| *at == key)
-                .map(|(_, body, path)| (*body, path.clone())),
-        );
-        release_bodies_in_txn(vault, wtxn, capsule.run, &bodies)?;
-        CAPSULES.put(vault, wtxn, &key, &erased(capsule))?;
+    if let Some(start) = &capsule.start {
+        bodies.push((start.body, start.path.clone()));
     }
-    Ok(())
+    bodies.extend(
+        answers
+            .iter()
+            .filter(|(at, _, _)| at == key)
+            .map(|(_, body, path)| (*body, path.clone())),
+    );
+    bodies
 }
 
 /// What an erase leaves of a capsule (FIX 6144): what the step was (its
@@ -97,11 +159,11 @@ fn erased(mut capsule: StepReplayCapsule) -> StepReplayCapsule {
 /// Every fork answer the contribution rows keep, by the capsule its fork
 /// regenerated: its body and path. A row that does not decode names none.
 fn fork_answers_in_txn(
-    vault: &Vault,
+    dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Vec<(CapsuleKey, OutputRef, String)>> {
     let mut answers = Vec::new();
-    for row in FORKS.iter_raw_from(&vault.store, txn, &[])? {
+    for row in FORKS.iter_raw_from(dbs, txn, &[])? {
         let (_, bytes) = row?;
         if let Ok(ForkRow::Fork(receipt)) = FORKS.decode_value(&bytes) {
             let at = (
@@ -139,8 +201,12 @@ fn release_bodies_in_txn(
 
 /// Whether `id`'s entity is here and is no actor: a person, a machine or an
 /// agent is one, and an id with no entity here may have been one.
-fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
+pub(in crate::code_run::storage) fn names_no_actor(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if let Some(raw) = store.port_entity_raw(txn, id)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
     {
         return Ok(!matches!(
@@ -158,7 +224,11 @@ fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result
 /// its row other than an archive), or hard-deleted and erased. A capsule's
 /// content is then never captured, finalized or added to. A marker that
 /// cannot be read counts as gone.
-pub(super) fn actor_gone_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> bool {
+pub(in crate::code_run::storage) fn actor_gone_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &EntityId,
+) -> bool {
     let gone = (|| -> Result<bool> {
         Ok(crate::ports::removed_in_txn(&vault.store, txn, actor)?
             || vault

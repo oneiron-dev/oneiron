@@ -211,8 +211,9 @@ use rmpv::Value;
 /// row-held response `row` owns was carried under, and a step-state payload
 /// its stamps name goes now (KS-2B1), as do the host's HTTP idempotency
 /// entries and media jobs its stamps name, each left its erased form
-/// (KS-2B2). A delete keeps every key, so its restore window stays: this
-/// door is the one erase cause.
+/// (KS-2B2), and the reply bodies of an erased actor's code runs and its
+/// replay capsules' bodies (FIX 5718, FIX 6278). A delete keeps every key,
+/// so its restore window stays: this door is the one erase cause.
 pub(crate) fn erase_row_provenance_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -237,6 +238,10 @@ pub(crate) fn erase_row_provenance_in_txn(
     body::release_owner_bodies_in_txn(store, txn, row)?;
     #[cfg(unix)]
     if erase {
+        // An erased actor's code runs' replies and its replay capsules'
+        // bodies retire here, read before its actor scrub releases them
+        // (FIX 5718, FIX 6278).
+        crate::code_run::retire_actor_responses_in_txn(store, txn, row)?;
         crate::store::erase_bodies_in_txn(store, txn, row, &held)?;
         crate::llm::erase_step_state_owner_in_txn(store, txn, row)?;
         crate::store::erase_sync_response_owner_in_txn(store, txn, row)?;

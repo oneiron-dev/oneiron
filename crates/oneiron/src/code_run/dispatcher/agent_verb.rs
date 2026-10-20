@@ -139,7 +139,8 @@ impl HostSelfDispatcher<'_> {
             KeptWrite::Fresh(stopped) => stopped,
         };
         let mut receipt = CodeRunReplayRecord::new(receipt_id, CodeRunDeterminism::new(0, [0; 32]));
-        let generation = self.put_write_receipt(&receipt, stopped, program.as_ref(), false)?;
+        let generation =
+            self.put_write_receipt(&receipt, stopped, program.as_ref(), false, site.run_id)?;
         // A call a code consent wait may bind carries its place in the run
         // (DOOR-079 1a), so a hold for consent alone binds the wait to it.
         let consent_site = self.code_consent_site(&call, site, ordinal, receipt_id)?;
@@ -205,7 +206,13 @@ impl HostSelfDispatcher<'_> {
             0,
             0,
         )?);
-        self.put_write_receipt(&receipt, Some(generation), program.as_ref(), true)?;
+        self.put_write_receipt(
+            &receipt,
+            Some(generation),
+            program.as_ref(),
+            true,
+            site.run_id,
+        )?;
         Ok(outcome)
     }
 

@@ -532,6 +532,18 @@ pub(crate) fn is_result_output_path(path: &str) -> bool {
         || resumed_output_wait(path).is_some()
 }
 
+/// Whether the run's output at `path` holds reply content an erase of the
+/// run's actor takes (FIX 5718; CALLS "reply-bearing outputs"): every
+/// output but the run's control bodies, which carry what it is and how it
+/// stands: its config marker, its steps' terminal markers and their
+/// trailing-speech markers. A result, a resumed reply, a provider's reply,
+/// a program, an observation and each file a step wrote hold one.
+pub(crate) fn holds_reply_content(path: &str) -> bool {
+    path != CONFIG_OUTPUT_PATH
+        && !is_terminal_output_path(path)
+        && !path.ends_with(FALLBACK_SPEECH_MARKER_SUFFIX)
+}
+
 /// The reply the wait step `seq` parked on was answered with, published when
 /// the run resumed from it: the result of the step's parked call. The path
 /// names the wait, so the record alone counts the run's resumes from one.

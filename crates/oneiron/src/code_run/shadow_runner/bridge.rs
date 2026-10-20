@@ -259,6 +259,17 @@ impl<'a> ShadowBridgeHost<'a> {
         self.hard_failure || self.stopped.is_some()
     }
 
+    /// The arm's source still holds its content, or the arm stops for it
+    /// (FIX 5718): once an erase or actor scrub of the source run's actor
+    /// took it, no read or publication of the arm goes on, and the arm is
+    /// unavailable, `SourceWithheld` for `response_erased`.
+    fn hold_source(&mut self) -> Result<()> {
+        match self.store.source_withheld() {
+            Some(withheld) => Err(self.stop(withheld)),
+            None => Ok(()),
+        }
+    }
+
     /// Stops the arm for `unavailable` (the first reason stands), and the
     /// error the program's call fails with: no guest-visible answer exists.
     fn stop(&mut self, unavailable: ShadowUnavailable) -> Error {
@@ -557,11 +568,13 @@ impl<'a> ShadowBridgeHost<'a> {
 
 impl JsCodeModeHost for ShadowBridgeHost<'_> {
     fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
+        self.hold_source()?;
         self.streams.write(self.store, stream, frame)?;
         Ok(true)
     }
 
     fn read_recoverable_output(&mut self, path: &str) -> Result<Option<Vec<u8>>> {
+        self.hold_source()?;
         self.admit_read()?;
         if path.starts_with(RESULT_READ_ROOT) {
             return self.read_stored_result(path);
@@ -586,6 +599,7 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
     }
 
     fn store_reply(&mut self, reply: &Value) -> Result<Option<Value>> {
+        self.hold_source()?;
         let bytes = serde_json::to_vec(reply).map_err(|error| {
             Error::InvalidConfig(format!("result body encoding failed: {error}"))
         })?;
@@ -596,6 +610,7 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
     }
 
     fn result_call(&mut self, call: JsResultCall) -> Result<Value> {
+        self.hold_source()?;
         match call {
             JsResultCall::Store {
                 name,
@@ -616,6 +631,7 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
         if let Some(stopped) = self.stopped.clone() {
             return Err(self.stop(stopped));
         }
+        self.hold_source()?;
         let seq = self.next_seq;
         self.next_seq = seq.saturating_add(1);
         let started_at_ms = self.determinism.frozen_unix_ms.saturating_add(seq);
@@ -643,6 +659,17 @@ impl JsCodeModeHost for ShadowBridgeHost<'_> {
             // answers as a trap: the live guest read it as a response.
             Err(_) if self.cursor.consumed() > at => {
                 let outcome = self.trapped_outcome(at)?;
+                // An erase of its run's actor took the reply the live guest
+                // read (FIX 5718): the arm stops there, the call it matched
+                // kept, never answered by anything else.
+                if response_erased(&outcome) {
+                    self.record_matched(at)?;
+                    let erased = ShadowUnavailable::new(
+                        Reason::SourceWithheld,
+                        crate::code_run::RESPONSE_ERASED,
+                    );
+                    return Err(self.stop(erased));
+                }
                 if !declined_halt(&outcome) {
                     self.hard_failure = true;
                 }
@@ -712,6 +739,15 @@ fn unreplayable(call: &SelfCall) -> Option<ShadowUnavailable> {
         ),
         _ => None,
     }
+}
+
+/// Whether `outcome` is the failure an erase of its run's actor left in a
+/// recorded call's place (FIX 5718).
+fn response_erased(outcome: &SelfDispatchOutcome) -> bool {
+    matches!(
+        outcome,
+        SelfDispatchOutcome::Failed(failed) if failed.error == crate::code_run::RESPONSE_ERASED
+    )
 }
 
 /// Whether `outcome` is the fail-closed answer a call gets once its run's
