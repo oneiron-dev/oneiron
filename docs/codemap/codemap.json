@@ -1389,7 +1389,7 @@
      "path": "src/agent_dispatch/workflow/member_context.rs",
      "purpose": "A member's bound run reads its context on that member's own lane (FIX 5416): the memory and chat a step…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -19002,6 +19002,16 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation/visibility/private_sources.rs",
+     "purpose": "The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -56937,6 +56947,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/highway_runner/workflow_try/settle.rs",
+     "purpose": "An ended run's TASK settlement, split from its parent",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/highway_status.rs",
      "purpose": "The highway's Status arm (OF-220): any handle's status, and a poll",
      "surface": {
@@ -57252,7 +57272,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RunControl",
@@ -57264,7 +57284,7 @@
      "purpose": "Pause and resume of one run branch (DOOR-100, FIX 4501, Engine 10-20 on the C002 pattern)…",
      "surface": {
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -62871,7 +62891,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "enum": 2,
       "fn": 6,
       "re-export": 16,
@@ -64943,7 +64963,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65902,7 +65922,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 200,
+     "files": 201,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66072,7 +66092,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4121,
+   "source_files": 4123,
    "test_files": 902
   },
   "oneiron-android": {
