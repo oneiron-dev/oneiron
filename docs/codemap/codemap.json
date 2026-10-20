@@ -5409,7 +5409,7 @@
      "path": "src/batch/export/document_import.rs",
      "purpose": "Validating archive import through ordinary admission doors, never sync replay",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6
      }
     },
@@ -19973,18 +19973,28 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/confirmed.rs",
+     "purpose": "The pending-confirmed-delete gate of a due owner-confirmed erase (FIX 6337)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/delete/facade.rs",
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/delete/headerless.rs",
@@ -20025,6 +20035,7 @@
      "path": "src/deletion/delete/mod.rs",
      "purpose": "—",
      "surface": {
+      "crate-vis": 1,
       "re-export": 3
      }
     },
@@ -20202,7 +20213,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "re-export": 11
      }
     },
@@ -20213,7 +20224,7 @@
      "path": "src/deletion/publish.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -65355,7 +65366,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66435,7 +66446,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4154,
+   "source_files": 4155,
    "test_files": 902
   },
   "oneiron-android": {
