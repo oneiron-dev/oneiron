@@ -475,7 +475,7 @@ pub(crate) async fn create_core_conversation_turn(
                 .await?;
                 entity_receipt(output)?
             }
-            None => super::facade::host_doors::write_core_turn(&server, input).await?,
+            None => super::facade::host_doors::write_core_turn(&server, &auth, input).await?,
         };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = projection::project_entity_parts(

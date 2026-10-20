@@ -30,6 +30,27 @@ pub(super) fn authorize_in_txn(
     selector: &SyncSelector,
     writer: Option<EntityId>,
 ) -> Result<DocumentGrant> {
+    authorize_at_in_txn(
+        vault,
+        txn,
+        scope,
+        selector,
+        writer,
+        crate::unix_seconds_now(),
+    )
+}
+
+/// [`authorize_in_txn`] with the grant's expiry judged at `now_secs`: an
+/// export's born-with sidecar takes the clock the export's own grant check
+/// read (FIX 5937).
+pub(super) fn authorize_at_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    writer: Option<EntityId>,
+    now_secs: u64,
+) -> Result<DocumentGrant> {
     let raw = vault
         .get_raw_in(txn, &selector.grant_id)?
         .ok_or_else(|| selector_err(SelectorError::GrantNotFound))?;
@@ -68,7 +89,7 @@ pub(super) fn authorize_in_txn(
     {
         return Err(denied());
     }
-    if !grant.confers_at(crate::unix_seconds_now()) {
+    if !grant.confers_at(now_secs) {
         return Err(selector_err(SelectorError::GrantExpired));
     }
     // A readonly fold uses exactly this writer snapshot and cannot open a nested writer.
