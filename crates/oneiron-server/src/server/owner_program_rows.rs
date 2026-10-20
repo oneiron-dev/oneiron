@@ -1,0 +1,151 @@
+//! An owner's own program's owner rows (FIX 5911, after FIX 5717). A Dreamer
+//! turn program a person woke binds the run host door under that person
+//! (DOOR-141 PR2). The rows that door refuses an agent as the owner's, the
+//! `ai.*` media calls past speech and `vault.hooks.replay`, are served here
+//! through the owner's own doors (`api::facade::host_doors`), and only while
+//! the waking person is proven, again at each such row, the vault's live
+//! recorded owner. Anyone else, a person who is not the owner or an agent,
+//! keeps the agent's door and its refusals. The program stays generated
+//! code: its surface keeps the run's host origin, so nothing it writes reads
+//! as the owner's own in-person act.
+use std::sync::Arc;
+
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::llm::media::AiOperation;
+use oneiron::llm::run_admission::RunAdmission;
+use oneiron::memory::{
+    HostWriteOrigin, MEMORY_CODE_INTERNAL, MemoryError, MemoryResult, ProducerRows,
+};
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::{self, AgentVerb};
+use oneiron::task_verb::verb_hook_boundary;
+use oneiron::{EdgeActorClass, EntityId, WriteActor};
+use serde_json::Value;
+
+use super::SyncServer;
+use super::run_host_door::{agent_memory, answer_as_agent};
+
+/// Whether `verb` is a row the run host door refuses an agent as the
+/// owner's: a hook replay, or an `ai.*` media call other than speech.
+pub(super) fn is_owner_row(verb: AgentVerb) -> bool {
+    matches!(
+        verb,
+        AgentVerb::VaultHooksReplay
+            | AgentVerb::AiImage
+            | AgentVerb::AiTranscribe
+            | AgentVerb::AiEmbed
+            | AgentVerb::AiVideo
+            | AgentVerb::AiVideoPoll
+            | AgentVerb::AiVideoCancel
+    )
+}
+
+/// The owner's proof for a program `actor` woke, made afresh for each row: a
+/// person this vault records as its owner, while that owner is live, as a
+/// managed owner's request is proved. `None` for anyone else.
+fn program_owner(server: &SyncServer, actor: WriteActor) -> Option<AuthenticatedOwner> {
+    if actor.actor_class() != EdgeActorClass::Human {
+        return None;
+    }
+    crate::api::managed_owner_proof(server, actor.entity_ref())
+        .ok()
+        .flatten()
+}
+
+/// One owner row ([`is_owner_row`]) of the program `actor` woke, with its
+/// verb hooks once around it on the program's own surface: served through
+/// the owner's door when `actor` is proven the live recorded owner, else
+/// answered exactly as the agent's door answers it. Beside it, the rows its
+/// surface and its door listed, `None` when those are not known. Blocking:
+/// call it on a blocking thread of the server's runtime.
+pub(super) fn answer(
+    server: &Arc<SyncServer>,
+    actor: WriteActor,
+    origin: &HostWriteOrigin,
+    invocation: InvocationId,
+    verb: AgentVerb,
+    input: Value,
+    line: Option<&RunAdmission>,
+) -> MemoryResult<(Value, Option<Vec<EntityId>>)> {
+    let Some(owner) = program_owner(server, actor) else {
+        return answer_as_agent(server, actor, origin, invocation, verb, input, None, line);
+    };
+    let producers = ProducerRows::default();
+    let memory = agent_memory(server, actor, origin, invocation).listing_producers(&producers);
+    let name = verb.as_str();
+    let mut listed = Some(Vec::new());
+    let output = verb_hook_boundary::row(&memory, name, input, |input| {
+        sdk::validate_input(name, &input)?;
+        owner_row(server, owner, verb, input, &mut listed)
+    })?;
+    let rows = listed.map(|mut listed| {
+        let mut rows = producers.take();
+        rows.append(&mut listed);
+        rows
+    });
+    Ok((output, rows))
+}
+
+/// The owner's door for one owner row, past its credential check: `owner`
+/// is the proof [`program_owner`] made for this row.
+fn owner_row(
+    server: &Arc<SyncServer>,
+    owner: AuthenticatedOwner,
+    verb: AgentVerb,
+    input: Value,
+    listed: &mut Option<Vec<EntityId>>,
+) -> MemoryResult<Value> {
+    let runtime = tokio::runtime::Handle::current();
+    let media = |operation: AiOperation, input: Value| -> MemoryResult<Value> {
+        let input = decode(input)?;
+        encode(runtime.block_on(crate::api::ai_media_as_owner(server, operation, input))?)
+    };
+    match verb {
+        AgentVerb::VaultHooksReplay => {
+            let (replayed, rows) = runtime.block_on(crate::api::vault_hooks_replay_as_owner(
+                server,
+                owner,
+                decode(input)?,
+            ))?;
+            match (listed.as_mut(), rows) {
+                (Some(listed), Some(mut rows)) => listed.append(&mut rows),
+                _ => *listed = None,
+            }
+            encode(replayed)
+        }
+        AgentVerb::AiImage => media(AiOperation::Image, input),
+        AgentVerb::AiTranscribe => media(AiOperation::Transcribe, input),
+        AgentVerb::AiEmbed => media(AiOperation::Embed, input),
+        AgentVerb::AiVideo => {
+            encode(runtime.block_on(crate::api::ai_video_as_owner(server, decode(input)?))?)
+        }
+        AgentVerb::AiVideoPoll => {
+            encode(runtime.block_on(crate::api::ai_video_poll_as_owner(server, decode(input)?))?)
+        }
+        AgentVerb::AiVideoCancel => {
+            encode(runtime.block_on(crate::api::ai_video_cancel_as_owner(server, decode(input)?))?)
+        }
+        _ => Err(MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            format!(
+                "{} is not an owner row of the run's host door",
+                verb.as_str()
+            ),
+            &["Report this host-door failure."],
+        )),
+    }
+}
+
+fn decode<T: serde::de::DeserializeOwned>(input: Value) -> MemoryResult<T> {
+    serde_json::from_value(input).map_err(|error| MemoryError::bad_request(error.to_string()))
+}
+
+fn encode<T: serde::Serialize>(output: T) -> MemoryResult<Value> {
+    serde_json::to_value(output).map_err(|error| {
+        MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            error.to_string(),
+            &["Report this host-door failure."],
+        )
+    })
+}
