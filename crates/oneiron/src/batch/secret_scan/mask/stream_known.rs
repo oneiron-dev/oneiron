@@ -4,18 +4,20 @@
 //! as a manifest, so the batch door's mark of a file's known values never
 //! reads it. The stream is read here as it passes instead: each value the
 //! known-value index holds is found, a value split across two frames
-//! included, by carrying the last `longest - 1` bytes into the next frame
-//! and taking at each place the longest value whole there. The bytes are
-//! never changed: the body and its digest stay as streamed.
+//! included, by carrying the bytes a value could still be arriving in into
+//! the next frame and taking at each place the longest value whole there.
+//! The bytes are never changed: the body and its digest stay as streamed.
 //!
 //! In the put's own transaction each value found is marked as the batch door
 //! marks a file's known value: its span in the stored bytes, the custody
 //! record that holds it, reason `gate.secret_scan.known_value`, the file's
 //! band; a value the owner ruled no secret in the record is left unmarked. A
 //! marked file stays a file, and the batch door keeps the mark and restricts
-//! the record by the file's digest (FIX 5507). Nothing is refused or skipped
-//! for its size or its count of values: the carry holds up to the longest
-//! value, and the marks grow with what is found.
+//! the record by the file's digest (FIX 5507). A file marked before keeps
+//! its marks, and a value found that none covers is marked beside them (FIX
+//! 2781). Nothing is refused or skipped for its size or its count of
+//! values: the carry holds up to the longest value's longest spelling (FIX
+//! 2725), and the marks grow with what is found.
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -75,7 +77,7 @@ impl KnownStreamFinder {
     /// bytes' end to be whole there is found, and the rest is held.
     pub(crate) fn feed(&mut self, frame: &[u8]) {
         self.held.extend_from_slice(frame);
-        let hold = self.known.longest().saturating_sub(1);
+        let hold = self.known.reach().saturating_sub(1);
         if self.held.len() > hold {
             self.find_until(self.held.len() - hold);
         }
@@ -114,9 +116,10 @@ pub(crate) struct StreamKnown(Vec<StreamHit>);
 
 impl StreamKnown {
     /// Marks the values found in the file `hash` names, which ASSET `record`
-    /// puts, in `txn` (KNOWN_VALUE_STREAM_FINDER), unless the file is marked
-    /// already: each but a value the owner ruled no secret in `record`, whose
-    /// bytes `read` gives back by offset and length.
+    /// puts, in `txn` (KNOWN_VALUE_STREAM_FINDER): each but a value the owner
+    /// ruled no secret in `record`, whose bytes `read` gives back by offset
+    /// and length. A file marked already keeps its marks, and each value
+    /// found that none of them covers is marked beside them (FIX 2781).
     ///
     /// # Errors
     ///
@@ -129,7 +132,7 @@ impl StreamKnown {
         hash: &[u8; 32],
         read: impl Fn(u64, usize) -> Result<Vec<u8>>,
     ) -> Result<()> {
-        if self.0.is_empty() || masked_file_in_txn(store, txn, hash)?.is_some() {
+        if self.0.is_empty() {
             return Ok(());
         }
         let keys = match KNOWN_VALUE_STREAM_FINDER {
@@ -138,12 +141,22 @@ impl StreamKnown {
         if keys.is_empty() {
             return Ok(());
         }
-        let file = MaskedFile {
-            band: MASKED_FILE_BAND,
-            keys,
-            masked_at: crate::ports::recorded_at_in_txn(store, txn)?,
-            members: Vec::new(),
+        let mut file = match masked_file_in_txn(store, txn, hash)? {
+            Some(file) => file,
+            None => MaskedFile {
+                band: MASKED_FILE_BAND,
+                keys: Vec::new(),
+                masked_at: crate::ports::recorded_at_in_txn(store, txn)?,
+                members: Vec::new(),
+            },
         };
+        let mut added = false;
+        for key in keys {
+            added |= file.unite(&[], key);
+        }
+        if !added {
+            return Ok(());
+        }
         put_masked_file_in_txn(store, txn, hash, &file)
     }
 

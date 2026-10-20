@@ -28,10 +28,12 @@ use heed::RwTxn;
 use rmpv::Value;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use zeroize::{Zeroize, Zeroizing};
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
 use super::admit::Lifted;
 pub(crate) use super::text::TextReplacements;
+use super::wipe::{PlanParts, PlanTree, replace_wiped};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
@@ -52,13 +54,19 @@ pub(crate) enum SidePart {
 }
 
 impl SidePart {
-    /// The bytes the door scans.
-    fn scanned(&self) -> Result<Cow<'_, [u8]>> {
-        Ok(match self {
+    /// The door's scan of this part; a tree's encoded copy is wiped once
+    /// read (FIX 1101).
+    fn scan(&self) -> Result<()> {
+        let scanned: Cow<'_, [u8]> = match self {
             Self::Body(bytes) => Cow::Borrowed(bytes.as_slice()),
             Self::Text(text) => Cow::Borrowed(text.as_bytes()),
             Self::Value(value) => Cow::Owned(encoded(value)?),
-        })
+        };
+        let scan = scan_payload(&scanned).map(drop);
+        if let Cow::Owned(mut copy) = scanned {
+            copy.zeroize();
+        }
+        scan
     }
 
     /// Replaces each secret `masker` places with its handle; whether it
@@ -67,11 +75,11 @@ impl SidePart {
     fn mask(&mut self, masker: &mut Masker, refs: &[RefPath]) -> Result<bool> {
         Ok(match self {
             Self::Body(bytes) => mask_body(masker, bytes, refs)?.is_some_and(|masked| {
-                *bytes = masked;
+                replace_wiped(bytes, masked);
                 true
             }),
             Self::Text(text) => masker.mask_text(text)?.is_some_and(|masked| {
-                *text = masked;
+                replace_wiped(text, masked);
                 true
             }),
             Self::Value(value) => mask_referenced(masker, value, refs, true)?,
@@ -86,25 +94,29 @@ impl SidePart {
 fn mask_body(masker: &mut Masker, bytes: &[u8], refs: &[RefPath]) -> Result<Option<Vec<u8>>> {
     let json = serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok();
     // A JSON body with references, read member by member as
-    // `Masker::mask_body` reads one, its references aside.
+    // `Masker::mask_body` reads one, its references aside. The decoded tree
+    // holds the body's secrets: wiped as it drops.
     if json
         && !refs.is_empty()
-        && let Ok(mut tree) = serde_json::from_slice::<Value>(bytes)
+        && let Ok(tree) = serde_json::from_slice::<Value>(bytes)
     {
-        if !mask_referenced(masker, &mut tree, refs, false)? {
+        let mut tree = PlanTree(tree);
+        if !mask_referenced(masker, &mut tree.0, refs, false)? {
             return Ok(None);
         }
-        return serde_json::to_vec(&tree)
+        return serde_json::to_vec(&tree.0)
             .map(Some)
             .map_err(|_| Error::InvariantViolation("a masked JSON body did not encode"));
     }
-    let Some(mut tree) = whole_messagepack(bytes).filter(|_| !json) else {
-        return masker.mask_body(bytes);
+    // The decoded tree holds the body's secrets: wiped as it drops.
+    let mut tree = match whole_messagepack(bytes).map(PlanTree) {
+        Some(tree) if !json => tree,
+        _ => return masker.mask_body(bytes),
     };
-    if !mask_referenced(masker, &mut tree, refs, true)? {
+    if !mask_referenced(masker, &mut tree.0, refs, true)? {
         return Ok(None);
     }
-    encoded(&tree).map(Some)
+    encoded(&tree.0).map(Some)
 }
 
 /// The bodies `tree`'s byte members carry, then the door's rules over the
@@ -210,11 +222,11 @@ fn mask_nested(masker: &mut Masker, value: &mut Value) -> Result<bool> {
             let Some(masked) = mask_body(masker, bytes, &[])? else {
                 return Ok(false);
             };
-            *bytes = masked;
+            replace_wiped(bytes, masked);
             Ok(true)
         }
         Value::Array(items) => {
-            if let Some(bytes) = byte_values(items) {
+            if let Some(bytes) = byte_values(items).map(Zeroizing::new) {
                 let Some(masked) = mask_body(masker, &bytes, &[])? else {
                     return Ok(false);
                 };
@@ -278,8 +290,8 @@ pub(crate) fn admit_side_parts(
     parts: &mut [SidePart],
     accepts: impl Fn(&[SidePart]) -> bool,
 ) -> Result<bool> {
-    let reading = Reading::default();
-    Ok(admit_read_parts(dbs, wtxn, (place, key), parts, accepts, reading)?.is_some())
+    let pass = Pass::default();
+    Ok(admit_read_parts(dbs, wtxn, (place, key), parts, accepts, pass)?.is_some())
 }
 
 /// [`admit_side_parts`], tracked (FIX 6144): the same pass, which also keeps
@@ -293,22 +305,22 @@ pub(crate) fn admit_tracked_side_parts(
     parts: &mut [SidePart],
     accepts: impl Fn(&[SidePart]) -> bool,
 ) -> Result<Option<TextReplacements>> {
-    let reading = Reading {
+    let pass = Pass {
         tracked: true,
-        ..Reading::default()
+        ..Pass::default()
     };
-    admit_read_parts(dbs, wtxn, (place, key), parts, accepts, reading)
+    admit_read_parts(dbs, wtxn, (place, key), parts, accepts, pass)
 }
 
 /// One row's `parts`, each naming the row at `place` and `key` on the custody
-/// records minted from it, admitted as `reading` says.
+/// records minted from it, admitted as `pass` says.
 fn admit_read_parts(
     dbs: &impl SideTableDbs,
     wtxn: &mut RwTxn<'_>,
     (place, key): (&str, &[u8]),
     parts: &mut [SidePart],
     accepts: impl Fn(&[SidePart]) -> bool,
-    reading: Reading,
+    pass: Pass,
 ) -> Result<Option<TextReplacements>> {
     let origins = vec![(origin(place, key)?, place); parts.len()];
     admitted(
@@ -318,27 +330,29 @@ fn admit_read_parts(
         parts,
         &mut Lifted::default(),
         accepts,
-        reading,
+        pass,
     )
 }
 
-/// How one admission reads its parts.
-#[derive(Clone, Copy, Default)]
-struct Reading {
-    /// The fields the row keeps structural references in (FIX 6634).
+/// How one admission runs: the fields the row keeps structural references
+/// in (FIX 6634), whether it keeps where each handle went in each text it
+/// masks (FIX 6144), and the known values its caller already read in this
+/// writer, so they are not read again (FIX 2722).
+#[derive(Default)]
+struct Pass {
     refs: &'static [RefPath],
-    /// Whether the pass keeps where each handle went in each text it masked
-    /// (FIX 6144).
     tracked: bool,
+    known: Option<Arc<KnownValues>>,
 }
 
-/// The wall's one admission, for a side row and for a record's own parts
-/// alike. With the owner's switch on, parts the door would refuse are
-/// planned on a copy with a stand-in for each secret their spans place, and
-/// the copy is read again: only a clean copy the row's own reading `accepts`
-/// mints custody records, one per value. The parts then hold their handles.
-/// A hit the plan leaves refuses the write with the door's reason, before
-/// anything is minted.
+/// The wall's one admission for a record's own parts, which every part's
+/// own reading accepts. With the owner's switch on, parts the door would
+/// refuse are planned on a copy with a stand-in for each secret their spans
+/// place, and the copy is read again: only a clean copy mints custody
+/// records, one per value. The parts then hold their handles. A hit the
+/// plan leaves refuses the write with the door's reason, before anything is
+/// minted. `known` is the index the caller already read in this writer, if
+/// it did.
 ///
 /// `origins` names, for each part in turn, the record and the place each
 /// custody record minted from it names. `seed` holds the handles this writer
@@ -353,14 +367,20 @@ pub(crate) fn admit_seeded_parts(
     origins: &[(EntityId, &str)],
     parts: &mut [SidePart],
     seed: &mut Lifted,
-    accepts: impl Fn(&[SidePart]) -> bool,
+    known: Option<Arc<KnownValues>>,
 ) -> Result<bool> {
-    Ok(admitted(dbs, wtxn, origins, parts, seed, accepts, Reading::default())?.is_some())
+    let pass = Pass {
+        known,
+        ..Pass::default()
+    };
+    Ok(admitted(dbs, wtxn, origins, parts, seed, |_| true, pass)?.is_some())
 }
 
-/// [`admit_seeded_parts`]' pass: `None` when the parts are written as given,
-/// else, with `reading.tracked`, where each handle went in each text it
-/// masked. Both the plan and the minted pass read `reading.refs`.
+/// The wall's one admission, for a side row and for a record's own parts
+/// alike: `None` when the parts are written as given, else, with a tracked
+/// `pass`, where each handle went in each text it masked. Only a clean copy
+/// the row's own reading `accepts` mints custody records. Both the plan and
+/// the minted pass read `pass.refs`.
 fn admitted(
     dbs: &impl SideTableDbs,
     wtxn: &mut RwTxn<'_>,
@@ -368,7 +388,7 @@ fn admitted(
     parts: &mut [SidePart],
     seed: &mut Lifted,
     accepts: impl Fn(&[SidePart]) -> bool,
-    reading: Reading,
+    pass: Pass,
 ) -> Result<Option<TextReplacements>> {
     if secret_scan_mode_in_txn(dbs, &*wtxn)? == SecretScanMode::Off {
         return Ok(None);
@@ -380,21 +400,23 @@ fn admitted(
     }
     let mut refusal = None;
     for part in parts.iter() {
-        if let Err(error) = scan_payload(&part.scanned()?) {
+        if let Err(error) = part.scan() {
             refusal = Some(error);
             break;
         }
     }
     // A value custody already holds keeps its own handle in a row whose
     // writer holds a custody door, shape or none (OF-560 C).
-    let known = match dbs.side_custody() {
-        Some(custody) => KnownValues::load_in_writer(custody.store, wtxn)?.map(Arc::new),
-        None => None,
+    let known = match (pass.known, dbs.side_custody()) {
+        (Some(known), _) => Some(known),
+        (None, Some(custody)) => KnownValues::load_in_writer(custody.store, wtxn)?.map(Arc::new),
+        (None, None) => None,
     };
     if refusal.is_none() && known.is_none() {
         return Ok(None);
     }
-    let mut planned = parts.to_vec();
+    // The plan's copy is wiped however the plan ends (FIX 1101).
+    let mut planned = PlanParts::of(parts);
     let mut plan = Masker {
         handles: seed.0.clone(),
         mints: true,
@@ -404,7 +426,7 @@ fn admitted(
     let mut placed = false;
     for (part, (record, place)) in planned.iter_mut().zip(origins) {
         plan.at = Some((*record, (*place).to_owned()));
-        placed |= part.mask(&mut plan, reading.refs)?;
+        placed |= part.mask(&mut plan, pass.refs)?;
     }
     // Nothing placed, not even a value the seed holds: the hit is the
     // door's.
@@ -412,10 +434,10 @@ fn admitted(
         return refusal.map_or(Ok(None), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
-    for part in &planned {
-        let _secrets_nulled = scan_payload(&part.scanned()?)?;
+    for part in &*planned {
+        part.scan()?;
     }
-    if !accepts(&planned) {
+    if !accepts(&planned[..]) {
         return refusal.map_or(Ok(None), Err);
     }
     drop(planned);
@@ -423,20 +445,16 @@ fn admitted(
         return refusal.map_or(Ok(None), Err);
     };
     let at = crate::ports::recorded_at_in_txn(custody.store, wtxn)?;
-    seed.0.extend(
-        plan.mint(&custody, wtxn, at)?
-            .into_iter()
-            .map(|(value, (handle, _))| (value, handle)),
-    );
+    seed.0.adopt(plan.mint(&custody, wtxn, at)?.map(|(handle, _)| handle));
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,
         known,
-        traced: reading.tracked.then(TextReplacements::default),
+        traced: pass.tracked.then(TextReplacements::default),
         ..Masker::default()
     };
     for part in parts.iter_mut() {
-        part.mask(&mut minted, reading.refs)?;
+        part.mask(&mut minted, pass.refs)?;
     }
     if !accepts(parts) {
         return Err(Error::InvariantViolation(
@@ -474,20 +492,11 @@ pub(crate) fn admit_side_row(
     };
     let mut parts = [SidePart::Body(body.to_vec())];
     let place = format!("side:{}", decl.name);
-    let reading = Reading {
+    let pass = Pass {
         refs: decl.references,
-        ..Reading::default()
+        ..Pass::default()
     };
-    if admit_read_parts(
-        dbs,
-        wtxn,
-        (place.as_str(), key),
-        &mut parts,
-        accepts,
-        reading,
-    )?
-    .is_none()
-    {
+    if admit_read_parts(dbs, wtxn, (place.as_str(), key), &mut parts, accepts, pass)?.is_none() {
         return Ok(None);
     }
     match &parts {
@@ -530,17 +539,18 @@ pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
     if held == raw {
         return Ok(true);
     }
-    let mut planned = raw.clone();
+    // The plan's copy is wiped once compared (FIX 1101).
+    let mut planned = PlanTree(raw.clone());
     Masker {
         mints: true,
         at: Some((origin("replay", &[])?, "replay".to_owned())),
         ..Masker::default()
     }
-    .mask_value(&mut planned)?;
+    .mask_value(&mut planned.0)?;
     let mut held = held.clone();
     stand_in_handles(&mut held);
-    stand_in_handles(&mut planned);
-    Ok(held == planned)
+    stand_in_handles(&mut planned.0);
+    Ok(held == planned.0)
 }
 
 /// `value` as a MessagePack tree that keeps its field names, as a named row

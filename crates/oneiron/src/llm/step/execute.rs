@@ -9,7 +9,8 @@ use super::step_claim::{
     step_claim_matches_request, step_index_lookup, step_index_lookup_in_txn,
 };
 use super::step_state::{
-    StepStateOwners, step_state_delete, step_state_read, step_state_write_owned,
+    StepStateDisposition, StepStateOwners, step_state_delete, step_state_read,
+    step_state_write_owned,
 };
 use super::trap::{open_trap_in_txn, trap_park_owner};
 use super::trap_binding::TrapBindingScope;
@@ -203,10 +204,7 @@ async fn durable_step(
     // never asked, or paid for, again, before any memo, recovery or
     // admission. It names no byte of the response.
     if step_state_read(ctx.vault, ctx.attempt_id, &step_hash)?.is_some_and(|row| row.erased) {
-        return Err(Error::Refused(
-            "this step's response was erased by its owner; it is not asked again".into(),
-        )
-        .into());
+        return Err(erased_step());
     }
 
     // Memo-hit provenance check (ONE-1344): a stored terminal response is
@@ -243,14 +241,20 @@ async fn durable_step(
     {
         let response: LlmResponse = serde_json::from_slice(payload)?;
         let failure_policy = failure_policy(ctx.vault, &response)?;
-        log_terminal_step(
+        // An erase that took an owner since the answer came keeps the row
+        // erased, with nothing filed (FIX 6226).
+        if log_terminal_step(
             ctx,
             &step_hash,
             &request,
             &response,
             payload,
             StepTerminal::Recovered,
-        )?;
+        )?
+        .is_none()
+        {
+            return Err(erased_step());
+        }
         step_state_delete(ctx.vault, ctx.attempt_id, &step_hash)?;
         return Ok(StepOutcome::Finished {
             response,
@@ -269,7 +273,9 @@ async fn durable_step(
         return Err(DurableStepError::FinalizeRefused);
     }
 
-    step_state_write_owned(
+    // An owner already gone keeps the row's erased skeleton (FIX 6226):
+    // the step is over before it is admitted, asked or paid for.
+    if step_state_write_owned(
         ctx.vault,
         ctx.attempt_id,
         &step_hash,
@@ -277,7 +283,10 @@ async fn durable_step(
         StepStateOwners::of(ctx),
         None,
         ctx.now_ms,
-    )?;
+    )? == StepStateDisposition::Erased
+    {
+        return Err(erased_step());
+    }
 
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
@@ -417,7 +426,10 @@ async fn durable_step(
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
 
     let payload = serde_json::to_vec(&response)?;
-    step_state_write_owned(
+    // A late answer for an owner its erase took is never kept (FIX 6226):
+    // the row keeps its erased skeleton, nothing is filed, and the spend
+    // settles as `lease_settle` drops; the call closes after it.
+    if step_state_write_owned(
         ctx.vault,
         ctx.attempt_id,
         &step_hash,
@@ -425,19 +437,27 @@ async fn durable_step(
         StepStateOwners::of(ctx),
         Some(&payload),
         ctx.now_ms,
-    )?;
+    )? == StepStateDisposition::Erased
+    {
+        return Err(erased_step());
+    }
 
     // The response is recoverable before any policy read that can fail. An
     // error may refuse downstream use, but replay must not re-spend the call.
     let failure_policy = failure_policy(ctx.vault, &response)?;
-    let claim_id = log_terminal_step(
+    let Some(claim_id) = log_terminal_step(
         ctx,
         &step_hash,
         &request,
         &response,
         &payload,
         observed.terminal(),
-    )?;
+    )?
+    else {
+        // The erase landed between the answer and its claim: the same
+        // erased disposition, with the row kept erased, never deleted.
+        return Err(erased_step());
+    };
     observed.claimed();
 
     lease_settle.settle().map_err(LlmError::from)?;
@@ -542,6 +562,13 @@ fn verified_step_response_in_txn(
     }
     let response = load_step_response_in_txn(vault, txn, &decoded)?;
     Ok((response, decoded.purpose))
+}
+
+/// A step whose response its owner's erase took (KS-2B1, FIX 6226): over,
+/// never asked or paid for again, naming no byte of the response.
+fn erased_step() -> DurableStepError {
+    Error::Refused("this step's response was erased by its owner; it is not asked again".into())
+        .into()
 }
 
 fn failure_policy(
