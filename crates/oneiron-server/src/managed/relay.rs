@@ -29,7 +29,11 @@ use subtle::ConstantTimeEq;
 use tokio::io::AsyncWriteExt;
 use zeroize::Zeroizing;
 
+mod deferred_delete;
 pub(super) mod hold_guard;
+
+use self::deferred_delete::HeldDeletes;
+use self::hold_guard::RelayDeleteHoldGuard;
 
 /// The relay executable must be built from the same fork revision as the
 /// engine's mesh adapter. It remains a sidecar, not another engine transport.
@@ -120,6 +124,9 @@ struct RelayRoom {
     received: AtomicU64,
     sent: AtomicU64,
     next_write: AtomicU64,
+    /// The host's hold guard and the deletes it deferred (FIX 1488). `None`
+    /// deletes as the room always has: no intent, no deferral.
+    held: Option<Arc<HeldDeletes>>,
 }
 
 type HttpResult<T> = Result<T, (StatusCode, &'static str)>;
@@ -237,9 +244,19 @@ async fn write(
         file.write_all(&bytes).await?;
         file.sync_all().await?;
         drop(file);
+        // With a hold guard, the rename waits out a delete or a replay, and
+        // supersedes a deferred delete of the object it replaces.
+        let _serial = match &room.held {
+            Some(held) => Some(held.serialize().await),
+            None => None,
+        };
         tokio::fs::rename(&temporary, &path).await?;
         let directory = tokio::fs::File::open(&room.objects).await?;
-        directory.sync_all().await
+        directory.sync_all().await?;
+        if let Some(held) = &room.held {
+            held.superseded(&object).await;
+        }
+        Ok::<(), std::io::Error>(())
     }
     .await;
     if result.is_err() {
@@ -254,11 +271,13 @@ async fn write(
 async fn delete(
     State(room): State<Arc<RelayRoom>>,
     Path((vault, object)): Path<(String, String)>,
-) -> HttpResult<StatusCode> {
-    tokio::fs::remove_file(room.object(&vault, &object)?)
-        .await
-        .map_err(storage_error)?;
-    Ok(StatusCode::NO_CONTENT)
+) -> HttpResult<Response> {
+    let path = room.object(&vault, &object)?;
+    if let Some(held) = &room.held {
+        return held.delete(object).await;
+    }
+    tokio::fs::remove_file(path).await.map_err(storage_error)?;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 #[derive(Serialize)]
@@ -306,6 +325,17 @@ fn relay_profile(config: &RelayConfig) -> anyhow::Result<String> {
 /// reachable here. A sidecar failure stops the locker too, rather than
 /// advertising a healthy relay that cannot forward packets.
 pub async fn run_relay(config_path: &FsPath) -> anyhow::Result<()> {
+    run_relay_with_hold_guard(config_path, None).await
+}
+
+/// [`run_relay`] with the host's hold guard on locker deletes (FIX 1488): a
+/// delete a standing hold covers defers instead of unlinking, and runs once
+/// the hold lifts. Only the host injects a guard; no [`RelayConfig`] field
+/// can. `None` is exactly [`run_relay`].
+pub(crate) async fn run_relay_with_hold_guard(
+    config_path: &FsPath,
+    hold_guard: Option<Arc<dyn RelayDeleteHoldGuard>>,
+) -> anyhow::Result<()> {
     crate::commands::init_tracing("info");
     let config: RelayConfig = serde_json::from_slice(&std::fs::read(config_path)?)?;
     config.validate()?;
@@ -323,6 +353,12 @@ pub async fn run_relay(config_path: &FsPath) -> anyhow::Result<()> {
     for path in [&config.locker_dir, &directory, &objects] {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
     }
+    let held = match hold_guard {
+        Some(guard) => {
+            Some(HeldDeletes::start(guard, &config.vault_id, &directory, objects.clone()).await?)
+        }
+        None => None,
+    };
     let room = Arc::new(RelayRoom {
         vault: config.vault_id.clone(),
         objects,
@@ -330,6 +366,7 @@ pub async fn run_relay(config_path: &FsPath) -> anyhow::Result<()> {
         received: AtomicU64::new(0),
         sent: AtomicU64::new(0),
         next_write: AtomicU64::new(0),
+        held,
     });
     let locker = Router::new()
         .route("/v1/relay/{vault}/locker", get(list))

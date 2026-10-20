@@ -1,7 +1,6 @@
-//! The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x), staged
-//! here because its home, `managed/relay/hold_guard.rs`, is not built yet:
-//! L14 moves this module there unchanged and wires the locker delete
-//! through it. The names are final.
+//! The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x). The host
+//! injects one through [`super::run_relay_with_hold_guard`], and the locker
+//! delete runs through it (`super::deferred_delete`).
 //!
 //! A locker delete hands the guard its target and its unlink. Under a
 //! standing backup-keeping legal hold of the vault the delete defers
@@ -10,8 +9,9 @@
 //! never deletes. The unlink, then its directory sync, runs inside the
 //! guard, so a hold placed meanwhile commits before the read or after the
 //! sync. A deferred delete asks again when [`RelayDeleteHoldGuard::subscribe_rechecks`]
-//! moves: after a committed hold release and after each hold maintenance
-//! pass. A relay with no guard deletes as it does today.
+//! moves: after a committed hold release, after each hold maintenance pass,
+//! and when the guard's vault first resolves or is rebound. A relay with no
+//! guard deletes as it does today.
 
 /// One locker object a relay delete would unlink.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,7 +69,8 @@ pub(crate) trait RelayDeleteHoldGuard: Send + Sync {
         unlink: &mut dyn FnMut() -> std::io::Result<()>,
     ) -> Result<RelayDeleteHoldOutcome, RelayDeleteHoldError>;
 
-    /// A content-free counter that moves after a committed hold release and
-    /// after each hold maintenance pass: a deferred delete asks again then.
+    /// A content-free counter that moves after a committed hold release,
+    /// after each hold maintenance pass, and when the guard's vault first
+    /// resolves or is rebound: a deferred delete asks again then.
     fn subscribe_rechecks(&self) -> tokio::sync::watch::Receiver<u64>;
 }

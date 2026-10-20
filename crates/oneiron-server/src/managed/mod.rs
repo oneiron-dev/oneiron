@@ -54,11 +54,16 @@ pub mod preview;
 mod relay;
 /// The cold managed restore start mode (`--restore`).
 mod restore;
-pub use relay::{IROH_RELAY_REVISION, RelayConfig, run_relay};
 pub(crate) use relay::hold_guard::{
     RelayDeleteDeferral, RelayDeleteHoldError, RelayDeleteHoldGuard, RelayDeleteHoldOutcome,
     RelayDeleteTarget,
 };
+#[allow(
+    unused_imports,
+    reason = "the host installs the relay hold guard here once it has one (FIX 1488)"
+)]
+pub(crate) use relay::run_relay_with_hold_guard;
+pub use relay::{IROH_RELAY_REVISION, RelayConfig, run_relay};
 mod settings;
 mod shed;
 pub(crate) use self::peer::UnixPeer;
