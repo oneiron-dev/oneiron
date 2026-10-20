@@ -209,12 +209,14 @@ pub(super) fn broker_backend(
         })
         .collect();
     let rows = catalog.values().cloned();
+    // Only an own server reads the host's solo marker (INF 1).
+    let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
     let wire = match provider.kind {
         ProviderKind::AnthropicCompat => {
             Wire::Anthropic(AnthropicMessagesConfig::from_catalog(rows))
         }
         ProviderKind::OpenaiCompat | ProviderKind::LocalOpenaiCompat => {
-            Wire::OpenAi(OpenAiCompatConfig::from_catalog(rows))
+            Wire::OpenAi(OpenAiCompatConfig::from_catalog(rows).with_solo_admission(solo))
         }
         ProviderKind::Oneironer => anyhow::bail!("a tagger provider sends no model call"),
         ProviderKind::Cartesia | ProviderKind::Elevenlabs | ProviderKind::Voxcpm2 => {
