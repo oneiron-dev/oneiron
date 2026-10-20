@@ -48455,11 +48455,11 @@
      "purpose": "Persisted customization settings and client-visible change events",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 13,
       "mod": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 7
      }
     },
@@ -48551,6 +48551,20 @@
      "purpose": "The owner's model settings (OF-305): the standing quota fallbacks",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RoomThreadAdminSettings"
+     ],
+     "path": "src/settings/room_threads.rs",
+     "purpose": "The owner's two switches over Admins and private room threads (owner ruling 2026-10-20, FIX 6382): whether…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -57712,7 +57726,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1104
+      "fn": 1105
      }
     },
     {
@@ -61790,7 +61804,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 20
      }
     },
@@ -62508,7 +62522,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ThreadAudienceAddRequest",
@@ -62518,7 +62532,7 @@
      "path": "src/workspace_roster/rooms/audience_doors.rs",
      "purpose": "The doors that edit a private thread's audience (FIX 5545): an add and a remove, each one audience edit TURN…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 5,
       "fn": 2,
       "struct": 3
      }
@@ -62552,7 +62566,7 @@
      "path": "src/workspace_roster/rooms/audience_events.rs",
      "purpose": "A private thread's audience edits (FIX 5545)",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 24,
       "enum": 1
      }
     },
@@ -62564,6 +62578,32 @@
      "purpose": "What the vault's Owner or an Admin learns of a room's private threads (FIX 5545): that they exist, by root…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ThreadAudienceOpenFullHistoryRequest"
+     ],
+     "path": "src/workspace_roster/rooms/audience_history.rs",
+     "purpose": "OPEN FULL HISTORY, the Owner's alone (owner ruling 2026-10-20, FIX 6383): the explicit act that opens a…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ThreadNotice"
+     ],
+     "path": "src/workspace_roster/rooms/audience_notices.rs",
+     "purpose": "What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1
      }
     },
     {
@@ -62638,6 +62678,8 @@
      "kind": "src",
      "notable": [
       "RoomThread",
+      "RoomThreadAudienceEvent",
+      "RoomThreadAudienceOp",
       "RoomThreadList",
       "RoomThreadPolicy",
       "RoomThreadWait",
@@ -62648,9 +62690,9 @@
      "purpose": "Read-time room thread liveness; the room history and TASK rows remain truth",
      "surface": {
       "crate-vis": 8,
-      "enum": 1,
+      "enum": 2,
       "fn": 3,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -62669,10 +62711,10 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "enum": 2,
       "fn": 6,
-      "re-export": 14,
+      "re-export": 16,
       "struct": 6
      }
     },
@@ -65543,7 +65585,7 @@
      "purpose": "In-memory session write-overlay substrate (ARCH-0052, D1)"
     },
     "settings": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -65837,7 +65879,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 105,
+     "files": 107,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65860,7 +65902,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4105,
+   "source_files": 4108,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75049,7 +75091,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1075
+      "fn": 1076
      }
     },
     {
@@ -76263,7 +76305,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1076
+      "fn": 1077
      }
     },
     {
@@ -82075,6 +82117,16 @@
      "notable": [],
      "path": "src/api/owner_routes/recovery_kit_target_routes.rs",
      "purpose": "The target install's own kit calls (FIX 4736, 4530, 4564): the material a root change or a late joiner's pad…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/room_thread_setting_routes.rs",
+     "purpose": "`/v1/owner/settings/room-threads`: the owner's two switches over Admins and private room threads (owner…",
      "surface": {
       "crate-vis": 1
      }
@@ -89201,7 +89253,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 475,
+     "files": 476,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -89651,7 +89703,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 901,
+   "source_files": 902,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -92606,6 +92658,8 @@
       "RoomSpeakingRole",
       "RoomStanding",
       "RoomThread",
+      "RoomThreadAudienceEvent",
+      "RoomThreadAudienceOp",
       "RoomThreadPage",
       "RoomThreadWait",
       "RoomTrunk",
@@ -93261,6 +93315,7 @@
       "TextReceipt",
       "ThreadAudienceAddRequest",
       "ThreadAudienceHistory",
+      "ThreadAudienceOpenFullHistoryRequest",
       "ThreadAudienceReceipt",
       "ThreadAudienceRemoveRequest",
       "ThreadEntryAtom",
@@ -93509,8 +93564,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 878,
-      "struct": 2779
+      "enum": 879,
+      "struct": 2781
      }
     },
     {
