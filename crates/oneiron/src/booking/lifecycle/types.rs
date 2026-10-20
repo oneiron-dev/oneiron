@@ -332,6 +332,12 @@ pub struct ConfirmReceipt {
     pub calendar: CalendarRevision,
     pub reschedule_token: OpaqueLifecycleToken,
     pub cancel_token: OpaqueLifecycleToken,
+    /// While the Gate holds this booking's confirm invite for the owner, the
+    /// approve-once digest his one-time press must name to release it, 64
+    /// lower-hex (FIX 6424), copied from the invite's dispatch result. The
+    /// confirm stands either way. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_digest: Option<String>,
 }
 
 /// What a successful reschedule or cancel returns.

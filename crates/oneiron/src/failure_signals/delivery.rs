@@ -88,7 +88,14 @@ pub enum FailureSignalDelivery {
     Delivered { counts: usize, records: usize },
     /// The pipeline did not deliver it. Nothing was acked, except counts
     /// that may have landed (an ambiguous send), which are not sent twice.
-    NotDelivered { outcome: OutboundDispatchOutcome },
+    NotDelivered {
+        outcome: OutboundDispatchOutcome,
+        /// While the Gate holds this batch for the owner, the approve-once
+        /// digest his one-time press must name to release it, 64 lower-hex
+        /// (FIX 6424), copied from the dispatch result. It pins this batch;
+        /// the next pass sends a new one. `None` otherwise.
+        approval_digest: Option<String>,
+    },
 }
 
 struct BatchSink<'a, T: ?Sized> {
@@ -181,9 +188,8 @@ impl Vault {
             body: &body,
             digest: &digest,
         };
-        let outcome = self
-            .dispatch_outbound_intent_recorded(request, &mut sink)?
-            .outcome;
+        let result = self.dispatch_outbound_intent_recorded(request, &mut sink)?;
+        let (outcome, approval_digest) = (result.outcome, result.approval_digest);
         let ids = batch
             .code_fix
             .iter()
@@ -202,9 +208,15 @@ impl Vault {
             // one; a count resent would count twice.
             OutboundDispatchOutcome::Ambiguous => {
                 self.ack_tier1_failure_counts(&batch.counts)?;
-                Ok(FailureSignalDelivery::NotDelivered { outcome })
+                Ok(FailureSignalDelivery::NotDelivered {
+                    outcome,
+                    approval_digest,
+                })
             }
-            _ => Ok(FailureSignalDelivery::NotDelivered { outcome }),
+            _ => Ok(FailureSignalDelivery::NotDelivered {
+                outcome,
+                approval_digest,
+            }),
         }
     }
 

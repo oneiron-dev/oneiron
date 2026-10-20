@@ -1,8 +1,10 @@
 mod admitted_approval;
+mod approval_target;
 mod effect_consent;
 mod effect_contacts;
 mod effect_grants;
 
+pub(crate) use self::approval_target::{ApprovalTarget, OutboundSendFacts};
 pub(super) use self::effect_consent::{
     external_effect_action_requirement, external_effect_composed_effect,
     external_effect_consent_context, native_mail_cold_composed_effect,

@@ -18,6 +18,9 @@ pub(super) struct OutboundGateBinding {
     gate_decision_ref: Option<String>,
     #[serde(default)]
     gate_reason_codes: Vec<String>,
+    /// The held schedule's approve-once digest (FIX 6424).
+    #[serde(default)]
+    approval_digest: Option<String>,
 }
 
 /// Bound on the `retry_of` climb behind an `already_scheduled` receipt, the
@@ -47,6 +50,9 @@ impl Memory<'_> {
             gate_decision_ref: binding
                 .as_ref()
                 .and_then(|binding| binding.gate_decision_ref.clone()),
+            approval_digest: binding
+                .as_ref()
+                .and_then(|binding| binding.approval_digest.clone()),
             gate_reason_codes: binding
                 .map(|binding| binding.gate_reason_codes)
                 .unwrap_or_default(),
@@ -98,11 +104,13 @@ impl Memory<'_> {
         gate_outcome: &str,
         gate_decision_ref: Option<&str>,
         gate_reason_codes: &[String],
+        approval_digest: Option<&str>,
     ) {
         let binding = OutboundGateBinding {
             gate_outcome: gate_outcome.to_owned(),
             gate_decision_ref: gate_decision_ref.map(ToOwned::to_owned),
             gate_reason_codes: gate_reason_codes.to_vec(),
+            approval_digest: approval_digest.map(ToOwned::to_owned),
         };
         if let Ok(encoded) = serde_json::to_vec(&binding) {
             let _ = self

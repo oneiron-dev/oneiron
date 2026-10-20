@@ -101,6 +101,12 @@ pub(crate) struct Sent {
     pub(crate) approval_receipt_ref: String,
     /// Repeating the same approved send names the same logical send.
     pub(crate) logical_send_ref: String,
+    /// While the Gate holds the send for the owner, the approve-once digest
+    /// his one-time press must name to release it, 64 lower-hex (FIX 6424),
+    /// copied from the send's dispatch result. Not `digest`, which names the
+    /// bundle. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) approval_digest: Option<String>,
 }
 
 pub(crate) fn preview(
@@ -271,6 +277,7 @@ pub(crate) fn send_previewed(
         gate_reasons: sent.dispatch.gate_reason_codes,
         approval_receipt_ref: sent.approval_receipt_ref,
         logical_send_ref: sent.logical_send_ref,
+        approval_digest: sent.dispatch.approval_digest,
     })
 }
 

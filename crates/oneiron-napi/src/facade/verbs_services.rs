@@ -406,6 +406,7 @@ impl ActorScopedVault {
             gate_outcome: receipt.gate_outcome,
             gate_decision_ref: receipt.gate_decision_ref,
             gate_reason_codes: receipt.gate_reason_codes,
+            approval_digest: receipt.approval_digest,
             deduped: receipt.deduped,
         })
     }
@@ -520,6 +521,7 @@ impl ActorScopedVault {
             gate_outcome: receipt.gate_outcome,
             gate_decision_ref: receipt.gate_decision_ref,
             gate_reason_codes: receipt.gate_reason_codes,
+            approval_digest: receipt.approval_digest,
             deduped: receipt.deduped,
         })
     }

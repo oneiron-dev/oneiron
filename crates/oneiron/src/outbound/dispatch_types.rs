@@ -101,6 +101,14 @@ pub struct OutboundDispatchRequest {
     /// that sinks key their per-send plan by. Never persisted; defaults to
     /// deriving the ledger identity from `intent_ref`.
     pub ledger_identity_ref: Option<String>,
+    /// FIX 6424: the stable logical send an ask runs for before that send
+    /// has its ledger identity: a schedule's ask names the logical send its
+    /// executor later runs under `ledger_identity_ref`, so an owner's
+    /// approve-once press on the ask pins the send that spends it (CALLS
+    /// `FIX 6424 scheduled ask stable identity`). Read only by a family whose
+    /// press pins its send's stable identity (e-sign). In memory only, never
+    /// persisted; `None` everywhere else.
+    pub approval_identity_ref: Option<String>,
     pub intent: OutboundIntent,
     pub actor: OutboundDispatchActor,
     pub gate: OutboundDispatchGate,
@@ -181,6 +189,7 @@ impl OutboundDispatchRequest {
             receipt_id: receipt_id.into(),
             intent_ref: intent_ref.into(),
             ledger_identity_ref: None,
+            approval_identity_ref: None,
             intent,
             actor,
             gate,
@@ -506,6 +515,15 @@ pub struct OutboundDispatchResult {
     pub gate_decision_id: Option<String>,
     pub gate_outcome: String,
     pub gate_reason_codes: Vec<String>,
+    /// FIX 6424 (Engine 10-20 20:4x): while the Gate holds this send for the
+    /// owner (`gate_outcome` `pending`), the approve-once digest his one-time
+    /// press must name to release it, 64 lower-hex: the exact digest the
+    /// Gate's spend lookup composes for a send whose family pins its own
+    /// target (e-sign, the communications connectors, `calendar.invite`,
+    /// feedback and failure-signal bundles). `None` for every other result.
+    /// [`crate::outbound::outbound_approve_once_digest`] composes the same
+    /// digest for a prepared request.
+    pub approval_digest: Option<String>,
     pub receipt: ReceiptRecord,
     /// Ledger-owned logical delivery result, independent of the attempt receipt.
     pub(crate) resolution: Option<crate::outbound_intent_ledger::IntentResolution>,

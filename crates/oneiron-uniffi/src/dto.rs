@@ -1011,6 +1011,8 @@ pub struct OutboundIntentReceipt {
     pub gate_decision_ref: Option<String>,
     /// Gate reason codes.
     pub gate_reason_codes: Vec<String>,
+    /// The approve-once digest a held send's owner press names (FIX 6424).
+    pub approval_digest: Option<String>,
     /// True when the idempotency key coalesced.
     pub deduped: bool,
 }

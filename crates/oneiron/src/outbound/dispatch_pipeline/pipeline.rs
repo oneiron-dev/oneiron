@@ -160,6 +160,7 @@ impl OutboundDispatchPipeline {
             ..
         } = prepared;
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
+        let approval_digest = super::govern::approval_digest(&effect);
         let verdict = super::effect::execute_admitted(super::effect::EffectInput {
             vault,
             request: &request,
@@ -186,6 +187,7 @@ impl OutboundDispatchPipeline {
             space_posting.as_ref(),
             None,
             verdict,
+            approval_digest,
         );
         Ok(RecordedDispatch {
             result,
@@ -247,6 +249,9 @@ impl OutboundDispatchPipeline {
         // from a snapshot before it acquires the publication transaction.
         let authorization = PreparedAuthorization::None;
         let effect = super::govern::gate_input(&request, verb_contract, policy_risk);
+        // FIX 6424: the digest an owner's press on this send names, carried
+        // by the result while the Gate holds it.
+        let approval_digest = super::govern::approval_digest(&effect);
         let parked = match admission.decision {
             super::admission::DispatchAdmission::Park { outcome } => Some(outcome),
             super::admission::DispatchAdmission::Execute => None,
@@ -296,6 +301,7 @@ impl OutboundDispatchPipeline {
             space_posting.as_ref(),
             Some(&admission),
             verdict,
+            approval_digest,
         );
         Ok(RecordedDispatch {
             result,

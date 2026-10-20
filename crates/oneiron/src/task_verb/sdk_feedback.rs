@@ -157,6 +157,12 @@ pub struct FeedbackSubjectSent {
     pub approval_receipt_ref: String,
     /// Repeating the same approved send names the same logical send.
     pub logical_send_ref: String,
+    /// While the Gate holds the send for the owner (`held`), the
+    /// approve-once digest his one-time press must name to release it, 64
+    /// lower-hex (FIX 6424), copied from the send's dispatch result. Not
+    /// `digest`, which names the bundle. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_digest: Option<String>,
 }
 
 fn parse_issue_ref(issue_ref: &str) -> MemoryResult<EntityId> {

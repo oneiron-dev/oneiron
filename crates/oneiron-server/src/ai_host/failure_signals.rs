@@ -83,7 +83,7 @@ pub(crate) fn spawn(
             })
             .await;
             match pass {
-                Ok(Ok(FailureSignalDelivery::NotDelivered { outcome })) => {
+                Ok(Ok(FailureSignalDelivery::NotDelivered { outcome, .. })) => {
                     tracing::warn!(
                         outcome = outcome.as_str(),
                         "failure signals wait for the next pass"

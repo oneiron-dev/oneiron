@@ -80,6 +80,47 @@ pub fn enqueue_confirm_invite(
     sink: &mut impl OutboundExecutionSink,
     now: u64,
 ) -> Result<IntentId, BookingError> {
+    recorded_or_refused(enqueue_confirm_invite_outcome(
+        vault, actor, grant_ref, invite, sink, now,
+    )?)
+}
+
+/// The refusal [`enqueue_confirm_invite`] answers a dispatch that recorded
+/// no intent with.
+fn recorded_or_refused(outcome: ConfirmInviteOutcome) -> Result<IntentId, BookingError> {
+    outcome
+        .intent_id
+        .ok_or_else(|| refused("the outbound door recorded no intent for this invite"))
+}
+
+/// What [`enqueue_confirm_invite_outcome`] dispatched (FIX 6424).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfirmInviteOutcome {
+    /// The durable intent the invite earned; `None` when the outbound door
+    /// recorded none (a gate hold or denial), where
+    /// [`enqueue_confirm_invite`] refuses.
+    pub intent_id: Option<IntentId>,
+    /// While the Gate holds the invite for the owner, the approve-once
+    /// digest his one-time press must name to release it, 64 lower-hex,
+    /// copied from the dispatch result. `None` otherwise.
+    pub approval_digest: Option<String>,
+}
+
+/// [`enqueue_confirm_invite`], answering a held invite instead of refusing
+/// it, so its caller learns the digest an owner's press names (FIX 6424).
+/// Every step and every other refusal is that function's.
+///
+/// # Errors
+///
+/// As [`enqueue_confirm_invite`], except a dispatch that recorded no intent.
+pub fn enqueue_confirm_invite_outcome(
+    vault: &Vault,
+    actor: EntityId,
+    grant_ref: EntityId,
+    invite: &ConfirmedBookingInvite<'_>,
+    sink: &mut impl OutboundExecutionSink,
+    now: u64,
+) -> Result<ConfirmInviteOutcome, BookingError> {
     let Some(binding) = confirmed_booking_binding(vault, &invite.booking_ref)? else {
         return Err(refused(
             "this booking carries no confirmed page and booker binding",
@@ -129,8 +170,12 @@ pub fn enqueue_confirm_invite(
         // A replay of the exact revision. One booking earns one REQUEST, so
         // this answers with the intent already recorded rather than sending a
         // second copy of it.
-        return recorded_intent_id(vault, &payload)?
-            .ok_or_else(|| refused("this invite replayed with no recorded outbound intent"));
+        let intent_id = recorded_intent_id(vault, &payload)?
+            .ok_or_else(|| refused("this invite replayed with no recorded outbound intent"))?;
+        return Ok(ConfirmInviteOutcome {
+            intent_id: Some(intent_id),
+            approval_digest: None,
+        });
     }
 
     let intent_ref = confirm_invite_intent_ref(&invite.booking_ref, invite.uid, invite.sequence);
@@ -155,15 +200,16 @@ pub fn enqueue_confirm_invite(
     )
     .counterparty_ref(binding.recipient)
     .calendar_invite(payload.clone());
-    vault
+    let result = vault
         .dispatch_outbound_intent(request, sink)
         .map_err(|error| refused(format!("calendar invite dispatch refused: {error}")))?;
 
-    // Success IS the durable intent: a gate denial records none, so there is
-    // nothing to return and nothing moved.
-    let intent_id = recorded_intent_id(vault, &payload)?
-        .ok_or_else(|| refused("the outbound door recorded no intent for this invite"))?;
-    Ok(intent_id)
+    // Success IS the durable intent: a gate denial or hold records none, so
+    // nothing moved; a hold names the digest the owner's press carries.
+    Ok(ConfirmInviteOutcome {
+        intent_id: recorded_intent_id(vault, &payload)?,
+        approval_digest: result.approval_digest,
+    })
 }
 
 /// Assembles and dispatches the confirm-time invite from committed state.
@@ -177,14 +223,14 @@ pub fn enqueue_confirm_invite(
 ///
 /// Every missing fact refuses, which the caller swallows: a booking with no
 /// live grant, no sending identity, or no readable binding simply sends no
-/// invite.
-pub(in crate::booking) fn dispatch_confirm_booking_invite(
+/// invite. A held invite answers with its approve-once digest (FIX 6424).
+pub(in crate::booking) fn dispatch_confirm_booking_invite_outcome(
     vault: &Vault,
     actor: EntityId,
     receipt: &ConfirmReceipt,
     sink: &mut impl OutboundExecutionSink,
     now: u64,
-) -> Result<IntentId, BookingError> {
+) -> Result<ConfirmInviteOutcome, BookingError> {
     let booking_ref = receipt.calendar.event_ref;
     let Some(binding) = confirmed_booking_binding(vault, &booking_ref)? else {
         return Err(refused(
@@ -241,7 +287,7 @@ pub(in crate::booking) fn dispatch_confirm_booking_invite(
         now,
     )
     .map_err(calendar_wrap)?;
-    enqueue_confirm_invite(
+    enqueue_confirm_invite_outcome(
         vault,
         actor,
         grant_ref,
@@ -279,6 +325,21 @@ fn recorded_intent_id(
         }
     }
     Ok(None)
+}
+
+/// [`dispatch_confirm_booking_invite_outcome`], refusing an invite the
+/// outbound door recorded no intent for, as [`enqueue_confirm_invite`] does.
+#[cfg(test)]
+pub(in crate::booking) fn dispatch_confirm_booking_invite(
+    vault: &Vault,
+    actor: EntityId,
+    receipt: &ConfirmReceipt,
+    sink: &mut impl OutboundExecutionSink,
+    now: u64,
+) -> Result<IntentId, BookingError> {
+    recorded_or_refused(dispatch_confirm_booking_invite_outcome(
+        vault, actor, receipt, sink, now,
+    )?)
 }
 
 /// The stable logical-send ref one booking's first REQUEST dispatches under.

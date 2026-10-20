@@ -214,6 +214,7 @@ fn send_subject(
         gate_reasons: sent.gate_reasons,
         approval_receipt_ref: sent.approval_receipt_ref,
         logical_send_ref: sent.logical_send_ref,
+        approval_digest: sent.approval_digest,
     })
 }
 

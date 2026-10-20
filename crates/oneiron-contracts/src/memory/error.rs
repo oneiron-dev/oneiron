@@ -210,6 +210,12 @@ pub struct MemoryGateDenial {
     /// (FIX 1380). Absent on every other denial.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ask_ref: Option<String>,
+    /// While the Gate holds the act for the owner (`pending`), the
+    /// approve-once digest his one-time press must name to release it, 64
+    /// lower-hex (FIX 6424), copied from the held dispatch's result. Absent
+    /// on every other denial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_digest: Option<String>,
 }
 
 /// Typed provenance and exception door for a refused policy-controlled act.
@@ -563,6 +569,7 @@ impl From<Error> for MemoryError {
                                 .map(|reason| (*reason).to_owned())
                                 .collect(),
                             ask_ref: None,
+                            approval_digest: None,
                         })),
                         ..forbidden
                     },

@@ -178,6 +178,8 @@ pub(super) fn dispatch_item_effect(
                             })
                             .unwrap_or_default(),
                         ask_ref: None,
+                        // FIX 6424: a hold names the digest the owner's press carries.
+                        approval_digest: result.approval_digest.clone(),
                     }))
                 } else {
                     None

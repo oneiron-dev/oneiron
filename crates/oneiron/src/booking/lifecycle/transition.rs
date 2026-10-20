@@ -23,7 +23,7 @@ use super::types::{
     MAX_CHECKOUT_HOLD_TTL_SECS, RescheduleSpec, RevisionReceipt, SoftHoldRow,
 };
 use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
-use crate::booking::invite_grant::dispatch_confirm_booking_invite;
+use crate::booking::invite_grant::dispatch_confirm_booking_invite_outcome;
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};
 use crate::calendar::passport::index_passport_uid;
@@ -194,7 +194,7 @@ pub(crate) fn execute_confirm<S: OutboundExecutionSink>(
         ConfirmOutcome::Taken { alternatives } => {
             Ok(BookingVerbReceipt::SlotTaken { alternatives })
         }
-        ConfirmOutcome::Booked(receipt) => {
+        ConfirmOutcome::Booked(mut receipt) => {
             // The UID index is node-local cache CAL-02 repairs from synced truth
             // on any miss, so it is maintained after the commit rather than
             // inside it: CAL-02's index door opens its OWN write transaction,
@@ -215,9 +215,13 @@ pub(crate) fn execute_confirm<S: OutboundExecutionSink>(
             // intent-ledger record is the observable, and nothing retries: a
             // second REQUEST would threaten the once-minted UID law. A replay
             // resolves to the intent the first pass recorded rather than
-            // enqueueing another.
-            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink) {
-                let _ = dispatch_confirm_booking_invite(vault, actor, &receipt, sink, now_utc);
+            // enqueueing another. FIX 6424: a held invite's approve-once
+            // digest rides the receipt; every refusal is still discarded.
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+                && let Ok(invite) =
+                    dispatch_confirm_booking_invite_outcome(vault, actor, &receipt, sink, now_utc)
+            {
+                receipt.approval_digest = invite.approval_digest;
             }
             Ok(BookingVerbReceipt::Confirmed(receipt))
         }
@@ -282,6 +286,7 @@ fn confirm_in_writer(
             calendar: recorded.into_revision(),
             reschedule_token: revision_token(&spec.hold_token, LifecycleTokenScope::Reschedule),
             cancel_token: revision_token(&spec.hold_token, LifecycleTokenScope::Cancel),
+            approval_digest: None,
         }));
     }
 
@@ -386,6 +391,7 @@ fn confirm_in_writer(
         calendar: revision,
         reschedule_token,
         cancel_token,
+        approval_digest: None,
     }))
 }
 

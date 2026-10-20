@@ -8,7 +8,9 @@
 //! ([`crate::gate::live_grant_covering_effect_in_txn`]). The owner's one-send
 //! press the gate spent admitting the send rides its ledger row as a typed
 //! proof (FIX 6362); the call carries it, and the ledger validates it against
-//! the digest the frozen call recomposes here.
+//! the digest the frozen call recomposes here: its document, command binding
+//! and the logical send ref frozen with it (FIX 6424), the one send the press
+//! approved.
 
 use serde::Deserialize;
 
@@ -16,9 +18,10 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gate::{
-    ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles,
+    ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
+    GateProvenanceHandles, OutboundSendFacts,
 };
-use crate::outbound::capability::outbound_verb_contract;
+use crate::outbound::capability::{normalize_key, outbound_verb_contract};
 use crate::outbound::outbound_dispatch_attempt_id;
 use crate::outbound_intent_ledger::{
     AdmittedApproval, IntentLedgerError, IntentState, check_intent_attempt_format_in_txn,
@@ -71,6 +74,9 @@ struct FrozenCall {
     channel_identity_ref: Option<String>,
     #[serde(default)]
     counterparty_ref: Option<String>,
+    /// FIX 6424: the logical send ref its press pins, frozen with the call.
+    #[serde(default)]
+    approval_send_ref: Option<String>,
     has_opted_in: bool,
     has_permission: bool,
     policy_risk: String,
@@ -112,12 +118,19 @@ pub(crate) fn esign_delivery_call_in_txn(
     if frozen.channel != "esign" {
         return Ok(Ok(None));
     }
-    Ok(frozen_call(frozen, dispatch_ref, record.admitted_approval).map(Some))
+    // FIX 6424: the send ref frozen with the call is this dispatch's own.
+    if frozen.approval_send_ref.as_deref() != Some(dispatch_ref) {
+        return Ok(Err(Error::InvariantViolation(
+            "e-sign dispatch logical send ref",
+        )));
+    }
+    Ok(frozen_call(frozen, record.admitted_approval).map(Some))
 }
 
 /// The digest an owner's one-send press on the e-sign `tool` call frozen in
 /// `payload` approves: the gate's approve-once composer over the call's
-/// actor, act, channel and brief, as the gate built them for the send.
+/// actor, act, channel and brief, and its document, command binding and
+/// frozen logical send ref (FIX 6424), as the gate built them for the send.
 /// `None` for a payload that is no frozen e-sign `tool` call.
 pub(crate) fn esign_approval_digest_from_frozen_payload(
     payload: &[u8],
@@ -127,18 +140,20 @@ pub(crate) fn esign_approval_digest_from_frozen_payload(
     if frozen.channel != "esign" || frozen.verb != tool {
         return None;
     }
-    let call = frozen_call(frozen, "", None).ok()?;
+    let call = frozen_call(frozen, None).ok()?;
     crate::gate::external_effect_approval_digest(&call_effect(&call).ok()?)
 }
 
 fn frozen_call(
     frozen: FrozenCall,
-    send_ref: &str,
     admitted_approval: Option<AdmittedApproval>,
 ) -> Result<EsignDeliveryCall> {
     let entity = |value: Option<String>| -> Result<Option<EntityId>> {
         value.map(|hex| EntityId::from_hex(&hex)).transpose()
     };
+    let send_ref = frozen.approval_send_ref.ok_or(Error::InvariantViolation(
+        "e-sign dispatch logical send ref",
+    ))?;
     Ok(EsignDeliveryCall {
         actor_class: frozen.actor_class,
         actor_entity_ref: entity(frozen.actor_entity_ref)?,
@@ -159,7 +174,7 @@ fn frozen_call(
         } else {
             ExternalEffectPolicyRisk::HoldToProposal
         },
-        send_ref: send_ref.to_owned(),
+        send_ref,
     })
 }
 
@@ -189,6 +204,16 @@ fn call_effect(call: &EsignDeliveryCall) -> Result<ExternalEffectGateInput> {
         provenance: GateProvenanceHandles {
             actor_entity_ref: call.actor_entity_ref,
             mail_content_ref: call.content_ref.clone(),
+            // FIX 6424: the same family target the dispatch's gate built.
+            approval_target: ApprovalTarget::for_outbound(&OutboundSendFacts {
+                connector: &normalize_key(&call.channel),
+                target: &call.target,
+                sender: call.channel_identity_ref,
+                thread_ref: None,
+                content_ref: call.content_ref.as_deref(),
+                send_ref: &call.send_ref,
+                calendar_invite: None,
+            }),
             ..GateProvenanceHandles::default()
         },
         verb: contract.kind.clone(),

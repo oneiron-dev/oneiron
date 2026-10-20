@@ -109,6 +109,12 @@ pub struct OutboundIntentReceipt {
     pub gate_decision_ref: Option<String>,
     /// Gate reason codes.
     pub gate_reason_codes: Vec<String>,
+    /// While the gate holds the send for the owner (`gate_outcome`
+    /// `pending`), the approve-once digest his one-time press must name to
+    /// release it, 64 lower-hex (FIX 6424): set for a send whose family pins
+    /// its own target (the communications connectors, `calendar.invite`).
+    /// On dedupe this re-surfaces the first schedule's digest.
+    pub approval_digest: Option<String>,
     /// True when the idempotency key coalesced onto an existing schedule.
     pub deduped: bool,
 }
