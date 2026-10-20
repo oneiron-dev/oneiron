@@ -78520,9 +78520,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer/unverifiable.rs",
-     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406)",
+     "purpose": "The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406, 6475, 6477)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
