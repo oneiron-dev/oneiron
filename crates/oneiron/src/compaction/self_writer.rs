@@ -241,7 +241,17 @@ pub struct CompactionExecution {
 pub struct CompactionCall {
     pub request: Vec<u8>,
     pub response: Vec<u8>,
+    /// Every record the call's words were read from: its request's sources
+    /// and each home part it wore, the summary's own lineage. Its filed step
+    /// and any response artifact derive from each (FIX 5977), so withdrawing
+    /// one withdraws them as it withdraws the summary.
+    pub sources: Vec<EntityId>,
 }
+
+/// The name of a filed compaction step's response artifact: an answer over
+/// the inline bound lives in one, and its bytes leave only while it and
+/// every record it was derived from stand (FIX 5977).
+pub(crate) const COMPACTION_STEP_RESPONSE_NAME: &str = "compaction.step.response";
 
 /// One filed call of a self-written pass: its terminal `dreamer.step`
 /// claim, whose job is the run the pass compacted (FIX 4465 B).
