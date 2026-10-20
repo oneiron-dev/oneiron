@@ -7,7 +7,9 @@ use super::step_claim::{
     decode_step_claim_value, load_step_response, load_step_response_in_txn, log_terminal_step,
     step_claim_matches_request, step_index_lookup, step_index_lookup_in_txn,
 };
-use super::step_state::{step_state_delete, step_state_read, step_state_write};
+use super::step_state::{
+    StepStateOwners, step_state_delete, step_state_read, step_state_write_owned,
+};
 use super::trap::{open_trap_in_txn, trap_park_owner};
 use super::trap_binding::TrapBindingScope;
 use super::types::{
@@ -196,6 +198,16 @@ async fn durable_step(
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
 
+    // A step whose response its owner's erase took is over (KS-2B1): it is
+    // never asked, or paid for, again, before any memo, recovery or
+    // admission. It names no byte of the response.
+    if step_state_read(ctx.vault, ctx.attempt_id, &step_hash)?.is_some_and(|row| row.erased) {
+        return Err(Error::Refused(
+            "this step's response was erased by its owner; it is not asked again".into(),
+        )
+        .into());
+    }
+
     // Memo-hit provenance check (ONE-1344): a stored terminal response is
     // returned ONLY when the WITH-WHAT identity it recorded — model id,
     // purpose, and params hash — is the identity of THIS request. The index key
@@ -256,11 +268,12 @@ async fn durable_step(
         return Err(DurableStepError::FinalizeRefused);
     }
 
-    step_state_write(
+    step_state_write_owned(
         ctx.vault,
         ctx.attempt_id,
         &step_hash,
         StepProgression::Started,
+        StepStateOwners::of(ctx),
         None,
         ctx.now_ms,
     )?;
@@ -397,11 +410,12 @@ async fn durable_step(
     let lease_settle = LeaseSettleOnDrop::new(guard, &admission.lease, &response.usage);
 
     let payload = serde_json::to_vec(&response)?;
-    step_state_write(
+    step_state_write_owned(
         ctx.vault,
         ctx.attempt_id,
         &step_hash,
         StepProgression::ResponseReceived,
+        StepStateOwners::of(ctx),
         Some(&payload),
         ctx.now_ms,
     )?;

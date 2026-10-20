@@ -5,7 +5,7 @@ use super::codec::{
     decode_attempt_id_value, decode_entity_id_value, decode_hash_hex, expect_key, expect_map,
     expect_string, expect_u64, invalid_step, pinned_key_index,
 };
-use super::step_state::{StepStateRow, step_state_put_in_txn, step_state_read};
+use super::step_state::{StepStateOwners, StepStateRow, step_state_put_in_txn, step_state_read};
 use super::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_VALUE_KEYS,
     DREAMER_STEP_VALUE_SCHEMA_VERSION, DurableStepContext, DurableStepError, DurableStepResult,
@@ -77,7 +77,7 @@ pub(super) const STEP_INDEX_FORWARD: SideTable<StepIndexKey, EntityId, Raw> =
     SideTable::new(&side_table::DREAMER_STEP_INDEX);
 /// The reverse "i:" sub-index: claim id -> the forward row's full stored key bytes, so a
 /// deindex can find (and verify) the forward row it must retire without knowing its key.
-const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
+pub(super) const STEP_INDEX_CLAIM: SideTable<StepIndexClaimKey, Vec<u8>, Raw> =
     SideTable::new(&side_table::DREAMER_STEP_INDEX);
 
 // ---------------------------------------------------------------------------
@@ -197,6 +197,11 @@ pub(super) fn log_terminal_step(
                     started_at: existing_started_at,
                     updated_at: ctx.now_ms,
                     response_payload: Some(payload.to_vec()),
+                    owners: StepStateOwners {
+                        claim: Some(claim_id),
+                        ..StepStateOwners::of(ctx)
+                    },
+                    erased: false,
                 },
             )?;
             let claimed = StepClaimed {

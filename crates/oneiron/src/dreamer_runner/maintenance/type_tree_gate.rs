@@ -29,7 +29,7 @@ use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_optimize::{
     GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay,
     PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeDecisions,
-    SkillReplayPair, receipt_is_held_out, score_gate_skill_edit_in_cycle,
+    SkillReplayResponses, receipt_is_held_out, score_gate_skill_edit_in_cycle,
 };
 use crate::task_type::{DecisionAxis, TaskTypeRef, TaskTypeTree, TreeScope};
 use crate::team::TeamReceipt;
@@ -362,8 +362,8 @@ impl HeldOutReplayNotes for TreeReplayScorer<'_> {
         })
     }
 
-    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
-        self.inner.blind_pairs(task, receipts)
+    fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        self.inner.replay_responses(receipts)
     }
 
     fn record_decision(

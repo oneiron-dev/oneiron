@@ -4407,6 +4407,9 @@ class Oneiron:
         def send_for_signature(self, spec):
             """Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."""
             return json.loads(_translate(lambda: self._client.vault_esign_send_for_signature(json.dumps(spec))))
+        @property
+        def notices(self) -> "Oneiron._VaultEsignNoticesVerbs":
+            return Oneiron._VaultEsignNoticesVerbs(self._client)
         def remind(self, spec):
             """Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."""
             return json.loads(_translate(lambda: self._client.vault_esign_remind(json.dumps(spec))))
@@ -4425,6 +4428,12 @@ class Oneiron:
         def issue(self, spec):
             """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
             return json.loads(_translate(lambda: self._client.vault_esign_links_issue(json.dumps(spec))))
+    class _VaultEsignNoticesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def dispatch(self, spec):
+            """Dispatches the due transition notices of one signing document recorded for the caller through the email send gate, as the caller."""
+            return json.loads(_translate(lambda: self._client.vault_esign_notices_dispatch(json.dumps(spec))))
     class _VaultEsignSigningVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::skill_optimize::JudgeLabel;
 
-/// A response-only preference frozen before either rubric or scalar score is
-/// shown to the judging callbacks. The host selects a near-tie rollout pair
-/// from the held-out questions; this reference identifies that pair.
+/// A response-only preference frozen before either version's instructions or
+/// an outcome label is read. The pair is two held-out responses whose
+/// common-rubric scores are closest; this reference identifies that pair.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlindPreference {
@@ -226,8 +226,8 @@ pub(super) fn measure(
 ) -> Result<JudgeMeasurements> {
     validate_blind(blind)?;
     // Coverage sees only the task identity and instructions: no responses,
-    // outcome labels, or aggregate score. The contrastive host must freeze its
-    // response-only preference before inspecting the rubric (instructions).
+    // outcome labels, or aggregate score. The contrastive preference was
+    // frozen on responses alone, before either version's instructions.
     let structural = AuditPair {
         before: checked(scorer.structural_audit(before.skill_id, before.instructions)?)?,
         after: checked(scorer.structural_audit(after.skill_id, after.instructions)?)?,

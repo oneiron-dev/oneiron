@@ -464,6 +464,14 @@ side_tables! {
     PROVENANCE_BODY_KEY: VaultMeta b"provenance:body_key:v1:" Named;
     /// File digests no descriptor holds, for the body-file collector. Key: bytes32 (BLAKE3).
     PROVENANCE_BODY_RELEASED: VaultMeta b"provenance:body_released:v1:" Named;
+    /// KS-2B1: a row-held response's body instance, bound by the first checkpoint that carries
+    /// its row. Key: u8 (database) + the row's full key; value: bytes16 (instance) + bytes32
+    /// (BLAKE3 of the bytes bound).
+    PROVENANCE_BODY_RESPONSE: VaultMeta b"provenance:body_response:v1:" Raw;
+    /// KS-2B1: each body instance a row-held response was carried under, by each owner its
+    /// write-time stamps name; it outlives the row, so an erase of the owner retires every
+    /// image's copy. Key: id16 (owner) + bytes16 (instance); value: the row's carrier.
+    PROVENANCE_BODY_RESPONSE_OWNER: VaultMeta b"provenance:body_response_owner:v1:" Raw;
     /// One row's immutable birth envelope (Rule A made_by). Key: id16.
     PROVENANCE_ROW_BIRTH: VaultMeta b"provenance:row_birth:v1:" Named;
     /// The local secret that keys a destination's withheld-ref handles (Q26 = B). Key: `()`. Never

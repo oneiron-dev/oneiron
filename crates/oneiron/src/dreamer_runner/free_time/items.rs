@@ -122,6 +122,56 @@ impl Vault {
     }
 }
 
+/// Whether `record` is a free-time item's try that was queued and never
+/// started (FIX 5661): the one kind of free-time work a home move carries,
+/// and the one a draining home holds back. A retry, or a try whose lease
+/// was handed back, already started: it runs and settles where it is.
+pub(crate) fn free_time_item_waits_unstarted(record: &AttemptRecord) -> bool {
+    record.state == crate::attempt_queue::AttemptState::Queued
+        && record.attempt_count == 0
+        && record.retry_of.is_none()
+        && free_time_line(record).is_some()
+}
+
+/// FIX 5661: whether `queue_kind`'s free-time items wait on this node. While
+/// it drains its free-time rows toward a home move, or after it froze them
+/// for one, C1's guard takes no new admission here: an item whose try never
+/// started ([`free_time_item_waits_unstarted`]) stays queued and inert,
+/// never cancelled, for the move to carry it to the new home, which queues
+/// it again as itself. A try that already started, and other work of its
+/// queue (a resident's nightly dreaming), are admitted as before.
+#[cfg(feature = "sync")]
+pub(crate) fn free_time_items_fenced_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    queue_kind: &str,
+) -> Result<bool> {
+    if queue_kind != crate::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND
+        && queue_kind != crate::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND
+    {
+        return Ok(false);
+    }
+    let admits = crate::sync::home_handoff::takes_home_write_in_txn(
+        vault,
+        txn,
+        crate::sync::home_handoff::HomeWrite::Admit,
+    )?;
+    Ok(!admits)
+}
+
+/// FIX 5661: whether this node still settles its free-time rows. An item
+/// admitted before a move settles while its home drains; a home that froze
+/// its rows for the move keeps them as history, and C1's guard takes no
+/// settlement there.
+#[cfg(feature = "sync")]
+pub(super) fn settles_here_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+    crate::sync::home_handoff::takes_home_write_in_txn(
+        vault,
+        txn,
+        crate::sync::home_handoff::HomeWrite::Settle,
+    )
+}
+
 /// Whether a resident's attempt runs as a free-time item.
 pub(crate) enum FreeTimeItemRun {
     /// No cycle queued it: it runs as it always has.
@@ -422,6 +472,15 @@ pub(crate) fn charge_free_time_item_in_txn(
     let Some(binding) = binding_in_txn(vault, txn, attempt)? else {
         return Ok(());
     };
+    #[cfg(feature = "sync")]
+    if !settles_here_in_txn(vault, txn)? {
+        tracing::warn!(
+            agent = %binding.agent.to_hex(),
+            units,
+            "a free-time item's spend landed after its home froze its rows for a move"
+        );
+        return Ok(());
+    }
     AgentDispatcher::new(vault).record_guard_spend_in_txn(txn, &binding.spend_scope, units)?;
     Ok(())
 }
@@ -445,6 +504,16 @@ pub(crate) fn end_free_time_item_in_txn(
     let Some(binding) = binding_in_txn(vault, txn, record.id)? else {
         return Ok(());
     };
+    // A home that froze its free-time rows for a move keeps them, and the
+    // scope its item spends under, as history (FIX 5661).
+    #[cfg(feature = "sync")]
+    if !settles_here_in_txn(vault, txn)? {
+        tracing::warn!(
+            agent = %binding.agent.to_hex(),
+            "a free-time item ended after its home froze its rows for a move"
+        );
+        return Ok(());
+    }
     AgentDispatcher::new(vault).settle_child_in_txn(txn, &record.id, now)?;
     let receipt = FreeTimeItemReceipt::of(&binding, outcome, None, now);
     if record_receipt_in_txn(vault, txn, &receipt)? {

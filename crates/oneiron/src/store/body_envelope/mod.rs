@@ -35,6 +35,7 @@ mod custody;
 mod frames;
 mod plan;
 mod reader;
+mod response;
 mod retention;
 mod rows;
 mod spill;
@@ -52,6 +53,11 @@ pub(crate) use self::plan::{
     body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
 };
 pub(crate) use self::reader::BodyFile;
+pub(crate) use self::response::{
+    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
+    bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
+    response_binding_in_txn, response_carrier,
+};
 pub(crate) use self::retention::{INLINE_ASSETS, erase_bodies_in_txn, release_body_in_txn};
 pub(crate) use self::rows::{
     BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn, retire_body_key_in_txn,
@@ -247,6 +253,44 @@ impl BodyDir {
             return Ok(None);
         };
         BodyFile::sealed(file, key, digest, len).map(Some)
+    }
+
+    /// Reads the file of the body `digest` back whole under `binding`'s
+    /// custody, as its instance row `row` names it (an activation's read
+    /// back, FIX 6020): a sealed directory's envelope frame by frame under
+    /// the instance's key, a plain one's body against its digest, with the
+    /// instance's key read too, since a plain read takes none.
+    ///
+    /// # Errors
+    ///
+    /// `body_key_custody_unavailable` for a key custody does not hold;
+    /// [`Error::CorruptedIndex`] for a file missing, of another length, or
+    /// that does not open or check; filesystem errors.
+    pub(crate) fn read_back(
+        &self,
+        binding: &crate::store::key_custody::CustodyBinding,
+        digest: &[u8; 32],
+        row: &BodyKeyRow,
+    ) -> Result<()> {
+        let key = body_key_in(binding, &row.instance)?;
+        let missing = || Error::CorruptedIndex("body file missing at read back");
+        let mut file = if self.sealed.is_some() {
+            let file = self
+                .open_named(&sealed_body_file_name(digest, &row.instance))?
+                .ok_or_else(missing)?;
+            BodyFile::sealed(file, key, digest, row.len)?
+        } else {
+            BodyFile::plain(
+                self.open_body(digest, row.len)?.ok_or_else(missing)?,
+                row.len,
+            )
+        };
+        let mut hasher = blake3::Hasher::new();
+        std::io::copy(&mut file, &mut hasher)?;
+        if hasher.finalize().as_bytes() != digest {
+            return Err(Error::CorruptedIndex("body file does not match its digest"));
+        }
+        Ok(())
     }
 
     /// Whether `row`, the instance row of the body `digest`, is a committed
