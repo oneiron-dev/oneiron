@@ -31,7 +31,9 @@ mod ceremony;
 mod delivery_capability;
 pub use delivery_capability::{EsignDeliveryLink, EsignDeliveryMint, EsignDeliveryWait};
 mod delivery_settlement;
-pub use delivery_settlement::{EsignDeliveryEndReason, EsignDeliveryReceipt};
+pub use delivery_settlement::{
+    EsignDeliveryEndReason, EsignDeliveryReceipt, EsignDeliveryReceiptState,
+};
 mod ingress;
 pub use ingress::EsignIngress;
 mod door;
