@@ -42,6 +42,7 @@ pub(crate) use self::dispatch_attempt_id::outbound_dispatch_attempt_id;
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
 pub use self::dispatch_pipeline::OutboundDispatchPipeline;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
+pub(crate) use self::dispatch_pipeline::{esign_delivery_call_in_txn, esign_delivery_grant_in_txn};
 pub use self::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,

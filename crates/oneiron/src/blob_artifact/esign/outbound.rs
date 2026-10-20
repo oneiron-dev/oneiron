@@ -4,15 +4,54 @@ use super::{
     ledger::{append, state_in},
     model::*,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::outbound::*;
-use crate::side_table::{self, Raw, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// Esign outbound dispatch marker. Key: bytes32 (blake3 of the intent ref).
-const DISPATCH_MARKER: SideTable<[u8; 32], String, Raw> =
+const DISPATCH_MARKER: SideTable<[u8; 32], DispatchMarker, Raw> =
     SideTable::new(&side_table::ESIGN_DISPATCH_MARKER);
+/// One admitted e-sign act: the command binding it ran under and, when the
+/// vault owner made it himself, his recorded act (FIX 5238). Stored as JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DispatchMarker {
+    /// The immutable command binding (`esign-command:<sha256>`).
+    pub(super) binding: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) owner_act: Option<OwnerSendAct>,
+}
+/// The owner's own send, remind or void: his actor and the decision his
+/// revalidated proof carried.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct OwnerSendAct {
+    pub(super) actor: String,
+    pub(super) decision_ref: String,
+}
+impl RawValue for DispatchMarker {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        serde_json::to_vec(self).map_err(|_| invalid("dispatch marker encoding").into())
+    }
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        serde_json::from_slice(bytes).map_err(|_| invalid("dispatch marker schema").into())
+    }
+}
+/// The marker of the act `intent_ref` admitted, if one ran.
+pub(super) fn dispatch_marker_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    intent_ref: &str,
+) -> Result<Option<DispatchMarker>> {
+    DISPATCH_MARKER.get(
+        &vault.store,
+        txn,
+        blake3::hash(intent_ref.as_bytes()).as_bytes(),
+    )
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EsignOutboundVerb {
@@ -45,6 +84,8 @@ struct EsignSink<'a> {
     automated: bool,
     now: u64,
     reminder: Option<(String, u32)>,
+    /// The vault owner's proof, when the act is his own.
+    owner: Option<&'a AuthenticatedOwner>,
 }
 impl OutboundExecutionSink for EsignSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
@@ -57,12 +98,28 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 .as_deref()
                 .ok_or_else(|| invalid("missing command binding"))?;
             if let Some(prior) = DISPATCH_MARKER.get(&self.vault.store, txn, &marker)? {
-                if prior != binding {
+                if prior.binding != binding {
                     return Err(invalid("dispatch replay binding changed"));
                 }
 
                 return Ok(id);
             }
+            // The owner's own act is recorded with his proof, revalidated
+            // under this writer, so a delivery minted later can cite it.
+            let owner_act = match self.owner {
+                Some(owner) => {
+                    let actor = super::principals::verify_owner(self.vault, txn, owner)?;
+                    (request.intent.actor == actor.to_hex()).then(|| OwnerSendAct {
+                        actor: actor.to_hex(),
+                        decision_ref: owner.decision_id().to_hex(),
+                    })
+                }
+                None => None,
+            };
+            let recorded = DispatchMarker {
+                binding: binding.to_owned(),
+                owner_act,
+            };
             if self.automated
                 && !super::principals::automated_outbound_allowed(
                     self.vault,
@@ -91,9 +148,6 @@ impl OutboundExecutionSink for EsignSink<'_> {
             }
             let recipients = match self.command.verb {
                 EsignOutboundVerb::SendForSignature => {
-                    super::capability::require_recipient_capabilities(
-                        self.vault, txn, id, &state, self.now,
-                    )?;
                     state = append(
                         self.vault,
                         txn,
@@ -189,7 +243,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                             now: self.now,
                         },
                     )?;
-                    DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &binding.to_owned())?;
+                    DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &recorded)?;
 
                     return Ok(id);
                 }
@@ -212,7 +266,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 },
             )?;
             enqueue_seal(self.vault, txn, id, self.now)?;
-            DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &binding.to_owned())?;
+            DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &recorded)?;
 
             Ok(id)
         });
@@ -242,7 +296,18 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_esign_inner(request, command, ip, user_agent, None)
+        self.dispatch_esign_inner(request, command, (ip, user_agent), None, None)
+    }
+    /// [`Self::dispatch_esign`] for the vault owner's own act: admission
+    /// rechecks his proof under its writer, and the act is recorded with it,
+    /// so each delivery it queues mints its own signing link (FIX 5238).
+    pub fn dispatch_esign_as_owner(
+        &self,
+        request: OutboundDispatchRequest,
+        command: &EsignOutboundCommand,
+        owner: &AuthenticatedOwner,
+    ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
+        self.dispatch_esign_inner(request, command, (None, None), None, Some(owner))
     }
     pub(super) fn dispatch_esign_reminder(
         &self,
@@ -254,18 +319,18 @@ impl Vault {
         self.dispatch_esign_inner(
             request,
             command,
-            None,
-            None,
+            (None, None),
             Some((recipient.to_owned(), rung)),
+            None,
         )
     }
     fn dispatch_esign_inner(
         &self,
         mut request: OutboundDispatchRequest,
         command: &EsignOutboundCommand,
-        ip: Option<String>,
-        user_agent: Option<String>,
+        (ip, user_agent): (Option<String>, Option<String>),
         reminder: Option<(String, u32)>,
+        owner: Option<&AuthenticatedOwner>,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         let document = EntityId::from_hex(&command.document)?;
         if request.intent.channel != "esign"
@@ -297,18 +362,19 @@ impl Vault {
         };
         let now = request.occurred_at;
         let automated = request.actor.actor_class != "human";
-        OutboundDispatchPipeline.dispatch(
-            self,
-            request,
-            &mut EsignSink {
-                vault: self,
-                command,
-                actor,
-                automated,
-                now,
-                reminder,
-            },
-        )
+        let mut sink = EsignSink {
+            vault: self,
+            command,
+            actor,
+            automated,
+            now,
+            reminder,
+            owner,
+        };
+        match owner {
+            Some(owner) => self.dispatch_outbound_intent_as_owner(request, owner, &mut sink),
+            None => OutboundDispatchPipeline.dispatch(self, request, &mut sink),
+        }
     }
     /// Expiry is an unsealed terminal and never queues a seal job.
     pub fn expire_esign_document(&self, document: EntityId, now: u64) -> Result<()> {
