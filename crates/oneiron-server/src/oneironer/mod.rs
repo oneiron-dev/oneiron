@@ -60,6 +60,15 @@ impl ProviderTagger {
             Self::Local(tagger) => Ok(endpoint::ProbeOutcome::Ready(tagger.card())),
         }
     }
+
+    /// The decoder revision a native tagger runs; `None` for an endpoint,
+    /// whose card names no decoder.
+    pub(crate) fn decode_revision(&self) -> Option<&'static str> {
+        match self {
+            Self::Endpoint(_) => None,
+            Self::Local(tagger) => Some(tagger.decode_revision()),
+        }
+    }
 }
 
 impl ExtractionEncoder for ProviderTagger {
@@ -251,13 +260,20 @@ pub(crate) fn build_slot_with_rows(
     };
     match slot.tagger.probe()? {
         endpoint::ProbeOutcome::Ready(card) => {
-            // The card's stack is the tagger's own string: with no pin to
-            // compare it to, it could be anything the tagger has read, so the
-            // log says only whether one was pinned.
+            // The accepted card names the bundle that serves, so the log
+            // alone says which one answers. Its checkpoint and stack are 16
+            // lowercase hex digits, never text the tagger has read: an
+            // endpoint's passed the probe's checks and a native card hashes
+            // its own. `stack_pinned` says whether the owner pinned that
+            // stack too; `decode_revision` is the native decoder this build
+            // runs, `-` for an endpoint.
             tracing::info!(
                 provider = config.provider.as_str(),
                 label_count = card.label_count,
                 links = card.returns.links,
+                checkpoint_sha16 = card.checkpoint_sha16.as_str(),
+                stack_sha16 = card.stack_sha16.as_deref().unwrap_or("-"),
+                decode_revision = slot.tagger.decode_revision().unwrap_or("-"),
                 stack_pinned = config.stack_sha16.is_some(),
                 "tagger probe succeeded"
             );

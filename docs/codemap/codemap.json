@@ -25748,7 +25748,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 3,
       "struct": 2,
       "trait": 1
@@ -25816,7 +25816,7 @@
       "const": 5,
       "crate-vis": 4,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 4,
       "trait": 1
      }
@@ -58458,7 +58458,7 @@
      "purpose": "The inputs and answers of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*`, each a host…",
      "surface": {
       "enum": 1,
-      "fn": 13,
+      "fn": 14,
       "struct": 12
      }
     },
@@ -70188,6 +70188,17 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/cli_env.rs",
+     "purpose": "The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "EgressRelay",
       "HttpRequest",
@@ -70262,7 +70273,7 @@
      "surface": {
       "enum": 2,
       "fn": 12,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 8,
       "type": 1
      }
@@ -70383,6 +70394,13 @@
     }
    ],
    "modules": {
+    "cli_env": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the…"
+    },
     "egress": {
      "files": 1,
      "impl_vault": false,
@@ -70449,7 +70467,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 17,
+   "source_files": 18,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -79952,6 +79970,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/ai/chat/recall.rs",
+     "purpose": "The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/ai/chat/sitting.rs",
      "purpose": "Whether a chat turn signals its caller's durable sitting (FIX 5564; Engine #1968: an anonymous off-record…",
      "surface": {
@@ -80531,13 +80559,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -86365,7 +86393,7 @@
      "path": "src/conversation_training/http.rs",
      "purpose": "The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -86396,6 +86424,56 @@
      "purpose": "The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper.rs",
+     "purpose": "The self-host training shipper (TL-6, FIX 5813): the loop that carries a self-hosted vault's released offers…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/stream.rs",
+     "purpose": "A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/tally.rs",
+     "purpose": "The self-host shipper's counts (TL-6): what a pass did, logged once at its end in counts and classes only…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/walks.rs",
+     "purpose": "The self-host shipper's three walks over the vault's anonymous custody (TL-6): the withdrawals, the uploads…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/window.rs",
+     "purpose": "The self-host shipper's requests, planned to the intake's bounds (TL-6): a window per piece packed into…",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -87661,6 +87739,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/container_dirs.rs",
+     "purpose": "The host directories the supervisor binds for the guests' container CLI (`--container-home` and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/managed/ctl_shed_tests.rs",
@@ -87915,7 +88003,7 @@
      "path": "src/managed/relay_delete.rs",
      "purpose": "The relay locker delete this engine executes (FIX 6826, Engine 10-21)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -89208,7 +89296,7 @@
      "path": "src/oneironer/local.rs",
      "purpose": "Native extraction on candle, with no HTTP server or second runtime",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -89248,7 +89336,7 @@
      "path": "src/oneironer/mod.rs",
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -90388,7 +90476,7 @@
      "path": "src/server/space_move.rs",
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -91260,7 +91348,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 480,
+     "files": 481,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91379,7 +91467,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "conversation_training": {
-     "files": 6,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91554,7 +91642,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 59,
+     "files": 60,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91708,9 +91796,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 52,
+   "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 952,
+   "source_files": 959,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -29,7 +29,7 @@ use oneiron::{
 };
 
 use super::core::SyncServer;
-use super::media_embedding::{MediaEmbedRefusal, RuntimeMediaEmbedder};
+use super::media_embedding::{MediaEgress, MediaEmbedRefusal, RuntimeMediaEmbedder};
 use crate::ai_host::CHAT_ROLE;
 
 /// How long an undecided move waits before its probes run again.
@@ -71,6 +71,13 @@ fn probe_author_failing(kind: InputKind, failing: bool) -> bool {
     }
 }
 
+/// `embedder`'s media egress gate when it runs at a third party (FIX 6741).
+fn third_party_egress(embedder: &RuntimeMediaEmbedder) -> Option<MediaEgress> {
+    (embedder.locality() == EmbedderLocality::ThirdParty)
+        .then(|| embedder.media_egress())
+        .flatten()
+}
+
 /// One media backfill pass's result per space.
 pub(super) type SpacePasses = Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)>;
 
@@ -81,6 +88,8 @@ struct ServerProbeEncoder<'a> {
     server: &'a SyncServer,
     incumbent: Option<RuntimeMediaEmbedder>,
     candidate: RuntimeMediaEmbedder,
+    /// The candidate's media egress gate when it runs at a third party.
+    candidate_egress: Option<MediaEgress>,
     runtime: &'a tokio::runtime::Handle,
 }
 
@@ -150,6 +159,14 @@ impl SpaceProbeEncoder for ServerProbeEncoder<'_> {
             query.media_type,
             query.bytes.to_vec(),
         ))?))
+    }
+
+    /// The gate the backfill sends a third-party candidate's documents
+    /// through (FIX 6741): what it withholds never fills the candidate.
+    fn candidate_egress(&self) -> Option<&dyn EgressPredicate> {
+        self.candidate_egress
+            .as_ref()
+            .map(|gate| gate as &dyn EgressPredicate)
     }
 }
 
@@ -506,6 +523,15 @@ impl SyncServer {
         }
     }
 
+    /// The media egress gate on `candidate`'s rung when it runs at a third
+    /// party (FIX 6907): what the backfill withholds from it never fills it,
+    /// so the owner's yes reads it settled. None for a rung on this device or
+    /// the owner's server, one with no egress opt-in, or a space no rung
+    /// serves.
+    pub(crate) fn candidate_media_egress(&self, candidate: &str) -> Option<MediaEgress> {
+        third_party_egress(&self.media_embedder(candidate).ok()?)
+    }
+
     /// Runs one open move's paired probes now, through both spaces' towers.
     /// When a check of the move is already running, waits for it and answers
     /// with its reading instead ([`MOVE_CHECKS`]). Blocking.
@@ -550,10 +576,12 @@ impl SyncServer {
             SpaceRef::TextIndex => None,
             SpaceRef::Declared(id) => Some(self.media_embedder(id)?.on_runtime(runtime.clone())),
         };
+        let candidate_egress = third_party_egress(&candidate);
         let encoder = ServerProbeEncoder {
             server: self,
             incumbent,
             candidate,
+            candidate_egress,
             runtime,
         };
         Ok(self

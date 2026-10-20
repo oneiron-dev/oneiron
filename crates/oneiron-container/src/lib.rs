@@ -1,10 +1,12 @@
 //! Container sessions with an engine-owned Linux Landlock/seccomp fence.
 //! No guest has a network device. The host proxy relays sockets and DNS.
 
+mod cli_env;
 mod egress;
 mod host_net_floor;
 mod relay_protocol;
 mod transport;
+pub use cli_env::set_cli_env;
 pub use egress::{
     EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal,
     LoopbackRefusalReason,
@@ -30,6 +32,7 @@ pub use launcher::launch as launch_fenced;
 #[cfg(target_os = "linux")]
 pub use supervisor::{NativeFenceGuard, serve_native as serve_native_fence};
 
+use crate::cli_env::ApplyCliEnv as _;
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::io::Read;
@@ -222,6 +225,7 @@ impl ContainerRuntime {
             .args(&args)
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
+            .apply_cli_env()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -296,6 +300,7 @@ impl ContainerRuntime {
                 .args(&args)
                 .env_clear()
                 .env("PATH", "/usr/bin:/bin")
+                .apply_cli_env()
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
@@ -480,6 +485,7 @@ impl Drop for GuestSession {
             .args(["rm", "--force", &self.name])
             .env_clear()
             .env("PATH", "/usr/bin:/bin")
+            .apply_cli_env()
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
