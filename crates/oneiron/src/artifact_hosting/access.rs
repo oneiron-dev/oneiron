@@ -256,6 +256,10 @@ impl Vault {
         read: AuthorizedArtifactRead,
     ) -> Result<Option<ArtifactServedFile>> {
         let target = read.target;
+        // A hosted reader is never the owner verified at a door (OF-560): the
+        // bytes it reads are masked. A body kept in its ASSET's file is masked
+        // as it is read, never held whole beside its copy (FIX 6507).
+        let sight = crate::secret_custody::SecretSight::Masked;
         let (bytes, media_type, hash) = match target.pointer.export {
             ArtifactExportRef::ForkHash(hash) => {
                 let Some(snapshot) = target.snapshot else {
@@ -275,8 +279,20 @@ impl Vault {
                 {
                     return Ok(None);
                 }
+                let asset = crate::codebase::snapshot_asset_entity_id(&entry.content_hash)?;
                 let bytes =
-                    crate::codebase::read_asset_blob_in_txn(self, txn, &entry.content_hash)?;
+                    match self.sighted_body_file_in_txn(txn, &asset, &entry.content_hash, sight)? {
+                        Some(bytes) => bytes,
+                        None => self.masked_whole_in_txn(
+                            txn,
+                            crate::codebase::read_asset_blob_in_txn(
+                                self,
+                                txn,
+                                &entry.content_hash,
+                            )?,
+                            &entry.content_hash,
+                        )?,
+                    };
                 (bytes, None, entry.content_hash)
             }
             ArtifactExportRef::BlobVersion {
@@ -294,24 +310,18 @@ impl Vault {
                 if path != "export" && path != "index.html" && path != record.export_name {
                     return Ok(None);
                 }
-                let Some(bytes) =
-                    self.read_blob_artifact_version_in_txn(txn, &artifact_id, version)?
+                let Some(bytes) = self.read_blob_artifact_version_sighted_in_txn(
+                    txn,
+                    &artifact_id,
+                    version,
+                    sight,
+                )?
                 else {
                     return Ok(None);
                 };
                 (bytes, Some(record.export_media_type), record.content_hash)
             }
         };
-        if *blake3::hash(&bytes).as_bytes() != hash {
-            return Err(Error::CorruptedIndex("artifact served content hash"));
-        }
-        // A hosted reader is never the owner verified at a door (OF-560).
-        let bytes = crate::secret_custody::sighted_bytes_in_txn(
-            &self.store,
-            txn,
-            bytes,
-            crate::secret_custody::SecretSight::Masked,
-        )?;
         // A DOCX copy shows its default author (FIX 4513).
         let bytes = self.resolve_docx_authors_in_txn(txn, bytes)?;
         let size_bytes = u64::try_from(bytes.len())
@@ -327,5 +337,24 @@ impl Vault {
             size_bytes,
             bytes,
         }))
+    }
+
+    /// The stored `bytes` a hosted reader reads whole, checked against
+    /// `hash` and masked (OF-560).
+    fn masked_whole_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        bytes: Vec<u8>,
+        hash: &[u8; 32],
+    ) -> Result<Vec<u8>> {
+        if blake3::hash(&bytes).as_bytes() != hash {
+            return Err(Error::CorruptedIndex("artifact served content hash"));
+        }
+        crate::secret_custody::sighted_bytes_in_txn(
+            &self.store,
+            txn,
+            bytes,
+            crate::secret_custody::SecretSight::Masked,
+        )
     }
 }
