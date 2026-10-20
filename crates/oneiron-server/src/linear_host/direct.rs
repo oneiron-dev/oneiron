@@ -132,7 +132,16 @@ pub(super) async fn spawn(
                         "Linear update remains pending"
                     );
                 }
-                Ok(Err(_)) | Err(_) => {
+                Ok(Err(error)) => {
+                    // FIX 6424 part 2a: a mutation the door held for the
+                    // owner's approve-once press names the digest to press.
+                    tracing::warn!(
+                        reason = "linear_sync_failed",
+                        approve_once = ?oneiron_linear::held_approve_once(&error),
+                        "Linear direct mirror pass failed; will retry"
+                    );
+                }
+                Err(_) => {
                     tracing::warn!(
                         reason = "linear_sync_failed",
                         "Linear direct mirror pass failed; will retry"

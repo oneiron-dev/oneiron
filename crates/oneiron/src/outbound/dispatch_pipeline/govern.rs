@@ -3,21 +3,25 @@ use crate::Vault;
 use crate::consent::EffectDigest;
 use crate::gate::{
     ApprovalTarget, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateProvenanceHandles,
-    OutboundSendFacts,
+    LinearMirrorFacts, OutboundSendFacts,
 };
 use crate::outbound::capability::{OutboundVerbContract, normalize_key};
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
 
+/// `frozen_payload` is the payload the request froze
+/// ([`super::request_binding::PreparedOutboundDispatch::frozen_payload_bytes`]),
+/// whose digest a Linear send's press pins (FIX 6424 part 2a).
 pub(super) fn gate_input(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
     policy_risk: ExternalEffectPolicyRisk,
+    frozen_payload: Option<&[u8]>,
 ) -> ExternalEffectGateInput {
     ExternalEffectGateInput {
         actor: request.actor.gate_actor(),
         provenance: GateProvenanceHandles {
             mail_content_ref: request.intent.content_ref.clone(),
-            approval_target: approval_target(request),
+            approval_target: approval_target(request, &verb_contract.kind, frozen_payload),
             ..request.actor.provenance()
         },
         verb: verb_contract.kind.clone(),
@@ -44,9 +48,27 @@ pub(super) fn gate_input(
 /// FIX 6424: the one send an owner's approve-once press on `request`
 /// approves, read off the canonical request: its original transport target
 /// (never the counterparty alias), its logical send ref, and its family's
-/// facts.
-pub(super) fn approval_target(request: &OutboundDispatchRequest) -> Option<ApprovalTarget> {
+/// facts. A Linear send (part 2a) pins its canonical `verb`, its target and
+/// content ref, its stable logical send ref, the digest of `frozen_payload`
+/// (every frozen field of the send), and the mirror operation's facts only
+/// when the mirror door supplies them. Every caller freezes a Linear request
+/// first; one that did not would pin nothing, as before part 2a.
+pub(super) fn approval_target(
+    request: &OutboundDispatchRequest,
+    verb: &str,
+    frozen_payload: Option<&[u8]>,
+) -> Option<ApprovalTarget> {
     let connector = normalize_key(&request.intent.channel);
+    if connector == LINEAR_CONNECTOR {
+        return Some(ApprovalTarget::LinearDispatch {
+            verb: verb.to_owned(),
+            target: request.intent.target.clone(),
+            content_ref: request.intent.content_ref.clone(),
+            send_ref: stable_send_ref(request).to_owned(),
+            payload_digest: crate::outbound_intent_ledger::hash_frozen_payload(frozen_payload?),
+            mirror: request.linear_mirror.as_ref().map(LinearMirrorFacts::of),
+        });
+    }
     ApprovalTarget::for_outbound(&OutboundSendFacts {
         connector: &connector,
         target: &request.intent.target,
@@ -57,6 +79,9 @@ pub(super) fn approval_target(request: &OutboundDispatchRequest) -> Option<Appro
         calendar_invite: request.calendar_invite.as_ref(),
     })
 }
+
+/// The connector a Linear issue mutation rides (FIX 6424 part 2a).
+const LINEAR_CONNECTOR: &str = "linear";
 
 /// FIX 6424 (Engine 10-20 20:4x): the logical send ref a press on `request`
 /// pins. A family whose press is recomposed from its frozen ledger bytes
@@ -71,6 +96,14 @@ fn approval_send_ref<'r>(request: &'r OutboundDispatchRequest, connector: &str) 
     if !ApprovalTarget::freezes_send_ref_of(connector) {
         return &request.intent_ref;
     }
+    stable_send_ref(request)
+}
+
+/// The send's stable logical identity: the logical send a schedule's ask
+/// names, else its ledger identity, else its intent ref. A Linear send pins
+/// it too (CALLS `FIX 6424 scheduled ask stable identity`), so a scheduled
+/// ask and its executor's spend name one logical send.
+fn stable_send_ref(request: &OutboundDispatchRequest) -> &str {
     request
         .approval_identity_ref
         .as_deref()
@@ -85,8 +118,14 @@ fn approval_send_ref<'r>(request: &'r OutboundDispatchRequest, connector: &str) 
 /// family's target and logical send ref. A held dispatch result, e-sign view
 /// and schedule receipt carry the same digest as `approval_digest`; pass its
 /// `to_hex()` as the press's `effect_digest`. `None` for a send whose family
-/// does not pin its target: mail keeps its own canonical digest, and Linear
-/// is FIX 6424's second part. A digest composed by hand from
+/// does not pin its target: mail keeps its own canonical digest. A Linear
+/// send's digest pins its stable logical send and the payload it freezes,
+/// frozen here exactly as its dispatch freezes it (FIX 6424 part 2a); the
+/// mirror door's names its operation too, through `linear_mirror`, which the
+/// door sets (both of that door's asks:
+/// [`crate::Vault::linear_outbound_door_approval_digests`]). A request a
+/// durable LLM step dispatches freezes that step too: its digest is
+/// [`outbound_step_approve_once_digest`]. A digest composed by hand from
 /// [`crate::consent::EffectFacts`] with no target releases none of these
 /// families' sends. It reads and records nothing else.
 /// # Errors
@@ -102,6 +141,28 @@ pub fn outbound_approve_once_digest(
     )?))
 }
 
+/// FIX 6424 part 2a: [`outbound_approve_once_digest`] for `request` as a
+/// durable LLM step dispatches it
+/// ([`crate::Vault::dispatch_outbound_intent_from_step`] with the same
+/// `attempt_id` and `step_request`): its frozen payload carries that step, so
+/// a Linear send's digest pins those exact bytes. It reads and records
+/// nothing else.
+/// # Errors
+/// As [`outbound_approve_once_digest`], or the step's own binding failure.
+pub fn outbound_step_approve_once_digest(
+    vault: &Vault,
+    attempt_id: crate::attempt_queue::AttemptId,
+    step_request: &crate::llm::LlmRequest,
+    request: &OutboundDispatchRequest,
+) -> Result<Option<EffectDigest>, OutboundDispatchError> {
+    let binding = crate::llm::StepEffectBinding::for_request(attempt_id, step_request)?;
+    Ok(pinned_approval_digest(&prepared_gate_effect(
+        vault,
+        request,
+        Some(binding),
+    )?))
+}
+
 /// FIX 6679: `request`'s Gate input as the dispatch pipeline prepares it,
 /// the one its approve-once digest and the Gate's decisions on it are
 /// composed over, so a caller can tell the Gate's own decisions on exactly
@@ -113,16 +174,32 @@ pub(crate) fn outbound_gate_effect(
     vault: &Vault,
     request: &OutboundDispatchRequest,
 ) -> Result<ExternalEffectGateInput, OutboundDispatchError> {
+    prepared_gate_effect(vault, request, None)
+}
+
+/// [`outbound_gate_effect`] for a request dispatched with `step_binding`
+/// (FIX 6424 part 2a), prepared as that dispatch prepares it.
+fn prepared_gate_effect(
+    vault: &Vault,
+    request: &OutboundDispatchRequest,
+    step_binding: Option<crate::llm::StepEffectBinding>,
+) -> Result<ExternalEffectGateInput, OutboundDispatchError> {
     let prepared = super::request_binding::PreparedOutboundDispatch::prepare(
         vault,
         request.clone(),
         None,
-        None,
+        step_binding,
     )?;
+    // FIX 6424 part 2a: a Linear send pins the bytes its dispatch freezes;
+    // no other family reads them here.
+    let frozen = (normalize_key(&prepared.request.intent.channel) == LINEAR_CONNECTOR)
+        .then(|| prepared.frozen_payload_bytes())
+        .transpose()?;
     Ok(gate_input(
         &prepared.request,
         prepared.verb_contract,
         prepared.policy_risk,
+        frozen.as_deref(),
     ))
 }
 
