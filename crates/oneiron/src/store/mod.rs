@@ -151,6 +151,7 @@ mod root_directory;
 mod send_receipt_audit;
 mod short_id_alias;
 mod structural_kind_registry;
+mod sync_responses;
 mod training_link;
 pub(crate) mod turn_missing;
 mod writer_lease;
@@ -233,6 +234,15 @@ use structural_kind_registry::*;
 pub(crate) use structural_kind_registry::{
     STRUCTURAL_KIND_REGISTRY_KEY_PREFIX, STRUCTURAL_KIND_REGISTRY_RECORD_VERSION,
     structural_kind_registry_key,
+};
+// KS-2B2: the host's row-held responses in `sync_state`, read by the engine.
+#[cfg(feature = "sync")]
+pub(crate) use sync_responses::media_job_put_fenced_in_txn;
+#[doc(hidden)]
+pub use sync_responses::{IdempotencyEntry, ResponseStamps, media_job_erased_state};
+pub(crate) use sync_responses::{
+    MediaKey, erase_sync_response_owner_in_txn, http_carriage, http_owners, media_job_carriage,
+    media_job_owners, media_key, media_part_carriage,
 };
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;

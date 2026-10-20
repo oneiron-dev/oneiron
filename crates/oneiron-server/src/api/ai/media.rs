@@ -596,11 +596,12 @@ pub(super) async fn video(
         Ok((request, _)) => request,
         Err(refused) => return refused,
     };
+    // Its row is stamped with the caller as the actor (KS-2B2).
     match server
         .ai
         .model_runtime()
         .media()
-        .submit(request, None)
+        .submit(request, None, auth.principal_entity())
         .await
     {
         Ok(ticket) => (StatusCode::ACCEPTED, Json(ticket)).into_response(),

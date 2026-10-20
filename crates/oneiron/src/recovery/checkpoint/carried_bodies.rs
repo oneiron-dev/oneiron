@@ -71,6 +71,12 @@ pub(super) struct CarriedInline {
     /// its first `keep` bytes alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) retired: Option<u32>,
+    /// A restore over a live vault keeps this response's row as the live
+    /// vault holds it, with the live vault's binding (a media job, a Live
+    /// family; KS-2B2): its stream is passed over, never required or
+    /// landed. Never in an image.
+    #[serde(skip)]
+    pub(super) superseded: bool,
 }
 
 /// Whether the bodies `image` names are the streams its artifact's manifest
@@ -237,6 +243,7 @@ impl BodyCensus {
                 len: body.len() as u64,
                 stored_len: 0,
                 retired: None,
+                superseded: false,
             },
             body.to_vec(),
         ));
@@ -460,11 +467,18 @@ pub(super) fn require(
         .get_mut("vault_meta")
         .ok_or_else(codec_error)?;
     let named = body_instances_in_rows(rows)?;
+    // A superseded response's binding is the live vault's now (KS-2B2).
     let carried = image
         .sealed_bodies
         .values()
         .map(|file| file.instance)
-        .chain(image.inline_bodies.iter().map(|carried| carried.instance));
+        .chain(
+            image
+                .inline_bodies
+                .iter()
+                .filter(|carried| !carried.superseded)
+                .map(|carried| carried.instance),
+        );
     for instance in carried {
         if !named.contains(&instance) {
             return Err(codec_error());
@@ -536,7 +550,7 @@ pub(super) fn restore(
         )?;
     }
     for (inline, carried) in image.inline_bodies.iter().enumerate() {
-        if retired.contains(&carried.instance) {
+        if carried.superseded || retired.contains(&carried.instance) {
             pass_over(&mut bodies, files + inline)?;
             continue;
         }

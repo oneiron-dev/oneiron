@@ -34,7 +34,7 @@ use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideKey, SideTable, SideTableDbs};
-use crate::store::{ManifestDbs, Store};
+use crate::store::{ManifestDbs, MediaKey, Store};
 
 type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -48,12 +48,13 @@ pub(crate) const RESPONSE_BINDINGS: SideTable<Vec<u8>, [u8; 48], Raw> =
 const RESPONSE_OWNERS: SideTable<(EntityId, [u8; 16]), Vec<u8>, Raw> =
     SideTable::new(&side_table::PROVENANCE_BODY_RESPONSE_OWNER);
 
-/// Where a row-held response rests. KS-2B2's HTTP idempotency and media job
-/// rows add `sync_state`.
+/// Where a row-held response rests: KS-2B2's HTTP idempotency entries and
+/// media jobs rest in `sync_state`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResponseDb {
     VaultMeta,
     Entities,
+    SyncState,
 }
 
 impl ResponseDb {
@@ -61,6 +62,7 @@ impl ResponseDb {
         match self {
             Self::VaultMeta => 0,
             Self::Entities => 1,
+            Self::SyncState => 2,
         }
     }
 
@@ -68,6 +70,7 @@ impl ResponseDb {
         match tag {
             0 => Some(Self::VaultMeta),
             1 => Some(Self::Entities),
+            2 => Some(Self::SyncState),
             _ => None,
         }
     }
@@ -77,6 +80,7 @@ impl ResponseDb {
         match name {
             "vault_meta" => Some(Self::VaultMeta),
             "entities" => Some(Self::Entities),
+            "sync_state" => Some(Self::SyncState),
             _ => None,
         }
     }
@@ -86,6 +90,7 @@ impl ResponseDb {
         match self {
             Self::VaultMeta => "vault_meta",
             Self::Entities => "entities",
+            Self::SyncState => "sync_state",
         }
     }
 }
@@ -150,8 +155,8 @@ pub(crate) struct ResponseCarriage {
     pub(crate) retired: usize,
 }
 
-/// A family of row-held responses (KS-2B1; KS-2B2 adds HTTP idempotency and
-/// media jobs).
+/// A family of row-held responses (KS-2B1; KS-2B2 adds the host's HTTP
+/// idempotency entries and media jobs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResponseFamily {
     /// A turn program's STEP row: a send's kept body (FIX 5719).
@@ -162,6 +167,13 @@ pub(crate) enum ResponseFamily {
     StepClaim,
     /// A code run's replay record: its bridge outcomes and output previews.
     Replay,
+    /// An HTTP idempotency cache entry: its request, headers, target and
+    /// response (KS-2B2).
+    Http,
+    /// A media job's row: its request and its end (KS-2B2).
+    MediaJob,
+    /// One of a media job's clips, in a row of its own beside the job's.
+    MediaPart,
 }
 
 impl ResponseFamily {
@@ -179,6 +191,15 @@ impl ResponseFamily {
             ResponseDb::Entities => EntityMetadataHeader::parse(value)
                 .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
                 .map(|_| Self::StepClaim),
+            ResponseDb::SyncState => {
+                if key.starts_with(side_table::HTTP_IDEMPOTENCY_REPLY.prefix) {
+                    return Some(Self::Http);
+                }
+                crate::store::media_key(key).map(|media| match media {
+                    MediaKey::Job => Self::MediaJob,
+                    MediaKey::Part { .. } => Self::MediaPart,
+                })
+            }
         }
     }
 
@@ -186,11 +207,19 @@ impl ResponseFamily {
     /// response (a bodyless step, a state with no payload, a claim whose
     /// response rests in an artifact, a row that does not decode).
     pub(crate) fn carriage(self, value: &[u8]) -> Option<ResponseCarriage> {
+        let whole = |stub: Vec<u8>| ResponseCarriage {
+            keep: 0,
+            retired: stub.len(),
+            stub,
+        };
         match self {
             Self::ProgramStep => crate::dreamer_runner::program_step_carriage(value),
             Self::StepState => crate::llm::step_state_carriage(value),
             Self::StepClaim => crate::llm::step_claim_carriage(value),
             Self::Replay => crate::code_run::replay_carriage(value),
+            Self::Http => crate::store::http_carriage(value).map(whole),
+            Self::MediaJob => crate::store::media_job_carriage(value).map(whole),
+            Self::MediaPart => crate::store::media_part_carriage(value).map(whole),
         }
     }
 
@@ -214,6 +243,19 @@ impl ResponseFamily {
                     .map_err(|_| Error::CorruptedIndex("entity key"))?,
             )?]),
             Self::Replay => crate::code_run::replay_owners(store, txn, value),
+            Self::Http => Ok(crate::store::http_owners(value)),
+            Self::MediaJob => Ok(crate::store::media_job_owners(value)),
+            // A clip's owners are its job's, as the job's row stamps them.
+            Self::MediaPart => {
+                let Some(MediaKey::Part { job }) = crate::store::media_key(key) else {
+                    return Ok(Vec::new());
+                };
+                Ok(store
+                    .side_sync_state()?
+                    .get(txn, sync_state_key(&key[..job])?)?
+                    .map(|row| crate::store::media_job_owners(&row))
+                    .unwrap_or_default())
+            }
         }
     }
 
@@ -231,7 +273,16 @@ impl ResponseFamily {
     ) -> Result<()> {
         match self {
             Self::StepClaim => crate::llm::retire_step_claim_in_rows(databases, key),
-            Self::ProgramStep | Self::StepState | Self::Replay => Ok(()),
+            // A retired clip's row goes: its job keeps its erased form.
+            Self::MediaPart => {
+                if let Some(rows) = databases.get_mut(ResponseDb::SyncState.name()) {
+                    rows.retain(|(row, _)| row.as_slice() != key);
+                }
+                Ok(())
+            }
+            Self::ProgramStep | Self::StepState | Self::Replay | Self::Http | Self::MediaJob => {
+                Ok(())
+            }
         }
     }
 
@@ -250,20 +301,37 @@ impl ResponseFamily {
         key: &[u8],
         carriage: &ResponseCarriage,
     ) -> Result<()> {
+        let kept = || {
+            carriage
+                .stub
+                .get(..carriage.retired)
+                .ok_or(Error::InvariantViolation(
+                    "a response stub shorter than it keeps",
+                ))
+        };
         match self {
             Self::StepClaim => crate::llm::retire_step_claim_in_txn(store, wtxn, key),
             Self::ProgramStep | Self::StepState | Self::Replay => {
-                let kept =
-                    carriage
-                        .stub
-                        .get(..carriage.retired)
-                        .ok_or(Error::InvariantViolation(
-                            "a response stub shorter than it keeps",
-                        ))?;
-                store.side_vault_meta().put(wtxn, key, kept)
+                store.side_vault_meta().put(wtxn, key, kept()?)
+            }
+            Self::Http | Self::MediaJob => {
+                store
+                    .side_sync_state()?
+                    .put(wtxn, sync_state_key(key)?, kept()?)
+            }
+            Self::MediaPart => {
+                store
+                    .side_sync_state()?
+                    .delete(wtxn, sync_state_key(key)?)?;
+                Ok(())
             }
         }
     }
+}
+
+/// The `sync_state` row key `key` as the text such a key is.
+fn sync_state_key(key: &[u8]) -> Result<&str> {
+    std::str::from_utf8(key).map_err(|_| Error::CorruptedIndex("sync_state row key"))
 }
 
 /// The binding of the row `carrier` names, as `txn` holds it.

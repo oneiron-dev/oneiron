@@ -41,9 +41,10 @@ impl IdempotencyStore {
     }
 }
 
-/// Whether `raw` is an entry a lookup at `now` finds expired. A row that does
-/// not decode is not judged here, and stays.
+/// Whether `raw` is an entry a lookup at `now` finds expired, an erased one
+/// alike: expiry is a delete, and keeps the entry's key (KS-2B2). A row that
+/// does not decode is not judged here, and stays.
 fn expired_at(raw: &[u8], now: u64) -> bool {
-    rmp_serde::from_slice::<StoredIdempotencyEntry>(raw)
+    StoredIdempotencyEntry::decode(raw)
         .is_ok_and(|stored| now.saturating_sub(stored.created_at_secs) >= IDEMPOTENCY_TTL.as_secs())
 }

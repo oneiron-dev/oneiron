@@ -5,14 +5,27 @@
 //! when that fails), and an ended job answers every poll from its row until
 //! its caller deletes it. A clip's bytes sit beside the row, one key a part,
 //! so the row stays small.
+//!
+//! Each row and its clips are one body instance each under the vault's body
+//! custody (KS-2B2, FIX 5683 part B2), bound lazily when a checkpoint carries
+//! them. The row keeps the stamps that name its owners from its submit
+//! ([`custody`]), and an erase of an owner leaves its erased form: the job's
+//! skeleton with its request scrubbed and its end terminal, and no clips.
+//! An erased job is never written again ([`JobStore::put`]), taken up,
+//! resumed or resubmitted; every poll answers its erased end.
 use std::sync::Arc;
 
 use oneiron::llm::media::{AiOperation, MediaJobState, MediaPart, MediaRequest};
 use oneiron::llm::run_admission::PayerPerson;
+use oneiron::store::ResponseStamps;
 use oneiron::{ModelId, Vault};
 use serde::{Deserialize, Serialize};
 
 use crate::models::ladder::PendingReceipt;
+
+mod custody;
+
+pub(super) use custody::{erased_poll, submit_stamps};
 
 /// The rows' prefix: the declared `MODEL_MEDIA_JOB` family.
 const JOB: &str = "models:media-job:v1:";
@@ -39,6 +52,15 @@ pub(super) struct JobRow {
     /// up again bills the same payer, never its poller's. `None` is the
     /// vault owner's.
     pub(super) payer: Option<PayerPerson>,
+    /// Who owns its content, stamped at its submit and kept at its end: the
+    /// actor that asked, the subject, the source rows. Never its payer
+    /// (KS-2B2).
+    #[serde(default)]
+    pub(super) stamps: ResponseStamps,
+    /// An erase of an owner took its content: the row is its erased form
+    /// (KS-2B2).
+    #[serde(default)]
+    pub(super) erased: bool,
 }
 
 /// The vault's job rows.
@@ -53,7 +75,9 @@ impl JobStore {
 
     /// Keeps `row` as job `ticket`, its end's clip bytes beside it: the row
     /// and its clips in one write, so a refused write keeps none of them.
-    pub(super) fn put(&self, ticket: &str, mut row: JobRow) -> Result<(), String> {
+    /// `false` when an erase took the job first: nothing is written, so no
+    /// end puts erased content back (KS-2B2).
+    pub(super) fn put(&self, ticket: &str, mut row: JobRow) -> Result<bool, String> {
         let mut parts = Vec::new();
         if let Some(MediaJobState::Done { response }) = &mut row.ended {
             for (index, part) in response.parts.iter_mut().enumerate() {
@@ -64,13 +88,7 @@ impl JobStore {
         }
         let kept = rmp_serde::to_vec_named(&row).map_err(|error| error.to_string())?;
         self.vault
-            .with_write_txn_grouped(|wtxn| {
-                for (key, bytes) in &parts {
-                    self.vault.sync_state_put_in_write_txn(wtxn, key, bytes)?;
-                }
-                self.vault
-                    .sync_state_put_in_write_txn(wtxn, &row_key(ticket), &kept)
-            })
+            .media_job_put(&row_key(ticket), &kept, &parts)
             .map_err(|error| error.to_string())
     }
 
@@ -90,7 +108,10 @@ impl JobStore {
                 return None;
             }
         };
-        if let Some(MediaJobState::Done { response }) = &mut row.ended {
+        // An erased job's clips went with its content.
+        if !row.erased
+            && let Some(MediaJobState::Done { response }) = &mut row.ended
+        {
             for (index, part) in response.parts.iter_mut().enumerate() {
                 let Some(bytes) = part_bytes(part).filter(|bytes| bytes.is_empty()) else {
                     continue;
@@ -119,7 +140,8 @@ impl JobStore {
         }
     }
 
-    /// Drops job `ticket`'s row and its clips.
+    /// Drops job `ticket`'s row and its clips: a delete, which keeps every
+    /// key, never an erase (KS-2B2).
     pub(super) fn remove(&self, ticket: &str) {
         let row = row_key(ticket);
         let mut keys = self

@@ -109,6 +109,16 @@ each outcome failed, and a claim the erase's shell. Activating an archived vault
 way and reads every body it keeps back under its own custody before the archive lifts; its report
 carries `custody_note` and `training_note` as a restore's does.
 
+The server's own row-held responses are instances the same way: each HTTP idempotency entry
+(request, headers, target and response) and each kept media job with each of its clips. An entry
+is stamped with its caller beside the rows it served and re-admits; a job with the actor that
+asked and its request's subject, never its payer. An erase of an owner leaves an entry its erased
+form, which answers `idempotent_response_erased` until the entry expires (never a miss, never a
+second run), and a job its skeleton with the request scrubbed and the end terminal, which is never
+taken up, resumed or resubmitted, its clips gone. Expiry, cancel and removal are deletes, which
+keep every key. A media job is the live vault's in a restore that keeps current authority, with
+its binding; the image's copy is passed over.
+
 ## Restore
 
 A restore on a host without the image's custody reads the head beside the backup. With an

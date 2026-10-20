@@ -582,12 +582,35 @@ impl Classes {
                     {
                         (ERASED_ORIGIN_AUTHORITY, prefix.len())
                     }
-                    Some((prefix, class)) if key.starts_with(prefix) => (class, prefix.len()),
+                    Some((prefix, class)) if key.starts_with(prefix) => {
+                        (self.binding_class(database, key, class), prefix.len())
+                    }
                     _ => (UNCLASSIFIED_ROWS, 0),
                 }
             }
             Some(Rows::Whole(class)) => (class, 0),
             Some(Rows::Rebuilt) | None => (UNCLASSIFIED_ROWS, 0),
+        }
+    }
+
+    /// A row-held response's binding goes with its carrier (KS-2B2): one
+    /// whose row is a Live family's, a media job's or clip's, is the live
+    /// vault's with the row, and one the live vault no longer holds stays
+    /// absent. Every other row keeps its family's `class`.
+    fn binding_class(&self, database: &str, key: &[u8], class: Class) -> Class {
+        if database != "vault_meta" {
+            return class;
+        }
+        let Some((db, row)) = key
+            .strip_prefix(crate::side_table::PROVENANCE_BODY_RESPONSE.prefix)
+            .and_then(crate::store::carrier_row)
+        else {
+            return class;
+        };
+        if db == crate::store::ResponseDb::SyncState && self.row(db.name(), row, &[]).0 == LIVE {
+            LIVE
+        } else {
+            class
         }
     }
 

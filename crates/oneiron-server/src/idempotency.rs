@@ -8,7 +8,7 @@ use axum::extract::{OriginalUri, Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use serde::{Deserialize, Serialize};
+use oneiron::store::IdempotencyEntry as StoredIdempotencyEntry;
 
 use crate::auth::{CoreAuth, require_owner_auth};
 use crate::config::SyncServerConfig;
@@ -86,13 +86,19 @@ impl IdempotencyStore {
             return Ok(IdempotencyLookup::Miss);
         };
 
-        let stored: StoredIdempotencyEntry =
-            rmp_serde::from_slice(&raw).map_err(IdempotencyStoreError::decode)?;
+        let stored = StoredIdempotencyEntry::decode(&raw).map_err(IdempotencyStoreError::decode)?;
+        // Expiry is a delete, never an erase: the entry's instance keeps its
+        // key, and the binding goes at the next checkpoint (KS-2B2).
         if self.now_secs().saturating_sub(stored.created_at_secs) >= IDEMPOTENCY_TTL.as_secs() {
             self.vault
                 .sync_state_delete(store_key)
                 .map_err(IdempotencyStoreError::storage)?;
             return Ok(IdempotencyLookup::Miss);
+        }
+        // An erase of an owner took the request and the response: the entry
+        // answers that, never a miss, until it expires (KS-2B2).
+        if stored.erased {
+            return Ok(IdempotencyLookup::Erased);
         }
         if stored.request_body != request_body
             || stored
@@ -103,25 +109,23 @@ impl IdempotencyStore {
             return Ok(IdempotencyLookup::Conflict);
         }
 
-        Ok(IdempotencyLookup::Replay(stored.try_into()?))
+        let response = CachedHttpResponse::of_stored(stored)?;
+        Ok(IdempotencyLookup::Replay(response))
     }
 
+    /// Keeps `response` under `store_key`, stamped with its `caller` when the
+    /// request's credential names one (KS-2B2).
     fn insert(
         &self,
         store_key: &str,
         request_target: String,
         request_body: Vec<u8>,
         response: CachedHttpResponse,
+        caller: Option<oneiron::EntityId>,
     ) -> Result<(), IdempotencyStoreError> {
-        let stored = StoredIdempotencyEntry::from_cached(
-            self.now_secs(),
-            request_target,
-            request_body,
-            response,
-        );
-        let raw = rmp_serde::to_vec(&stored).map_err(IdempotencyStoreError::encode)?;
+        let stored = response.into_stored(self.now_secs(), request_target, request_body, caller);
         self.vault
-            .sync_state_put(store_key, &raw)
+            .http_idempotency_put(store_key, &stored)
             .map_err(IdempotencyStoreError::storage)
     }
 }
@@ -181,6 +185,8 @@ enum IdempotencyLookup {
     Miss,
     Replay(CachedHttpResponse),
     Conflict,
+    /// An erase of an owner took the cached response (KS-2B2).
+    Erased,
 }
 
 #[derive(Clone)]
@@ -257,59 +263,41 @@ impl CachedHttpResponse {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct StoredIdempotencyEntry {
-    created_at_secs: u64,
-    request_body: Vec<u8>,
-    status: u16,
-    headers: Vec<(String, Vec<u8>)>,
-    response_body: Vec<u8>,
-    /// The method and request target this entry answers: the same key and
-    /// body sent to any other operation is a conflict, never a replay of this
-    /// response. Entries written before it was kept name none.
-    #[serde(default)]
-    request_target: Option<String>,
-    /// The rows the response was derived from, as hex ids. Entries written
-    /// before they were kept list none.
-    #[serde(default)]
-    served_rows: Vec<String>,
-    /// The rows a replay re-admits, as hex ids. Entries written before they
-    /// were kept carry none.
-    #[serde(default)]
-    replay_admits: Option<Vec<String>>,
-}
-
-impl StoredIdempotencyEntry {
-    fn from_cached(
+impl CachedHttpResponse {
+    /// The entry this response is kept as: its time, the request it
+    /// answers, and its owners' stamps, the caller's among them.
+    fn into_stored(
+        self,
         created_at_secs: u64,
         request_target: String,
         request_body: Vec<u8>,
-        cached: CachedHttpResponse,
-    ) -> Self {
-        let mut headers = Vec::with_capacity(cached.headers.len());
-        for (name, value) in &cached.headers {
+        caller: Option<oneiron::EntityId>,
+    ) -> StoredIdempotencyEntry {
+        let mut headers = Vec::with_capacity(self.headers.len());
+        for (name, value) in &self.headers {
             headers.push((name.as_str().to_owned(), value.as_bytes().to_vec()));
         }
-
-        Self {
+        StoredIdempotencyEntry {
             created_at_secs,
             request_body,
-            status: cached.status.as_u16(),
+            status: self.status.as_u16(),
             headers,
-            response_body: cached.body,
+            response_body: self.body,
             request_target: Some(request_target),
-            served_rows: cached.rows.iter().map(oneiron::EntityId::to_hex).collect(),
-            replay_admits: cached
+            served_rows: self.rows.iter().map(oneiron::EntityId::to_hex).collect(),
+            replay_admits: self
                 .admit
                 .map(|admit| admit.iter().map(oneiron::EntityId::to_hex).collect()),
+            stamps: oneiron::store::ResponseStamps {
+                actor: caller,
+                ..Default::default()
+            },
+            erased: false,
         }
     }
-}
 
-impl TryFrom<StoredIdempotencyEntry> for CachedHttpResponse {
-    type Error = IdempotencyStoreError;
-
-    fn try_from(stored: StoredIdempotencyEntry) -> Result<Self, Self::Error> {
+    /// The response a kept entry replays.
+    fn of_stored(stored: StoredIdempotencyEntry) -> Result<Self, IdempotencyStoreError> {
         let mut headers = HeaderMap::new();
         for (name, value) in stored.headers {
             let name =
@@ -368,13 +356,7 @@ impl IdempotencyStoreError {
         }
     }
 
-    fn encode(error: rmp_serde::encode::Error) -> Self {
-        Self {
-            message: format!("idempotency encode error: {error}"),
-        }
-    }
-
-    fn decode(error: rmp_serde::decode::Error) -> Self {
+    fn decode(error: oneiron::Error) -> Self {
         Self {
             message: format!("idempotency decode error: {error}"),
         }
@@ -531,6 +513,14 @@ async fn idempotent(
             return response.into_response();
         }
         Ok(IdempotencyLookup::Conflict) => return conflict_response(&key, is_core_auth_route),
+        // Never a miss and never a second run: the request's effect stands,
+        // and the response it had is gone (KS-2B2).
+        Ok(IdempotencyLookup::Erased) => {
+            return api_error_response(
+                ApiError::invalid_state(Some("idempotent_response_erased")),
+                is_core_auth_route,
+            );
+        }
         Ok(IdempotencyLookup::Miss) => {}
         Err(_) => {
             tracing::error!(
@@ -583,7 +573,16 @@ async fn idempotent(
             admit: served.admit,
         };
 
-        if let Err(_error) = state.store.insert(&store_key, target, request_body, cached) {
+        // The caller owns the response beside the rows it served: its
+        // principal's entity, when its credential names one (KS-2B2).
+        let caller = core_auth
+            .as_ref()
+            .and_then(|auth| auth.as_ref().ok())
+            .and_then(CoreAuth::principal_entity);
+        if let Err(_error) = state
+            .store
+            .insert(&store_key, target, request_body, cached, caller)
+        {
             tracing::error!(
                 reason = "idempotency_cache_write_failed",
                 "failed to persist idempotency response"

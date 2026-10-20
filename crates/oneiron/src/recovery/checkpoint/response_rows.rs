@@ -22,6 +22,7 @@ use heed::RoTxn;
 use heed::types::Bytes;
 
 use super::carried_bodies::CarriedInline;
+use super::restore_class::{Class, Classes};
 use super::{CanonicalRows, CheckpointImage, codec_error};
 use crate::store::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, Store,
@@ -133,6 +134,7 @@ pub(super) fn carry(
         len: body.len() as u64,
         stored_len: 0,
         retired: Some(u32::try_from(carriage.retired).map_err(|_| codec_error())?),
+        superseded: false,
     };
     Ok((carried, body, carriage.stub))
 }
@@ -239,7 +241,7 @@ pub(super) fn retire_carried(
     let gone: Vec<(String, Vec<u8>, usize)> = image
         .inline_bodies
         .iter()
-        .filter(|carried| retired.contains(&carried.instance))
+        .filter(|carried| !carried.superseded && retired.contains(&carried.instance))
         .filter_map(|carried| {
             carried
                 .retired
@@ -257,6 +259,28 @@ pub(super) fn retire_carried(
             .and_then(|db| ResponseFamily::of_row(db, &key, value))
             .ok_or_else(codec_error)?;
         family.retire_in_rows(&mut image.databases, &key)?;
+    }
+    Ok(())
+}
+
+/// Marks each carried response whose row a restore over `current` keeps as
+/// `current` holds it, a Live family's (a media job's, KS-2B2): the
+/// authority carry put `current`'s row in the image's place, absent when
+/// `current` holds none, and `current`'s binding with it, so the image's
+/// copy is passed over, never required, retired or landed. Its stream keeps
+/// its place among the artifact's.
+///
+/// # Errors
+///
+/// Storage errors reading `current`'s classes.
+pub(super) fn supersede_live(image: &mut CheckpointImage, current: &crate::Vault) -> Result<()> {
+    let classes = Classes::new(current)?;
+    for carried in &mut image.inline_bodies {
+        if carried.retired.is_some()
+            && classes.row(&carried.database, &carried.key, &[]).0 == Class::Live
+        {
+            carried.superseded = true;
+        }
     }
     Ok(())
 }
