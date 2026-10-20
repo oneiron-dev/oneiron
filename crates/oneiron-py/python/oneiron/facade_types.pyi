@@ -7322,6 +7322,7 @@ class EvalLabel(TypedDict):
     reference: str
     weight: float
     at: int
+    source_rows: NotRequired[list[EntityId] | None]
 class EvalCase(TypedDict):
     id: EntityId
     family: EntityId
@@ -7334,6 +7335,7 @@ class EvalCase(TypedDict):
     source_at: int
     recorded_at: int
     labels: list[EvalLabel]
+    source_rows: NotRequired[list[EntityId] | None]
 class EvalCaseDraft(TypedDict):
     seat: EvalSeat
     kind: DerivationKind
@@ -7599,6 +7601,8 @@ class OfferPilot(TypedDict):
     measurement: NotRequired[OfferPilotMeasurement | None]
     card: NotRequired[SufficiencyCard | None]
     completed_at: NotRequired[int | None]
+    release_source_rows: NotRequired[list[EntityId] | None]
+    measurement_source_rows: NotRequired[list[EntityId] | None]
 class OfferPilotPrepared(TypedDict):
     pilot: OfferPilot
     release: EvalRelease
@@ -13776,6 +13780,7 @@ class ModelRegistryRow(TypedDict):
     fetched_at: NotRequired[dict[str, int]]
     tokens_per_o200k: NotRequired[float | None]
     stale_since: NotRequired[int | None]
+    source_rows: NotRequired[list[EntityId] | None]
 class CatalogSeed(TypedDict):
     version: int
     rows: list[ModelRegistryRow]
@@ -13787,6 +13792,7 @@ class ScoreSnapshot(TypedDict):
     source: str
     fetched_at: int
     observations: list[ScoreObservation]
+    source_rows: NotRequired[list[EntityId] | None]
 class ModelCatalogRefresh(TypedDict):
     revision: str
     expected_revision: NotRequired[str | None]

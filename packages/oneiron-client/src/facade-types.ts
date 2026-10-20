@@ -2987,9 +2987,9 @@ export type EvalFamilyAssignRequest = { seat: EvalSeat; roots: string[]; purpose
 /** `oneiron::skill_optimize::eval_set::doors::EvalCasesRequest` */
 export type EvalCasesRequest = { seat: EvalSeat; purpose: FamilyPurpose }
 /** `oneiron::skill_optimize::eval_set::EvalLabel` */
-export type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number }
+export type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number; source_rows?: EntityId[] | null }
 /** `oneiron::skill_optimize::eval_set::EvalCase` */
-export type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[] }
+export type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[]; source_rows?: EntityId[] | null }
 /** `oneiron::skill_optimize::eval_set::EvalCaseDraft` */
 export type EvalCaseDraft = { seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number }
 /** `oneiron::skill_optimize::eval_set::cohort::CohortRetirement` */
@@ -3081,7 +3081,7 @@ export type OfferPilotPrepare = { candidate: EntityId; cohort: EntityId }
 /** `oneiron::skill_optimize::offer_pilot::OfferPilotMeasurement` */
 export type OfferPilotMeasurement = { sufficiency: SufficiencyInput; receipt_refs: string[]; currency: string; one_off_cost?: number | null; incumbent_score?: number | null; candidate_score?: number | null }
 /** `oneiron::skill_optimize::offer_pilot::OfferPilot` */
-export type OfferPilot = { id: EntityId; candidate: EntityId; exposure: EvalExposure; membership_digest: string; rubric_revision: string; families: number; floor_slices: Record<string, number>; prepared_at: number; measurement?: OfferPilotMeasurement | null; card?: SufficiencyCard | null; completed_at?: number | null }
+export type OfferPilot = { id: EntityId; candidate: EntityId; exposure: EvalExposure; membership_digest: string; rubric_revision: string; families: number; floor_slices: Record<string, number>; prepared_at: number; measurement?: OfferPilotMeasurement | null; card?: SufficiencyCard | null; completed_at?: number | null; release_source_rows?: EntityId[] | null; measurement_source_rows?: EntityId[] | null }
 /** `oneiron::skill_optimize::offer_pilot::OfferPilotPrepared` */
 export type OfferPilotPrepared = { pilot: OfferPilot; release: EvalRelease }
 /** `oneiron::skill_optimize::offer_pilot::OfferPilotComplete` */
@@ -5521,13 +5521,13 @@ export type LlmCatalogCost = { input_per_million: string; output_per_million: st
 /** `oneiron_model::llm::catalog::LlmCatalogEntry` */
 export type LlmCatalogEntry = { model: ModelId; display_name: string; locality: ModelLocality; context_window_tokens: number; max_output_tokens?: number | null; cost?: LlmCatalogCost | null; capabilities?: LlmCapability[]; metadata?: Record<string, unknown> }
 /** `oneiron::llm::registry::ModelRegistryRow` */
-export type ModelRegistryRow = { version: number; wire: ModelWireFormat; catalog: LlmCatalogEntry; scores?: Record<string, Record<string, number>>; fetched_at?: Record<string, number>; tokens_per_o200k?: number | null; stale_since?: number | null }
+export type ModelRegistryRow = { version: number; wire: ModelWireFormat; catalog: LlmCatalogEntry; scores?: Record<string, Record<string, number>>; fetched_at?: Record<string, number>; tokens_per_o200k?: number | null; stale_since?: number | null; source_rows?: EntityId[] | null }
 /** `oneiron::llm::registry::CatalogSeed` */
 export type CatalogSeed = { version: number; rows: ModelRegistryRow[] }
 /** `oneiron::llm::registry::ScoreObservation` */
 export type ScoreObservation = { model: ModelId; benchmark: string; score: number }
 /** `oneiron::llm::registry::ScoreSnapshot` */
-export type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[] }
+export type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[]; source_rows?: EntityId[] | null }
 /** `oneiron::llm::catalog_doors::types::ModelCatalogRefresh` */
 export type ModelCatalogRefresh = { revision: string; expected_revision?: string | null; catalog: CatalogSeed; scores?: ScoreSnapshot[] }
 /** `oneiron::llm::registry::ModelScoreDiff` */

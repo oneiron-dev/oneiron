@@ -58,6 +58,7 @@ use crate::Vault;
 use crate::batch::secret_scan::admit_typed;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
+use crate::limit_ask::EngineLimit;
 
 pub use authoring::{
     CandidateLabel, CaseDecision, CohortSummary, CutDecision, EvalAuthoringInventory,
@@ -84,9 +85,7 @@ pub(super) const CASE_PREFIX: &[u8] = b"skill_optimize:eval_case:v1:";
 const CASE_PLACE: &str = "side:SKILL_OPTIMIZE_EVAL_CASE";
 const LABEL: &str = "eval set row";
 
-const MAX_ROOTS: usize = 256;
 const MAX_REF_BYTES: usize = 256;
-const MAX_PARENTS: usize = 64;
 const MAX_NAME_BYTES: usize = 64;
 
 /// A model function the vault keeps a test set for: "The seats are the
@@ -202,6 +201,11 @@ pub struct EvalLabel {
     pub reference: String,
     pub weight: f64,
     pub at: u64,
+    /// The rows the label's value was read from, as fixed code found them
+    /// when it was recorded (FIX 5761); `None`, unknown, when its producer
+    /// named none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// What the eval-authoring skill proposes to record. The family is not part
@@ -238,6 +242,24 @@ pub struct EvalCase {
     pub source_at: u64,
     pub recorded_at: u64,
     pub labels: Vec<EvalLabel>,
+    /// The rows the case's content was read from, frozen when it was
+    /// recorded (FIX 5761): its receipts' and its parents' content and
+    /// labels. `None`, unknown, when any of them is: a receipt names no
+    /// complete set of the rows it read. Each label keeps its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_rows: Option<Vec<EntityId>>,
+}
+
+impl EvalCase {
+    /// The rows the case and every label on it were read from (FIX 5761);
+    /// `None` when any of them is unknown.
+    #[must_use]
+    pub fn content_source_rows(&self) -> Option<Vec<EntityId>> {
+        super::union_source_rows(
+            std::iter::once(self.source_rows.as_deref())
+                .chain(self.labels.iter().map(|label| label.source_rows.as_deref())),
+        )
+    }
 }
 
 fn encode<T: Serialize>(row: &T) -> Result<Vec<u8>> {
@@ -422,7 +444,19 @@ impl Vault {
     /// Unbounded references, an unassigned receipt, lineage that spans
     /// families or seats, an invalid draw probability, or storage errors.
     pub fn record_eval_case(&self, draft: &EvalCaseDraft, at: u64) -> Result<EvalCase> {
-        self.with_write_txn_grouped(|txn| record_case_in_txn(self, txn, draft, at))
+        // A caller's receipts name no rows they were read from.
+        self.with_write_txn_grouped(|txn| record_case_in_txn(self, txn, draft, None, at))
+    }
+
+    /// [`Self::record_eval_case`] for fixed code that resolved the rows the
+    /// draft's receipts were read from (FIX 5761); `None` is unknown.
+    pub(crate) fn record_eval_case_sourced(
+        &self,
+        draft: &EvalCaseDraft,
+        receipt_sources: Option<&[EntityId]>,
+        at: u64,
+    ) -> Result<EvalCase> {
+        self.with_write_txn_grouped(|txn| record_case_in_txn(self, txn, draft, receipt_sources, at))
     }
 
     /// Attach an outcome, audit or judge label to a case. An owner's pick
@@ -491,8 +525,8 @@ fn assign_family_in_txn(
     purpose: FamilyPurpose,
     at: u64,
 ) -> Result<SourceFamily> {
-    if roots.is_empty() || roots.len() > MAX_ROOTS {
-        return Err(invalid("an eval family needs 1..=256 source roots"));
+    if roots.is_empty() {
+        return Err(invalid("an eval family needs a source root"));
     }
     for root in roots {
         bounded_ref(root)?;
@@ -521,10 +555,13 @@ fn assign_family_in_txn(
     if family.purpose != purpose || &family.seat != seat {
         return Err(invalid("an eval family keeps the purpose it was assigned"));
     }
-    if family.roots.len() + roots.difference(&family.roots).count() > MAX_ROOTS {
-        return Err(invalid("an eval family holds at most 256 source roots"));
-    }
     let fresh: Vec<String> = roots.difference(&family.roots).cloned().collect();
+    // A family holds every root its lineage has (Rule 5): its size is
+    // measured, never cut.
+    let _ = vault.measure_limit(
+        EngineLimit::MaintenanceRowItems,
+        (family.roots.len() + fresh.len()) as u64,
+    );
     if fresh.is_empty() {
         return Ok(family);
     }
@@ -547,16 +584,17 @@ fn record_case_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     draft: &EvalCaseDraft,
+    receipt_sources: Option<&[EntityId]>,
     at: u64,
 ) -> Result<EvalCase> {
-    if (draft.receipts.is_empty() && draft.parents.is_empty())
-        || draft.receipts.len() > MAX_ROOTS
-        || draft.parents.len() > MAX_PARENTS
-    {
-        return Err(invalid(
-            "an eval case names 1..=256 receipts or 1..=64 parents",
-        ));
+    if draft.receipts.is_empty() && draft.parents.is_empty() {
+        return Err(invalid("an eval case names a receipt or a parent"));
     }
+    // A case keeps all of its lineage (Rule 5): its size is measured.
+    let _ = vault.measure_limit(
+        EngineLimit::MaintenanceRowItems,
+        draft.receipts.len().max(draft.parents.len()) as u64,
+    );
     for receipt in &draft.receipts {
         bounded_ref(receipt)?;
     }
@@ -573,6 +611,13 @@ fn record_case_in_txn(
         ));
     }
     let mut families = BTreeSet::new();
+    // The receipts' rows, then each parent's content and labels (FIX 5761).
+    let mut sources: Vec<Option<Vec<EntityId>>> = Vec::with_capacity(draft.parents.len() + 1);
+    sources.push(if draft.receipts.is_empty() {
+        Some(Vec::new())
+    } else {
+        receipt_sources.map(<[EntityId]>::to_vec)
+    });
     for receipt in &draft.receipts {
         let raw = vault
             .store
@@ -590,6 +635,7 @@ fn record_case_in_txn(
             return Err(invalid("an eval case cannot derive across seats"));
         }
         families.insert(parent.family);
+        sources.push(parent.content_source_rows());
     }
     if families.len() != 1 {
         return Err(invalid("an eval case's lineage spans more than one family"));
@@ -607,6 +653,7 @@ fn record_case_in_txn(
         source_at: draft.source_at,
         recorded_at: at,
         labels: Vec::new(),
+        source_rows: super::union_source_rows(sources),
     };
     put_case_in_txn(vault, txn, &mut case)?;
     Ok(case)
