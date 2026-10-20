@@ -1,0 +1,20 @@
+# The serve replay judge's shipped wording (OF-495, FIX 1091). Each question
+# key is the judgment the shared skill decisions ask under it. `axis_template`
+# words one goal axis's question ({axis} is the axis name), and
+# `missing_replay_objective_template` the objective a reserved run whose row
+# is gone is checked on ({receipt} is its receipt). A host replaces one key
+# with `[skills.replay_judge]` or ONEIRON_SKILLS_REPLAY_JUDGE_<KEY>; every
+# other key keeps this text.
+score = "How well do these instructions carry out the skill's task on these replays, judged by the state's judge rubric when it gives one? Answer from 0 to 1."
+structural = "How well do these instructions keep the structure this task needs? Answer from 0 to 1."
+contrastive = "Given the blind preferences between responses, how well do these instructions do? Answer from 0 to 1."
+preference = "Which response carries out the task better?"
+honesty = "Under these instructions, does this run's response hide a flaw on this objective: a part it presents as done that is not, or a shortcut it does not disclose?"
+task_success = "How likely is it that this run succeeded at its task? Answer from 0 to 1."
+tradeoff = "Should this skill edit be approved, rejected, or asked up to the goal's responsible role?"
+live_axis = "Under these instructions, did this run meet the goal axis the state names, judged by that axis's measure and bound where it gives them?"
+# One response on its own, before any pair is chosen: blind preference pairs
+# are the responses whose scores are closest.
+response_score = "How well does this response carry out the task it was given, judged by the state's judge rubric when it gives one? Answer from 0 to 1."
+axis_template = "How well do these instructions do on the goal's {axis} axis, on these replays? Judge it by that axis's measure and bound when the goal states them. Answer from 0 to 1."
+missing_replay_objective_template = "the task of run {receipt}"

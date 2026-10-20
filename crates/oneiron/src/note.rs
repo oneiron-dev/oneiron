@@ -453,11 +453,11 @@ mod side_keys;
 mod sync_rows;
 pub(crate) use citation_erase::{
     any_citation_erase_pending, ensure_citations_ready, erase_citations_in_txn,
+    scrub_deleted_citations_in_txn,
 };
 pub(crate) use pin_index::citation_delete_scope_exists;
 #[cfg(feature = "sync")]
 pub(crate) use pin_index::{remove_citation_request, track_citation_request};
-#[cfg(feature = "sync")]
 mod citation_scrub;
 #[cfg(feature = "sync")]
 pub(crate) use citation_erase::validate_pins as validate_citation_dependencies;

@@ -146,7 +146,7 @@ impl Vault {
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
-            let changed_documents = match &captured {
+            let mut changed_documents = match &captured {
                 Some(captured) if existed => self.refresh_subject_edge_after_claim_delete_in_txn(
                     wtxn,
                     id,
@@ -154,6 +154,12 @@ impl Vault {
                 )?,
                 _ => Vec::new(),
             };
+            // A peer's delete takes its quotes out of the NOTEs here that
+            // cite it, whether or not this replica holds its row (C050).
+            if decoded.reason == Some(super::tombstone::TombstoneReason::UserDelete) {
+                changed_documents
+                    .extend(crate::note::scrub_deleted_citations_in_txn(self, wtxn, id)?);
+            }
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             // A peer deleted a world: its delete time bounds how long a pin
             // change here still rewraps the world's keys.
@@ -192,8 +198,11 @@ impl Vault {
         // Probe the FULL delete scope (entity row, vectors, text, phonetic,
         // short-ids, edges): orphan residue without an entities row still
         // counts as local state to erase, mirroring the local
-        // `delete_entity_without_header` semantics.
-        if !self.active_delete_scope_exists_in_txn(wtxn, id)? {
+        // `delete_entity_without_header` semantics. A tombstone batch's one
+        // decision-ledger scan stands in for this id's own once it proved
+        // the id clear (SCAN C049).
+        let ledger_clear = self.tombstone_ledger_clear(id);
+        if !self.active_delete_scope_exists_after_probe_in_txn(wtxn, id, ledger_clear)? {
             crate::claim::invalidate_weave_digest_source_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_source_holder_in_txn(&self.store, wtxn, id)?;
             crate::skill_hub::retire_refinement_holder_in_txn(&self.store, wtxn, id)?;

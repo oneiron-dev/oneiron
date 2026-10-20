@@ -173,6 +173,18 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<bool> {
+        self.active_delete_scope_exists_after_probe_in_txn(txn, id, false)
+    }
+
+    /// [`Self::active_delete_scope_exists_in_txn`] whose decision-ledger cell
+    /// is already answered when `ledger_clear`: a tombstone batch's one scan
+    /// proved that no unredacted decision binds or cites `id` (SCAN C049).
+    pub(in crate::deletion) fn active_delete_scope_exists_after_probe_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        ledger_clear: bool,
+    ) -> Result<bool> {
         if crate::note::citation_delete_scope_exists(&self.store, txn, id)?
             || crate::skill_hub::source_custody_exists_in_txn(&self.store, txn, id)?
             || crate::skill_hub::claim_refinement_scope_exists_in_txn(&self.store, txn, id)?
@@ -199,10 +211,11 @@ impl Vault {
         }
 
         if crate::note::erase::scope_exists(self, txn, id)?
-            || !self
-                .store
-                .verify_claim_erasure_by_scan_in_txn(txn, id.as_bytes())?
-                .is_empty()
+            || (!ledger_clear
+                && !self
+                    .store
+                    .verify_claim_erasure_by_scan_in_txn(txn, id.as_bytes())?
+                    .is_empty())
         {
             return Ok(true);
         }

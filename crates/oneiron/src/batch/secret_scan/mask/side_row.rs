@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
 use super::admit::Lifted;
+pub(crate) use super::text::TextReplacements;
 use super::{HANDLE_OPEN, Masker, STAND_IN};
 use crate::entity_id::{EntityId, derived_domains::SIDE_ROW_MASK};
 use crate::error::{Error, Result};
@@ -173,6 +174,29 @@ pub(crate) fn admit_side_parts(
     admit_seeded_parts(dbs, wtxn, &origins, parts, &mut Lifted::default(), accepts)
 }
 
+/// [`admit_side_parts`], tracked (FIX 6144): the same pass, which also keeps
+/// where each handle went in each text it masked, for a writer that indexes
+/// into those texts and moves its bounds with them. `None` when the parts
+/// are written as given.
+pub(crate) fn admit_tracked_side_parts(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    (place, key): (&str, &[u8]),
+    parts: &mut [SidePart],
+    accepts: impl Fn(&[SidePart]) -> bool,
+) -> Result<Option<TextReplacements>> {
+    let origins = vec![(origin(place, key)?, place); parts.len()];
+    admitted(
+        dbs,
+        wtxn,
+        &origins,
+        parts,
+        &mut Lifted::default(),
+        accepts,
+        true,
+    )
+}
+
 /// The wall's one admission, for a side row and for a record's own parts
 /// alike. With the owner's switch on, parts the door would refuse are
 /// planned on a copy with a stand-in for each secret their spans place, and
@@ -196,8 +220,22 @@ pub(crate) fn admit_seeded_parts(
     seed: &mut Lifted,
     accepts: impl Fn(&[SidePart]) -> bool,
 ) -> Result<bool> {
+    Ok(admitted(dbs, wtxn, origins, parts, seed, accepts, false)?.is_some())
+}
+
+/// [`admit_seeded_parts`]' pass: `None` when the parts are written as given,
+/// else, with `tracked`, where each handle went in each text it masked.
+fn admitted(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut RwTxn<'_>,
+    origins: &[(EntityId, &str)],
+    parts: &mut [SidePart],
+    seed: &mut Lifted,
+    accepts: impl Fn(&[SidePart]) -> bool,
+    tracked: bool,
+) -> Result<Option<TextReplacements>> {
     if secret_scan_mode_in_txn(dbs, &*wtxn)? == SecretScanMode::Off {
-        return Ok(false);
+        return Ok(None);
     }
     if origins.len() != parts.len() {
         return Err(Error::InvariantViolation(
@@ -218,7 +256,7 @@ pub(crate) fn admit_seeded_parts(
         None => None,
     };
     if refusal.is_none() && known.is_none() {
-        return Ok(false);
+        return Ok(None);
     }
     let mut planned = parts.to_vec();
     let mut plan = Masker {
@@ -235,18 +273,18 @@ pub(crate) fn admit_seeded_parts(
     // Nothing placed, not even a value the seed holds: the hit is the
     // door's.
     if !placed {
-        return refusal.map_or(Ok(false), Err);
+        return refusal.map_or(Ok(None), Err);
     }
     // A hit no span places is still in the copy, and refuses as before.
     for part in &planned {
         let _secrets_nulled = scan_payload(&part.scanned()?)?;
     }
     if !accepts(&planned) {
-        return refusal.map_or(Ok(false), Err);
+        return refusal.map_or(Ok(None), Err);
     }
     drop(planned);
     let Some(custody) = dbs.side_custody() else {
-        return refusal.map_or(Ok(false), Err);
+        return refusal.map_or(Ok(None), Err);
     };
     let at = crate::ports::recorded_at_in_txn(custody.store, wtxn)?;
     seed.0.extend(
@@ -258,6 +296,7 @@ pub(crate) fn admit_seeded_parts(
         handles: seed.0.clone(),
         minted: true,
         known,
+        traced: tracked.then(TextReplacements::default),
         ..Masker::default()
     };
     for part in parts.iter_mut() {
@@ -268,7 +307,7 @@ pub(crate) fn admit_seeded_parts(
             "a side row's own reading refused the handles its plan placed",
         ));
     }
-    Ok(true)
+    Ok(Some(minted.traced.take().unwrap_or_default()))
 }
 
 /// One row of an authored side table, admitted at its write: `None` to
