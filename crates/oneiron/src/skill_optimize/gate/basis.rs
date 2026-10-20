@@ -277,10 +277,11 @@ pub struct HeldOutReplayCase<'a> {
 }
 
 /// Host replay data and the Coach's configured typed-decision path.
-/// Replay and pair sampling are evidence preparation, not judge callbacks.
-/// Judgment scores, blind preferences, audits, honesty findings and tradeoffs
-/// all run on that path; nothing here returns a verdict. The archive coverage
-/// floor is computed from engine-owned evidence, and person-time is metered.
+/// Replay and response reads are evidence preparation, not judge callbacks.
+/// Judgment scores, response scores, pair choice, blind preferences, audits,
+/// honesty findings and tradeoffs all run on that path; nothing here returns
+/// a score or verdict. The archive coverage floor is computed from
+/// engine-owned evidence, and person-time is metered.
 pub trait HeldOutReplayNotes {
     fn judge_revision(&self) -> &str;
 
@@ -290,13 +291,16 @@ pub trait HeldOutReplayNotes {
     /// Do not include observed success labels: the engine joins those later.
     fn replay_state(&self, case: &HeldOutReplayCase<'_>) -> Result<serde_json::Value>;
 
-    /// Sample response-only near ties before the rubric is read. The shared
-    /// decision path, not this sampler, chooses which response is preferred.
-    fn blind_pairs(
+    /// Each of these reserved receipts' responses, whole beside the task it
+    /// answered, and the common judge rubric, read once. No status, success
+    /// label, score or instructions; a receipt with no kept, nonempty
+    /// response is left out. The shared decision path scores each response
+    /// by the rubric, pairs the closest, and freezes the response-only
+    /// preference before either version's instructions or a label is read.
+    fn replay_responses(
         &self,
-        task: &str,
         receipts: &[String],
-    ) -> Result<Vec<crate::skill_optimize::SkillReplayPair>>;
+    ) -> Result<crate::skill_optimize::SkillReplayResponses>;
 
     /// Persist every typed question and receipt, including abstentions, in
     /// the host's ordinary decision journal. Failure aborts scoring.

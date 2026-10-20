@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 104] = [
+    pub const ALL: [Self; 105] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -110,6 +110,7 @@ impl EngineLimit {
         Self::OrganNoteBytes,
         Self::OrganLossCodeBytes,
         Self::OrganMemoryBytes,
+        Self::DeadlineJobsPerCaller,
     ];
 
     /// The config key that sets the row.
@@ -219,6 +220,7 @@ impl EngineLimit {
             Self::OrganNoteBytes => "limits.organ_note_bytes",
             Self::OrganLossCodeBytes => "limits.organ_loss_code_bytes",
             Self::OrganMemoryBytes => "limits.organ_memory_bytes",
+            Self::DeadlineJobsPerCaller => "limits.deadline_jobs_per_caller",
         }
     }
 
@@ -369,6 +371,8 @@ impl EngineLimit {
             Self::OrganNoteBytes => 256,
             Self::OrganLossCodeBytes => 64,
             Self::OrganMemoryBytes => 2 << 30,
+            // Ten times the fleet's 200 agents, as `limits.task_work` sits.
+            Self::DeadlineJobsPerCaller => 2_048,
         }
     }
 }

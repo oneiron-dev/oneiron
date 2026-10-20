@@ -438,22 +438,72 @@ impl<'a> DreamerRunnerStore<'a> {
         cycle: crate::EntityId,
         now: u64,
     ) -> Result<EnqueueDreamerAttemptOutcome> {
-        let cycle_hex = cycle.to_hex();
+        let (payload, dedupe_key, run_id) = free_time_item_job(queue_kind, resident, cycle);
         self.enqueue_kind_in_txn(
             wtxn,
             queue_kind,
-            DreamerAttemptPayload {
-                attempt_type: queue_kind.to_owned(),
-                input: super::free_time::free_time_item_input(resident, cycle),
-                parent_attempt: None,
-            },
-            Some(format!(
-                "{queue_kind}:{}:free_time:{cycle_hex}",
-                resident.to_hex()
-            )),
-            Some(format!("free_time:{cycle_hex}")),
+            payload,
+            Some(dedupe_key),
+            Some(run_id),
             now,
         )
+    }
+
+    /// FIX 5661: queues again, on a new home, a free-time item a home move
+    /// carried whose try never started on its old home: under that try's own
+    /// attempt id and first queue time, with the payload, dedupe key and run
+    /// its cycle queued it with, the resident's stamp and its run-tree row, as
+    /// [`Self::enqueue_free_time_item_in_txn`] queues one. A row here under
+    /// that id is the same work only while it is that very try, of its queue
+    /// and key and not ended; `false` when other work holds the item's place.
+    #[cfg(feature = "sync")]
+    pub(crate) fn resume_free_time_item_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        queue_kind: &str,
+        resident: crate::EntityId,
+        cycle: crate::EntityId,
+        attempt: AttemptId,
+        enqueued_at: u64,
+    ) -> Result<bool> {
+        let (payload, dedupe_key, run_id) = free_time_item_job(queue_kind, resident, cycle);
+        if let Some(existing) = self.attempts.get_in_txn(wtxn, attempt)? {
+            if existing.kind != queue_kind
+                || existing.dedupe_key.as_deref() != Some(dedupe_key.as_str())
+                || existing.state.is_terminal()
+            {
+                return Ok(false);
+            }
+            super::authority::stamp_attempt(self.vault, wtxn, &existing, &payload.attempt_type)?;
+            ensure_run_tree_record_in_txn(self.vault, wtxn, &existing)?;
+            return Ok(true);
+        }
+        let outcome = self.attempts.enqueue_with_id_in_txn(
+            wtxn,
+            attempt,
+            EnqueueAttempt {
+                kind: queue_kind.to_owned(),
+                payload: encode_dreamer_attempt_payload(&payload)?,
+                dedupe_key: Some(dedupe_key),
+                run_id: Some(run_id),
+                now: enqueued_at,
+            },
+        )?;
+        // Another try already holds the item's dedupe key here.
+        let EnqueueOutcome::Enqueued(record) = outcome else {
+            return Ok(false);
+        };
+        super::authority::stamp_attempt(self.vault, wtxn, &record, &payload.attempt_type)?;
+        put_run_tree_record_in_txn(
+            self.vault,
+            wtxn,
+            &DreamerRunTreeRecord {
+                attempt_id: record.id,
+                parent_attempt: payload.parent_attempt,
+                created_at: record.created_at,
+            },
+        )?;
+        Ok(true)
     }
 
     /// Enqueues the weave lens's generate step for one published digest
@@ -1098,6 +1148,32 @@ fn ensure_run_tree_record_in_txn(
             created_at: status.attempt.created_at,
         },
     )
+}
+
+/// The run a free-time cycle's items queue under (FIX 4453).
+pub(super) fn free_time_item_run_id(cycle: crate::EntityId) -> String {
+    format!("free_time:{}", cycle.to_hex())
+}
+
+/// The job one free-time item queues as: its payload naming the resident
+/// and the cycle, its dedupe key (one per item per cycle) and its cycle's
+/// run.
+fn free_time_item_job(
+    queue_kind: &str,
+    resident: crate::EntityId,
+    cycle: crate::EntityId,
+) -> (DreamerAttemptPayload, String, String) {
+    let payload = DreamerAttemptPayload {
+        attempt_type: queue_kind.to_owned(),
+        input: super::free_time::free_time_item_input(resident, cycle),
+        parent_attempt: None,
+    };
+    let dedupe_key = format!(
+        "{queue_kind}:{}:free_time:{}",
+        resident.to_hex(),
+        cycle.to_hex()
+    );
+    (payload, dedupe_key, free_time_item_run_id(cycle))
 }
 
 fn put_run_tree_record_in_txn(

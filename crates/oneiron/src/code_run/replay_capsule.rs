@@ -17,26 +17,27 @@
 //! (FIX 3694): its replay row as stored, with the config and teaching it ran
 //! under, in a body the run owns. A continuation of a failed run forks from
 //! the start of its failing step.
+//!
+//! Each body a capsule names is written as the side-row wall admits it, each
+//! secret in it its custody handle, and the capsule names the actor whose
+//! step it was, so an erase of that actor releases them (FIX 6144, KEY STORE
+//! = A; `storage::replay_capsule`). Staged captures are kept and measured,
+//! never capped (FIX 6143).
 
 use std::cell::RefCell;
 
 use serde::{Deserialize, Serialize};
 
-use super::codec::encode_code_run_replay_record;
 use super::replay::CodeRunReplayRecord;
-use super::storage::{finalize_capsule, put_capsule, store_capsule_request, store_capsule_start};
+use super::storage::{finalize_capsule, put_staged_capsule};
 use crate::attempt_queue::AttemptId;
 use crate::compaction::output::OutputRef;
 use crate::llm::ReasoningEffort;
 use crate::vault::VaultId;
 use crate::{
     ContentPart, EntityId, LlmMessage, LlmRequest, ModelId, ModelLocality, ModelTierRef, Result,
-    Vault,
+    Vault, WriteActor,
 };
-
-/// The most staged captures one thread holds while their calls are out. A
-/// thread that stages more drops its oldest, which then stays unreplayable.
-const AWAITING_CAP: usize = 16;
 
 /// One skill body the host put in a run's task, and where it went: the byte
 /// span in the task, separator included, and the hash of those bytes.
@@ -88,35 +89,49 @@ pub enum ExposureKind {
 }
 
 /// One exposure in a captured request: the skill, its revision and the hash
-/// of its bytes, at a byte span of one text part of one message.
+/// of its bytes as the host put them, in one text part of one message.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExposureSlot {
     pub skill: EntityId,
     pub revision: String,
+    /// BLAKE3 of its bytes as the host put them in the task, before any
+    /// mask.
     pub content_hash: [u8; 32],
     pub kind: ExposureKind,
     pub message: u32,
     pub part: u32,
+    /// Where it sits in the request as stored (FIX 6144). `None` when a
+    /// secret's handle the wall put there cuts through one of its bounds: no
+    /// span of the stored text is the exposure, and none is guessed at.
+    pub stored: Option<StoredSpan>,
+}
+
+/// Where an exposure sits in a stored request: a byte span of its text part
+/// and the hash of the bytes there, each secret in them its handle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StoredSpan {
     pub start: u64,
     pub end: u64,
+    pub content_hash: [u8; 32],
 }
 
 impl ExposureSlot {
-    /// The slot's text part in `request` and its byte range there, when the
-    /// part is text, the range falls on its character boundaries and its
-    /// bytes still hash to the slot's.
+    /// The slot's text part in `request` and its byte range there, when it
+    /// has a stored span, the part is text, the range falls on its character
+    /// boundaries and its bytes still hash to the span's.
     pub(crate) fn locate<'r>(
         &self,
         request: &'r LlmRequest,
     ) -> Option<(&'r str, std::ops::Range<usize>)> {
+        let span = self.stored?;
         let message = request.messages.get(usize::try_from(self.message).ok()?)?;
         let ContentPart::Text { text } = message.content.get(usize::try_from(self.part).ok()?)?
         else {
             return None;
         };
-        let range = usize::try_from(self.start).ok()?..usize::try_from(self.end).ok()?;
+        let range = usize::try_from(span.start).ok()?..usize::try_from(span.end).ok()?;
         let bytes = text.get(range.clone())?;
-        (*blake3::hash(bytes.as_bytes()).as_bytes() == self.content_hash).then_some((text, range))
+        (*blake3::hash(bytes.as_bytes()).as_bytes() == span.content_hash).then_some((text, range))
     }
 }
 
@@ -139,6 +154,31 @@ pub struct CapsuleRungBinding {
     pub prompt: Option<String>,
 }
 
+/// What a capsule holds of the step it captured (FIX 6144, KEY STORE = A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapsuleContent {
+    /// Its bodies, each masked as it was written, for `actor`'s step: the
+    /// actor its host stamped on the step's writes, which an erase of that
+    /// actor finds the capsule by.
+    Kept { actor: EntityId },
+    /// Its actor was erased. Its request, start and fork answers are
+    /// released, its route prompt is cleared and it names no actor; what the
+    /// step was stays, and every read of its content is unavailable.
+    Erased,
+}
+
+impl CapsuleContent {
+    /// The actor whose step the capsule holds; `None` once it is erased.
+    #[must_use]
+    pub const fn actor(self) -> Option<EntityId> {
+        match self {
+            Self::Kept { actor } => Some(actor),
+            Self::Erased => None,
+        }
+    }
+}
+
 /// One captured step of a canonical attempt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepReplayCapsule {
@@ -149,11 +189,16 @@ pub struct StepReplayCapsule {
     pub step: u64,
     pub host: CapsuleHost,
     /// The request as assembled and bound, before its route's prompt, by its
-    /// body ref: its canonical JSON.
+    /// body ref: its canonical JSON as stored, each secret in it its custody
+    /// handle.
     pub request: OutputRef,
     pub request_path: String,
-    /// The request's canonical hash.
+    /// The canonical hash of the request as it was sent, before any mask:
+    /// the identity a sent request is matched by.
     pub request_hash: [u8; 32],
+    /// The hash of the request's body as stored, masked (FIX 6144): what a
+    /// read of the body checks.
+    pub stored_request_hash: [u8; 32],
     /// The hash of its messages, which the answering rung is matched by.
     pub messages_digest: [u8; 32],
     pub exposures: Vec<ExposureSlot>,
@@ -167,6 +212,17 @@ pub struct StepReplayCapsule {
     /// The executor run's state before the step; `None` for a workflow step
     /// and for a start that was not captured.
     pub start: Option<ExecutorStepStart>,
+    /// What it holds, and for whose step (FIX 6144).
+    pub content: CapsuleContent,
+}
+
+impl StepReplayCapsule {
+    /// Whether the request as stored is the request as sent (FIX 6144): the
+    /// wall placed no handle in it. A replay of a masked copy says so.
+    #[must_use]
+    pub fn as_sent(&self) -> bool {
+        self.stored_request_hash == self.request_hash
+    }
 }
 
 /// The executor run's state before the step (FIX 3694): what a
@@ -174,10 +230,10 @@ pub struct StepReplayCapsule {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutorStepStart {
     /// The start body (its encoded prefix row, its config, its teaching
-    /// fingerprint), owned by the run.
+    /// fingerprint), owned by the run, as the wall admitted it.
     pub body: OutputRef,
     pub path: String,
-    /// BLAKE3 of the body bytes.
+    /// BLAKE3 of the body bytes as stored.
     pub digest: [u8; 32],
     /// The bridge log's length at the step's start.
     pub bridge_start: u64,
@@ -187,7 +243,7 @@ pub struct ExecutorStepStart {
 /// before the step, with no live-run binding, and what the run ran under.
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct StepStartBody {
-    /// The prefix row, as [`encode_code_run_replay_record`] encodes it.
+    /// The prefix row, as [`super::encode_code_run_replay_record`] encodes it.
     pub(crate) record: Vec<u8>,
     pub(crate) task: String,
     pub(crate) model: ModelId,
@@ -206,6 +262,8 @@ pub(crate) struct StepCapture<'a> {
     pub(crate) run: EntityId,
     pub(crate) step: u64,
     pub(crate) host: CapsuleHost,
+    /// The actor its host stamps on the step's writes.
+    pub(crate) actor: WriteActor,
     pub(crate) request: &'a LlmRequest,
     /// The task the request carries, which `exposures` index into.
     pub(crate) task: &'a str,
@@ -226,12 +284,40 @@ pub(crate) struct StepStartCapture<'a> {
     pub(crate) prompt_fingerprint: &'a str,
 }
 
+/// A capture as its site assembled it, before the side-row wall reads it:
+/// what storage admits and writes as the capsule.
+pub(crate) struct CapsuleDraft<'a> {
+    pub(crate) capture: &'a StepCapture<'a>,
+    pub(crate) attempt: EntityId,
+    pub(crate) actor: EntityId,
+    /// The request's canonical bytes as sent.
+    pub(crate) request: Vec<u8>,
+    pub(crate) request_path: String,
+    pub(crate) start_path: String,
+    pub(crate) messages_digest: [u8; 32],
+    /// Each exposure where it sits in the request as sent.
+    pub(crate) exposures: Vec<ExposureSlot>,
+}
+
+impl CapsuleDraft<'_> {
+    /// The capsule's key: its attempt, lease generation and step.
+    pub(crate) fn key(&self) -> (EntityId, u64, u64) {
+        (
+            self.attempt,
+            u64::from(self.capture.lease_generation),
+            self.capture.step,
+        )
+    }
+}
+
 /// A staged capture waiting for its call's answering rung.
 struct Awaiting {
     vault: VaultId,
     key: (EntityId, u64, u64),
     messages: [u8; 32],
     binding: Option<CapsuleRungBinding>,
+    /// The request bytes it captured.
+    bytes: u64,
 }
 
 thread_local! {
@@ -279,7 +365,8 @@ pub fn note_answering_rung(
 /// Finalizes this thread's staged captures for `vault`, once their calls are
 /// done: each that a rung answered takes that rung, and each that none did
 /// stays unreplayable. A capture site calls it after its step's call; a
-/// failure is logged and never fails the step.
+/// failure is logged and never fails the step. The drain is measured: how
+/// many took their rung, how many no rung answered and how many failed.
 pub fn finalize_step_captures(vault: &Vault) {
     let id = vault.vault_id();
     let mine: Vec<Awaiting> = AWAITING.with(|awaiting| {
@@ -290,24 +377,40 @@ pub fn finalize_step_captures(vault: &Vault) {
         *awaiting = rest;
         mine
     });
+    if mine.is_empty() {
+        return;
+    }
+    let (mut finalized, mut unanswered, mut failed) = (0_usize, 0_usize, 0_usize);
     for entry in mine {
         let Some(binding) = entry.binding else {
+            unanswered += 1;
             continue;
         };
-        if let Err(error) = finalize_capsule(vault, &entry.key, binding) {
-            tracing::warn!(kind = ?error.kind(), "a step replay capsule was not finalized");
+        match finalize_capsule(vault, &entry.key, binding) {
+            Ok(()) => finalized += 1,
+            Err(error) => {
+                failed += 1;
+                tracing::warn!(kind = ?error.kind(), "a step replay capsule was not finalized");
+            }
         }
     }
+    tracing::debug!(
+        finalized,
+        unanswered,
+        failed,
+        "staged step replay captures drained"
+    );
 }
 
 /// Captures a saved-workflow step's admitted request before it is sent: the
-/// step is its attempt's only call. Finalize it with
+/// step is its attempt's only call, made for `actor`. Finalize it with
 /// [`finalize_step_captures`] once the call is done. A failure is logged and
 /// never fails the step.
 pub fn capture_workflow_step(
     vault: &Vault,
     attempt: AttemptId,
     lease_generation: u32,
+    actor: WriteActor,
     request: &LlmRequest,
 ) {
     let Ok(run) = EntityId::from_bytes(*attempt.as_bytes()) else {
@@ -321,6 +424,7 @@ pub fn capture_workflow_step(
             run,
             step: 0,
             host: CapsuleHost::WorkflowStep,
+            actor,
             request,
             task: "",
             exposures: &[],
@@ -337,10 +441,8 @@ pub(crate) fn capture_step(vault: &Vault, capture: &StepCapture<'_>) {
     match stage(vault, capture) {
         Ok(Some(awaiting)) => AWAITING.with(|staged| {
             let mut staged = staged.borrow_mut();
-            if staged.len() >= AWAITING_CAP {
-                staged.remove(0);
-            }
             staged.push(awaiting);
+            measure_staged(&staged);
         }),
         Ok(None) => {}
         Err(error) => {
@@ -349,102 +451,70 @@ pub(crate) fn capture_step(vault: &Vault, capture: &StepCapture<'_>) {
     }
 }
 
-/// Writes the capsule's request body and its row; `None` for a request
-/// whose messages cannot be hashed.
+/// What staging does as captures wait on one thread for their calls (FIX
+/// 6143, Rule 5): it keeps every one, with no cap and no eviction, and
+/// measures how many wait and the request bytes they captured.
+fn measure_staged(staged: &[Awaiting]) {
+    let bytes = staged
+        .iter()
+        .fold(0_u64, |total, entry| total.saturating_add(entry.bytes));
+    tracing::debug!(
+        staged = staged.len(),
+        staged_bytes = bytes,
+        "a step replay capture is staged"
+    );
+}
+
+/// Whose step a capsule is (FIX 6144): the actor its host stamped on the
+/// step's writes, the gated write's for an executor step and the step's own
+/// for a workflow step. An erase of that actor reaches the capsule by it.
+const fn capsule_actor(actor: WriteActor) -> EntityId {
+    actor.entity_ref()
+}
+
+/// Writes the capsule's bodies and its row as the side-row wall admits them;
+/// `None` for a request whose messages cannot be hashed, and for a step
+/// whose actor is gone by now, which leaves no capsule.
 fn stage(vault: &Vault, capture: &StepCapture<'_>) -> Result<Option<Awaiting>> {
     let Some(messages) = messages_digest(&capture.request.messages) else {
         return Ok(None);
     };
-    let bytes = capture
+    let request = capture
         .request
         .canonical_bytes()
         .map_err(|error| crate::Error::InvalidConfig(format!("capsule request: {error}")))?;
-    let attempt = EntityId::from_bytes(*capture.attempt.as_bytes())?;
-    let path = format!(
-        "replay/capsule/{}/{:06}.request.json",
-        capture.lease_generation, capture.step
-    );
-    let request = store_capsule_request(vault, capture.run, path.clone(), &bytes)?;
-    // A start that fails is logged, and the capsule goes on without it.
-    let start = capture.start.as_ref().and_then(|start| {
-        stage_start(vault, capture, start).unwrap_or_else(|error| {
-            tracing::warn!(kind = ?error.kind(), "a step start was not captured");
-            None
-        })
-    });
-    let capsule = StepReplayCapsule {
-        attempt,
-        lease_generation: capture.lease_generation,
-        run: capture.run,
-        step: capture.step,
-        host: capture.host,
-        request,
-        request_path: path,
-        request_hash: *blake3::hash(&bytes).as_bytes(),
+    let draft = CapsuleDraft {
+        capture,
+        attempt: EntityId::from_bytes(*capture.attempt.as_bytes())?,
+        actor: capsule_actor(capture.actor),
+        request_path: format!(
+            "replay/capsule/{}/{:06}.request.json",
+            capture.lease_generation, capture.step
+        ),
+        start_path: format!(
+            "replay/capsule/{}/{:06}.start.msgpack",
+            capture.lease_generation, capture.step
+        ),
         messages_digest: messages,
         exposures: slots(capture),
-        seed: capture
-            .request
-            .params
-            .get("seed")
-            .and_then(serde_json::Value::as_u64),
-        binding: None,
-        captured_at: crate::unix_seconds_now(),
-        start,
+        request,
     };
-    let key = (attempt, u64::from(capture.lease_generation), capture.step);
-    put_capsule(vault, &key, &capsule)?;
-    Ok(Some(Awaiting {
-        vault: vault.vault_id(),
-        key,
-        messages,
-        binding: None,
-    }))
-}
-
-/// Stores the run's state before the step as a body the run owns: its replay
-/// row as stored, which the side-row wall already admitted, with its
-/// live-run binding cleared. `None` when no row is stored or the stored row
-/// is not the one the step starts from.
-fn stage_start(
-    vault: &Vault,
-    capture: &StepCapture<'_>,
-    start: &StepStartCapture<'_>,
-) -> Result<Option<ExecutorStepStart>> {
-    let Some(mut record) = vault.get_code_run_replay_record(&capture.run)? else {
-        return Ok(None);
-    };
-    if record.generation()? != start.record.generation()? {
+    if put_staged_capsule(vault, &draft)?.is_none() {
         return Ok(None);
     }
-    record.live_run = None;
-    let body = StepStartBody {
-        record: encode_code_run_replay_record(&record)?,
-        task: capture.task.to_owned(),
-        model: start.model.clone(),
-        model_locality: start.model_locality,
-        seat_effort: start.seat_effort,
-        global_tier: start.global_tier.clone(),
-        soft_steps: start.soft_steps,
-        prompt_fingerprint: start.prompt_fingerprint.to_owned(),
-    };
-    let bytes = rmp_serde::to_vec_named(&body)
-        .map_err(|error| crate::Error::InvalidConfig(format!("capsule start: {error}")))?;
-    let path = format!(
-        "replay/capsule/{}/{:06}.start.msgpack",
-        capture.lease_generation, capture.step
-    );
-    Ok(Some(ExecutorStepStart {
-        body: store_capsule_start(vault, capture.run, path.clone(), &bytes)?,
-        path,
-        digest: *blake3::hash(&bytes).as_bytes(),
-        bridge_start: record.bridge_calls.len() as u64,
+    Ok(Some(Awaiting {
+        vault: vault.vault_id(),
+        key: draft.key(),
+        messages,
+        binding: None,
+        bytes: draft.request.len() as u64,
     }))
 }
 
-/// Each task exposure as a slot of the request: the text part the task ends
-/// is where the host put it, and an exposure whose bytes there do not hash
-/// to its own is left out rather than guessed at.
+/// Each task exposure as a slot of the request as sent: the text part the
+/// task ends is where the host put it, and an exposure whose bytes there do
+/// not hash to its own is left out rather than guessed at. Storage moves
+/// each slot to where it sits once the request is masked.
 fn slots(capture: &StepCapture<'_>) -> Vec<ExposureSlot> {
     if capture.task.is_empty() || capture.exposures.is_empty() {
         return Vec::new();
@@ -482,8 +552,11 @@ fn slots(capture: &StepCapture<'_>) -> Vec<ExposureSlot> {
             kind: ExposureKind::Knowledge,
             message,
             part,
-            start: (base + exposure.start) as u64,
-            end: (base + exposure.end) as u64,
+            stored: Some(StoredSpan {
+                start: (base + exposure.start) as u64,
+                end: (base + exposure.end) as u64,
+                content_hash: exposure.content_hash,
+            }),
         })
         .filter(|slot| slot.locate(capture.request).is_some())
         .collect()
