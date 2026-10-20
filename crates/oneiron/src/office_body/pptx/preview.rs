@@ -40,12 +40,10 @@ use oneiron_docedit::retained_opc::Package;
 
 const ROW: &str = "vault.artifacts.body.deck.preview";
 
-/// The most slides one preview draws (CALLS "OF-510 deck preview").
-const MAX_SLIDES: usize = 20;
-
 /// The most image bytes [`DRAWN`] holds, across every vault and deck; past
 /// it the least recently read export's slides go first (CALLS "OF-510 deck
-/// preview cache").
+/// preview cache"). A budget for what is kept, never for what is drawn: a
+/// preview past it still answers every slide it names.
 const DRAWN_BYTES: usize = 64 << 20;
 
 /// How long an export's drawn slides stay in [`DRAWN`] once no call reads
@@ -122,9 +120,10 @@ impl Memory<'_> {
                 &["Call it through a server with LibreOffice (soffice) and pdftoppm on its PATH."],
             ));
         };
-        if input.slides.is_empty() || input.slides.len() > MAX_SLIDES {
+        // Every slide named is drawn, however many (FIX 6565, Rule 5).
+        if input.slides.is_empty() {
             return Err(MemoryError::bad_request(format!(
-                "a deck preview names 1 to {MAX_SLIDES} slides"
+                "{ROW} names at least one slide"
             )));
         }
         admit_row_references(self, ROW, input, &["/artifact_ref", "/fork_ref"])?;
