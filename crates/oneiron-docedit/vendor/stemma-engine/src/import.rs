@@ -109,6 +109,11 @@ pub(crate) fn resolve_relationship_target(target: &str, main_dir: &str) -> Strin
 }
 
 fn map_docx_error(err: DocxError) -> RuntimeError {
+    let code = if matches!(err, DocxError::ParseLimitExceeded { .. }) {
+        ErrorCode::ParseLimitExceeded
+    } else {
+        ErrorCode::InvalidDocx
+    };
     let message = match err {
         DocxError::ZipRead(source) => format!("docx read failed: {source}"),
         DocxError::ZipWrite(source) => format!("docx write failed: {source}"),
@@ -122,9 +127,12 @@ fn map_docx_error(err: DocxError) -> RuntimeError {
         DocxError::InvalidWrittenZip(detail) => {
             format!("docx write produced an invalid ZIP central directory: {detail}")
         }
+        DocxError::ParseLimitExceeded { bound, limit } => {
+            crate::parse_budget::refusal(bound, limit)
+        }
     };
     RuntimeError {
-        code: ErrorCode::InvalidDocx,
+        code,
         message,
         details: ErrorDetails::default(),
     }

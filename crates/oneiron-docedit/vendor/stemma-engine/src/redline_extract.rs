@@ -112,6 +112,10 @@ impl fmt::Display for RedlineExtractError {
 pub fn extract_redline(docx_bytes: &[u8]) -> Result<RedlineExtract, RedlineExtractError> {
     let cursor = Cursor::new(docx_bytes);
     let mut zip = ZipArchive::new(cursor).map_err(|e| RedlineExtractError::Zip(e.to_string()))?;
+    // One XML budget across every part, charged before any part is parsed.
+    crate::parse_budget::admit_zip(&mut zip).map_err(|bound| {
+        RedlineExtractError::Zip(crate::parse_budget::refusal(bound, bound.limit()))
+    })?;
     let numbering_defs = read_numbering_definitions(&mut zip)?;
 
     // Extract body from word/document.xml (required).

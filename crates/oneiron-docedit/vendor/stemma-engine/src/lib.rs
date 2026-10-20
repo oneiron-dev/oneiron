@@ -120,6 +120,7 @@ pub mod numbering;
 pub mod opaque_meta;
 pub(crate) mod opaque_splice;
 pub mod opaque_targets;
+pub mod parse_budget;
 pub(crate) mod resolution_rules;
 pub mod runtime;
 pub mod view;
