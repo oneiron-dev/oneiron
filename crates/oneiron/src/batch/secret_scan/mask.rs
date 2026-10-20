@@ -24,6 +24,7 @@ pub(super) mod carrier;
 mod file_plane;
 pub(super) mod known_marks;
 pub(super) mod side_row;
+pub(super) mod spool;
 pub(super) mod stream_known;
 mod text;
 mod wipe;

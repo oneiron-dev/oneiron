@@ -22,8 +22,10 @@ use super::super::support::invalid_code_run_replay;
 use super::replay_bodies::RESPONSE_ERASED;
 use super::response_erase::{fence_replay_in_txn, response_erased_in_txn};
 
+mod admitted;
 mod bodies;
 
+pub(crate) use self::admitted::ReplyBody;
 use self::bodies::owned_body;
 pub(crate) use self::bodies::{
     FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_row_key,
