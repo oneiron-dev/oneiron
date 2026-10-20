@@ -459,7 +459,9 @@ impl Memory<'_> {
             )
             .with_validity(ruling.valid_from, ruling.valid_to)
             .with_stale(ruling.stale);
-            if let Some(scope) = ruling.scope {
+            // The ruling row is born at the default ClaimOf weight, never at
+            // the proposal's own.
+            if let Some(scope) = crate::claim::without_initial_weight(ruling.scope) {
                 candidate = candidate.with_scope(scope);
             }
             if let Some(world) = ruling.world {

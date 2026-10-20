@@ -238,13 +238,15 @@ pub(crate) fn resolved_candidate(
     )
 }
 
-/// `candidate` on `body`'s own world, relationship, scope and project.
+/// `candidate` on `body`'s own world, relationship, scope and project. The
+/// row's initial ClaimOf weight is its own birth fact, never an axis, so the
+/// candidate is born at the default weight.
 pub(crate) fn on_axes_of(mut candidate: ClaimCandidate, body: &crate::ClaimBody) -> ClaimCandidate {
     let project = body.scope_project;
     // The row's own stamp is its project; a scope-map entry can never move
     // it. Promotion keeps only a map scope, so a non-map one adds nothing.
-    let mut fields = match &body.scope {
-        Some(Value::Map(fields)) => fields.clone(),
+    let mut fields = match crate::claim::without_initial_weight(body.scope.clone()) {
+        Some(Value::Map(fields)) => fields,
         _ => Vec::new(),
     };
     fields.retain(|(key, _)| key.as_str() != Some(SCOPE_PROJECT_KEY));

@@ -820,6 +820,9 @@ impl ScopeFold {
                         "evidence_taint" | "facet" | "facet_ref" | "facetRef" | "scopeProjectId"
                         | "sensitivity",
                     ) => continue,
+                    // A source's initial ClaimOf weight is its own birth fact,
+                    // never a term the answer rests on.
+                    Some(crate::claim::CLAIM_SCOPE_INITIAL_CLAIM_OF_WEIGHT_KEY) => continue,
                     Some("typed_question_principal")
                         if value.as_str() == Some(self.principal.as_str()) =>
                     {
