@@ -7398,7 +7398,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BlobBytes"
@@ -7407,7 +7407,7 @@
      "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -76431,14 +76431,15 @@
       "OrganCall",
       "OrganInput",
       "OrganSpec",
-      "OrganTier"
+      "OrganTier",
+      "SightedInput"
      ],
      "path": "src/spec.rs",
      "purpose": "What the engine installs and what a caller asks",
      "surface": {
       "enum": 2,
       "fn": 3,
-      "struct": 8
+      "struct": 9
      }
     },
     {

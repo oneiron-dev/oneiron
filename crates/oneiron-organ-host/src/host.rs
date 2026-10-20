@@ -22,7 +22,7 @@ use crate::outcome::OrganOutcome;
 use crate::process::{CallFailure, Grant, OrganProcess, Revocations, Wait};
 use crate::regions::RegionCache;
 use crate::slot::{OrganStatus, Slot};
-use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec};
+use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec, SightedInput};
 
 mod outputs;
 mod sized;
@@ -273,9 +273,10 @@ impl OrganHost {
     /// Runs one organ call and returns the checked proposal.
     ///
     /// The caller has already authorized its actor to read every input, as
-    /// for any engine read; the host checks the organ's grant (verb, media
-    /// type) and hands the organ those inputs and nothing else. Every ask
-    /// the organ makes is refused.
+    /// for any engine read, and judged the sight it reads each under
+    /// ([`SightedInput`]); the host checks the organ's grant (verb, media
+    /// type) and hands the organ those inputs, as that sight reads them, and
+    /// nothing else. Every ask the organ makes is refused.
     ///
     /// # Errors
     /// See [`HostError`]: grants, budget, the organ's state, its reply.
@@ -524,17 +525,23 @@ impl OrganHost {
         }
     }
 
-    /// Lends one input from the vault: inline when small, else a sealed
-    /// region, made once per content hash and kept for reuse.
+    /// Lends one input from the vault, as its caller's sight reads it:
+    /// inline when small, else a sealed region, made once per lent hash and
+    /// kept for reuse. The lent hash names the bytes the organ reads, a
+    /// masked copy's own included (FIX 6508), so the receipt says what it saw.
     fn resolve(
         &self,
         vault: &Vault,
         spec: &OrganSpec,
-        input: OrganInput,
+        sighted: SightedInput,
     ) -> Result<Resolved, HostError> {
+        let SightedInput { input, sight } = sighted;
         let inline_max = self.config.inline_max_bytes;
-        let lent =
-            vault.lend_blob_artifact_version(&input.artifact, input.version, |record, bytes| {
+        let lent = vault.lend_blob_artifact_version(
+            &input.artifact,
+            input.version,
+            sight,
+            |record, bytes| {
                 let media_type = record.export_media_type.clone();
                 if !spec
                     .media_types
@@ -544,29 +551,28 @@ impl OrganHost {
                     return Err(HostError::MediaTypeNotGranted(media_type));
                 }
                 let len = bytes.len() as u64;
+                let hash = *bytes.hash();
                 // A kept region was verified under this hash when it was made;
                 // a row whose length no longer matches it is checked afresh,
                 // and fails closed.
-                let kept = self
-                    .regions
-                    .get(&record.content_hash)
-                    .filter(|region| region.len() == len);
+                let kept = self.regions.get(&hash).filter(|region| region.len() == len);
                 let held = if bytes.len() <= inline_max {
                     Held::Inline(bytes.verified()?.to_vec())
                 } else if let Some(region) = kept {
                     Held::Region(region)
                 } else {
                     let region = SharedRegion::from_bytes(&bytes.verified()?)?;
-                    Held::Region(self.regions.insert(record.content_hash, region))
+                    Held::Region(self.regions.insert(hash, region))
                 };
                 Ok(Resolved {
                     input: Some(input),
                     media_type,
-                    hash: Hash32(record.content_hash),
+                    hash: Hash32(hash),
                     len,
                     held,
                 })
-            })?;
+            },
+        )?;
         lent.unwrap_or_else(|| {
             Err(HostError::InputNotFound {
                 artifact: input.artifact.to_hex(),
