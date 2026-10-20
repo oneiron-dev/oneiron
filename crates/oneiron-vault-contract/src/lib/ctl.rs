@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::restore::{ManagedRestoreIdentity, RestoreStatus};
+use super::restore::{
+    HostHoldsCursor, HostHoldsSource, HostOrderHoldsExport, ManagedRestoreIdentity, RestoreStatus,
+};
 use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
 use super::{
@@ -119,6 +121,22 @@ pub enum CtlRequest {
     /// (`Ok { ok: false }`), which a supervisor reads as not supported and
     /// prepares with `prepare_reap`.
     PrepareIdleReap,
+    /// Appended last (FIX 1485): this vault's whole host-order legal hold
+    /// family, for the cold restore attempt `identity` names to carry
+    /// ([`CtlResponse::HostOrderHolds`],
+    /// [`host_holds`](crate::restore::host_holds)). The supervisor asks the
+    /// source under its reap freeze, before the control plane's fence;
+    /// `source` must name this vault, and `cursor` is the page to read from,
+    /// `null` or absent for the first. A read: it writes no hold and changes
+    /// no reap state. Build floor: as the restore input's `host_holds`; a v3
+    /// vault built before it answers it as an unknown request
+    /// (`Ok { ok: false }`), which is never a family.
+    HostOrderHolds {
+        identity: ManagedRestoreIdentity,
+        source: HostHoldsSource,
+        #[serde(default)]
+        cursor: Option<HostHoldsCursor>,
+    },
 }
 
 impl CtlRequest {
@@ -135,6 +153,14 @@ impl CtlRequest {
                 anyhow::ensure!(
                     valid_owner_signing_challenge(challenge),
                     "recover_owner_signing requires a 64-digit lowercase hex challenge"
+                );
+            }
+            CtlRequest::HostOrderHolds {
+                identity, source, ..
+            } => {
+                anyhow::ensure!(
+                    HostOrderHoldsExport::fits(identity, source),
+                    "host_order_holds names an attempt and source that leave no room in a line"
                 );
             }
             CtlRequest::PrepareReap
@@ -615,13 +641,24 @@ pub enum CtlResponse {
     PrepareIdleReap {
         idle_reap: IdleReapWire,
     },
+    /// Appended last (FIX 1485): the answer to
+    /// [`CtlRequest::HostOrderHolds`] ([`HostOrderHoldsExport`]). Its one
+    /// required field {host_order_holds} is disjoint from every variant
+    /// above, {idle_reap} included, and it carries no `ok` for the reason
+    /// `Slim` carries none. A supervisor parses this shape alone for the
+    /// request it sent and runs [`CtlResponse::validate`]: any other answer
+    /// is not proven, never an empty family.
+    HostOrderHolds {
+        host_order_holds: HostOrderHoldsExport,
+    },
 }
 
 impl CtlResponse {
     /// Validate SLIM status, residency, numerics, and blocker combinations,
     /// the shape of `PrepareReap.training`, the residency an `Unslim` left,
-    /// the shape of a `RestoreStatus` page and of a `PrepareIdleReap`
-    /// answer ([`IdleReapWire::validate`]), after parsing. Existing
+    /// the shape of a `RestoreStatus` page, of a `PrepareIdleReap` answer
+    /// ([`IdleReapWire::validate`]) and of a `HostOrderHolds` page, after
+    /// parsing. Existing
     /// responses keep their prior validation requirements;
     /// `PrepareReap.next_wake` still uses
     /// [`validate_wake_entries`](crate::validate_wake_entries).
@@ -634,6 +671,9 @@ impl CtlResponse {
         }
         if let CtlResponse::PrepareIdleReap { idle_reap } = self {
             idle_reap.validate()?;
+        }
+        if let CtlResponse::HostOrderHolds { host_order_holds } = self {
+            host_order_holds.validate()?;
         }
         if let CtlResponse::Unslim { unslim } = self {
             anyhow::ensure!(
