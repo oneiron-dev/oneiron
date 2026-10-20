@@ -7398,7 +7398,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BlobBytes"
@@ -7407,7 +7407,7 @@
      "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
      "surface": {
       "crate-vis": 5,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -44573,7 +44573,7 @@
      "purpose": "CRDT-independent, byte-exact Layer-1 snapshot and fresh-window construction",
      "surface": {
       "const": 2,
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 8,
       "re-export": 1,
@@ -60576,7 +60576,7 @@
      "path": "src/vault/entity_revision/pending_index/checkpoint.rs",
      "purpose": "The checkpoint rows of the staged index inputs (KS7-2): the caller's fields, vector and token waiting for…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60596,7 +60596,7 @@
      "path": "src/vault/entity_revision/phonetic/checkpoint.rs",
      "purpose": "The checkpoint rows of the staged phonetic codes (KS7-2): the codes waiting to publish with the indexed text…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -60618,6 +60618,16 @@
      "purpose": "The checkpoint getter of the revision ledger (KS7-2): each entity's revision state, retained frontiers…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/checkpoint/document.rs",
+     "purpose": "A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -66313,7 +66323,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66399,7 +66409,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4151,
+   "source_files": 4152,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76421,14 +76431,15 @@
       "OrganCall",
       "OrganInput",
       "OrganSpec",
-      "OrganTier"
+      "OrganTier",
+      "SightedInput"
      ],
      "path": "src/spec.rs",
      "purpose": "What the engine installs and what a caller asks",
      "surface": {
       "enum": 2,
       "fn": 3,
-      "struct": 8
+      "struct": 9
      }
     },
     {
