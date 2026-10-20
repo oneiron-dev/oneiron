@@ -1126,9 +1126,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/reader_jobs.rs` | src | L | 2 struct · 1 enum · 11 fn · 28 crate-vis | ReaderJobs, SummaryMember, SummaryRead | One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record… |
 | `src/code_run/storage/records.rs` | src | m | 2 struct · 8 fn · 21 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/records/admitted.rs` | src | s | 4 crate-vis | — | A run's reply bodies masked at write (FIX 5718 part 3, Engine rulings 3 and 4) |
-| `src/code_run/storage/records/bodies.rs` | src | m | 3 fn · 24 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
+| `src/code_run/storage/records/bodies.rs` | src | m | 3 fn · 25 crate-vis | — | The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish… |
 | `src/code_run/storage/replay_bodies.rs` | src | s | 6 crate-vis | — | A code run's replay outcomes under body custody (KS-2B1, FIX 5683 part B1) |
-| `src/code_run/storage/replay_capsule.rs` | src | s | 1 fn · 12 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
+| `src/code_run/storage/replay_capsule.rs` | src | m | 1 fn · 12 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
 | `src/code_run/storage/replay_capsule/admit.rs` | src | m | 2 crate-vis | — | A capsule's bodies, admitted and published in the capsule's own writer (FIX 6144, KEY STORE = A): the… |
 | `src/code_run/storage/replay_capsule/erase.rs` | src | s | 4 crate-vis | — | The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's own writer |
 | `src/code_run/storage/response_erase.rs` | src | s | 5 crate-vis | — | An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay… |
@@ -3695,7 +3695,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/reveal/actor_erase.rs` | src | s | 1 enum · 1 const · 2 crate-vis | RevealAskErase | An erased actor out of the reveal rows (FIX 3520) |
 | `src/secret_custody/reveal/agent.rs` | src | m | 5 crate-vis | — | The agent's doors: `reveal`, `wait` and `describe` on a handle |
 | `src/secret_custody/reveal/file.rs` | src | m | 3 crate-vis | — | An agent's sight of a file stored with keys in it (OF-560; owner ruling G04 binary = C2): "Agent with a… |
-| `src/secret_custody/reveal/owner.rs` | src | s | 3 fn | — | The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value |
+| `src/secret_custody/reveal/owner.rs` | src | m | 3 fn | — | The owner's doors: the asks and receipts, the answer to one ask, and the owner's own read of a value |
 | `src/secret_custody/reveal/person.rs` | src | s | 5 crate-vis | — | PERSON handles use the reveal consent machine, not custody or a T1 lease |
 | `src/secret_custody/sighted_file.rs` | src | s | 2 crate-vis | — | An ASSET body kept in its file, read as a serving door's reader reads it (FIX 5507) |
 | `src/secret_custody/tests.rs` | test | L | — | — | SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index… |
