@@ -11847,7 +11847,7 @@
      "path": "src/claim/projection_index.rs",
      "purpose": "Rebuildable claim projections maintained at the shared put chokepoint",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -34721,7 +34721,7 @@
      "path": "src/llm/step/step_state.rs",
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
