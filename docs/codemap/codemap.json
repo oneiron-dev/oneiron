@@ -2668,8 +2668,8 @@
      "path": "src/authority/checkpoint_policy.rs",
      "purpose": "Who may attest a portable authority checkpoint (OF-469, checkpoint v2): the eligible roots and the quorum…",
      "surface": {
-      "const": 3,
-      "crate-vis": 3,
+      "const": 4,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -3470,7 +3470,7 @@
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 32,
-      "re-export": 57
+      "re-export": 59
      }
     },
     {
@@ -3535,7 +3535,22 @@
      "path": "src/authority/owner_key_enrollment.rs",
      "purpose": "The fold's judge of the owner's enrollment of one of his devices' own owner signing keys (FIX 4920; Engine…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "EnrolledOwnerKey",
+      "OwnerKeyEnrollment",
+      "OwnerKeyEnrollmentReceipt"
+     ],
+     "path": "src/authority/owner_key_enrollment_door.rs",
+     "purpose": "The owner's enrollment of one of his devices' own owner signing keys (FIX 4920 part 2; Engine 10-20 00:5x…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -18380,7 +18395,7 @@
      "path": "src/context_board/stream/mod.rs",
      "purpose": "Board streaming frames, routing and the pending-wake queue",
      "surface": {
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -18388,13 +18403,14 @@
      "kind": "src",
      "notable": [
       "ChildEvent",
+      "VerifiedDiaryReviewEvent",
       "VerifiedOwnTaskEvent"
      ],
      "path": "src/context_board/stream/provenance.rs",
      "purpose": "Verified own-task and child event minting for routed board events",
      "surface": {
-      "crate-vis": 13,
-      "struct": 2
+      "crate-vis": 16,
+      "struct": 3
      }
     },
     {
@@ -18424,6 +18440,20 @@
       "crate-vis": 1,
       "fn": 12,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingDiaryReview"
+     ],
+     "path": "src/context_board/stream/review.rs",
+     "purpose": "The diary-review producer: a pending diary-read review wakes the reviewed agent's STREAM connections (FIX…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -22319,7 +22349,7 @@
      "purpose": "A free-time cycle's items (FIX 4453): the binding each item's attempt runs under, what it lands, and how it…",
      "surface": {
       "crate-vis": 13,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -23200,9 +23230,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "WakeDeferredJob",
+      "WakeOutcomeState",
+      "WakeOutcomeView",
+      "WakeParkedJob",
       "WakeRecipeJobView",
       "WakeSettlementRequest",
       "WakeSettlementView",
@@ -23212,8 +23246,9 @@
      "path": "src/dreamer_runner/observation.rs",
      "purpose": "Owner reads of recipe receipts and their Dreamer/Coach descendants",
      "surface": {
+      "enum": 1,
       "fn": 2,
-      "struct": 5
+      "struct": 8
      }
     },
     {
@@ -23711,9 +23746,23 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 1,
-      "re-export": 14
+      "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NightStepRequestId"
+     ],
+     "path": "src/dreamer_wake/night_step.rs",
+     "purpose": "The Dreamer's night step on the owner's say (FIX 6903): a Timer `host.wake` asks for what a Timer wake asks…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -23941,7 +23990,7 @@
      "path": "src/dreamer_wake/scheduling.rs",
      "purpose": "The host-facing enqueue doors; the engine owns no timer",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5
      }
@@ -25748,7 +25797,7 @@
      "path": "src/embed/media.rs",
      "purpose": "The media embedder adapter and the backfill that fills a declared media space from stored image and audio…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 3,
       "struct": 2,
       "trait": 1
@@ -25834,7 +25883,7 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 2,
       "trait": 1
      }
@@ -65430,7 +65479,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65731,7 +65780,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65885,7 +65934,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66888,7 +66937,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4192,
+   "source_files": 4195,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83630,6 +83679,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/owner_key_enrollment_routes.rs",
+     "purpose": "`/v1/owner/owner-signing-keys`: the owner enrols a device's own Ed25519 owner signing key on the vault's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/owner_work_routes.rs",
      "purpose": "`/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736)",
      "surface": {
@@ -90960,7 +91019,7 @@
      "path": "src/wake_adapters/board_stream.rs",
      "purpose": "STREAM frames for the production host wake handoff",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -91391,7 +91450,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 481,
+     "files": 482,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91841,7 +91900,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 962,
+   "source_files": 963,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95618,8 +95677,12 @@
       "WaitForOutput",
       "WakeCadenceReceipt",
       "WakeCadenceView",
+      "WakeDeferredJob",
       "WakeEnvelope",
       "WakeIdleState",
+      "WakeOutcomeState",
+      "WakeOutcomeView",
+      "WakeParkedJob",
       "WakePolicyDecision",
       "WakePolicySetRequest",
       "WakeRecipe",
@@ -95748,8 +95811,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 897,
-      "struct": 2809
+      "enum": 898,
+      "struct": 2812
      }
     },
     {

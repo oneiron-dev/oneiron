@@ -447,6 +447,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/owner_routes/legal_hold_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/legal-holds`: the owner's legal holds (OF-470), behind the same owner door as every other owner… |
 | `src/api/owner_routes/machine_routes.rs` | src | s | 5 crate-vis | — | `/v1/owner/machines`: the owner's answer for each of his linked machines (mesh PR1b) |
 | `src/api/owner_routes/model_setting_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/settings/models`: the owner's model settings |
+| `src/api/owner_routes/owner_key_enrollment_routes.rs` | src | s | 1 crate-vis | — | `/v1/owner/owner-signing-keys`: the owner enrols a device's own Ed25519 owner signing key on the vault's… |
 | `src/api/owner_routes/owner_work_routes.rs` | src | s | 3 crate-vis | — | `/v1/owner/owner-work/{request}`: where one owner work request stands (FIX 4632, 4682, 4736) |
 | `src/api/owner_routes/pack_preview_routes.rs` | src | s | 1 crate-vis | — | `POST /v1/owner/packs/preview` (FIX 5493): the owner's look at a pack folder before `POST /v1/owner/packs`… |
 | `src/api/owner_routes/pack_routes.rs` | src | L | 2 crate-vis | — | `/v1/owner/packs`: the served `vault.packs.put` (ARCH-0080 §8, slice 1) |
@@ -1110,7 +1111,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/tests/pass_attachment.rs` | test | m | — | — | The voice host attached to a real wake supervisor through the driver's generic pass-attachment seam (moved… |
 | `src/voice_host/tests/wire.rs` | test | s | — | — | — |
 | `src/voice_host/wire.rs` | src | s | 1 struct · 12 crate-vis | VoiceWireBindings | The voice wire's media ops (OF-410) |
-| `src/wake_adapters/board_stream.rs` | src | s | 3 crate-vis | — | STREAM frames for the production host wake handoff |
+| `src/wake_adapters/board_stream.rs` | src | s | 4 crate-vis | — | STREAM frames for the production host wake handoff |
 | `src/wake_adapters/delivery.rs` | src | s | 1 crate-vis | — | The preference/degrade ladder belongs to this host, never the engine |
 | `src/wake_adapters/inbox.rs` | src | s | 6 crate-vis | — | A local handoff inbox and occurrence-id acknowledgements |
 | `src/wake_adapters/mod.rs` | src | s | 4 crate-vis | — | Host-side, per-config-directory wake delivery (OF-385) |

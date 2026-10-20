@@ -113,7 +113,7 @@ export type LiveRunRequest<T> = { live_run: string; spec: T }
 /** `oneiron::task_verb::sdk::BoardWakeRequest` */
 export type BoardWakeRequest = Record<string, never>
 /** `oneiron::context_board::stream::wake::WakeEnvelope` */
-export type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string }
+export type WakeEnvelope = { event_ref: string; task_ref: string; actor_ref: string; line: string; review_ref?: string | null }
 /** `oneiron::task_verb::sdk::BoardWakeReply` */
 export type BoardWakeReply = { wakes: WakeEnvelope[] }
 /** `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallRequest` */
@@ -7457,7 +7457,7 @@ export type BoardStreamFrame = { epoch: number; kind: FrameKind }
 /** `oneiron::task_verb::sdk::BoardFrameReply` */
 export type BoardFrameReply = { frame: BoardStreamFrame }
 /** `oneiron::context_board::stream::events::SubscriptionScope` */
-export type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts"
+export type SubscriptionScope = "my_tasks" | "my_children" | "consults_to_me" | "memories" | "worlds" | "presence" | "counts" | "diary_reviews"
 /** `oneiron::task_verb::sdk::BoardSubscriptionRequest` */
 export type BoardSubscriptionRequest = { scopes: SubscriptionScope[] }
 /** `oneiron::task_verb::sdk::BoardSubscriptionReply` */

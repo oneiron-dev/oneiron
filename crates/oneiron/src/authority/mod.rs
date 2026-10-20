@@ -104,6 +104,7 @@ mod op_apply;
 mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
+mod owner_key_enrollment_door;
 mod owner_project_slip;
 mod owner_roots;
 mod owner_work;
@@ -179,6 +180,11 @@ pub use oneiron_authority::authority::{CustodyChange, CustodyRecipientPermit};
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
+// The challenge a device's new owner key signs to enrol, and its proof's
+// length (FIX 4920, the seam L04's FIX 4921 calls).
+pub use oneiron_authority::authority::{
+    OWNER_KEY_POSSESSION_PROOF_LEN, owner_key_enrollment_challenge,
+};
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
 
@@ -268,6 +274,9 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
+pub use owner_key_enrollment_door::{
+    EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{
