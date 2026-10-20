@@ -75,6 +75,10 @@ unsupported case is inconclusive, and the gate stays closed.
   `decktest` (in its own logged-in Terminal), then commit `environment.json`
   and start a new run: a run directory pins its copy of the script, so
   approving inside a run invalidates it.
+- The account running the Office half needs a console (Aqua) session on vel:
+  it owns `/dev/console`, or `who` lists its `console` login. Without one the
+  pass refuses before opening anything with "log olety into vel's desktop (use
+  fast user switching for decktest)", not with osascript's -10810.
 - `scripts/office/README.md` "Safe Mac setup" applies: Automation and
   Accessibility granted once, no Grant File Access, no other open presentation.
   The Office half takes the shared lock `~/w7-oracle/lock` and releases it on
