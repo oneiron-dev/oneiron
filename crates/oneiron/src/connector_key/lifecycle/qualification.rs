@@ -14,8 +14,15 @@ use super::super::slate::{
     bind_connector_slate_in_txn, read_connector_slate_in_txn, slate_expands,
 };
 use super::super::txn::{
-    append_connector_key_op_record, read_connector_key_in_txn, rewrite_connector_key_in_txn,
+    CATALOG_NAME_INDEX, append_connector_key_op_record, read_connector_key_in_txn,
+    rewrite_connector_key_in_txn,
 };
+
+/// FIX 5941, Ask-first: a pack update (another source of the pack installed
+/// over the one a catalog connector's slate names) halts that connector's
+/// route as the pack's removal does. False keeps today's update: the key
+/// stays Active and routes until the owner revises and requalifies it.
+const PACK_UPDATE_HALTS_CONNECTOR_ROUTES: bool = false;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectorQualificationError {
@@ -315,6 +322,88 @@ impl Vault {
         )?;
         self.sync_derived_keys_in_txn(wtxn, &adopted, at)?;
         Ok(adopted)
+    }
+
+    /// A pack update superseded the install a catalog connector's slate
+    /// names: its route halts as on removal only while
+    /// [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds.
+    pub(crate) fn halt_updated_pack_connector_routes_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        source_ref: &str,
+        content_hash: &str,
+        at: u64,
+    ) -> Result<()> {
+        if !PACK_UPDATE_HALTS_CONNECTOR_ROUTES {
+            return Ok(());
+        }
+        self.halt_pack_connector_routes_in_txn(wtxn, source_ref, content_hash, at)
+    }
+
+    /// The install a catalog connector's slate is bound to left the install
+    /// catalog, in the caller's transaction: the owner removed the pack
+    /// (FIX 5941), or an update superseded it while
+    /// [`PACK_UPDATE_HALTS_CONNECTOR_ROUTES`] holds. Every Active catalog key
+    /// whose slate names that exact source goes back to Pending, as a
+    /// revision change leaves it: its route stops, its per-grant keys are
+    /// held, and only a re-install that qualifies again through
+    /// [`Self::qualify_connector_key`] brings it back.
+    pub(crate) fn halt_pack_connector_routes_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        source_ref: &str,
+        content_hash: &str,
+        at: u64,
+    ) -> Result<()> {
+        for (_, id) in CATALOG_NAME_INDEX.scan(&self.store, wtxn)? {
+            let Some(record) = read_connector_key_in_txn(&self.store, wtxn, &id)? else {
+                continue;
+            };
+            if record.status != ConnectorKeyStatus::Active || record.catalog.is_none() {
+                continue;
+            }
+            let Some(slate_id) = record.slate_ref else {
+                continue;
+            };
+            let bound = read_connector_slate_in_txn(self, wtxn, slate_id)?.is_some_and(|slate| {
+                slate
+                    .slate_manifest()
+                    .pack_source
+                    .as_ref()
+                    .is_some_and(|binding| {
+                        binding.source_ref == source_ref && binding.content_hash == content_hash
+                    })
+            });
+            if !bound {
+                continue;
+            }
+            let admission_epoch = record
+                .admission_epoch
+                .checked_add(1)
+                .ok_or(Error::ArithmeticOverflow("connector admission epoch"))?;
+            let pending = ConnectorKeyRecord {
+                status: ConnectorKeyStatus::Pending,
+                status_changed_at: Some(at),
+                suspended_reason: None,
+                admission_epoch,
+                qualification_receipt: None,
+                ..record
+            };
+            pending.validate()?;
+            rewrite_connector_key_in_txn(&self.store, wtxn, &id, &pending)?;
+            let policy = crate::gate::resolve_policy_manifest(&self.store, wtxn)?;
+            append_connector_key_op_record(
+                &self.store,
+                wtxn,
+                &id,
+                "gate.connector_key.pack_uninstalled",
+                &pending,
+                policy.read_frontier_hash()?,
+                at,
+            )?;
+            self.sync_derived_keys_in_txn(wtxn, &pending, at)?;
+        }
+        Ok(())
     }
 }
 

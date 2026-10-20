@@ -8,7 +8,9 @@
 //! Its setup sessions end too: the grants their permissions minted are
 //! revoked with the owner's receipts, while stored credentials stay in
 //! custody. A built-in goes back to its seeded Candidate and qualifies again
-//! on a fresh checked setup.
+//! on a fresh checked setup. A catalog connector this install admitted goes
+//! back to Pending with its per-grant keys held (FIX 5941): no call routes
+//! to it until the pack installs and the connector qualifies again.
 use super::{PackInstallReceipt, admission, invalid};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Raw, SideTable};
@@ -35,6 +37,12 @@ impl Vault {
             self.retire_pack_skills_in_txn(txn, &receipt, at)?;
             self.uninstall_pack_kinds_in_txn(txn, &receipt.kinds)?;
             self.end_pack_setup_sessions_in_txn(txn, Some(owner), pack, &receipt.content_hash)?;
+            self.halt_pack_connector_routes_in_txn(
+                txn,
+                &receipt.source_id,
+                &receipt.content_hash,
+                at,
+            )?;
             for predicate in &receipt.predicates {
                 // Only a row still naming this pack is its own; an update
                 // that moved the predicate already rewrote it.
