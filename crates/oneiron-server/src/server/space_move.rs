@@ -5,7 +5,9 @@
 //! ([`oneiron::Vault::check_space_move`]): each probe query goes through the
 //! incumbent's tower twice, for its retest noise, and through the candidate's
 //! once. The engine swaps the candidate in, keeps the incumbent, or leaves the
-//! move open, and leaves the result note.
+//! move open, and leaves the result note. A media query goes through the
+//! space's tower of its kind, behind the backfill's own media egress gate
+//! (FIX 1637).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
@@ -13,8 +15,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use oneiron::embed::{
-    EmbedderLocality, InputKind, MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, SpaceMove,
-    SpaceMoveOutcome, SpaceMoveState, SpaceProbeAuthor, SpaceProbeEncoder, SpaceRef,
+    EgressPredicate, EmbedderLocality, InputKind, MediaEmbedReport, MediaEmbedder,
+    MediaEmbeddingInput, SpaceMove, SpaceMoveOutcome, SpaceMoveState, SpaceProbeAuthor,
+    SpaceProbeEncoder, SpaceRef,
 };
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest};
@@ -81,6 +84,23 @@ struct ServerProbeEncoder<'a> {
     runtime: &'a tokio::runtime::Handle,
 }
 
+impl ServerProbeEncoder<'_> {
+    /// The `ai.embed` rung that is declared space `id`'s tower.
+    fn declared(&self, id: &str) -> oneiron::Result<&RuntimeMediaEmbedder> {
+        if id == self.candidate.space_id() {
+            return Ok(&self.candidate);
+        }
+        self.incumbent
+            .as_ref()
+            .filter(|incumbent| incumbent.space_id() == id)
+            .ok_or_else(|| {
+                oneiron::Error::InvalidConfig(format!(
+                    "no probe tower is open for embedding space {id}"
+                ))
+            })
+    }
+}
+
 impl SpaceProbeEncoder for ServerProbeEncoder<'_> {
     fn encode_probe(&self, space: &SpaceRef, query: &str) -> oneiron::Result<Vec<f32>> {
         let embedder = match space {
@@ -91,22 +111,45 @@ impl SpaceProbeEncoder for ServerProbeEncoder<'_> {
                     ))
                 });
             }
-            SpaceRef::Declared(id) if *id == self.candidate.space_id() => &self.candidate,
-            SpaceRef::Declared(id) => self
-                .incumbent
-                .as_ref()
-                .filter(|incumbent| incumbent.space_id() == id)
-                .ok_or_else(|| {
-                    oneiron::Error::InvalidConfig(format!(
-                        "no probe tower is open for embedding space {id}"
-                    ))
-                })?,
+            SpaceRef::Declared(id) => self.declared(id)?,
         };
         Ok(self.runtime.block_on(embedder.embed_query(
             InputKind::Text,
             PROBE_MEDIA_TYPE,
             query.as_bytes().to_vec(),
         ))?)
+    }
+
+    /// A stored image or audio query through the space's tower of its kind
+    /// (FIX 1637), behind the backfill's own gate
+    /// ([`oneiron::Vault::media_document_may_leave`]): a third-party rung
+    /// reads it only on the owner's egress opt-in and only while no
+    /// device-local world keeps it, asked right before each call. A withheld
+    /// query encodes none, and its probe does not run. The vault's own text
+    /// index has no media tower.
+    fn encode_media_probe(
+        &self,
+        space: &SpaceRef,
+        query: &MediaEmbeddingInput<'_>,
+    ) -> oneiron::Result<Option<Vec<f32>>> {
+        let embedder = match space {
+            SpaceRef::TextIndex => return Ok(None),
+            SpaceRef::Declared(id) => self.declared(id)?,
+        };
+        let egress = embedder.media_egress();
+        let gate = egress.as_ref().map(|gate| gate as &dyn EgressPredicate);
+        if !self
+            .server
+            .vault
+            .media_document_may_leave(embedder, gate, query)?
+        {
+            return Ok(None);
+        }
+        Ok(Some(self.runtime.block_on(embedder.embed_query(
+            query.kind,
+            query.media_type,
+            query.bytes.to_vec(),
+        ))?))
     }
 }
 

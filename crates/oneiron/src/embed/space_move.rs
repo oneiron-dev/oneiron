@@ -211,7 +211,7 @@ pub trait SpaceProbeEncoder {
     /// its tower of that kind (FIX 1637), afresh for every run as [`Self::encode_probe`].
     /// `None` when the host encodes no media query, and that probe does not run. A host whose
     /// model is off this device sends the bytes only as its media egress admits them, as the
-    /// backfill does. The default encodes none.
+    /// backfill does ([`Vault::media_document_may_leave`]). The default encodes none.
     fn encode_media_probe(
         &self,
         space: &SpaceRef,

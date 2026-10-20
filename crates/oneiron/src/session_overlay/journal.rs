@@ -52,14 +52,18 @@ pub(crate) struct JournalEntry {
 impl JournalEntry {
     /// The bytes this entry spends of the room's budget. A `FacetOf` edge, a
     /// NOTE's birth facet, is the room's bookkeeping and spends none
-    /// (`keyspace::unbudgeted_row`).
+    /// (`keyspace::unbudgeted_row`). Nor does a media vector, which only the
+    /// room's media door stages (`Vault::put_session_media_vector`): derived
+    /// from the room's own records and recomputable, it spends none, and the
+    /// door marks its row as bookkeeping too, so a write that fits the room
+    /// without it still fits (FIX 2345, Engine 10-20 23:4x).
     pub(super) fn byte_size(&self) -> usize {
         if matches!(
             self.op,
             BatchOp::Edge {
                 kind: crate::edge::EdgeKind::FacetOf,
                 ..
-            }
+            } | BatchOp::MediaVector { .. }
         ) {
             return 0;
         }

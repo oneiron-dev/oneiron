@@ -642,6 +642,12 @@ fn validate_space_id(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// The overlay key of `id`'s media vector row in declared space `space_id`: the `vault_meta` row
+/// a room's media door stages, which the room holds outside its byte budget (FIX 2345).
+pub(crate) fn media_vector_row_key(space_id: &str, id: &EntityId) -> Vec<u8> {
+    MEDIA_VECTOR.key_bytes(&(space_key(space_id), *id))
+}
+
 fn space_key(id: &str) -> [u8; 16] {
     let hash = blake3::hash(id.as_bytes());
     let mut key = [0_u8; 16];

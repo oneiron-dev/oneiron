@@ -426,6 +426,31 @@ impl Vault {
         Ok(outcomes)
     }
 
+    /// Whether `input`'s bytes may go to `embedder` now, as the backfill sends a stored document
+    /// (FIX 382): to a model on this device or the owner's server, always; to one at a third
+    /// party only with the host's gate `egress`, which must allow it, and only while no
+    /// device-local world keeps it (DEC-0005), read under the flag lock right before the bytes
+    /// go. A move's check asks it for each media query it encodes (FIX 1637); `false` sends
+    /// nothing, and that probe does not run.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading the world flags or the row.
+    pub fn media_document_may_leave(
+        &self,
+        embedder: &dyn MediaEmbedder,
+        egress: Option<&dyn EgressPredicate>,
+        input: &MediaEmbeddingInput<'_>,
+    ) -> Result<bool> {
+        if embedder.locality() != EmbedderLocality::ThirdParty {
+            return Ok(true);
+        }
+        if egress.is_none_or(|egress| egress.decide_media(input) != EgressDecision::Allow) {
+            return Ok(false);
+        }
+        self.media_rows_may_leave(None, &[input.entity_id])
+    }
+
     /// Whether every row of `rows` may leave this device now, as `session`'s room reads them,
     /// or base with none: none is one a device-local world keeps (DEC-0005), or whose world
     /// cannot be read while one is flagged. Read under the flag lock right before the bytes

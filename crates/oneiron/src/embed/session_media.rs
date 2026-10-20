@@ -5,7 +5,10 @@
 //! writes here instead: the vector stages into the room's overlay as one typed, journaled
 //! `BatchOp::MediaVector`, owned by a turn of the room, so session recall's media channel reads
 //! it through the room's view and base never holds it. Promoting the turn replays it into base;
-//! closing the room drops it. A room on record writes base, while its saver holds.
+//! closing the room drops it. A room on record writes base, while its saver holds. A vector is
+//! derived from the room's own records and recomputable, so neither its row nor its journal entry
+//! spends the room's byte budget: a write that fits the room without it still fits (FIX 2345,
+//! Engine 10-20 23:4x). It still lives in the room's overlay and goes when the room closes.
 //!
 //! The host's embed pass over live rooms (FIX 2345, [`Vault::reconcile_session_media_embeddings`])
 //! fills a declared space for the records each room off record stages, through this door, one
@@ -19,7 +22,9 @@ use super::media::{
     MediaEgressGate, MediaEmbedReport, MediaEmbedder, PendingMedia, asset_document_in,
     is_text_document_type, media_egress_for, media_held_in, text_document_of,
 };
-use super::space::{EmbeddingSpace, InputKind, embedding_space_in_txn, media_text_hash_of};
+use super::space::{
+    EmbeddingSpace, InputKind, embedding_space_in_txn, media_text_hash_of, media_vector_row_key,
+};
 use super::space_move::space_fill_kinds_in_txn;
 use super::{EgressPredicate, TEXT_HASH_LEN};
 use crate::Vault;
@@ -29,7 +34,9 @@ use crate::error::{Error, OffRecordError, Result};
 use crate::off_record::{OffRecordMode, OffRecordSession};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_TURN};
-use crate::session_overlay::{JournalEntry, JournalRole, JournalScope, RouteTarget};
+use crate::session_overlay::{
+    JournalEntry, JournalRole, JournalScope, OverlayKeyspace, RouteTarget,
+};
 use crate::temporal::TimeRange;
 
 /// What the embed pass over live rooms saw a space's model refuse by content, per room, kept by
@@ -177,6 +184,12 @@ impl Vault {
                     _ => media_text_hash_of(self, &view, &*wtxn, id, kind)?,
                 }
             };
+            // The vector's row is the room's bookkeeping, past its byte budget, as its
+            // journal entry is: the `vault_meta` row the side table stages.
+            session.overlay().mark_bookkeeping_row(
+                OverlayKeyspace::VaultMeta,
+                &media_vector_row_key(space_id, id),
+            )?;
             let at = self.store.clock.now_recorded_at();
             apply(
                 wtxn,
