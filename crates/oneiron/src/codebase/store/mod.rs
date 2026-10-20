@@ -25,6 +25,7 @@ use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
 
+pub(crate) mod checkpoint;
 mod index_rows;
 mod lift;
 use self::index_rows::{

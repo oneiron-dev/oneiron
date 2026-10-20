@@ -21,6 +21,7 @@ pub use self::codec::{
     decode_code_revision_fork, encode_code_revision, encode_code_revision_fork,
 };
 pub use self::proposals::{CodeRevisionProposal, CodeRevisionWriteOutcome};
+pub(crate) use self::storage::checkpoint;
 pub(crate) use self::storage::{
     delete_code_revision_lifecycle_in_txn, has_finalized_code_revision_in_txn,
 };

@@ -30,6 +30,7 @@ pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
 pub(crate) use self::resolution::{
     ConnectorIntentBinding, IntentResolution, RetryDisposition, UnconfirmedDelivery,
 };
+pub(crate) use self::store::checkpoint;
 pub(crate) use self::store::{
     abandon_record, admitted_calls_since_in_txn, begin_definite_non_delivery_retry,
     complete_record_bridged, force_sync, hash_frozen_payload, insert_pending_in_txn,

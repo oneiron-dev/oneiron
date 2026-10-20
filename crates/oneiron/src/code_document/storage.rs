@@ -19,6 +19,7 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
+pub(crate) mod checkpoint;
 mod lift;
 mod receipt_actor;
 pub(crate) use self::lift::{CodeDocumentRows, code_document_texts_in_txn};

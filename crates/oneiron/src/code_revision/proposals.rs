@@ -12,6 +12,7 @@ use crate::store::Store;
 use crate::{Vault, entity_id::EntityId};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
+pub(super) mod checkpoint;
 
 /// Stranded/diverged revision proposal awaiting reconciliation with the head. Key: revision id.
 const PROPOSALS: SideTable<EntityId, CodeRevisionProposal, Raw> =

@@ -12,6 +12,7 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::side_table::{self, Raw, SideKey, SideTable};
 
+pub(crate) mod checkpoint;
 pub(super) mod pending;
 
 /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting.

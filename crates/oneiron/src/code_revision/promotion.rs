@@ -5,6 +5,7 @@ use crate::registry::ENTITY_TYPE_SESSION;
 use crate::side_table::{self, LegacyCompact, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
+pub(super) mod checkpoint;
 
 /// Immutable receipt of the file-mode-review proposal ids that promoted a revision, as their
 /// sorted hex spellings. Key: revision id.
