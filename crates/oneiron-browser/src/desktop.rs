@@ -1371,6 +1371,10 @@ fn key_row(key: &str) -> Row {
         value: None,
         states: Vec::new(),
         depth: 0,
+        href: None,
+        level: None,
+        datetimes: Vec::new(),
+        unavailable: Vec::new(),
     }
 }
 
@@ -1535,6 +1539,10 @@ fn lines(elements: &[Value]) -> (Vec<Line>, Vec<Secret>) {
                     value,
                     states,
                     depth: u16::try_from(scope.len()).unwrap_or(u16::MAX),
+                    href: None,
+                    level: None,
+                    datetimes: Vec::new(),
+                    unavailable: Vec::new(),
                 },
                 frame: frame_of(element, "frame"),
                 token,
