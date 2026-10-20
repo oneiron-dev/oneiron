@@ -7,7 +7,7 @@ the `[models]` data that binds it.
 
 | Server | GPU | Port | What it is | Seats |
 |---|---|---|---|---|
-| `serve-exl3.sh` | 0 | 18091 | `exl3_server.py`: EXL3 4 bpw target with the DFlash2 5 bpw draft at depth 7, Q8 caches, batch 1 | first rung of `generative_reasoner`, `checker`, `dreamer_current` |
+| `serve-exl3.sh` | 0 | 18091 | `exl3_server.py`: EXL3 4 bpw target with the DFlash2 5 bpw draft at depth 7, Q8 caches, one request in flight (see "The EXL3 scheduler") | first rung of `generative_reasoner`, `checker`, `dreamer_current` |
 | `serve-llama.sh` | 1 | 18134 | llama.cpp `llama-server`: Q4_K_M target with the 0.8B Q8_0 draft, 2 slots | the fallback rung of those seats; the one rung of `local_reasoner`, which decide()'s decision read reaches on `/tokenize` and `/completion` |
 
 The rulings this setup carries:
@@ -67,8 +67,69 @@ splits it: the thought in `reasoning_content`, the answer in `content`.
 `reasoning_budget_tokens` caps the thought: at the cap the server closes it
 and the answer gets the rest of `max_tokens`. A `response_format` schema
 constrains the answer only. A prompt that fills the context is refused with
-`400` and `code = "context_length_exceeded"`. Requests take turns: one runs
-at a time, as the measured recipe ran.
+`400` and `code = "context_length_exceeded"`. By default requests take
+turns: one runs at a time, as the measured recipe ran.
+
+## The EXL3 scheduler
+
+One scheduler thread owns the exllamav3 generator (INF 1, FIX 6566). An HTTP
+handler renders and tokenizes its request, submits it, and streams from its own
+queue. Handlers never call the generator. The scheduler admits requests, starts
+their jobs, iterates the generator and routes every event to the request it
+belongs to. The same code runs one request at a time and up to four.
+
+- **Queue.** Up to 4 submitted requests wait for admission in arrival order
+  (`INGRESS_CAPACITY`). When those places are full, a further request waits
+  in its own handler for one to free. No request is refused for load.
+- **Admission.** A request is admitted when all three hold:
+  - fewer than `--max-in-flight` requests are in flight;
+  - no admitted answer pass is waiting for pages;
+  - its pages fit in the shared pool beside the pages the admitted requests
+    hold.
+
+  Its pages are the generator's own count: prompt plus output cap plus 1 plus
+  the draft depth, rounded up to 256-token pages. A thinking request also
+  holds `CLOSE_ROOM_TOKENS` (16) for the closed thought and the answer's
+  re-encode. A request that does not fit waits; its context is never shrunk,
+  its size never refused, and no running job is evicted for it. Admission is
+  strict arrival order, so a long request is never starved by short ones
+  behind it. The `context_length_exceeded` 400 is unchanged.
+- **Thinking.** A thinking request keeps one place and its pages through both
+  passes. The reasoning job ends, then the answer job starts with what is
+  left of `max_tokens`; the two never run at once. If the answer's re-encode
+  needs more pages than were held, it waits for them before any new admission.
+- **Cancellation.** A client that disconnects is noticed while its request
+  waits for admission, while it waits for a token, and on any failed write.
+  The scheduler then drops the queued request, or cancels its job in the
+  generator, and frees its place. Other requests are untouched.
+- **Errors.** A job's own error fails only its request. A failure of the
+  generator's iteration fails every request that had a job in it. Neither is
+  ever reported as a finished reply.
+- **Timings.** Each reply's `timings` sums both passes into the six keys it
+  always had. It adds:
+  - `admission_wait_ms`: submit to admission;
+  - `enqueue_wait_ms`: each job's enqueue to start, plus an answer's wait for
+    pages;
+  - `draft_depth` and `max_in_flight`: what the server ran with;
+  - `peak_in_flight`: the most requests in flight while this one was.
+
+  Prefill and decode times are per-job intervals, which contain other jobs'
+  work when several are in flight. They are not exclusive GPU time.
+
+Two knobs, set in `/etc/oneiron-house.env`:
+
+| Variable | Flag | Default | What it sets |
+|---|---|---|---|
+| `ONEIRON_HOUSE_EXL3_IN_FLIGHT` | `--max-in-flight` | 1 | requests in flight at once, 1 to 4 (`MAX_IN_FLIGHT`); the cache's recurrent slots and the generator's batch follow it |
+| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `ONEIRON_HOUSE_CONTEXT` | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least the context |
+
+The defaults are today's server: one request at a time over a pool the size
+of one context. Four in flight is gated. It ships only after both runs pass
+on INFER-BENCH (FIX 6559): E5, batch invariance (the same request gives the
+same output alone and batched, at the same draft depth), and E1 (short calls
+beside one long Dreamer-like call, one in flight against four, over the same
+pool). Until then no deploy raises either knob. Four in flight over the
+default pool admits beside a long call only what fits in the pages it leaves.
 
 ## Compressed requests
 

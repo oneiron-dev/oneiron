@@ -334,6 +334,7 @@ oneiron-bench infer run --arm-id ID --transport direct|own-server \
   --models-toml FILE --model PROVIDER:MODEL --cases /ABS/cases.jsonl --out /ABS/rows.jsonl \
   [--reps 1] [--only CASE_ID]... [--warmup 1] [--sampling shipped|greedy|card] \
   [--schema on|off] [--cache-bust on|off] [--keep-outputs /ABS/DIR] \
+  [--concurrency 1] [--stagger-ms 0] [--draft-depth N] \
   [--engine-cmd PATH [--engine-env KEY=VALUE]... --engine-health URL [--engine-ready-timeout 900]] \
   [--gpu-index 0] [--vram-poll-ms 100] [--server oneiron-server]
 ```
@@ -368,6 +369,24 @@ oneiron-bench infer run --arm-id ID --transport direct|own-server \
   with `response_format = "none"` drops it on the wire, as in production.
   `--cache-bust on` puts one nonce line at the head of each request's system
   message, so no engine reuses a cached prefix across reps or arms.
+- `--concurrency N` keeps up to N calls in flight at once. They run as N
+  worker tasks on the one arm, backend and caller meter, each call under its
+  own lease, all under one runtime. `--stagger-ms M` spaces the first wave:
+  worker k starts its first call k × M ms after the cohort starts. With N > 1
+  the run goes in **cohorts**, one per rep. A cohort is the whole selected
+  packet in file order. Its first min(N, packet) calls are assigned before
+  any starts: worker k takes case k. The rest go, in order, to whichever
+  worker frees first. Each cohort ends before the next starts, so every rep
+  repeats the arrival pattern.
+- `--draft-depth N` declares the engine's draft depth. It is a label for
+  rows and `config_digest`; the house EXL3 server also reports its own
+  `draft_depth` in `native`, and that wins.
+- `--concurrency`, `--stagger-ms` and `--draft-depth` enter `config_digest`
+  only when they differ from their defaults. A sequential run keeps the
+  digest it always had, and its old rows still resume.
+- Each warmup round (`--warmup`) sends N warmup calls at once, so the batched
+  path is warm too. The warmup runs per arm and per concurrency setting,
+  before every measured call, so a cold start skews no TTFT.
 
 Case packets are JSONL: `id`, `kind`, `scorer` (`claims` or `decisions`),
 `messages` (`{role, content}`), `max_tokens`, `thinking`, and optionally
@@ -387,10 +406,78 @@ was sent (`params_sent`, `seat_effort`, `thinking_knob`, `schema_sent`,
 `max_tokens`), the timings (`ttft_any_ms`, `ttft_text_ms`, `t_last_ms`,
 `wall_ms`, token counts, `finish_reason`), `native`, `prefill_tps_e2e`,
 `decode_tps_e2e`, `output_digest`, `output_chars`, `vram_case_peak_mib` and the
-`quality` block. A rerun skips (arm, case, rep) rows that are `ok` under the
-same `config_digest` and retries error rows; a last line cut mid-write is
-ignored. The run exits 0 only when every selected case has an `ok` row. The
-summary goes to stdout and `<out>.summary.json`.
+`quality` block. Each row also carries its schedule:
+- `session_id` (this invocation), `concurrency`, `stagger_ms`, `draft_depth`;
+- `worker_id`, `queue_index` (the case's place in the selected packet);
+- `cohort_id`, `cohort_size`;
+- `start_offset_ms` and `end_offset_ms`: the call's `t0` and end, in ms
+  after the session's post-warmup epoch.
+
+One writer appends the rows in completion order, so file order is not input
+order.
+
+Resume is per row when sequential. A rerun skips (arm, case, rep) rows that
+are `ok` under the same `config_digest` and retries error rows, each row a
+cohort of one. It is per cohort when concurrent. A rep counts as done only
+when one cohort holds an `ok` row for every case of the packet. Otherwise the
+whole packet runs again under a new `cohort_id`; survivors of a partial
+cohort are never topped up, since that would change the load they ran
+beside. Partial cohorts stay in the file. A last line cut mid-write is
+ignored. The run exits 0 only when every selected (case, rep) is done.
+
+The summary goes to stdout and `<out>.summary.json`. Its arm table reads
+**clean** cohorts only: every member present and `ok`. Its `client tok/s`
+column reads **complete** cohorts: every member has a row. It is a client
+wall-clock rate: the `ok` rows' output tokens over the cohorts' summed
+makespans (first start to last end), with failed calls' time in the
+denominator. Its identity table follows.
+
+### Identity table
+
+`run` and `summarize` both print an identity table, which also goes into
+`summary.json` under `identity`. It is keyed by (case_id, case_digest, rep),
+with one column per (arm_id, config_digest). Each cell is that arm's
+`output_digest` for the case, from clean cohorts. Each case is marked `equal`,
+`different` (any two digests differ) or `missing` (an arm has no clean row).
+
+It is grouped by **draft depth**, and arms are compared only within one
+depth. A verify width alone moves some greedy replies (d7 against plain was
+12/18 equal, while d7 repeated 12/12), so a cross-depth difference says
+nothing about placement. Each row's depth is the engine's own `draft_depth`
+from `native`, else the declared `--draft-depth`, else `unknown`.
+
+### E1 and E5 (INF 1, FIX 6566 and 6569)
+
+- **E1, short calls beside a long one.** The packet order is the long
+  Dreamer-like case first, then four short cases. The packet always follows
+  the cases file's line order, and `--only` selects without reordering, so
+  write the file in that order. Run
+  `--concurrency 5 --stagger-ms M --reps R` once against the server at
+  `--max-in-flight 1` and once at `--max-in-flight 4`, with the same `M`, the
+  same `--cache-tokens` and the same depth. Five workers put all four short
+  calls behind the long one at their offsets; with four, the fifth call would
+  wait client-side. Pick M below the long call's lifetime, and check the rows'
+  `start_offset_ms` and the server's `peak_in_flight` and `admission_wait_ms`
+  to see what actually overlapped. Controls: each case alone at
+  `--concurrency 1 --stagger-ms 0`. Compare TTFT, wall, `client tok/s` and the
+  quality columns.
+- **E5, batch invariance.** Use `--sampling greedy --cache-bust off`, so every
+  placement sends byte-identical requests, and pass `--draft-depth`. Run the
+  same packet in each placement: `--concurrency 1` and `--concurrency 5` at
+  server bound 1, and the same at bound 4. Then compare with `oneiron-bench
+  infer summarize --out A --out B ...`. E5 compares placements at **one fixed
+  depth**, never across depths.
+
+Honesty notes for both:
+- VRAM under concurrency is the whole card's sampled peak during each call,
+  whatever else was in flight. It is not that request's memory.
+- `output_digest` is the BLAKE3 of the reply's text parts. Equal digests mean
+  equal answer text. They do not mean equal tokens, reasoning, tool calls or
+  finish reason, so they are not a token-level batch-invariance proof. An
+  empty reply digests equal to every other empty reply.
+- The engine's per-job prefill and decode times are intervals that contain
+  other jobs' work when several run at once. Client TTFT and wall are the E1
+  measures.
 
 Honesty rules:
 
@@ -409,5 +496,6 @@ Honesty rules:
   client-side estimates over the whole path and always carry `_e2e`; the
   summary marks each rate `native` or `e2e`.
 - VRAM is `nvidia-smi` sampled every `--vram-poll-ms` for `--gpu-index`: a
-  **sampled peak**, not an allocator high-water mark. Without `nvidia-smi`
-  the fields are null.
+  **sampled peak**, not an allocator high-water mark. It covers the whole
+  card. With calls in flight together, each call keeps its own window on the
+  one sampler. Without `nvidia-smi` the fields are null.

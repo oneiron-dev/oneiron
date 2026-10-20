@@ -1,12 +1,16 @@
 //! GPU memory, sampled: one `nvidia-smi -lms` child streams
 //! `memory.used, memory.total, name, uuid` for one GPU, and a reader thread
-//! keeps the latest reading, the run's maximum and the open window's
-//! maximum.
+//! keeps the latest reading, the run's maximum and each open window's
+//! maximum. Calls in flight together each open their own window on the one
+//! sampler.
 //!
 //! These are sampled peaks at the poll interval, not an allocator's
-//! high-water mark: a spike shorter than one interval can be missed. Without
-//! `nvidia-smi` every reading is null and the run goes on.
+//! high-water mark: a spike shorter than one interval can be missed. A
+//! window's peak is the whole card's during that call, whatever else ran
+//! beside it, never one request's own memory. Without `nvidia-smi` every
+//! reading is null and the run goes on.
 
+use std::collections::BTreeMap;
 use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -19,10 +23,16 @@ struct Readings {
     total: Option<u64>,
     name: Option<String>,
     uuid: Option<String>,
-    window: Option<u64>,
+    /// Each open window's highest reading, by window id.
+    windows: BTreeMap<u64, Option<u64>>,
+    next_window: u64,
     run: Option<u64>,
     samples: u64,
 }
+
+/// One open window on the sampler.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Window(u64);
 
 /// The GPU the sampler reads, as `nvidia-smi` names it.
 #[derive(Clone, Debug, Default)]
@@ -87,7 +97,9 @@ impl Vram {
                     now.total = Some(total);
                     now.name = Some(name);
                     now.uuid = Some(uuid);
-                    now.window = Some(now.window.map_or(used, |peak| peak.max(used)));
+                    for peak in now.windows.values_mut() {
+                        *peak = Some(peak.map_or(used, |high| high.max(used)));
+                    }
                     now.run = Some(now.run.map_or(used, |peak| peak.max(used)));
                     now.samples += 1;
                 }
@@ -117,16 +129,21 @@ impl Vram {
     }
 
     /// Starts a window: [`Self::close_window`] reports the highest reading
-    /// from here.
-    pub(super) fn open_window(&self) {
-        self.lock().window = None;
+    /// from here. Windows open at once are independent.
+    pub(super) fn open_window(&self) -> Window {
+        let mut now = self.lock();
+        let id = now.next_window;
+        now.next_window += 1;
+        now.windows.insert(id, None);
+        Window(id)
     }
 
-    /// The highest reading since [`Self::open_window`]; the latest reading
-    /// when none came in between.
-    pub(super) fn close_window(&self) -> Option<u64> {
-        let now = self.lock();
-        now.window.or(now.latest)
+    /// The highest whole-card reading since `window` opened; the latest
+    /// reading when none came in between.
+    pub(super) fn close_window(&self, window: Window) -> Option<u64> {
+        let mut now = self.lock();
+        let peak = now.windows.remove(&window.0).flatten();
+        peak.or(now.latest)
     }
 
     /// The highest reading since the sampler started.

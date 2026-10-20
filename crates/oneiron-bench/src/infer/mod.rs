@@ -5,9 +5,12 @@
 //!   --models-toml FILE --model PROVIDER:MODEL --cases /ABS/cases.jsonl
 //!   --out /ABS/rows.jsonl [flags]` — one arm over runtime-only case packets:
 //!   TTFT, native and end-to-end rates, sampled VRAM and a deterministic
-//!   quality check per (case, rep), one appended row each, resumable.
+//!   quality check per (case, rep), one appended row each, resumable. With
+//!   `--concurrency N` that many calls are in flight at once, in cohorts
+//!   (`workers.rs`).
 //! * `oneiron-bench infer summarize --out ROWS.jsonl [--out ...]` — the
-//!   per-arm table of finished rows.
+//!   per-arm table of finished rows, and the identity table of their reply
+//!   digests at each draft depth.
 //!
 //! Calls go through the production seams (`ModelRuntime` and `RunBackend`,
 //! or `RemoteLlmClient` and `OwnServerBackend` to a loopback server), never a
@@ -27,22 +30,22 @@ mod rows;
 mod scoring;
 mod summary;
 mod vram;
+mod workers;
 
-use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, LlmRequest};
-use serde_json::json;
+use oneiron::{BudgetExhaustionPolicy, BudgetGuard};
+use serde_json::{Value as JsonValue, json};
 
 use args::{RunArgs, Transport};
 use arms::Arm;
 use cases::{Case, CaseFile};
 use config::Models;
-use measure::{Failed, Measured, Timing};
 use rows::RunIdentity;
+use workers::{Caller, Entry, RowSink, Session};
 
 /// How long a VRAM reading taken at a phase boundary waits for a new sample.
 const SAMPLE_WAIT: Duration = Duration::from_secs(2);
@@ -108,7 +111,7 @@ fn select<'a>(cases: &'a [Case], only: &[String]) -> Result<Vec<&'a Case>, Strin
 /// a row measures, but not the arm's label or the case set.
 fn config_digest(args: &RunArgs, models: &Models) -> Result<String, String> {
     let engine = args.engine.as_ref();
-    let config = json!({
+    let mut config = json!({
         "transport": args.transport.as_str(),
         "model": args.model,
         "served_model": models.engine_id.as_str(),
@@ -123,6 +126,16 @@ fn config_digest(args: &RunArgs, models: &Models) -> Result<String, String> {
         "role_added": models.role_added,
         "server": args.server.as_ref().map(|server| server.display().to_string()),
     });
+    // The schedule and the declared depth join the digest only off their
+    // defaults, so a sequential run keeps the digest it always had and its
+    // rows still resume.
+    if args.concurrency != 1 || args.stagger_ms != 0 {
+        config["concurrency"] = json!(args.concurrency);
+        config["stagger_ms"] = json!(args.stagger_ms);
+    }
+    if let Some(depth) = args.draft_depth {
+        config["draft_depth"] = json!(depth);
+    }
     let bytes = serde_json_canonicalizer::to_vec(&config)
         .map_err(|e| format!("encode the run config: {e}"))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
@@ -145,50 +158,127 @@ fn execute(args: RunArgs) -> Result<bool, String> {
             args.out.display()
         );
     }
-    let mut done = rows::done(&existing, &config_digest);
-    let pending: Vec<(&Case, u32)> = selected
-        .iter()
-        .flat_map(|case| (0..args.reps).map(move |rep| (*case, rep)))
-        .filter(|(case, rep)| !done.contains(&key(&args.arm_id, case, *rep)))
-        .collect();
+    let session_id = oneiron::EntityId::now().to_hex();
+    let batches = plan(&args, &selected, &existing, &config_digest, &session_id);
     let total = selected.len() * args.reps as usize;
+    let pending: usize = batches.iter().map(Vec::len).sum();
     println!(
         "infer: skipped {} of {total} rows already ok under config {}",
-        total - pending.len(),
+        total - pending,
         config_digest.get(..12).unwrap_or(&config_digest)
     );
-    if !pending.is_empty() {
+    if pending > 0 {
         let run = Run {
             args: &args,
             models: &models,
             file: &file,
             config_digest: &config_digest,
+            session_id: &session_id,
         };
-        run.session(&pending, cut, &mut done)?;
+        run.session(&selected, &batches, cut)?;
     }
-    let (rows, _, _) = rows::read(&args.out)?;
-    let arms = summary::summarize(&rows);
-    println!("{}", summary::markdown(&arms));
-    summary::write_json(&args.out, &arms)?;
-    Ok(selected
+    let (found, _, _) = rows::read(&args.out)?;
+    let arms = summary::summarize(&found);
+    let identity = summary::identity(&found);
+    println!(
+        "{}\n{}",
+        summary::markdown(&arms),
+        summary::identity_markdown(&identity)
+    );
+    summary::write_json(&args.out, &arms, &identity)?;
+    Ok(all_done(&args, &selected, &found, &config_digest))
+}
+
+/// The selected packet as a cohort is matched against it: (queue_index,
+/// case_id, case_digest), in order.
+fn packet<'a>(selected: &[&'a Case]) -> Vec<(usize, &'a str, &'a str)> {
+    selected
         .iter()
-        .all(|case| (0..args.reps).all(|rep| done.contains(&key(&args.arm_id, case, rep)))))
+        .copied()
+        .enumerate()
+        .map(|(index, case)| (index, case.id.as_str(), case.digest.as_str()))
+        .collect()
+}
+
+/// The calls still to make, as batches run one after another. Sequential:
+/// one batch of every (case, rep) without an `ok` row, case-major, each call
+/// its own cohort. Concurrent: one batch per rep that no clean cohort holds,
+/// the whole packet in order under a new cohort id; a partial cohort is never
+/// topped up.
+fn plan(
+    args: &RunArgs,
+    selected: &[&Case],
+    existing: &[JsonValue],
+    config_digest: &str,
+    session_id: &str,
+) -> Vec<Vec<Entry>> {
+    if args.concurrency == 1 {
+        let done = rows::done(existing, config_digest);
+        let batch: Vec<Entry> = selected
+            .iter()
+            .copied()
+            .enumerate()
+            .flat_map(|(queue_index, case)| (0..args.reps).map(move |rep| (queue_index, case, rep)))
+            .filter(|(_, case, rep)| !done.contains(&key(&args.arm_id, case, *rep)))
+            .map(|(queue_index, _, rep)| Entry {
+                queue_index,
+                rep,
+                cohort_id: format!("{session_id}-{queue_index}-{rep}"),
+                cohort_size: 1,
+            })
+            .collect();
+        return if batch.is_empty() {
+            Vec::new()
+        } else {
+            vec![batch]
+        };
+    }
+    let clean = rows::clean_cohort_reps(existing, config_digest, &args.arm_id, &packet(selected));
+    (0..args.reps)
+        .filter(|rep| !clean.contains(rep))
+        .map(|rep| {
+            (0..selected.len())
+                .map(|queue_index| Entry {
+                    queue_index,
+                    rep,
+                    cohort_id: format!("{session_id}-rep{rep}"),
+                    cohort_size: selected.len(),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Whether every selected (case, rep) is done, as [`plan`] counts done.
+fn all_done(args: &RunArgs, selected: &[&Case], found: &[JsonValue], config_digest: &str) -> bool {
+    if args.concurrency == 1 {
+        let done = rows::done(found, config_digest);
+        return selected
+            .iter()
+            .all(|case| (0..args.reps).all(|rep| done.contains(&key(&args.arm_id, case, rep))));
+    }
+    let clean = rows::clean_cohort_reps(found, config_digest, &args.arm_id, &packet(selected));
+    (0..args.reps).all(|rep| clean.contains(&rep))
 }
 
 fn summarize(outs: &[PathBuf]) -> Result<bool, String> {
     let mut all = Vec::new();
     for out in outs {
-        let (rows, unreadable, _) = rows::read(out)?;
+        let (found, unreadable, _) = rows::read(out)?;
         if unreadable > 0 {
             eprintln!(
                 "infer: {unreadable} line(s) of {} do not parse as rows; ignored",
                 out.display()
             );
         }
-        summary::write_json(out, &summary::summarize(&rows))?;
-        all.extend(rows);
+        summary::write_json(out, &summary::summarize(&found), &summary::identity(&found))?;
+        all.extend(found);
     }
-    println!("{}", summary::markdown(&summary::summarize(&all)));
+    println!(
+        "{}\n{}",
+        summary::markdown(&summary::summarize(&all)),
+        summary::identity_markdown(&summary::identity(&all))
+    );
     Ok(true)
 }
 
@@ -198,39 +288,7 @@ struct Run<'a> {
     models: &'a Models,
     file: &'a CaseFile,
     config_digest: &'a str,
-}
-
-/// The arm and meters every call of a session uses.
-struct Caller<'a> {
-    rt: &'a tokio::runtime::Runtime,
-    arm: &'a Arm,
-    budget: &'a BudgetGuard,
-}
-
-impl Caller<'_> {
-    /// One call under its own lease from the caller's meter, settled on its
-    /// usage or released on failure.
-    fn call(&self, request: LlmRequest) -> Result<Measured, Failed> {
-        let lease = self
-            .budget
-            .admit_for_request(&request)
-            .map_err(|e| Failed {
-                error: format!("the caller's meter refused the call: {e}"),
-                wall_ms: 0.0,
-            })?
-            .lease;
-        let outcome = self
-            .rt
-            .block_on(measure::drive(self.arm.backend.as_ref(), request, &lease));
-        let refused = match &outcome {
-            Ok(measured) => self.budget.settle_per_call(&lease, &measured.usage).err(),
-            Err(_) => self.budget.abort(&lease).err(),
-        };
-        if let Some(e) = refused {
-            eprintln!("infer: settling a call's lease failed: {e}");
-        }
-        outcome
-    }
+    session_id: &'a str,
 }
 
 /// Writes a reply's text to `<dir>/<case>-<rep>.txt`, the case id made safe
@@ -304,17 +362,16 @@ impl Run<'_> {
             vram_poll_ms: args.vram_poll_ms,
             vram_idle_mib,
             vram_loaded_mib,
+            session_id: self.session_id.to_owned(),
+            concurrency: args.concurrency,
+            stagger_ms: args.stagger_ms,
+            draft_depth: args.draft_depth,
         }
     }
 
-    /// Starts what the arm needs, warms it, measures every pending (case,
-    /// rep) into a row, and stops what it started.
-    fn session(
-        &self,
-        pending: &[(&Case, u32)],
-        cut: bool,
-        done: &mut BTreeSet<Key>,
-    ) -> Result<(), String> {
+    /// Starts what the arm needs, warms it, measures every batch into rows,
+    /// and stops what it started.
+    fn session(&self, selected: &[&Case], batches: &[Vec<Entry>], cut: bool) -> Result<(), String> {
         let args = self.args;
         let reaper = engine::Reaper::default();
         reaper.arm();
@@ -357,81 +414,25 @@ impl Run<'_> {
             arms::RUN_UNITS,
             BudgetExhaustionPolicy::Suspend,
         );
-        let caller = Caller {
-            rt: &rt,
-            arm: &arm,
-            budget: &budget,
+        let session = Session {
+            caller: Caller {
+                arm: &arm,
+                budget: &budget,
+            },
+            shape: &shape,
+            vram: &vram,
+            packet: selected,
+            concurrency: args.concurrency as usize,
+            stagger: Duration::from_millis(args.stagger_ms),
+            warmup: args.warmup,
         };
-        for n in 0..args.warmup {
-            match caller.call(shape.warmup()) {
-                Ok(measured) => println!(
-                    "warmup {n}: {} ms (not recorded)",
-                    shown(measured.timing.wall_ms)
-                ),
-                Err(failed) => eprintln!(
-                    "warmup {n} failed after {:.0} ms: {}",
-                    failed.wall_ms, failed.error
-                ),
-            }
-        }
-        let mut writer = rows::Writer::open(&args.out, cut)?;
-        for (case, rep) in pending {
-            let (request, sent) = shape.case(case);
-            let started_at = rows::now_rfc3339();
-            vram.open_window();
-            let outcome = caller.call(request);
-            let vram_case_peak_mib = vram.close_window();
-            let (status, error, timing, quality) = match outcome {
-                Ok(measured) => {
-                    keep_output(args.keep_outputs.as_deref(), case, *rep, &measured.text);
-                    let quality = scoring::score(case, &measured.text);
-                    ("ok", None, measured.timing, Some(quality))
-                }
-                Err(failed) => (
-                    "error",
-                    Some(failed.error),
-                    Timing {
-                        wall_ms: Some(failed.wall_ms),
-                        ..Timing::default()
-                    },
-                    None,
-                ),
-            };
-            let row = rows::Row {
-                schema: rows::SCHEMA,
-                run: &identity,
-                case_id: &case.id,
-                case_kind: &case.kind,
-                scorer: case.scorer,
-                case_digest: &case.digest,
-                case_prompt_tokens: case.prompt_tokens,
-                case_approx_input_tokens: case.approx_input_tokens,
-                rep: *rep,
-                started_at,
-                status,
-                error,
-                sent: &sent,
-                timing,
-                vram_case_peak_mib,
-                quality,
-            };
-            writer.append(&row)?;
-            match &row.error {
-                None => println!(
-                    "{} rep {rep}: ok, ttft_any {} ms, ttft_text {} ms, out {} tok, decode_e2e {} tok/s, score {}",
-                    case.id,
-                    shown(row.timing.ttft_any_ms),
-                    shown(row.timing.ttft_text_ms),
-                    row.timing.output_tokens.unwrap_or(0),
-                    shown(row.timing.decode_tps_e2e),
-                    shown(row.quality.as_ref().map(|quality| quality.score)),
-                ),
-                Some(error) => println!("{} rep {rep}: error: {error}", case.id),
-            }
-            if row.error.is_none() {
-                done.insert(key(&args.arm_id, case, *rep));
-            }
-        }
+        let sink = RowSink {
+            identity: &identity,
+            packet: selected,
+            keep_outputs: args.keep_outputs.as_deref(),
+        };
+        let measured = rows::Writer::open(&args.out, cut)
+            .and_then(|writer| workers::run(&rt, &session, &sink, writer, batches));
         if let Some(status) = arm.finish(&reaper) {
             println!("loopback server stopped: {status}");
         }
@@ -442,6 +443,6 @@ impl Run<'_> {
         if let Some(peak) = vram.run_peak() {
             println!("VRAM session peak (sampled, includes load): {peak} MiB");
         }
-        Ok(())
+        measured
     }
 }
