@@ -1,5 +1,7 @@
 //! WindowSync sub-tag dispatcher with selector and VV paths.
 
+use std::ops::ControlFlow;
+
 use loro::VersionVector;
 
 use oneiron::sync::residence::{admit_promoted_window_update, promotion_covers_full_window_for};
@@ -17,6 +19,13 @@ use crate::protocol::{self, ProtocolError, window_sub_tags};
 use crate::server::SyncServer;
 
 /// Handles a WindowSync message: routes to the correct window LoroDoc.
+/// `Break` when `session_gone` finds the socket's caller gone once the
+/// window has loaded (FIX 5438): nothing of the frame is applied, and the
+/// connection ends as the gate before dispatch ends it.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame, its socket's state and its session consult"
+)]
 pub(super) async fn handle_window_sync(
     server: &SyncServer,
     conn_id: u32,
@@ -25,7 +34,8 @@ pub(super) async fn handle_window_sync(
     payload: &[u8],
     direct_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     conn_state: &mut ConnState,
-) -> Result<(), ProtocolError> {
+    session_gone: &(dyn Fn() -> bool + Sync),
+) -> Result<ControlFlow<()>, ProtocolError> {
     // Window-key chokepoint. `decode_window_sync` already validated the key
     // at the parse boundary; re-validate here so this write path stays
     // fail-closed even if a future caller bypasses the wire decoder.
@@ -56,7 +66,7 @@ pub(super) async fn handle_window_sync(
             && protocol::is_residence_version(conn_state.protocol_version)
             && !read_window_list(&server.root_doc).contains(&key)
         {
-            return Ok(());
+            return Ok(ControlFlow::Continue(()));
         }
         if !protocol::is_residence_version(conn_state.protocol_version)
             || payload.len() > 4096
@@ -85,7 +95,7 @@ pub(super) async fn handle_window_sync(
             )
         });
         if setup && authorized.is_err() {
-            return Ok(());
+            return Ok(ControlFlow::Continue(()));
         }
         authorized?;
         // The baseline is the root of the snapshot the home would serve this promotion, never a
@@ -105,7 +115,7 @@ pub(super) async fn handle_window_sync(
         direct_tx
             .send(granted)
             .map_err(|_| ProtocolError::Persistence("promotion reply channel closed".into()))?;
-        return Ok(());
+        return Ok(ControlFlow::Continue(()));
     }
     if matches!(
         sub_tag,
@@ -114,7 +124,8 @@ pub(super) async fn handle_window_sync(
         return super::federation::handle_selector_fetch(
             server, &key, sub_tag, payload, direct_tx, conn_state,
         )
-        .await;
+        .await
+        .map(ControlFlow::Continue);
     }
     if sub_tag == window_sub_tags::RESIDENCE_UPDATE {
         conn_state.bind_window_sync_mode(WindowSyncMode::Residence)?;
@@ -171,7 +182,7 @@ pub(super) async fn handle_window_sync(
             | window_sub_tags::REPLACEMENT_REQUEST
     ) {
         tracing::warn!(window_key, sub_tag, "unknown WindowSync sub-tag");
-        return Ok(());
+        return Ok(ControlFlow::Continue(()));
     }
     if sub_tag == window_sub_tags::RESIDENCE_UPDATE
         && !conn_state.promoted_windows.contains_key(&key)
@@ -196,6 +207,16 @@ pub(super) async fn handle_window_sync(
         .serve_window(&key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
+    // FIX 5438: the load may wait, and the session the gate before dispatch
+    // found live may have gone meanwhile. Nothing below awaits before the
+    // update persists, so this is the frame's last consult.
+    if session_gone() {
+        tracing::warn!(
+            conn_id,
+            "credential revoked — refusing sync message and closing"
+        );
+        return Ok(ControlFlow::Break(()));
+    }
     let doc = window.doc.clone();
     if protocol::is_residence_version(conn_state.protocol_version)
         && matches!(
@@ -308,7 +329,7 @@ pub(super) async fn handle_window_sync(
                     if let Some(frame) = replacement_frame(server, conn_state, &key, &doc)? {
                         let _ = direct_tx.send(frame);
                     }
-                    return Ok(());
+                    return Ok(ControlFlow::Continue(()));
                 }
                 return Err(map_update_admission_err(error));
             }
@@ -402,7 +423,7 @@ pub(super) async fn handle_window_sync(
         _ => {}
     }
 
-    Ok(())
+    Ok(ControlFlow::Continue(()))
 }
 
 /// Asks `max_windows_per_connection`'s question (OF-520): one socket holds `held` windows or

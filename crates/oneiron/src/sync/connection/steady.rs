@@ -323,6 +323,10 @@ impl SyncConnection {
                                         .inspect(|&taken| {
                                             if taken > 0 {
                                                 machine_history_due.store(true, Ordering::Relaxed);
+                                                // The host re-reads what those rows
+                                                // decide, its home candidacy among
+                                                // them (FIX 5572).
+                                                let _ = events.send(SyncEvent::AuthorityCaughtUp);
                                             }
                                         })
                                 && !matches!(error, crate::sync::TransportError::InvalidPayload(_))

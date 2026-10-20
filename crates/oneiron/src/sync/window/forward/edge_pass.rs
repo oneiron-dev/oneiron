@@ -464,6 +464,11 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         EdgeValueFields::from_decoded(decoded),
                     )
                     .apply(wtxn)?;
+                // FIX 6261: a deferred `PartOf` edge landing after its
+                // MESSAGE row may complete a kept turn's missing words.
+                if kind == crate::edge::EdgeKind::PartOf {
+                    crate::store::turn_missing::reconcile_in_txn(vault, wtxn, Some(&src))?;
+                }
                 if kind == crate::edge::EdgeKind::ChildOf {
                     bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
                 }

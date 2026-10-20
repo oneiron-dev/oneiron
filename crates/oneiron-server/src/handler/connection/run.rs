@@ -134,6 +134,9 @@ pub(super) async fn handle_connection(
     // answers queue on `direct_tx`. A call still running when the loop ends
     // runs to its end below.
     let mut verb_calls = tokio::task::JoinSet::new();
+    // This socket's live-session consult: a privileged frame takes it before
+    // dispatch, and a window frame again once its window loads (FIX 5438).
+    let gone = || session_gone(server.vault(), session_jti.as_deref(), owner.as_ref());
 
     // One loop, one owner. The outbound arms used to run in a spawned task over
     // the split sink; they are folded in here because two tasks cannot share
@@ -497,9 +500,7 @@ pub(super) async fn handle_connection(
                 // before it runs also stops its side effects, which for a
                 // write reach the hub store and every live peer rather than
                 // this socket's sink.
-                if privileged_sync_message(&msg)
-                    && session_gone(server.vault(), session_jti.as_deref(), owner.as_ref())
-                {
+                if privileged_sync_message(&msg) && gone() {
                     tracing::warn!(
                         conn_id,
                         "credential revoked — refusing sync message and closing"
@@ -558,10 +559,19 @@ pub(super) async fn handle_connection(
                         Some(&mut app_connection),
                     )
                     .map(drop),
-                    msg => {
-                        handle_sync_message(&server, conn_id, msg, &direct_tx, &mut conn_state)
-                            .await
-                    }
+                    msg => match handle_sync_message(
+                        &server,
+                        conn_id,
+                        msg,
+                        &direct_tx,
+                        &mut conn_state,
+                        &gone,
+                    )
+                    .await
+                    {
+                        Ok(std::ops::ControlFlow::Break(())) => break,
+                        result => result.map(drop),
+                    },
                 };
                 if let Err(e) = handle_result {
                     match &e {

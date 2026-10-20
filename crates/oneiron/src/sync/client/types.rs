@@ -316,6 +316,10 @@ pub enum SyncEvent {
         request_id: [u8; 32],
         inputs: crate::llm::NormalizedBurstInputs,
     },
+    /// An authority catch-up round imported rows: what they decide here (this
+    /// machine's own profile among them) may read differently now. It does not
+    /// say every row of history is here.
+    AuthorityCaughtUp,
     Error(String),
 }
 

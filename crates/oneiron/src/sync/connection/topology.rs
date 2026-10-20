@@ -44,7 +44,8 @@ impl HomeNodeTopology {
     }
 
     /// Publish a new host-authorized candidate snapshot, including explicit
-    /// cloud detach or local role changes. An empty set removes the home.
+    /// cloud detach or local role changes. An empty set clears only the host's
+    /// own candidacy; signed HomeCandidacy declarations still elect.
     pub fn publish(&self, candidates: Vec<DreamerHomeNodeCandidate>) {
         self.updates.send_replace(TopologySnapshot {
             candidates,

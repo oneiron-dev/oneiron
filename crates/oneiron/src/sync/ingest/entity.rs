@@ -454,6 +454,11 @@ fn admit(
             || pack_sync::pack_echo_equal(&local, blob)
             || crate::sync::asset_body::file_echo_equal(&vault.store, wtxn, &id, &local, blob)?
         {
+            // FIX 5500: the replay stays a skip, but a row already here with these bytes still
+            // records the origin its window carries for them, as the write below does.
+            if let Some(doc) = ctx.carrier_doc() {
+                super::carried_origin_in_txn(vault, wtxn, doc, ctx.window_key, &id, blob)?;
+            }
             return Ok(EntityStep::Skip);
         }
         // SoftErase shell guard: `user_delete` truncates the local record to the 25 B header

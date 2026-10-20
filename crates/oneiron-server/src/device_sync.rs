@@ -226,6 +226,9 @@ async fn open(
         }),
         pin,
         machine,
+        always_on,
+        primary,
+        macro_ready,
     };
     let connection = link.connection(link.client_config(&credential)?)?;
     let renewal = renewal::Renewal::new(
@@ -281,6 +284,11 @@ struct Link {
     /// This machine: each connection registers under it, so the owner's
     /// residence rows reach this machine through it (FIX 531).
     machine: oneiron::EntityId,
+    /// This machine's MACRO home candidacy as open declared it: an authority
+    /// catch-up that took rows declares it again (FIX 5572).
+    always_on: bool,
+    primary: bool,
+    macro_ready: bool,
 }
 
 #[cfg(feature = "mesh")]
@@ -368,8 +376,17 @@ impl Link {
         loop {
             let config = {
                 let (end, ended) = oneshot::channel();
-                let observed =
-                    connection.run_observed(ended, observer(home.to_owned(), statuses.clone()));
+                let observed = connection.run_observed(
+                    ended,
+                    observer(
+                        home.to_owned(),
+                        statuses.clone(),
+                        Arc::clone(self.windows.vault()),
+                        self.always_on,
+                        self.primary,
+                        self.macro_ready,
+                    ),
+                );
                 tokio::pin!(observed);
                 let renewed = loop {
                     tokio::select! {
@@ -438,11 +455,17 @@ impl Link {
 }
 
 /// A connection's event observer: each status to `statuses`, each error to
-/// the log.
+/// the log. An authority catch-up that took rows declares this machine's
+/// MACRO home candidacy again off the async thread, so a freshly enrolled
+/// device counts at once, not at its next start.
 #[cfg(feature = "mesh")]
 fn observer(
     home: String,
     statuses: tokio::sync::mpsc::UnboundedSender<oneiron::sync::SyncStatus>,
+    vault: Arc<oneiron::Vault>,
+    always_on: bool,
+    primary: bool,
+    macro_ready: bool,
 ) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
     use oneiron::sync::SyncEvent;
 
@@ -450,6 +473,12 @@ fn observer(
         SyncEvent::StatusChanged(status) => {
             tracing::debug!(%home, ?status, "device sync");
             let _ = statuses.send(status);
+        }
+        SyncEvent::AuthorityCaughtUp => {
+            let vault = Arc::clone(&vault);
+            tokio::task::spawn_blocking(move || {
+                crate::home_candidacy::declare(&vault, always_on, primary, macro_ready);
+            });
         }
         SyncEvent::Error(error) => tracing::warn!(%home, %error, "device sync"),
         _ => {}
