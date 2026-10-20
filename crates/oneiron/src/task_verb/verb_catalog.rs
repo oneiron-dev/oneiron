@@ -710,6 +710,12 @@ pub enum AgentVerb {
     VaultRoomsThreadAudienceAdd,
     VaultRoomsThreadAudienceOpenFullHistory,
     VaultRoomsThreadAudienceRemove,
+    VaultRoomsPrivateThreads,
+    VaultRoomsThreadDelete,
+    VaultRoomsThreadJoinRequest,
+    VaultRoomsThreadJoinRequests,
+    VaultRoomsThreadJoinApprove,
+    VaultRoomsThreadJoinDeny,
     VaultProjectsPropose,
     VaultProjectsProposals,
     VaultProjectsDismissCard,
@@ -1809,6 +1815,12 @@ impl AgentVerb {
         Self::VaultRoomsThreadAudienceAdd,
         Self::VaultRoomsThreadAudienceOpenFullHistory,
         Self::VaultRoomsThreadAudienceRemove,
+        Self::VaultRoomsPrivateThreads,
+        Self::VaultRoomsThreadDelete,
+        Self::VaultRoomsThreadJoinRequest,
+        Self::VaultRoomsThreadJoinRequests,
+        Self::VaultRoomsThreadJoinApprove,
+        Self::VaultRoomsThreadJoinDeny,
         Self::VaultProjectsPropose,
         Self::VaultProjectsProposals,
         Self::VaultProjectsDismissCard,
@@ -2931,6 +2943,12 @@ impl AgentVerb {
                 "vault.rooms.thread_audience.open_full_history"
             }
             Self::VaultRoomsThreadAudienceRemove => "vault.rooms.thread_audience.remove",
+            Self::VaultRoomsPrivateThreads => "vault.rooms.private_threads",
+            Self::VaultRoomsThreadDelete => "vault.rooms.thread_delete",
+            Self::VaultRoomsThreadJoinRequest => "vault.rooms.thread_join.request",
+            Self::VaultRoomsThreadJoinRequests => "vault.rooms.thread_join.requests",
+            Self::VaultRoomsThreadJoinApprove => "vault.rooms.thread_join.approve",
+            Self::VaultRoomsThreadJoinDeny => "vault.rooms.thread_join.deny",
             Self::VaultProjectsPropose => "vault.projects.propose",
             Self::VaultProjectsProposals => "vault.projects.proposals",
             Self::VaultProjectsDismissCard => "vault.projects.dismiss_card",
@@ -4040,6 +4058,12 @@ impl AgentVerb {
                 | Self::VaultRoomsThreadAudienceAdd
                 | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
+                | Self::VaultRoomsPrivateThreads
+                | Self::VaultRoomsThreadDelete
+                | Self::VaultRoomsThreadJoinRequest
+                | Self::VaultRoomsThreadJoinRequests
+                | Self::VaultRoomsThreadJoinApprove
+                | Self::VaultRoomsThreadJoinDeny
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -5166,6 +5190,12 @@ impl AgentVerb {
                 | Self::VaultRoomsThreadAudienceAdd
                 | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
+                | Self::VaultRoomsPrivateThreads
+                | Self::VaultRoomsThreadDelete
+                | Self::VaultRoomsThreadJoinRequest
+                | Self::VaultRoomsThreadJoinRequests
+                | Self::VaultRoomsThreadJoinApprove
+                | Self::VaultRoomsThreadJoinDeny
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -5621,6 +5651,8 @@ impl AgentVerb {
                 | Self::VaultRoomsRender
                 | Self::VaultRoomsFind
                 | Self::VaultRoomsReplyStrips
+                | Self::VaultRoomsPrivateThreads
+                | Self::VaultRoomsThreadJoinRequests
                 | Self::VaultProjectsProposals
                 | Self::VaultRoomsOffers
                 | Self::VaultProjectsGoalRevisions
@@ -6385,6 +6417,12 @@ impl AgentVerb {
                 | Self::VaultRoomsThreadAudienceAdd
                 | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
+                | Self::VaultRoomsPrivateThreads
+                | Self::VaultRoomsThreadDelete
+                | Self::VaultRoomsThreadJoinRequest
+                | Self::VaultRoomsThreadJoinRequests
+                | Self::VaultRoomsThreadJoinApprove
+                | Self::VaultRoomsThreadJoinDeny
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsProposals
                 | Self::VaultProjectsDismissCard
@@ -7169,6 +7207,10 @@ impl AgentVerb {
                 | Self::VaultRoomsThreadAudienceAdd
                 | Self::VaultRoomsThreadAudienceOpenFullHistory
                 | Self::VaultRoomsThreadAudienceRemove
+                | Self::VaultRoomsThreadDelete
+                | Self::VaultRoomsThreadJoinRequest
+                | Self::VaultRoomsThreadJoinApprove
+                | Self::VaultRoomsThreadJoinDeny
                 | Self::VaultProjectsPropose
                 | Self::VaultProjectsDismissCard
                 | Self::VaultProjectsConfirm
@@ -8140,6 +8182,12 @@ impl AgentVerb {
             Self::VaultRoomsThreadAudienceAdd => &["spec"],
             Self::VaultRoomsThreadAudienceOpenFullHistory => &["spec"],
             Self::VaultRoomsThreadAudienceRemove => &["spec"],
+            Self::VaultRoomsPrivateThreads => &["spec"],
+            Self::VaultRoomsThreadDelete => &["spec"],
+            Self::VaultRoomsThreadJoinRequest => &["spec"],
+            Self::VaultRoomsThreadJoinRequests => &["spec"],
+            Self::VaultRoomsThreadJoinApprove => &["spec"],
+            Self::VaultRoomsThreadJoinDeny => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -9240,6 +9288,12 @@ impl AgentVerb {
             Self::VaultRoomsThreadAudienceAdd => &["spec"],
             Self::VaultRoomsThreadAudienceOpenFullHistory => &["spec"],
             Self::VaultRoomsThreadAudienceRemove => &["spec"],
+            Self::VaultRoomsPrivateThreads => &["spec"],
+            Self::VaultRoomsThreadDelete => &["spec"],
+            Self::VaultRoomsThreadJoinRequest => &["spec"],
+            Self::VaultRoomsThreadJoinRequests => &["spec"],
+            Self::VaultRoomsThreadJoinApprove => &["spec"],
+            Self::VaultRoomsThreadJoinDeny => &["spec"],
             Self::VaultProjectsPropose => &["spec"],
             Self::VaultProjectsProposals => &["spec"],
             Self::VaultProjectsDismissCard => &["spec"],
@@ -11701,13 +11755,31 @@ impl AgentVerb {
                 "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."
             }
             Self::VaultRoomsThreadAudienceAdd => {
-                "Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."
+                "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told."
             }
             Self::VaultRoomsThreadAudienceOpenFullHistory => {
                 "Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."
             }
             Self::VaultRoomsThreadAudienceRemove => {
                 "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."
+            }
+            Self::VaultRoomsPrivateThreads => {
+                "That a room's private threads exist: id, creator, created and last-active times, member count; never a name, members or words. The vault's Owner or an Admin, seated or not, or the companion agent of either may call it."
+            }
+            Self::VaultRoomsThreadDelete => {
+                "Deletes a private thread's root and its own messages on the room's delete rail; legal holds keep what they name. The vault's Owner, or an Admin while rooms.private_threads.admin_delete is on, may call it, seated or not."
+            }
+            Self::VaultRoomsThreadJoinRequest => {
+                "Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it."
+            }
+            Self::VaultRoomsThreadJoinRequests => {
+                "The requests to join a private thread pending now: each request, who asked and when; a member in its audience now may call it."
+            }
+            Self::VaultRoomsThreadJoinApprove => {
+                "Approves a pending request to join a private thread: the one who asked is added from now on, citing the request, and told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it."
+            }
+            Self::VaultRoomsThreadJoinDeny => {
+                "Denies a pending request to join a private thread, and the one who asked is told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it."
             }
             Self::VaultProjectsPropose => {
                 "The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."

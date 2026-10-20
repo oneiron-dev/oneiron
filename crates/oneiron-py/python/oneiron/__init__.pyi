@@ -2533,6 +2533,12 @@ class Oneiron:
             """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."""
         @property
         def thread_audience(self) -> "Oneiron._VaultRoomsThreadAudienceVerbs": ...
+        def private_threads(self, spec: Facade.RoomPrivateThreadsRequest) -> list[Facade.PrivateThreadMetadata]:
+            """That a room's private threads exist: id, creator, created and last-active times, member count; never a name, members or words. The vault's Owner or an Admin, seated or not, or the companion agent of either may call it."""
+        def thread_delete(self, spec: Facade.PrivateThreadDeleteRequest) -> Facade.PrivateThreadDeleteReceipt:
+            """Deletes a private thread's root and its own messages on the room's delete rail; legal holds keep what they name. The vault's Owner, or an Admin while rooms.private_threads.admin_delete is on, may call it, seated or not."""
+        @property
+        def thread_join(self) -> "Oneiron._VaultRoomsThreadJoinVerbs": ...
         def join(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
             """Files and decides a request to take part in a room or one of its threads."""
         def invite(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
@@ -2549,11 +2555,20 @@ class Oneiron:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsThreadAudienceVerbs:
         def add(self, spec: Facade.ThreadAudienceAddRequest) -> Facade.ThreadAudienceReceipt:
-            """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
+            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told."""
         def open_full_history(self, spec: Facade.ThreadAudienceOpenFullHistoryRequest) -> Facade.ThreadAudienceReceipt:
             """Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."""
         def remove(self, spec: Facade.ThreadAudienceRemoveRequest) -> Facade.ThreadAudienceReceipt:
             """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
+    class _VaultRoomsThreadJoinVerbs:
+        def request(self, spec: Facade.ThreadJoinRequest) -> Facade.ThreadJoinRequestView:
+            """Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it."""
+        def requests(self, spec: Facade.ThreadJoinRequestsRequest) -> list[Facade.ThreadJoinRequestView]:
+            """The requests to join a private thread pending now: each request, who asked and when; a member in its audience now may call it."""
+        def approve(self, spec: Facade.ThreadJoinDecisionRequest) -> Facade.ThreadJoinRequestView:
+            """Approves a pending request to join a private thread: the one who asked is added from now on, citing the request, and told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it."""
+        def deny(self, spec: Facade.ThreadJoinDecisionRequest) -> Facade.ThreadJoinRequestView:
+            """Denies a pending request to join a private thread, and the one who asked is told; the first answer settles it and a later one answers how it settled. Any one member in its audience now may call it."""
     class _VaultRoomsOfferVerbs:
         def __call__(self, spec: Facade.OfferDraft) -> Facade.OfferCard:
             """Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card."""

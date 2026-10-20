@@ -6518,6 +6518,69 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_rooms_private_threads(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.private_threads")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.private_threads", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_delete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_delete")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.thread_delete", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_join_request(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_join.request")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.rooms.thread_join.request", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_join_requests(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_join.requests")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.rooms.thread_join.requests", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_join_approve(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_join.approve")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.rooms.thread_join.approve", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_rooms_thread_join_deny(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.thread_join.deny")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.thread_join.deny", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_projects_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.projects.propose")?;
         let output = py

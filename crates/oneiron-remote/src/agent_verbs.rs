@@ -2203,6 +2203,24 @@ impl OneironClient {
                 "vault.rooms.thread_audience.remove" => remote_agent_verb_output::<
                     oneiron::workspace_roster::ThreadAudienceReceipt,
                 >(client, verb, &input),
+                "vault.rooms.private_threads" => remote_agent_verb_output::<
+                    Vec<oneiron::workspace_roster::PrivateThreadMetadata>,
+                >(client, verb, &input),
+                "vault.rooms.thread_delete" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::PrivateThreadDeleteReceipt,
+                >(client, verb, &input),
+                "vault.rooms.thread_join.request" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ThreadJoinRequestView,
+                >(client, verb, &input),
+                "vault.rooms.thread_join.requests" => remote_agent_verb_output::<
+                    Vec<oneiron::workspace_roster::ThreadJoinRequestView>,
+                >(client, verb, &input),
+                "vault.rooms.thread_join.approve" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ThreadJoinRequestView,
+                >(client, verb, &input),
+                "vault.rooms.thread_join.deny" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::ThreadJoinRequestView,
+                >(client, verb, &input),
                 "vault.projects.propose" => remote_agent_verb_output::<
                     oneiron::genui::ProjectProposalCard,
                 >(client, verb, &input),
@@ -12024,6 +12042,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.thread_audience.remove", value)
+    }
+    pub fn vault_rooms_private_threads(
+        &self,
+        input: &oneiron::workspace_roster::RoomPrivateThreadsRequest,
+    ) -> Result<Vec<oneiron::workspace_roster::PrivateThreadMetadata>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.private_threads", value)
+    }
+    pub fn vault_rooms_thread_delete(
+        &self,
+        input: &oneiron::workspace_roster::PrivateThreadDeleteRequest,
+    ) -> Result<oneiron::workspace_roster::PrivateThreadDeleteReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_delete", value)
+    }
+    pub fn vault_rooms_thread_join_request(
+        &self,
+        input: &oneiron::workspace_roster::ThreadJoinRequest,
+    ) -> Result<oneiron::workspace_roster::ThreadJoinRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_join.request", value)
+    }
+    pub fn vault_rooms_thread_join_requests(
+        &self,
+        input: &oneiron::workspace_roster::ThreadJoinRequestsRequest,
+    ) -> Result<Vec<oneiron::workspace_roster::ThreadJoinRequestView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_join.requests", value)
+    }
+    pub fn vault_rooms_thread_join_approve(
+        &self,
+        input: &oneiron::workspace_roster::ThreadJoinDecisionRequest,
+    ) -> Result<oneiron::workspace_roster::ThreadJoinRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_join.approve", value)
+    }
+    pub fn vault_rooms_thread_join_deny(
+        &self,
+        input: &oneiron::workspace_roster::ThreadJoinDecisionRequest,
+    ) -> Result<oneiron::workspace_roster::ThreadJoinRequestView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_join.deny", value)
     }
     pub fn vault_projects_propose(
         &self,
