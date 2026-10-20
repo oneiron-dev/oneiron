@@ -110,8 +110,20 @@ pub struct UsageCostRates {
     pub price_table_snapshot: String,
     pub input_per_million: u64,
     pub output_per_million: u64,
-    pub cache_read_per_million: u64,
-    pub cache_write_per_million: u64,
+    /// `None` when the price table quotes no cache rate: unknown, never
+    /// zero. `Some(0)` is a quoted free rate.
+    #[serde(default)]
+    pub cache_read_per_million: Option<u64>,
+    #[serde(default)]
+    pub cache_write_per_million: Option<u64>,
+}
+impl UsageCostRates {
+    /// Whether these rates price `counts`: every count above zero has a
+    /// quoted rate. Cached tokens with no quoted cache rate have no price.
+    pub fn prices(&self, counts: &UsageTokenCounts) -> bool {
+        (counts.cache_read_tokens == 0 || self.cache_read_per_million.is_some())
+            && (counts.cache_write_tokens == 0 || self.cache_write_per_million.is_some())
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -126,11 +138,18 @@ impl UsageCostInput {
     pub fn calculate(&self) -> Result<Money, UsageError> {
         let t = &self.token_counts;
         let r = &self.cost_rates;
+        if !r.prices(t) {
+            return Err(UsageError::InvalidField {
+                field: "costRates",
+                message: "a measured cache count needs its quoted rate",
+            });
+        }
+        // Past that check an unquoted rate only meets a zero count.
         let numerator = [
             (t.input_tokens, r.input_per_million),
             (t.output_tokens, r.output_per_million),
-            (t.cache_read_tokens, r.cache_read_per_million),
-            (t.cache_write_tokens, r.cache_write_per_million),
+            (t.cache_read_tokens, r.cache_read_per_million.unwrap_or(0)),
+            (t.cache_write_tokens, r.cache_write_per_million.unwrap_or(0)),
         ]
         .into_iter()
         .try_fold(0u128, |sum, (qty, rate)| {
