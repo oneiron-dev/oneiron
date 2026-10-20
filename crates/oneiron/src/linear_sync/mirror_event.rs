@@ -6,7 +6,7 @@
 //! mapping edit, the TASK, actor and report key of a title edit. A row is the
 //! replay identity of what made it and its evidence; no gate or proof reads
 //! it. A second table orders one TASK's rows by time for the provenance read.
-//! A third binds a webhook delivery id and its body to each other for good.
+//! A third binds a webhook delivery id and its body to each other.
 //!
 //! The control row qualifies the link: whether the TASK is opted out of the
 //! mirror and the revision every mapping edit compares and moves (C6). No
@@ -71,6 +71,14 @@ const BINDINGS: SideTable<[u8; 33], [u8; 32], Raw> =
 const DELIVERY_TO_BODY: u8 = 1;
 /// A binding row's tag: the body digest, naming its delivery key's.
 const BODY_TO_DELIVERY: u8 = 2;
+
+/// The one policy hook for a delivery id that comes again with another body
+/// before any delivery under it is recorded (FIX 5971). `false` keeps
+/// today's path: the provider re-signs a retry with a new `webhookTimestamp`,
+/// so the id binds its new body and the delivery goes on; a recorded
+/// delivery's id still names its body (C4), and a body still names one id.
+/// `true` refuses it as [`super::LinearSyncError::DeliveryReused`].
+const UNRECORDED_ID_KEEPS_BODY: bool = false;
 
 /// One stored mirror event, as the provenance read returns it. Refs and
 /// digests are lowercase hex; the external actor is the provider's own
@@ -225,11 +233,12 @@ pub(crate) fn delivery_key(delivery_id: &str) -> EventKey {
     )
 }
 
-/// Binds `delivery_id` and `body_digest` to each other for good, in the
-/// first verified preflight of the delivery and before its body is archived
-/// (C4). `false`, writing nothing, when the id is bound to another body or
-/// the body to another id; a delivery already bound to this body is `true`
-/// again, so a retry of the same id and body goes on.
+/// Binds `delivery_id` and `body_digest` to each other, in the first
+/// verified preflight of the delivery and before its body is archived (C4).
+/// A body names its id for good. `false`, writing nothing, when the body is
+/// bound to another id, or, under [`UNRECORDED_ID_KEEPS_BODY`], the id to
+/// another body; else the id binds this body, and a retry of the same id and
+/// body goes on.
 pub(crate) fn bind_delivery_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -241,12 +250,12 @@ pub(crate) fn bind_delivery_in(
     let backward = binding_key(BODY_TO_DELIVERY, body_digest);
     let bound_body = BINDINGS.get(vault, txn, &forward)?;
     let bound_delivery = BINDINGS.get(vault, txn, &backward)?;
-    if bound_body.is_some_and(|bound| bound != *body_digest)
-        || bound_delivery.is_some_and(|bound| bound != delivery)
+    if bound_delivery.is_some_and(|bound| bound != delivery)
+        || (UNRECORDED_ID_KEEPS_BODY && bound_body.is_some_and(|bound| bound != *body_digest))
     {
         return Ok(false);
     }
-    if bound_body.is_none() {
+    if bound_body != Some(*body_digest) {
         BINDINGS.put(vault, txn, &forward, body_digest)?;
     }
     if bound_delivery.is_none() {

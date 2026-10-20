@@ -11,12 +11,12 @@
 //! Every delivery is recorded once under its `Linear-Delivery` id, after the
 //! engine's two guarded writes (C5): a crash between them is healed by the
 //! link's permanent event digest, so the redelivery applies as `noop` and
-//! then records its row. A delivery id and its body bind each other for good
-//! at the first verified preflight, before the body is archived: the same id
-//! with the same body answers the stored receipt as a replay and writes
-//! nothing, and the same id with another body, or the same body under another
-//! id, is refused (C4). The provider's actor is evidence on the row, never a
-//! vault actor, writer or owner (C3).
+//! then records its row. A delivery id and its body bind each other at the
+//! first verified preflight, before the body is archived: the same id with
+//! the same body answers the stored receipt as a replay and writes nothing;
+//! the same body under another id, or a recorded id with another body, is
+//! refused (C4). The provider's actor is evidence on the row, never a vault
+//! actor, writer or owner (C3).
 
 use serde::{Deserialize, Serialize};
 
@@ -193,16 +193,15 @@ fn replay_in(
 }
 
 impl Vault {
-    /// Binds a verified delivery's id and body to each other for good, then
-    /// answers the stored receipt of an already-recorded delivery, marked a
-    /// replay, before its host archives the body (OF-427 C4). `None` is a
-    /// delivery to apply; a failure after this keeps the binding, so the same
-    /// id and body retry.
+    /// Binds a verified delivery's id and body to each other, then answers
+    /// the stored receipt of an already-recorded delivery, marked a replay,
+    /// before its host archives the body (OF-427 C4). `None` is a delivery to
+    /// apply; a failure after this keeps the binding, so the same id retries.
     ///
     /// # Errors
-    /// [`LinearSyncError::DeliveryReused`] when the delivery id is bound to
-    /// another body or the body to another delivery id; otherwise a store
-    /// error.
+    /// [`LinearSyncError::DeliveryReused`] when the body is bound to another
+    /// delivery id or the delivery id was recorded with another body;
+    /// otherwise a store error.
     pub fn linear_webhook_replay(
         &self,
         delivery_id: &str,
