@@ -354,6 +354,12 @@ impl LocalTagger {
         self.card.clone()
     }
 
+    /// The revision of this build's decoder: what a bundle's character head
+    /// must declare. A bundle without one declares none.
+    pub(crate) fn decode_revision(&self) -> &'static str {
+        ONEIRONER_DECODE_REVISION
+    }
+
     /// Decodes as E4's frozen baseline from here on: the served layers but
     /// for the DATE snap after refinement. Only `oneironer qualify` asks.
     pub(crate) fn decode_as_e4(&mut self) {

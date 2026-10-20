@@ -153,18 +153,19 @@ impl Vault {
 
     /// Binds `model`, the Oneironer a host has loaded, into the current
     /// manifest under this writer: `extraction_encoder` takes it in the
-    /// Oneironer slot at `tier`, else at its row's current tier, and the
-    /// Oneironer route is pinned on the device. Every other role, route, the
-    /// verdict and the seat policy stay. The proof, the saved teacher
-    /// approval and the manifest guards run here as a replace runs them, and
-    /// so does the rest of that write: a stale encoder export is dropped and
-    /// resident route overrides clear. The returned manifest is the one this
-    /// transaction published. A vault with no manifest is refused.
+    /// Oneironer slot at `tier`, the tier the host names the loaded bundle
+    /// by, never the row's current one, and the Oneironer route is pinned on
+    /// the device. Every other role, route, the verdict and the seat policy
+    /// stay. The proof, the saved teacher approval and the manifest guards
+    /// run here as a replace runs them, and so does the rest of that write: a
+    /// stale encoder export is dropped and resident route overrides clear.
+    /// The returned manifest is the one this transaction published. A vault
+    /// with no manifest is refused.
     pub fn bind_oneironer_as_owner(
         &self,
         owner: &AuthenticatedOwner,
         model: &ModelId,
-        tier: Option<&ModelTierRef>,
+        tier: &ModelTierRef,
     ) -> Result<ModelManifest> {
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
@@ -174,7 +175,7 @@ impl Vault {
         let row = super::ModelBinding {
             model: model.clone(),
             slot: ModelSlot::Oneironer,
-            tier: tier.unwrap_or(&current.tier).clone(),
+            tier: tier.clone(),
             // The on-device pin is the narrowest route: no route model is
             // narrower than it.
             route_models: BTreeMap::new(),
