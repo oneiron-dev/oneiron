@@ -18103,7 +18103,7 @@
      "path": "src/context_board/room_verbs/thread_readers.rs",
      "purpose": "A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
