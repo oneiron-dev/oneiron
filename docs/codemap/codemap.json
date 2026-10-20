@@ -6642,7 +6642,7 @@
      "surface": {
       "crate-vis": 5,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -6678,7 +6678,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignNotice"
@@ -6687,8 +6687,24 @@
      "purpose": "Durable e-sign transition intents cross OF-327 before edge handoff",
      "surface": {
       "const": 1,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EsignNoticeOutcome",
+      "EsignNoticesDispatchRequest",
+      "EsignNoticesDispatchView"
+     ],
+     "path": "src/blob_artifact/esign/notice_door.rs",
+     "purpose": "`vault.esign.notices.dispatch` (FIX 5239): a signing document's staged transition notices (pending…",
+     "surface": {
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -23476,7 +23492,7 @@
      "path": "src/edge.rs",
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 2,
       "re-export": 2,
@@ -56925,7 +56941,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1101
+      "fn": 1102
      }
     },
     {
@@ -63604,7 +63620,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65041,7 +65057,7 @@
    },
    "over_bar": 191,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4036,
+   "source_files": 4037,
    "test_files": 902
   },
   "oneiron-android": {
@@ -74080,7 +74096,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1072
+      "fn": 1073
      }
     },
     {
@@ -75294,7 +75310,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1073
+      "fn": 1074
      }
     },
     {
@@ -89808,7 +89824,10 @@
       "EsignLifecycleRules",
       "EsignLinksIssueRequest",
       "EsignLinksView",
+      "EsignNoticeOutcome",
       "EsignNoticeSwitches",
+      "EsignNoticesDispatchRequest",
+      "EsignNoticesDispatchView",
       "EsignRecipient",
       "EsignSealAttemptView",
       "EsignSealGetRequest",
@@ -92303,7 +92322,7 @@
      "purpose": "—",
      "surface": {
       "enum": 874,
-      "struct": 2771
+      "struct": 2774
      }
     },
     {
