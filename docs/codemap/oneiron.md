@@ -1072,13 +1072,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/world_privacy_wait.rs` | src | s | 1 crate-vis | — | `tasks.wait({request, step_key})` (FIX 4706): a code run's wait on one world-privacy request its actor… |
 | `src/code_run/fold_api.rs` | src | s | 7 struct · 1 fn | FoldCompactRequest, FoldHistoryRequest, FoldMarkRequest, FoldRunRequest, FoldUnfoldRequest, RunAttachRequest, RunAttached | Typed public calls on a credential's attached live run |
 | `src/code_run/live_run.rs` | src | s | 2 struct · 9 fn · 1 const | CodeRunLiveRunBinding, LiveRunCredential | A live agent run's attachment to the one credential that may act for it (OF-181) |
-| `src/code_run/mod.rs` | src | s | 6 mod · 20 re-export · 22 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
+| `src/code_run/mod.rs` | src | s | 7 mod · 20 re-export · 22 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/payload.rs` | src | m | 10 crate-vis | — | — |
 | `src/code_run/payload/session_hooks.rs` | src | s | 2 crate-vis | — | The replay codec of a `vault.search` outcome and what each verb hook bound to it did in a room (WILL L11-01… |
 | `src/code_run/reader.rs` | src | m | 21 struct · 8 enum · 1 trait · 19 fn · 6 const · 12 crate-vis | ClaimOutcome, DelegatedSource, ReaderActor, ReaderFindingRef, ReaderJob, ReaderJobKind, ReaderJobRunner, ReaderJobState +22 | Reader forks (ARCH-0079 #reader-forks): a code run hands one of its results to a child run that reads it and… |
 | `src/code_run/reader_fold.rs` | src | s | 2 fn | — | The model call behind `summarize` (code-mode-summary-sdk-v1): the one prompt a summary job sends, by its… |
 | `src/code_run/replay.rs` | src | L | 12 struct · 1 enum · 24 fn · 8 const · 12 crate-vis | CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunHistoryTurn, CodeRunOutputKind, CodeRunOutputPreview, CodeRunRawOutput, CodeRunReplayCursor +5 | — |
-| `src/code_run/replay_capsule.rs` | src | m | 6 struct · 3 enum · 6 fn · 7 crate-vis | CapsuleContent, CapsuleHost, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, StepReplayCapsule, StoredSpan +1 | Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical… |
+| `src/code_run/replay/position.rs` | src | s | 1 fn | — | A replay cursor that starts part way into its record (PR-S1): a shadow arm replays one captured step from… |
+| `src/code_run/replay_capsule.rs` | src | m | 7 struct · 4 enum · 7 fn · 7 crate-vis | CapsuleContent, CapsuleHost, CapsuleRequest, CapsuleRungBinding, ExecutorStepStart, ExposureKind, ExposureSlot, ReplayRoutePin +3 | Step replay capsules (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): the exact model input of a canonical… |
+| `src/code_run/result_read/arm.rs` | src | s | 3 crate-vis | — | A shadow arm's reads of its own results (PR-S1, FIX 1661/2144): the card, the verdict and the facets a run's… |
 | `src/code_run/result_read/chunks.rs` | src | m | 2 crate-vis | — | `chunks`: a result cut into range refs, a page at a time |
 | `src/code_run/result_read/mod.rs` | src | m | 1 enum · 2 fn · 1 const · 21 crate-vis | ResultFacet | Reads of one result body of a code run (OF-190 B++): its card, with the shape its head shows, and the `more`… |
 | `src/code_run/result_read/outside.rs` | src | s | 2 fn | — | Reads of a code run's results for a caller outside the run: the cards of its named results, and one read of… |
@@ -1088,6 +1090,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/result_read/slice.rs` | src | s | 1 crate-vis | — | `slice`: one range of a result's body, by bytes or by lines, at most one reply of it, with where to go on from |
 | `src/code_run/run_verb_call.rs` | src | s | 3 crate-vis | — | The run rows as typed calls (OF-181) |
 | `src/code_run/run_verbs.rs` | src | m | 25 struct · 9 enum · 1 fn · 1 const · 3 crate-vis | AgentSpawnInput, AgentSpawnKind, AgentSpawnOutput, LeaderAdviceInput, LeaderPatternFile, LeaderPatternInput, LeaderPatternOutput, LeaderSplitInput +26 | The inputs and outputs of the verb-table rows a code run answers itself (`context: "run"` in… |
+| `src/code_run/shadow_runner/bridge.rs` | src | m | 9 crate-vis | — | The bridge an arm's program calls (PR-S1): every `self.*` call the program makes joins the arm's… |
+| `src/code_run/shadow_runner/frames.rs` | src | s | 2 struct · 2 enum · 1 fn | ShadowFrame, ShadowFrameBody, ShadowModelAnswer, ShadowReceiptFrame | The frames an arm and its host speak (PR-S1 defines them; the candidate process runner speaks them, PR-S2) |
+| `src/code_run/shadow_runner/mod.rs` | src | s | 1 trait · 1 type · 1 const · 4 re-export · 1 crate-vis | ShadowRunner | The shadow runner (PR-S1; FIX 1661/2144, the runner side of L07-B's B2b): one captured step of a canonical… |
+| `src/code_run/shadow_runner/source.rs` | src | m | 1 struct · 12 fn · 1 crate-vis | PreparedShadowStep | The source an arm runs from (PR-S1): one captured step of a canonical run, read from its capsule and frozen… |
+| `src/code_run/shadow_runner/store.rs` | src | s | 1 struct · 4 fn · 6 crate-vis | ShadowBodyStore | A shadow arm's own body store (PR-S1): one directory, outside any vault, of whole bodies, each a file named… |
+| `src/code_run/shadow_runner/types.rs` | src | m | 16 struct · 12 enum · 10 fn · 1 crate-vis | ArtifactDigest, ArtifactDigestAlgorithm, EngineArtifactPin, ShadowArmLease, ShadowBodyRef, ShadowBridgeWindow, ShadowDeterminism, ShadowIsolation +20 | The shadow runner's request, result and their parts (PR-S1): what a caller asks an arm to run, by immutable… |
 | `src/code_run/storage/compaction.rs` | src | m | 18 crate-vis | — | Node-local executor coverage: typed run/step binding to a committed epoch SUMMARY |
 | `src/code_run/storage/compaction/tests.rs` | test | s | — | — | — |
 | `src/code_run/storage/continuation.rs` | src | s | 4 crate-vis | — | A successor attempt's approved continuation of a failed run (FIX 3694, OF-568): the run it forks from, the… |
@@ -1975,10 +1983,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/driver.rs` | src | m | 1 struct · 10 fn · 5 crate-vis | EngineNativeExecutor | Executor driver: struct, constructors, and the witness-turn doors |
 | `src/engine_executor/history.rs` | src | s | 3 struct · 2 fn | FoldHistory, FoldHistoryEpoch, FoldHistoryStep | Durable steps and landed compaction boundaries of an attached run |
 | `src/engine_executor/host.rs` | src | XL | 12 crate-vis | — | JS host bridge: recording dispatcher, sandbox contract, and prompt sites |
-| `src/engine_executor/mod.rs` | src | s | 3 mod · 5 re-export · 3 crate-vis | — | Engine-native JS code-mode executor |
+| `src/engine_executor/mod.rs` | src | s | 3 mod · 6 re-export · 4 crate-vis | — | Engine-native JS code-mode executor |
 | `src/engine_executor/program_entry.rs` | src | m | 7 crate-vis | — | A turn program's pinned entry (DOOR-141 PR3b, FIX 4382) |
 | `src/engine_executor/record.rs` | src | m | 25 crate-vis | — | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
 | `src/engine_executor/repl.rs` | src | L | 2 fn · 4 crate-vis | — | Durable REPL loop: run(), persistence helpers, and LLM request building |
+| `src/engine_executor/shadow_step.rs` | src | s | 1 fn · 1 crate-vis | — | One captured step of a shadow arm (PR-S1, FIX 1661/2144): the pinned model's answer to the step's captured… |
 | `src/engine_executor/skill_call.rs` | src | s | 2 fn | — | One callable bridge entry between turns of an attached, leased run |
 | `src/engine_executor/stack_floor.rs` | src | s | 2 crate-vis | — | The native stack a callable skill's call leaves its thread (FIX 600) |
 | `src/engine_executor/store.rs` | src | m | 49 crate-vis | — | Output envelope and path helpers for the routed raw-output store |
