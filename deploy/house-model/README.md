@@ -121,10 +121,12 @@ Two knobs, set in `/etc/oneiron-house.env`:
 | Variable | Flag | Default | What it sets |
 |---|---|---|---|
 | `ONEIRON_HOUSE_EXL3_IN_FLIGHT` | `--max-in-flight` | 1 | requests in flight at once, 1 to 4 (`MAX_IN_FLIGHT`); the cache's recurrent slots and the generator's batch follow it |
-| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | `ONEIRON_HOUSE_CONTEXT` | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least the context |
+| `ONEIRON_HOUSE_EXL3_CACHE_TOKENS` | `--cache-tokens` | one full request: the context + 1 + the draft depth + 16, rounded up to 256 (33024 at the defaults) | the KV pool all requests in flight share, target and draft alike; a multiple of 256 and at least that floor |
 
-The defaults are today's server: one request at a time over a pool the size
-of one context. Four in flight is gated. It ships only after both runs pass
+The defaults are today's server: one request at a time, over a pool that
+holds one full-context request with its draft and close room (Engine ruling
+10-20, FIX 6723; the context alone left a full request one page short). Four
+in flight is gated. It ships only after both runs pass
 on INFER-BENCH (FIX 6559): E5, batch invariance (the same request gives the
 same output alone and batched, at the same draft depth), and E1 (short calls
 beside one long Dreamer-like call, one in flight against four, over the same

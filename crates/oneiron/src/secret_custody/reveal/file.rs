@@ -10,8 +10,17 @@
 //! this agent, this file, this project and this run; the owner answers it
 //! as any reveal ask, and an approval once opens the next such read.
 //!
-//! A file whose keys are not all active, admitted to a model (T1) and of one
-//! custody class reads masked, with no ask.
+//! A file whose keys are of more than one custody class (FIX 6624) is read
+//! as a typed body's read is: in one group per class, each judged by the
+//! same check and asking under its own class, and the read opens only when
+//! every group does; each group's ask card names the others (FIX 6738). A
+//! file whose keys are not all active and admitted to a model (T1) reads
+//! masked, with no ask.
+//!
+//! A delivered read, and the owner's answer to an ask, keep their reveal row
+//! under the id it was asked under (FIX 6623, 6737): the next ask of the
+//! same read is filed under the next id in that ask's sequence, never over a
+//! delivered or answered row.
 //!
 //! A sealed file (a container the write door could not read whole, stored
 //! as it is and unmarked) holds keys no mark names. Its read asks for the
@@ -53,6 +62,11 @@ use crate::vault::Vault;
 /// Domain of the id of the one ask an agent's read of a file files.
 const FILE_ASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_ask.v1";
 
+/// Domain of the next id in an ask's sequence, hashed from the one before:
+/// where a read asks again once its ask was delivered or answered (FIX 6623,
+/// 6737).
+const FILE_REASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_reask.v1";
+
 /// Domain of a typed body read's fingerprint, the hash its reveal rows name
 /// in place of a stored file's: never a hash of stored bytes.
 const TYPED_BODY_READ_DOMAIN: &[u8] = b"oneiron.secret_reveal.typed_body_read.v1";
@@ -74,8 +88,9 @@ struct KeyRead<'a> {
     /// The stored file's bytes' hash, or a typed body read's fingerprint.
     hash: [u8; 32],
     groups: Vec<ReadGroup>,
-    /// Whether each group's ask names its class: a typed body's read, one
-    /// ask per class group. A file's one ask names none.
+    /// Whether each group's ask names its class: a typed body's read, or a
+    /// file whose keys span more than one class, one ask per class group. A
+    /// file of one class, or a sealed one, asks once under an id naming none.
     per_class: bool,
 }
 
@@ -249,26 +264,29 @@ impl Vault {
             "a file read's why is one line of at most 512 bytes",
         )?;
         self.with_write_txn_grouped(|txn| {
-            let group = if sealed {
-                ReadGroup {
+            let groups = if sealed {
+                vec![ReadGroup {
                     class: SEALED_FILE_CLASS,
                     first: *artifact,
                     keys: Vec::new(),
                     handle: SEALED_FILE_HANDLE.to_owned(),
-                }
+                }]
             } else {
-                let Some((class, keys)) = marked_keys_in_txn(self, txn, &hash)? else {
+                let Some(groups) = marked_groups_in_txn(self, txn, &hash)? else {
                     return Ok(SecretSight::Masked);
                 };
-                ReadGroup::of(class, keys)?
+                groups
             };
+            // Only a file whose keys span classes asks per class: a file of
+            // one class keeps the one ask id it has always had.
+            let per_class = groups.len() > 1;
             let read = KeyRead {
                 asker,
                 artifact,
                 why: &why,
                 hash,
-                groups: vec![group],
-                per_class: false,
+                groups,
+                per_class,
             };
             self.read_sight_in_txn(txn, &read)
         })
@@ -296,7 +314,7 @@ impl Vault {
         let mut ready = Vec::with_capacity(read.groups.len());
         let mut asks = Vec::new();
         for group in &read.groups {
-            let ask = read.ask_id(group)?;
+            let ask = read.ask_in_txn(self, txn, group, now)?;
             let bound = reveal_bound(
                 &read.asker.connection(),
                 group.class,
@@ -346,13 +364,22 @@ impl Vault {
 }
 
 impl KeyRead<'_> {
-    /// The id of the one ask `group` of this read files.
-    fn ask_id(&self, group: &ReadGroup) -> Result<EntityId> {
-        file_ask_id(
+    /// The id `group` of this read asks under at `now`: its ask's id
+    /// ([`file_ask_id`]), or past each delivered or answered row of it, the
+    /// next in its sequence ([`open_ask_id_in_txn`]).
+    fn ask_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        group: &ReadGroup,
+        now: u64,
+    ) -> Result<EntityId> {
+        let base = file_ask_id(
             self.asker,
             &self.hash,
             self.per_class.then_some(group.class),
-        )
+        )?;
+        open_ask_id_in_txn(vault, txn, base, now)
     }
 
     /// The reveal row `group` of this read writes, in `state`, at `now`.
@@ -383,8 +410,20 @@ impl KeyRead<'_> {
                 hash: self.hash,
                 keys: group.keys.clone(),
                 leases: Vec::new(),
+                siblings: self.siblings(group),
             }),
         }
+    }
+
+    /// This read's groups other than `group`, each as its class word and its
+    /// keys' handles, which its ask card names (FIX 6738): none for a read of
+    /// one group.
+    fn siblings(&self, group: &ReadGroup) -> Vec<(String, String)> {
+        self.groups
+            .iter()
+            .filter(|other| other.class != group.class)
+            .map(|other| (other.class.as_str().to_owned(), other.handle.clone()))
+            .collect()
     }
 }
 
@@ -442,6 +481,45 @@ fn asked_plan_in_txn(
     })
 }
 
+/// The id a read whose ask's id is `base` asks under at `now` (FIX 6623,
+/// 6737): `base` until its row is kept ([`kept_row`]), then the first id of
+/// its sequence, each hashed from the one before under
+/// [`FILE_REASK_DOMAIN`], whose row is not. A delivered read and an owner's
+/// answer keep their row and their id; the next ask, its answer and its
+/// delivery are another row's.
+fn open_ask_id_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    base: EntityId,
+    now: u64,
+) -> Result<EntityId> {
+    let mut ask = base;
+    while REVEALS
+        .get(&vault.store, txn, &ask)?
+        .is_some_and(|row| kept_row(&row, now))
+    {
+        ask = crate::codebase::entity_id_from_hash_material(
+            FILE_REASK_DOMAIN,
+            &[ask.as_bytes().as_slice()],
+        )?;
+    }
+    Ok(ask)
+}
+
+/// Whether `row` stays as it is at `now`, so the read's next ask takes the
+/// next id: a delivered read, or the owner's answer (FIX 6737), a standing
+/// one at once, and an approval once or a denial once its window has closed.
+/// In its window an approval once still opens the read and a denial still
+/// holds it masked ([`asked_plan_in_txn`]), as an open ask does; an
+/// unanswered ask past its window is asked again under its own id.
+fn kept_row(row: &RevealRow, now: u64) -> bool {
+    match row.state {
+        SecretRevealState::Delivered | SecretRevealState::ApprovedStanding => true,
+        SecretRevealState::ApprovedOnce | SecretRevealState::Denied => now >= row.expires_at,
+        SecretRevealState::Asked | SecretRevealState::Covered | SecretRevealState::Expired => false,
+    }
+}
+
 /// Each key `custody` names, once, with its class and handle, in the order
 /// given: `None` when one has no custody record, is not active, or is not
 /// admitted to a model (T1).
@@ -477,15 +555,15 @@ fn admitted_keys_in_txn(
     Ok(Some(keys))
 }
 
-/// The keys the mark of the file `hash` names, each with its handle, in the
-/// file's order, with their one class: `None` when no mark covers the file,
-/// or when a key is not admitted ([`admitted_keys_in_txn`]) or is of
-/// another class than the rest.
-fn marked_keys_in_txn(
+/// The keys the mark of the file `hash` names, each with its handle, in one
+/// group per custody class ([`class_groups`]), each group's keys in the
+/// file's order: `None` when no mark covers the file, it names no key, or a
+/// key is not admitted ([`admitted_keys_in_txn`]).
+fn marked_groups_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     hash: &[u8; 32],
-) -> Result<Option<(CustodyClass, Vec<(EntityId, String)>)>> {
+) -> Result<Option<Vec<ReadGroup>>> {
     let Some(mark) = masked_file_in_txn(&vault.store, txn, hash)? else {
         return Ok(None);
     };
@@ -499,17 +577,10 @@ fn marked_keys_in_txn(
     let Some(admitted) = admitted_keys_in_txn(vault, txn, marked)? else {
         return Ok(None);
     };
-    let Some(class) = admitted.first().map(|key| key.class) else {
-        return Ok(None);
-    };
-    if admitted.iter().any(|key| key.class != class) {
+    if admitted.is_empty() {
         return Ok(None);
     }
-    let keys = admitted
-        .into_iter()
-        .map(|key| (key.secret, key.handle))
-        .collect();
-    Ok(Some((class, keys)))
+    class_groups(admitted).map(Some)
 }
 
 /// `keys` in one group per custody class: the groups in their class word's
@@ -556,8 +627,9 @@ fn typed_read_hash(
 
 /// The one ask an agent's reads of a file file: by the agent, the read's
 /// hash (the stored bytes', or a typed body read's fingerprint), the project
-/// and the run, and the keys' class for a typed body's group. A file's one
-/// ask names no class.
+/// and the run, and the keys' class for a group of a typed body or of a file
+/// whose keys span classes. The one ask of a file of one class names no
+/// class.
 fn file_ask_id(
     asker: &RevealAsker,
     hash: &[u8; 32],
