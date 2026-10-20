@@ -316,6 +316,22 @@ fn with_anchored_pens_in(
     Ok(members)
 }
 
+/// Whether the audience now of the private thread rooted at `root` names
+/// `person` ([`names_actor_in`]), read as [`notify_thread_members_in_txn`]
+/// reads its members: on base, or in the published overlay of the live
+/// off-record stretch that holds a root base does not. No one is in a public
+/// thread, or a root that is no live private root. Read only; an Owner's
+/// export asks it before it tells a thread (FIX 6427).
+pub(crate) fn thread_has_member_now_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    let members = thread_members_now_in(vault, txn, root)?;
+    names_actor_in(vault, txn, &members, person)
+}
+
 /// Everyone in the audience of the private thread rooted at `root` now; no
 /// one for a root that is no live private root. A root base does not hold
 /// is read in the published overlay of the live off-record stretch that

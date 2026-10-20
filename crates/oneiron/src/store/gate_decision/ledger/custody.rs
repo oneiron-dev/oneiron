@@ -2,11 +2,13 @@
 //! claim's key, a new row sealed under it, and an erase's key retirement
 //! staged with the redaction.
 
-use heed::RwTxn;
+use std::collections::BTreeSet;
+
+use heed::{RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
 use crate::store::key_custody::{
-    RetireCause, RetirementIntent, retirement_in_txn, stage_retirement_in_txn,
+    LocalCustody, RetireCause, RetirementIntent, retirement_in_txn, stage_retirement_in_txn,
 };
 use crate::store::{ManifestDbs, Store};
 
@@ -93,6 +95,93 @@ impl Store {
                 cause: RetireCause::Erase,
             },
         )
+    }
+
+    /// A left environment's purge (OF-158) retires the claim keys of the
+    /// ledger rows it removed in this transaction, `removed` their stored
+    /// values, read without a key (FIX 5749). A claim's key retires, every
+    /// published generation at once, once no encrypted row of it is left and
+    /// no hold stands on its partition: as a retention's, so a hold set before
+    /// the finisher runs still defers it. A claim with rows left keeps its key
+    /// until the pass that removes the last of them; a plaintext or claim-free
+    /// row names none. A custody this cannot read keeps its keys, logged: the
+    /// purge never fails on them.
+    pub(in crate::store) fn stage_purged_claim_key_retirements_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        removed: &[Vec<u8>],
+    ) -> Result<()> {
+        /// The intents of `claims` whose last encrypted row is gone and whose
+        /// partition no hold stands on, each through its newest published
+        /// generation.
+        fn eligible(
+            store: &Store,
+            txn: &RoTxn<'_>,
+            custody: LocalCustody<'_>,
+            claims: &BTreeSet<[u8; 16]>,
+        ) -> Result<Vec<RetirementIntent>> {
+            if store.core.gate_custody_archived() {
+                return Err(Error::Store(StoreError::ArchivedVault));
+            }
+            let mut left = BTreeSet::new();
+            for row in LEDGER.iter_raw_from(store, txn, &[])? {
+                let (_, raw) = row?;
+                if let Some((claim, _)) = orcb::raw_claim_generation(&raw)
+                    && claims.contains(&claim)
+                {
+                    left.insert(claim);
+                }
+            }
+            let overflow = || Error::ArithmeticOverflow("gate decision key generation");
+            let mut intents = Vec::new();
+            for claim in claims.difference(&left) {
+                if store.gate_partition_held_in_txn(txn, Some(claim))? {
+                    continue;
+                }
+                let subject = orcb::claim_subject(custody, claim)?;
+                let mut through = None;
+                let mut generation = custody.first_unretired(&subject)?;
+                while custody.published(&subject.at(generation))? {
+                    through = Some(generation);
+                    generation = generation.checked_add(1).ok_or_else(overflow)?;
+                }
+                if let Some(through) = through {
+                    intents.push(RetirementIntent {
+                        subject,
+                        through,
+                        cause: RetireCause::Retention,
+                    });
+                }
+            }
+            Ok(intents)
+        }
+
+        let claims: BTreeSet<[u8; 16]> = removed
+            .iter()
+            .filter_map(|raw| orcb::raw_claim_generation(raw).map(|(claim, _)| claim))
+            .collect();
+        // No exterior custody exists off unix, and an unbound one published
+        // no key.
+        if claims.is_empty() || cfg!(not(unix)) {
+            return Ok(());
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(());
+        };
+        let intents = match eligible(self, &*wtxn, custody, &claims) {
+            Ok(intents) => intents,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "left env purge kept the claim keys of the ledger rows it removed"
+                );
+                return Ok(());
+            }
+        };
+        for intent in &intents {
+            stage_retirement_in_txn(self, wtxn, intent)?;
+        }
+        Ok(())
     }
 }
 
