@@ -295,24 +295,29 @@ impl RoomThreadPolicy {
 }
 
 /// The public room read supplies its exact room id even for an empty history.
+/// `edits` are the audience edits among `turns` (FIX 6544): no thread's
+/// last message or last reply, here and in every fold below.
 pub(super) fn project_in_room(
     turns: &[RoomTurn],
+    edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     policy: RoomThreadPolicy,
     room: EntityId,
 ) -> Result<RoomThreads> {
-    project_inner(turns, tasks, policy, None, &room.to_hex())
+    project_inner(turns, edits, tasks, policy, None, &room.to_hex())
 }
 
 /// Direct-by-handle fold: no render cap and no unrelated thread rows built.
 pub(super) fn project_target(
     turns: &[RoomTurn],
+    edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     handle: EntityId,
     now: u64,
 ) -> Result<Option<RoomThread>> {
     let projection = project_inner(
         turns,
+        edits,
         tasks,
         RoomThreadPolicy {
             now,
@@ -338,6 +343,7 @@ pub(super) fn project_target(
 /// the turns hold no such thread root.
 pub(super) fn thread_is_live(
     turns: &[RoomTurn],
+    edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     room: EntityId,
     handle: EntityId,
@@ -345,6 +351,7 @@ pub(super) fn thread_is_live(
 ) -> Result<Option<bool>> {
     let projection = project_inner(
         turns,
+        edits,
         tasks,
         RoomThreadPolicy {
             now,
@@ -366,6 +373,7 @@ pub(super) fn thread_is_live(
 
 fn project_inner(
     turns: &[RoomTurn],
+    edits: &BTreeSet<EntityId>,
     tasks: &[RoomThreadTask],
     policy: RoomThreadPolicy,
     target: Option<EntityId>,
@@ -433,7 +441,7 @@ fn project_inner(
         let Some(&root_id) = root_by_turn.get(&id) else {
             continue;
         };
-        if id == root_id {
+        if id == root_id || edits.contains(&id) {
             continue;
         }
         if let Some(root) = roots.get_mut(&root_id) {

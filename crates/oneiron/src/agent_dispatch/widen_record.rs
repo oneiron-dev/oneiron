@@ -262,6 +262,36 @@ pub(super) struct WidenRecord {
     pub declined: Option<WidenDecline>,
 }
 
+/// `intent` as [`WIDEN`] stores it (FIX 2314): read through the side-row
+/// wall in `wtxn`, `vault`'s custody door holding it, so each secret it
+/// carries reads as its custody handle, a value custody already holds
+/// keeping its own, before its key, its request's id or any compare is
+/// derived from it: equal requests stay one proposal, and two secrets stay
+/// two. No proposal is keyed yet, so the wall's custody records name the
+/// nil key's place for it.
+pub(super) fn admitted_intent_in(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    intent: WidenIntent,
+) -> Result<WidenIntent> {
+    let unkeyed = [0; 32];
+    let mut record = WidenRecord {
+        version: 1,
+        request: WidenRequest {
+            intent,
+            target_fingerprint: String::new(),
+            board: None,
+            parent_spec: ContextSpec::default(),
+            widened_spec: ContextSpec::default(),
+        },
+        recorded_at: 0,
+        landed: None,
+        declined: None,
+    };
+    WIDEN.admit(vault, wtxn, &unkeyed, &mut record)?;
+    Ok(record.request.intent)
+}
+
 impl WidenRecord {
     /// A proposal settles once: approved and landed, or declined.
     pub(super) fn validate_settlement(&self) -> Result<()> {

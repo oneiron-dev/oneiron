@@ -24,6 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub use types::*;
 
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::ConfirmedEraseOutcome;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, LegalHoldState, Result};
@@ -583,7 +584,8 @@ impl Vault {
     }
 
     /// Runs each owner-confirmed erase whose record nothing holds now.
-    /// A failed one stays for the next pass.
+    /// A failed one stays for the next pass. One whose row went before its
+    /// writer ran is cancelled: nothing erased, counted or dropped (FIX 6337).
     fn run_due_legal_hold_erases(&self) -> Result<u64> {
         // A birth a released hold kept from an erased actor's scrub goes
         // first, whether or not an erase waits (FIX 6280).
@@ -594,11 +596,15 @@ impl Vault {
         let mut erased = 0_u64;
         for record in due {
             match self.due_confirmed_erase(&record) {
-                Ok(_) => {
+                Ok(ConfirmedEraseOutcome::Completed(_)) => {
                     self.with_write_txn_grouped(|txn| {
                         hold_store::drop_pending_erase_in_txn(&self.store, txn, &record)
                     })?;
                     erased = erased.saturating_add(1);
+                }
+                // A row confirmed since stays for its own pass.
+                Ok(ConfirmedEraseOutcome::Cancelled) => {
+                    tracing::info!("a confirmed erase was cancelled: none waits any more");
                 }
                 Err(error) => tracing::warn!(
                     error = %error,

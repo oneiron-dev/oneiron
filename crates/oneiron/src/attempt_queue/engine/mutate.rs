@@ -29,6 +29,16 @@ use crate::limit_ask::EngineLimit;
 use super::AttemptQueue;
 use crate::error::ArtifactError;
 const RETRY_REASON_LEASE_TIMEOUT: &str = "lease_timeout";
+/// The cleanup reason for a pending row waiting on a readiness instant: a
+/// first try (no `retry_of`) scheduled for later is due later (FIX 6106); a
+/// real retry, or a row already due, keeps the retry-backoff class.
+fn waiting_reason(record: &AttemptRecord, now: u64) -> AttemptQueueRetryReason {
+    if record.retry_of.is_none() && ready_at(record) > now {
+        AttemptQueueRetryReason::DueLater
+    } else {
+        AttemptQueueRetryReason::RetryBackoff
+    }
+}
 /// Stable reason stamped on a retried source row when the caller supplied none.
 pub(in crate::attempt_queue) const RETRY_REASON_UNSPECIFIED: &str = "retry";
 impl AttemptQueue<'_> {
@@ -548,7 +558,7 @@ impl AttemptQueue<'_> {
                 AttemptState::Queued | AttemptState::Paused | AttemptState::Scheduled => {
                     report.pending += 1;
                     if waiting_on_backoff(&record) {
-                        report.increment_retry_reason(AttemptQueueRetryReason::RetryBackoff);
+                        report.increment_retry_reason(waiting_reason(&record, input.now));
                     }
                 }
                 AttemptState::Leased | AttemptState::Landing
@@ -668,7 +678,7 @@ impl AttemptQueue<'_> {
                         mark_rechecked_candidate_not_running(&mut report);
                         report.pending += 1;
                         if waiting_on_backoff(&record) {
-                            report.increment_retry_reason(AttemptQueueRetryReason::RetryBackoff);
+                            report.increment_retry_reason(waiting_reason(&record, input.now));
                         }
                     }
                     AttemptState::Completed => {
