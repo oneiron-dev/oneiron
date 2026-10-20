@@ -949,6 +949,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/runtime/secret_destinations.rs` | src | m | 4 struct · 5 fn · 1 const | RunSecretDestinations, SecretDestination, SecretDestinations, ServedSecretDelivery | T1 host delivery (DOOR-124, FIX 4490): the secret destinations a run host registers for one run, and the… |
 | `src/runtime/staged_input.rs` | src | s | 1 struct | WorkdirStager | The host half of a BYOA run's staged job (`oneiron::dispatch_byoa`'s staged input): the job is written whole… |
 | `src/runtime/usage.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | VaultUsage | Trusted-host attribution of served run settlements to one vault |
+| `src/runtime/usage/pricing.rs` | src | s | 3 crate-vis | — | The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that… |
 | `src/saved_query_sweep.rs` | src | m | 2 crate-vis | — | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
 | `src/server/artifact_previews.rs` | src | s | 1 fn · 6 crate-vis | — | Host-authenticated process declarations and their existing private preview leases |
 | `src/server/board_publisher.rs` | src | s | 4 crate-vis | — | The board publisher: committed TASK writes reach STREAM subscribers |
@@ -958,8 +959,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/connector_sends.rs` | src | s | 1 crate-vis | — | The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that… |
 | `src/server/consult_settle.rs` | src | s | 1 crate-vis | — | Consult settlement on every housekeeping pass (DOOR-063), on every substrate |
 | `src/server/cooperative_deletion.rs` | src | s | 1 crate-vis | — | Delivers queued courtesy deletion asks and answers (OF-273) |
-| `src/server/core.rs` | src | L | 1 struct · 18 fn · 1 re-export · 18 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
+| `src/server/core.rs` | src | L | 1 struct · 16 fn · 1 re-export · 18 crate-vis | SyncServer | Core server state: the `SyncServer` struct, construction, and shared helpers |
 | `src/server/core/pattern_workflow.rs` | src | m | 1 fn · 8 crate-vis | — | The house pattern runner (DOOR-111 S4b): the start a planned team's pattern skill writes, run on the house… |
+| `src/server/core/usage.rs` | src | s | 2 fn | — | The usage meter the trusted host binds to this vault before work starts |
 | `src/server/desktop_seats.rs` | src | m | 16 crate-vis | — | The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door… |
 | `src/server/embedding.rs` | src | m | 7 crate-vis | — | The embedding worker: the one thing that drives the engine's reconciler |
 | `src/server/housekeeping.rs` | src | m | 13 crate-vis | — | The host's half of the engine's housekeeping |
@@ -1004,8 +1006,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
 | `src/usage/ledger.rs` | src | m | 3 struct · 6 fn · 1 crate-vis | CycleSettlements, SeatUsage, UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
 | `src/usage/limit.rs` | src | s | 2 struct · 4 fn | CachedBudgetLimit, ExchangeRate | A host-pushed limit converts once |
-| `src/usage/mod.rs` | src | s | 4 re-export | — | Provider-list metering and host-pushed vault budget limits |
-| `src/usage/model.rs` | src | m | 10 struct · 2 enum · 6 fn · 3 crate-vis | Money, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent, UsageEventType, UsageMode +4 | Provider-list money facts and per-vault usage counters |
+| `src/usage/mod.rs` | src | s | 5 re-export | — | Provider-list metering and host-pushed vault budget limits |
+| `src/usage/model.rs` | src | m | 10 struct · 2 enum · 7 fn · 3 crate-vis | Money, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent, UsageEventType, UsageMode +4 | Provider-list money facts and per-vault usage counters |
+| `src/usage/pricing.rs` | src | s | 1 fn | — | Catalog list prices as fixed-point usage rates |
 | `src/usage/tests.rs` | test | s | — | — | — |
 | `src/voice_host/attachment.rs` | src | s | 1 fn | — | The voice host as a wake-pass attachment: it serves the owner's admitted stream beside one pass and spends… |
 | `src/voice_host/backend.rs` | src | s | 2 crate-vis | — | The voice call's backend for the host's own model calls (OF-410): partial enrichment and the sentence… |
@@ -1033,8 +1036,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/wake_adapters/mod.rs` | src | s | 4 crate-vis | — | Host-side, per-config-directory wake delivery (OF-385) |
 | `src/web_client.rs` | src | s | 1 struct · 1 enum · 1 fn · 5 crate-vis | DeploymentPosition, EndpointDescriptor | Endpoint discovery and browser access for an external shared web client |
 | `src/wire_health.rs` | src | m | 1 struct · 3 enum · 2 fn · 2 const · 2 crate-vis | AnsweredBy, CheckState, CrossingSource, HealthCheck | The health check past a threshold (OF-520, ARCH-0044 C5) |
-| `src/wire_telemetry.rs` | src | m | 5 struct · 2 enum · 12 fn · 1 const · 1 re-export · 11 crate-vis | LimitQuestions, LimitRow, WireLimitQuestion, WireQuestion, WireQuestionKind, WireTelemetry, WireWindowReceipt | RC42 observation-only wire counters |
+| `src/wire_telemetry.rs` | src | m | 5 struct · 1 enum · 11 fn · 2 re-export · 11 crate-vis | LimitQuestions, WireLimitQuestion, WireQuestion, WireQuestionKind, WireTelemetry, WireWindowReceipt | RC42 observation-only wire counters |
 | `src/wire_telemetry/http.rs` | src | s | 2 crate-vis | — | The HTTP observer every routed request passes, and the tick that keeps the observed window |
+| `src/wire_telemetry/rows.rs` | src | s | 1 enum · 1 fn · 1 const | LimitRow | The `[limits]` rows this server's questions name (moved out of `wire_telemetry.rs` whole, so the telemetry… |
 | `src/wire_telemetry/tests.rs` | test | s | — | — | — |
 | `tests/inference_defaults.rs` | test | s | — | — | Owner-grade HTTP edit/read proof for resident inference policy rows |
 | `tests/inference_egress.rs` | test | s | — | — | Extraction default changes require a host gate at storage and dispatch |

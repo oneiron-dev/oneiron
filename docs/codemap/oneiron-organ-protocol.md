@@ -11,10 +11,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/frame.rs` | src | m | 1 enum · 8 fn | FrameError | Framing: `len: u32 LE \| MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries… |
-| `src/lib.rs` | src | s | 2 mod · 6 re-export | — | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
-| `src/region.rs` | src | s | 2 struct · 7 fn | MappedRegion, SharedRegion | Read-only shared regions: how blob bytes cross without being copied |
+| `src/frame.rs` | src | m | 1 enum · 9 fn | FrameError | Framing: `len: u32 LE \| MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries… |
+| `src/lib.rs` | src | s | 3 mod · 6 re-export | — | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) |
+| `src/region.rs` | src | s | 2 struct · 8 fn | MappedRegion, SharedRegion | Read-only shared regions: how blob bytes cross without being copied |
 | `src/runtime.rs` | src | m | 7 struct · 1 trait · 10 fn · 2 const | Answer, AskBytes, AskReply, Asker, CallContext, InputBytes, Organ, OutputBytes | The organ side: handshake, frames, a small worker pool and cancel flags |
+| `src/seal.rs` | src | s | 4 struct · 5 enum | SealByteRangeEvidence, SealCheckVerdict, SealModificationLevel, SealModifications, SealRevisionClassification, SealRevisionEvidence, SealRevisionKind, SealSignatureEvidence +1 | The seal organ's revision classification, as its verdicts carry it (OF-415, C032) |
 | `src/shape.rs` | src | s | 2 const · 1 crate-vis | — | A structural check of a MessagePack frame before it is decoded |
 | `src/spin.rs` | src | s | 2 fn · 1 const | — | Spinning a moment before sleeping |
 | `src/wire.rs` | src | m | 22 struct · 10 enum · 7 fn · 7 const | Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call, CancelReason +24 | The protocol's messages |

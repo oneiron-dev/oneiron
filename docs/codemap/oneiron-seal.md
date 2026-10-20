@@ -24,7 +24,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/cms/policy.rs` | src | s | 10 crate-vis | — | Attribute/ESS binding and frozen signature-suite verification gates |
 | `src/native/cms/tests.rs` | test | m | — | — | CMS assembly/parsing round-trip, canonicality, and version-gating tests |
 | `src/native/engine.rs` | src | m | 1 struct · 3 fn | NativeSealEngine | `NativeSealEngine`: composition of config, backend, fetcher, and clock |
-| `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 3 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
+| `src/native/fetch.rs` | src | m | 1 struct · 1 fn · 1 re-export · 2 crate-vis | SsrfGuardedHttpFetcher | SSRF-guarded fetcher (§5) |
 | `src/native/mod.rs` | src | s | 2 re-export · 6 crate-vis | — | Native implementation modules (feature `native`) |
 | `src/native/pdf/incremental.rs` | src | s | 5 crate-vis | — | Byte-exact incremental append: xref table/stream emitters, EOF glue, ByteRange/Contents patch, hash and… |
 | `src/native/pdf/lex.rs` | src | m | 12 crate-vis | — | Bounded PDF structural tokens |
@@ -59,6 +59,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/native/verify/verify_tests_time_lta_a.rs` | src | m | 18 crate-vis | — | Verifier tests C: skew and freshness tests, DocTimeStamp covered-set tests, LTA fixture and revision-append… |
 | `src/native/verify/verify_tests_timestamp_evidence.rs` | src | s | — | — | Public native-verifier regressions for both RFC 3161 timestamp forms |
 | `src/organ.rs` | src | m | 1 struct · 8 const | SealOrgan | The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run as its own process behind the organ… |
+| `src/organ/report.rs` | src | s | 2 crate-vis | — | A verdict as the engine reads it: the native report's coarse fields, its full JSON, and the revision… |
 | `tests/esign_host_e2e.rs` | test | L | — | — | The engine's seal task over the real organ host and the real seal organ process, not a simulated sealer: a… |
 | `tests/it/fetch_policy.rs` | test | m | — | — | Fetch-policy tests (§5, §10), all behind `network-fetch`: the guarded client's pre-network denials |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary for the vector suites |
