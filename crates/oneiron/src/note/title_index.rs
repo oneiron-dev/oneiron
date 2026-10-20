@@ -39,13 +39,17 @@ fn title_key(
     note: EntityId,
     title: Option<&str>,
 ) -> Result<Option<TitleKey>> {
-    title
-        .map(|title| {
-            validate_title(title)?;
-            let (_, core) = super::verbs::note_core(vault, txn, note)?;
-            Ok(TitleKey(reservation_key(core.author_ref, title)))
-        })
-        .transpose()
+    let Some(title) = title else {
+        return Ok(None);
+    };
+    validate_title(title)?;
+    let (_, core) = super::verbs::note_core(vault, txn, note)?;
+    // An erased author holds no reservation: no author namespace stands in
+    // for no one (FIX 6072). The title still reads from the document.
+    Ok(core
+        .author_ref
+        .id()
+        .map(|author| TitleKey(reservation_key(author, title))))
 }
 
 /// Titles that differ only in case and spacing are one title.

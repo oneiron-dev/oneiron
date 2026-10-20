@@ -6,6 +6,7 @@ use super::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::outbound::*;
+use crate::side_table::classified::SideGet;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
@@ -97,17 +98,24 @@ fn admitted_owner_press_in(
         effect_digest: proof.effect_digest().to_hex(),
     }))
 }
-/// The marker of the act `intent_ref` admitted, if one ran.
+/// The marker of the act `intent_ref` admitted, if one ran: the store's own
+/// failure (the outer error) apart from a marker that does not decode (the
+/// inner one), which waits only the delivery that reads it (FIX 6482).
 pub(super) fn dispatch_marker_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     intent_ref: &str,
-) -> Result<Option<DispatchMarker>> {
-    DISPATCH_MARKER.get(
+) -> Result<Result<Option<DispatchMarker>>> {
+    match DISPATCH_MARKER.get_classified(
         &vault.store,
         txn,
         blake3::hash(intent_ref.as_bytes()).as_bytes(),
-    )
+    ) {
+        SideGet::Missing => Ok(Ok(None)),
+        SideGet::Decoded(marker) => Ok(Ok(Some(marker))),
+        SideGet::DecodeError(unreadable) => Ok(Err(unreadable)),
+        SideGet::StoreError(error) => Err(error),
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

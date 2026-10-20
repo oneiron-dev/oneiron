@@ -12,15 +12,17 @@
 //! goes out as before.
 //!
 //! The same `delivery_receipts` list each invitation or reminder still
-//! queued and unexported that waits on its own (FIX 6423, 6455), its `state`
-//! `waits` with its typed reason: an event of its document awaits the
-//! owner's answer (`document_awaits_owner`), its document's trail does not
-//! read (`document_unreadable`), or the send's admitted call does not read
-//! (`send_unreadable`). The view reads each one now through the mint's own
-//! classifier, so it lists exactly what the next export would wait on. A
-//! lease whose link was minted is out, and is not listed. A queued notice
-//! that does not read (`notice_unreadable`) names no document to list it
-//! under; the exporter logs that wait alone.
+//! queued and unexported that waits on its own (FIX 6423, 6455, 6482), its
+//! `state` `waits` with its typed reason: an event of its document awaits
+//! the owner's answer (`document_awaits_owner`), its document's trail does
+//! not read (`document_unreadable`), the send's dispatch marker or admitted
+//! call does not read (`send_unreadable`), or its recipient's signing links
+//! do not read (`links_unreadable`). The view reads each one now through the
+//! mint's own classifier, so it lists exactly what the next export would
+//! wait on, and lists it even when the document's own trail does not read
+//! (FIX 6481). A lease whose link was minted is out, and is not listed. A
+//! queued notice that does not read (`notice_unreadable`) names no document
+//! to list it under; the exporter logs that wait alone.
 
 use super::delivery_capability::{
     DELIVERY_KIND, DeliveryRead, EsignDeliveryWait, delivery_key, delivery_read_in,
@@ -212,7 +214,8 @@ pub(super) fn delivery_receipts_in(
 /// Where `row`, a delivery of `notice`, stands for the owner's receipts:
 /// ended with the reason its failed row keeps, waiting with the reason the
 /// mint's own read gives now, or `None` while it may still go or once it is
-/// out (a lease whose link was minted) or done.
+/// out (a lease whose link was minted) or done. A lease whose recipient's
+/// links do not read is not known to be out, so the mint's read lists it.
 fn receipt_state_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -229,7 +232,8 @@ fn receipt_state_in(
     }
     if row.state.is_terminal()
         || !notice.carries_signing_link()
-        || (row.state == AttemptState::Leased && lease_digest_in(vault, txn, row)?.is_some())
+        || (row.state == AttemptState::Leased
+            && matches!(lease_digest_in(vault, txn, row)?, Ok(Some(_))))
     {
         return Ok(None);
     }

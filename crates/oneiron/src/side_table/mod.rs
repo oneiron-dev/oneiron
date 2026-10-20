@@ -7,6 +7,7 @@
 //! open gate holds before a store exists), so a session view stages into its overlay and the base store
 //! writes the base table through the same body.
 
+pub(crate) mod classified;
 mod codec;
 mod decls;
 mod key;

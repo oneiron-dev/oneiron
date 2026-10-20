@@ -192,11 +192,13 @@ pub(crate) fn import_note_from_authority(
         };
         let old = previous.view()?;
         let new = next.view()?;
+        // An erased twin keeps its record (ErasedWins); a live actor never
+        // stands in for an erased one.
         if old.pins.iter().any(|pin| !new.pins.contains(pin))
             || old
                 .authorship
                 .iter()
-                .any(|record| !new.authorship.contains(record))
+                .any(|record| !new.authorship.iter().any(|kept| record.kept_by(kept)))
         {
             return Err(invalid("NOTE authority state would discard provenance"));
         }

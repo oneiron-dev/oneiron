@@ -135,12 +135,14 @@ const KEY_SOURCE_REVISION: &str = NOTE_BODY_KEYS[3];
 /// A decoded NOTE body.
 ///
 /// `author_ref` is engine-stamped from the bound facade actor, never caller
-/// data, and always equals the target of the NOTE's mandatory `AuthoredBy`
-/// edge.
+/// data. A live author always equals the target of the NOTE's mandatory
+/// `AuthoredBy` edge. An erased one ([`NoteActor::Erased`], stored as
+/// `"erased"`) names no one and no edge: it reads as an unknown author, never
+/// matches a live writer and opens no author-only read (FIX 6072, Engine R2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoteBody {
     pub kind: NoteKind,
-    pub author_ref: EntityId,
+    pub author_ref: NoteActor,
     pub markdown: String,
     /// Opaque source revision identity, stored as exactly 16 binary bytes.
     pub source_revision_ref: [u8; 16],
@@ -194,7 +196,7 @@ pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
         ),
         (
             Value::from(KEY_AUTHOR_REF),
-            Value::from(body.author_ref.to_hex()),
+            Value::from(body.author_ref.to_wire()),
         ),
         (
             Value::from(KEY_MARKDOWN),
@@ -213,7 +215,8 @@ pub fn encode_note_body(body: &NoteBody) -> Result<Vec<u8>> {
 
 /// Decodes a NOTE body, fail-closed on every deviation from the ABI: bad
 /// MessagePack, trailing bytes, non-string or unknown or duplicate keys, an
-/// unknown kind, an unparseable actor ref, and blank markdown.
+/// unknown kind, an actor ref that is neither an id nor the erased marker,
+/// and blank markdown.
 pub fn decode_note_body(bytes: &[u8]) -> Result<NoteBody> {
     decode_note_body_using(bytes, NoteKind::parse)
 }
@@ -240,7 +243,7 @@ pub(crate) fn decode_note_body_using(
     };
 
     let mut kind: Option<NoteKind> = None;
-    let mut author_ref: Option<EntityId> = None;
+    let mut author_ref: Option<NoteActor> = None;
     let mut markdown: Option<String> = None;
     let mut source_revision_ref = None;
     let mut seen = [false; NOTE_BODY_KEYS.len()];
@@ -282,11 +285,9 @@ pub(crate) fn decode_note_body_using(
                     .ok_or(Error::Record(RecordError::InvalidNoteBody(
                         "author_ref must be a UTF-8 string",
                     )))?;
-                author_ref = Some(EntityId::from_hex(raw).map_err(|_| {
-                    Error::Record(RecordError::InvalidNoteBody(
-                        "author_ref is not a 32-hex id",
-                    ))
-                })?);
+                author_ref = Some(NoteActor::from_wire(raw).ok_or(Error::Record(
+                    RecordError::InvalidNoteBody("author_ref is not a 32-hex id or erased"),
+                ))?);
             }
             KEY_MARKDOWN => {
                 let raw = value
@@ -365,7 +366,7 @@ pub(crate) fn note_body_readable(
     Ok(match context {
         ContextDefault::OwnerOnly | ContextDefault::ExplicitOnly => match actor {
             Some(actor) => {
-                *actor == body.author_ref || reader_imported_note(store, txn, &body, *actor)?
+                body.author_ref.is(*actor) || reader_imported_note(store, txn, &body, *actor)?
             }
             None => false,
         },
@@ -375,14 +376,18 @@ pub(crate) fn note_body_readable(
 
 /// Whether `body` came in through an import for `reader`: its author is a
 /// folder's import MACHINE that imports for that reader. Such a note reads
-/// as its importer's own, though the importer did not write it (OF-554).
+/// as its importer's own, though the importer did not write it (OF-554). An
+/// erased author is no importer's.
 pub(crate) fn reader_imported_note(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
     body: &NoteBody,
     reader: EntityId,
 ) -> Result<bool> {
-    Ok(import::note_importer_in_txn(store, txn, &body.author_ref)? == Some(reader))
+    let Some(author) = body.author_ref.id() else {
+        return Ok(false);
+    };
+    Ok(import::note_importer_in_txn(store, txn, &author)? == Some(reader))
 }
 
 /// Whether NOTE `id` is explicit-only, by its kind or its override: out of

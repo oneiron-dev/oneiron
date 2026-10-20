@@ -12355,7 +12355,7 @@ impl AgentVerb {
                 "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."
             }
             Self::VaultEsignGet => {
-                "Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."
+                "Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail, with its delivery receipts. A trail that does not read answers trail unreadable with its error, its receipts still listed."
             }
             Self::VaultEsignLinksIssue => {
                 "The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."
