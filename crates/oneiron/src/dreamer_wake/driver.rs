@@ -30,7 +30,8 @@ use super::deadline::{DREAMER_WRAP_UP_NOTICE_PERCENT, WakeCancellation, WakePass
 use super::types::WakeProgressLane;
 use super::types::{
     DreamerAttemptExecution, DreamerAttemptExecutor, LandingRequest, ProgressKind, RunWakePass,
-    WakeAttemptContext, WakeMilestoneAuthor, WakePassReport, WakePassStop, WakeTrigger,
+    WakeAttemptContext, WakeAttemptMeter, WakeMilestoneAuthor, WakePassReport, WakePassStop,
+    WakeTrigger,
 };
 
 /// Park reason stamped on attempts cut at the wake-pass ceiling.
@@ -686,6 +687,10 @@ impl<'a> DreamerWakeDriver<'a> {
             // stops.
             let cancel_requested = cancel.is_cancelled();
             let mut backlog_left = false;
+            // What the attempt's own run line charged, read outside the
+            // executor's future (SCAN C012): an attempt that never
+            // dispatched registers nothing and settles zero.
+            let spend_meter = WakeAttemptMeter::default();
             let executed = if cancel_requested {
                 Ok(DreamerAttemptExecution::Park {
                     reason: DREAMER_CANCELLED_PARK_REASON.to_owned(),
@@ -745,6 +750,7 @@ impl<'a> DreamerWakeDriver<'a> {
                         }
                         _ => None,
                     },
+                    spend_meter: Some(&spend_meter),
                 };
                 if ctx.prepared_attempt.is_some_and(
                     crate::dreamer_consolidation::PreparedConsolidationAttempt::sources_truncated,
@@ -833,16 +839,18 @@ impl<'a> DreamerWakeDriver<'a> {
                     if !step_layer_parked && !self.deadline.expired() {
                         // H-S5/R2 (ONE-1683): a non-deadline executor error
                         // must release what admission acquired BEFORE the
-                        // error propagates — refund the budget reservation
+                        // error propagates — settle the budget reservation
                         // and park the admitted attempt, mirroring the Park arm
                         // below. Returning the error first used to leak the
                         // admitted attempt (stuck leased) AND its reservation.
-                        self.store
-                            .abort_budget_reservation(AbortDreamerBudgetReservation {
-                                budget_id: line.clone(),
-                                child_attempt: attempt_id,
-                                now: input.now,
-                            })?;
+                        // What its run line charged stays spent; the rest is
+                        // refunded (SCAN C012).
+                        self.settle_charged_or_abort(
+                            &line,
+                            attempt_id,
+                            spend_meter.charged_units(),
+                            input.now,
+                        )?;
                         // The durable reason keeps the whole error
                         // Display; the full error propagates below
                         // untouched.
@@ -986,14 +994,16 @@ impl<'a> DreamerWakeDriver<'a> {
                     report.parked += 1;
                 }
                 DreamerAttemptExecution::Park { reason, cause } => {
-                    // The lease is not settled as spent — refund the
-                    // reservation.
-                    self.store
-                        .abort_budget_reservation(AbortDreamerBudgetReservation {
-                            budget_id: line.clone(),
-                            child_attempt: attempt_id,
-                            now: input.now,
-                        })?;
+                    // The lease is not settled as spent: what its run line
+                    // charged stays spent (SCAN C012), the rest of the
+                    // reservation is refunded, all of it for an attempt that
+                    // never dispatched.
+                    self.settle_charged_or_abort(
+                        &line,
+                        attempt_id,
+                        spend_meter.charged_units(),
+                        input.now,
+                    )?;
                     let hard_cut =
                         reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
                     if self.store.parked_attempt(attempt_id)?.is_some() {
@@ -1035,6 +1045,39 @@ impl<'a> DreamerWakeDriver<'a> {
         }
 
         Ok(report)
+    }
+
+    /// Settles a failed or plainly parked attempt's reservation on `line`
+    /// with what its run line `charged` (SCAN C012). A settlement the counter
+    /// refuses (more than the reservation and the counter's remaining units)
+    /// falls back to the zero abort this path always made, so the attempt
+    /// still parks or fails exactly as before.
+    fn settle_charged_or_abort(
+        &self,
+        line: &str,
+        attempt_id: crate::attempt_queue::AttemptId,
+        charged: u64,
+        now: u64,
+    ) -> Result<()> {
+        if let Err(error) = self.store.settle_budget(SettleDreamerBudget {
+            budget_id: line.to_owned(),
+            child_attempt: attempt_id,
+            actual_units: charged,
+            now,
+        }) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
+                "the charged settlement was refused; the reservation is aborted at zero"
+            );
+            self.store
+                .abort_budget_reservation(AbortDreamerBudgetReservation {
+                    budget_id: line.to_owned(),
+                    child_attempt: attempt_id,
+                    now,
+                })?;
+        }
+        Ok(())
     }
 
     /// Fires the ONE 80% wrap-up notice: `max(counter_percent,
