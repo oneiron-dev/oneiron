@@ -291,6 +291,8 @@ impl Vault {
             ));
         }
         txn.commit()?;
+        // A floor this commit moved is judged again at once (FIX 5505).
+        self.apply_pending_rebinds_after_commit();
         Ok(())
     }
 

@@ -450,6 +450,45 @@ pub(super) fn head_position(head: &[u8]) -> Result<CustodyPosition> {
     CustodyPosition::from_bytes(&parse(head)?.position).ok_or_else(head_corrupt)
 }
 
+/// The position the first bytes of a head claim, before the rest of it has
+/// arrived: a residence stage an upload is still writing (FIX 6415). The
+/// wire is a map whose first two entries are [`HeadWire`]'s version and
+/// position, read alone here. `None` when they are not there yet, or are
+/// not this engine's. Unauthenticated, as [`head_position`] is.
+pub(super) fn staged_position(lead: &[u8]) -> Option<CustodyPosition> {
+    use rmpv::Value;
+    let body = lead.strip_prefix(HEAD_MAGIC)?;
+    let shape = rmp_serde::to_vec_named(&HeadWire {
+        version: HEAD_VERSION,
+        position: Vec::new(),
+        compartments: Vec::new(),
+    })
+    .ok()?;
+    let (map, entries) = body.split_first()?;
+    if shape.first() != Some(map) {
+        return None;
+    }
+    let mut cursor = std::io::Cursor::new(entries);
+    let version_key = rmpv::decode::read_value(&mut cursor).ok()?;
+    let version = rmpv::decode::read_value(&mut cursor).ok()?;
+    let position_key = rmpv::decode::read_value(&mut cursor).ok()?;
+    let position = rmpv::decode::read_value(&mut cursor).ok()?;
+    match (version_key, version, position_key, position) {
+        (
+            Value::String(version_key),
+            Value::Integer(version),
+            Value::String(position_key),
+            Value::Binary(position),
+        ) if version_key.as_str() == Some("version")
+            && version.as_u64() == Some(u64::from(HEAD_VERSION))
+            && position_key.as_str() == Some("position") =>
+        {
+            CustodyPosition::from_bytes(&position)
+        }
+        _ => None,
+    }
+}
+
 /// The compartment key one of `wraps` gives `opener`, if any does.
 fn unwrap_key(
     position: &CustodyPosition,

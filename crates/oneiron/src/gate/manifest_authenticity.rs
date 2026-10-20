@@ -468,6 +468,8 @@ impl Vault {
         };
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, manifest, updated, now)?;
         txn.commit()?;
+        // A floor this commit moved is judged again at once (FIX 5505).
+        self.apply_pending_rebinds_after_commit();
         Ok(true)
     }
 
@@ -498,6 +500,8 @@ impl Vault {
         self.write_owner_policy_manifest_in_txn(owner, &mut txn, target, data, now)?;
         REKEY.put(&self.store, &mut txn, &HexId(legacy), &target)?;
         txn.commit()?;
+        // A floor this commit moved is judged again at once (FIX 5505).
+        self.apply_pending_rebinds_after_commit();
         Ok(())
     }
 }
