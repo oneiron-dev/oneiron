@@ -1,11 +1,12 @@
 //! The erase of a capsule's actor (FIX 6144, KEY STORE = A), in the erase's
 //! own writer. Each capsule of the actor's steps keeps what the step was and
 //! loses what it held: its request, start and fork answers are released as
-//! the run's occurrences, each with only its own taint and secret marks,
-//! and erased as kept copies (`store::erase_bodies_in_txn`), so another
-//! holder of the same bytes keeps them and its marks, and the last holder's
-//! release retires them. A restore runs this again for every erased actor,
-//! so a restored capsule stays erased.
+//! the run's occurrences, each with only its own taint and secret marks, so
+//! another holder of the same bytes keeps them and its marks. A soft delete
+//! runs this scrub too, so it retires no body instance: the erase cause
+//! comes from the provenance door alone (KS-2B1), and a release keeps the
+//! restore window. A restore runs this again for every erased actor, so a
+//! restored capsule stays erased.
 //!
 //! The same tombstone fences every later write: a late capture, a finalize
 //! and a fork answer's publication read it in their own writer and keep
@@ -17,7 +18,7 @@ use super::super::records::{RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS};
 use super::{CAPSULES, FORKS, ForkRow};
 use crate::compaction::output::OutputRef;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
-use crate::provenance::body::{owned_body_in_txn, release_body_in_txn};
+use crate::provenance::body::release_body_in_txn;
 use crate::side_table::SideKey;
 use crate::{EntityId, Result, Vault};
 
@@ -67,8 +68,7 @@ pub(crate) fn erase_capsule_actor_in_txn(
                 .filter(|(at, _, _)| *at == key)
                 .map(|(_, body, path)| (*body, path.clone())),
         );
-        let held = release_bodies_in_txn(vault, wtxn, capsule.run, &bodies)?;
-        crate::store::erase_bodies_in_txn(&vault.store, wtxn, &capsule.run, &held)?;
+        release_bodies_in_txn(vault, wtxn, capsule.run, &bodies)?;
         CAPSULES.put(vault, wtxn, &key, &erased(capsule))?;
     }
     Ok(())
@@ -111,15 +111,13 @@ fn fork_answers_in_txn(
 }
 
 /// Releases run `owner`'s occurrence of each of `bodies`, with that
-/// occurrence's own taint and secret marks and no other's. Returns the
-/// digest each released occurrence held, read before it went.
+/// occurrence's own taint and secret marks and no other's.
 fn release_bodies_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     owner: EntityId,
     bodies: &[(OutputRef, String)],
-) -> Result<Vec<[u8; 32]>> {
-    let mut held = Vec::new();
+) -> Result<()> {
     for (body, path) in bodies {
         let output = CodeRunRawOutput {
             path: path.clone(),
@@ -129,15 +127,9 @@ fn release_bodies_in_txn(
         let marks = occurrence.mark_key(&output.handle);
         RAW_OUTPUT_TAINTS.delete(&vault.store, wtxn, &marks)?;
         RAW_OUTPUT_SECRETS.delete(&vault.store, wtxn, &marks)?;
-        let id = occurrence.id();
-        if let Some(descriptor) = owned_body_in_txn(&vault.store, wtxn, &owner, &id)?
-            && let Some(kept) = descriptor.state.held()
-        {
-            held.push(kept.blake3);
-        }
-        release_body_in_txn(&vault.store, wtxn, &owner, &id)?;
+        release_body_in_txn(&vault.store, wtxn, &owner, &occurrence.id())?;
     }
-    Ok(held)
+    Ok(())
 }
 
 /// Whether `id`'s entity is here and is no actor: a person, a machine or an
