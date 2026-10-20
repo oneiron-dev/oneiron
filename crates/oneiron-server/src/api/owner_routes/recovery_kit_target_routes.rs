@@ -181,7 +181,7 @@ impl FromRequestParts<Arc<SyncServer>> for OwnerDevice {
             return Err(kit_target_refused(
                 KIT_REQUIRES_OWNER_DEVICE,
                 "this install is hosted: recovery kit work runs only on the owner's own device \
-                 (his own machine or a self-hosted install), so it takes no kit here",
+                 (your own machine or a self-hosted install), so it takes no kit here",
                 "Run this from your own machine or self-hosted install; your say-so here still \
                  reaches it.",
             )
