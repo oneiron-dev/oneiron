@@ -1,10 +1,11 @@
 //! What the run's door adds to a guest's answer (CUA-001): the record of a
 //! person's takeover that ended, and the agent's move to another tab or
-//! window, each once, on the agent's next answer. A driver's own answer
-//! carries neither; the door writes them beside the answer's own fields, and
+//! window, each once, on the agent's next answer, and, on every browser
+//! answer, the engine that ran it (FIX 6680). A driver's own answer carries
+//! none of them; the door writes them beside the answer's own fields, and
 //! these types declare them, so a program reads them typed.
 
-use crate::TabSwitch;
+use crate::{BrowserEngine, TabSwitch};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -52,8 +53,8 @@ pub enum WindowSwitchCause {
 }
 
 /// A browser verb's answer as the run's door gives it: the verb's own
-/// answer, and, once each, the takeover a person ended and the agent's move
-/// to another tab since its last answer.
+/// answer, the engine that ran it, and, once each, the takeover a person
+/// ended and the agent's move to another tab since its last answer.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserAnswer<T> {
     #[serde(flatten)]
@@ -64,6 +65,9 @@ pub struct BrowserAnswer<T> {
     /// The agent's verbs moved to another tab since its last answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<TabSwitch>,
+    /// The engine the browser ran this verb on, read verbs included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub engine: Option<BrowserEngine>,
 }
 
 impl<T> BrowserAnswer<T> {
@@ -75,6 +79,7 @@ impl<T> BrowserAnswer<T> {
             answer,
             takeover: None,
             switched: None,
+            engine: None,
         }
     }
 }

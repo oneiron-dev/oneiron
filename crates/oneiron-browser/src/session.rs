@@ -42,16 +42,20 @@
 //! A long outline is answered in pages (Rule 5): each answer carries as
 //! many rows as fit one page, and `next` names the cursor `observe` reads
 //! the rest from.
+//!
+//! The session records the engine it attached (FIX 6680): today's pipe
+//! guest runs Chromium. Every receipt names it, with the act's fact when
+//! the page showed no change; such an act is receipted as every act is.
 
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::driver::pages::Base;
 use crate::retention::HandleRetention;
 use crate::{
-    AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserError, BrowserPersonInput,
-    BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY,
-    EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput,
-    FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput, ImageOutput,
+    AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserEngine, BrowserError,
+    BrowserPersonInput, BrowserTab, ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE,
+    EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput,
+    ExpectOutput, FindInput, FindOutput, HandleInfo, HandoverInput, HandoverOutput, ImageOutput,
     LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
     LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, NoDecider,
     Observation, ObservationPage, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
@@ -152,6 +156,7 @@ impl BrowserSession {
         } = transport;
         let driver = CdpDriver::attach(
             Pipe::with_egress(reader, writer, Some(relay)),
+            BrowserEngine::Chromium,
             config.wait_cap,
             retention,
         )?;
@@ -217,6 +222,12 @@ impl BrowserSession {
     #[must_use]
     pub fn manifest(&self) -> &SessionManifest {
         &self.manifest
+    }
+
+    /// The engine the session attached, which runs its every verb.
+    #[must_use]
+    pub const fn engine(&self) -> BrowserEngine {
+        self.driver.engine()
     }
 
     /// The PNG bytes of a screenshot this session took, while it holds them.
@@ -520,6 +531,8 @@ impl BrowserSession {
             screenshot,
             capture_id,
             screenshot_evidence: None,
+            engine: Some(self.driver.engine()),
+            fact: observation.fact.clone(),
         };
         // The pixels are kept before the receipt is stored, while the
         // session still holds them.
@@ -666,7 +679,8 @@ impl BrowserDriver for BrowserSession {
             (Some(class), Some(row)) => self.press_for(class, row)?,
             _ => PressMode::None,
         };
-        let mut observation = self.driver.click_point(x, y, &Base::of(input.base))?;
+        let base = Base::of(input.base);
+        let mut observation = self.driver.click_point(x, y, row.as_ref(), &base)?;
         let class = receipt_class(class, row.as_ref());
         self.receipt("click_at", row.as_ref(), class, press, &mut observation);
         Ok(observation)

@@ -30,6 +30,7 @@ use crate::{BrowserError, Row};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
+use std::time::Instant;
 
 /// Samples of the page's documents one read takes before it stops waiting
 /// for the page to hold still between them.
@@ -443,9 +444,27 @@ impl CdpDriver {
         Ok(self.documents()?.shown(&self.target))
     }
 
+    /// Every document the front tab shows now, as one name, both reads
+    /// answered by `deadline`: the change check's sample (FIX 6680).
+    pub(super) fn shown_documents_by(&self, deadline: Instant) -> Result<String, BrowserError> {
+        Ok(self.documents_by(Some(deadline))?.shown(&self.target))
+    }
+
     /// The front tab's documents as they stand.
     fn documents(&self) -> Result<Documents, BrowserError> {
-        let tree = self.page("Page.getFrameTree", json!({}))?;
+        self.documents_by(None)
+    }
+
+    /// The front tab's documents as they stand: both reads answered by
+    /// `deadline` when one is named, else each within its own call bound.
+    fn documents_by(&self, deadline: Option<Instant>) -> Result<Documents, BrowserError> {
+        let read = |method: &str, params: Value| match deadline {
+            Some(deadline) => self
+                .pipe
+                .call(Some(&self.session), method, params, deadline),
+            None => self.page(method, params),
+        };
+        let tree = read("Page.getFrameTree", json!({}))?;
         let text = |frame: &Value, name: &str| {
             frame
                 .get(name)
@@ -471,8 +490,7 @@ impl CdpDriver {
                     .flatten(),
             );
         }
-        let root = self
-            .page("DOM.getDocument", json!({"depth": 0}))?
+        let root = read("DOM.getDocument", json!({"depth": 0}))?
             .pointer("/root/backendNodeId")
             .and_then(Value::as_u64);
         Ok(Documents {
