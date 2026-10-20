@@ -545,7 +545,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/transfer.rs` | src | m | 31 crate-vis | — | Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges |
 | `src/api/vad.rs` | src | m | 9 crate-vis | — | — |
 | `src/api/write_facet.rs` | src | s | 4 crate-vis | — | Where a write by a credential narrowed to some facets lands (owner ruling FACET-READ = A; placement stays… |
-| `src/auth.rs` | src | L | 46 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
+| `src/auth.rs` | src | L | 47 crate-vis | — | HTTP authentication for log-backed version-two capability slips |
 | `src/auth/account_key.rs` | src | m | 5 struct · 1 enum · 1 trait · 6 fn · 1 type · 2 const · 1 crate-vis | AccountKeyConfig, AccountKeyError, AccountKeys, CentralKeyCheck, CentralKeyVerdict, PunchAck, VerifiedAccountKey | Node-side account API key verification (OF-448, the M4 node path of CROSS-ARCH-0008 section 4, owner pick B… |
 | `src/auth/binding_admission.rs` | src | s | 1 crate-vis | — | Consume holder proofs at the network door, once per request or upgrade, and stop serving a shared vault its… |
 | `src/auth/client_address.rs` | src | s | 2 crate-vis | — | The address a request's client is charged under: the key booking admission counts per-address quotas by |
@@ -753,7 +753,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/window_sync.rs` | src | m | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
 | `src/home_candidacy.rs` | src | s | 1 crate-vis | — | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… |
 | `src/hook_verdict.rs` | src | s | 2 crate-vis | — | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
-| `src/http_listener.rs` | src | m | 8 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
+| `src/http_listener.rs` | src | m | 9 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/tests.rs` | test | m | 1 crate-vis | — | The listener's admission, end to end over real sockets (C4, and the rate law of ARCH-0044 C5): headers that… |
 | `src/idempotency.rs` | src | m | 9 crate-vis | — | — |
 | `src/idempotency/reclaim.rs` | src | s | 2 crate-vis | — | Reclaim of expired idempotency entries (FIX 5951) |
@@ -871,7 +871,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/ladder/step_attempt.rs` | src | s | 1 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
 | `src/models/media.rs` | src | L | 3 struct · 17 fn · 24 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
-| `src/models/media/jobs.rs` | src | s | 7 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
+| `src/models/media/jobs.rs` | src | s | 8 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
+| `src/models/media/jobs/custody.rs` | src | s | 2 crate-vis | — | A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2) |
 | `src/models/mod.rs` | src | L | 2 struct · 20 fn · 14 re-export · 15 crate-vis | ModelRuntime, Seat | The one provider abstraction: `[models]` in, one backend per seat out |
 | `src/models/offer.rs` | src | s | 1 struct · 1 enum · 2 fn · 4 crate-vis | OfferEndpoint, ServedOffer | What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays… |
 | `src/models/openai.rs` | src | s | 3 crate-vis | — | The OpenAI-compatible transport: any `/v1/chat/completions` server |

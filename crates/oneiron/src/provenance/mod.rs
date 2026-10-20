@@ -209,8 +209,10 @@ use rmpv::Value;
 /// holder this releases retires, and one another holder keeps owes its
 /// retirement to that holder's release (KS-2A); so does every instance a
 /// row-held response `row` owns was carried under, and a step-state payload
-/// its stamps name goes now (KS-2B1). A delete keeps every key, so its
-/// restore window stays: this door is the one erase cause.
+/// its stamps name goes now (KS-2B1), as do the host's HTTP idempotency
+/// entries and media jobs its stamps name, each left its erased form
+/// (KS-2B2). A delete keeps every key, so its restore window stays: this
+/// door is the one erase cause.
 pub(crate) fn erase_row_provenance_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -237,6 +239,7 @@ pub(crate) fn erase_row_provenance_in_txn(
     if erase {
         crate::store::erase_bodies_in_txn(store, txn, row, &held)?;
         crate::llm::erase_step_state_owner_in_txn(store, txn, row)?;
+        crate::store::erase_sync_response_owner_in_txn(store, txn, row)?;
         crate::store::erase_response_owner_in_txn(store, txn, row)?;
     }
     Ok(())

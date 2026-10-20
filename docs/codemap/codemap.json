@@ -14356,7 +14356,7 @@
      "path": "src/code_sandbox/egress/mod.rs",
      "purpose": "The engine's open egress proxy",
      "surface": {
-      "fn": 3,
+      "fn": 4,
       "re-export": 1,
       "struct": 2
      }
@@ -44498,7 +44498,7 @@
      "path": "src/recovery/checkpoint/response_rows.rs",
      "purpose": "The row-held responses a checkpoint carries (KS-2B1, FIX 5683 part B1): a turn program's STEP bodies, LLM…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -51976,9 +51976,9 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 27,
       "mod": 1,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -52407,6 +52407,33 @@
      "purpose": "Vault-scoped structural-kind registry core: keys, record codec, load and rebuild, and registration vet rules",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IdempotencyEntry",
+      "ResponseStamps"
+     ],
+     "path": "src/store/sync_responses.rs",
+     "purpose": "The host's row-held responses in `sync_state` under body custody (KS-2B2, FIX 5683 part B2; owner KEY STORE…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/sync_responses/media.rs",
+     "purpose": "A media job row's stamps, mask and fenced write (KS-2B2)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -59875,6 +59902,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault/response_bodies.rs",
+     "purpose": "The host's typed writes of its row-held responses (KS-2B2, FIX 5683 part B2): an HTTP idempotency entry and…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault/retrieval_trace_key.rs",
      "purpose": "The per-vault key over every stored retrieval-trace fork hash",
      "surface": {
@@ -65134,7 +65171,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 115,
+     "files": 117,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65274,7 +65311,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65360,7 +65397,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4066,
+   "source_files": 4069,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67664,7 +67701,7 @@
      "purpose": "The strip rule (SBX-001 for the model-key adapter only, ARCH-0069 `#model-adapter-strip-forms`): before a…",
      "surface": {
       "const": 1,
-      "crate-vis": 6,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -67675,6 +67712,16 @@
      "path": "src/strip/tests.rs",
      "purpose": "The strip forms of ARCH-0069 `#model-adapter-strip-forms`, each written the way a provider could echo it…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/strip/watch.rs",
+     "purpose": "The strip rule read as a reply streams (FIX 6103), moved out of the strip module whole: [`KeyWatch`]",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "s",
@@ -67778,7 +67825,7 @@
      "purpose": "The shape rows: for each wire protocol the broker speaks, the method, the path, the content type, where the…"
     },
     "strip": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -67794,7 +67841,7 @@
    },
    "over_bar": 0,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
-   "source_files": 15,
+   "source_files": 16,
    "test_files": 5
   },
   "oneiron-browser": {
@@ -68320,6 +68367,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostNetFloor",
+      "HostNetPermit",
+      "UnmeteredFloor"
+     ],
+     "path": "src/host_net_floor.rs",
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)",
+     "surface": {
+      "const": 2,
+      "fn": 4,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -68349,7 +68413,7 @@
      "surface": {
       "enum": 2,
       "fn": 12,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 8,
       "type": 1
      }
@@ -68410,7 +68474,17 @@
      "path": "src/supervisor/lifetime.rs",
      "purpose": "A guest socket's host entry lives as long as the guest holds the socket (FIX 5978)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/relay_workers.rs",
+     "purpose": "Bounded relay workers for a guest's datagrams (FIX 5979)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -68447,6 +68521,13 @@
      "layout": "file",
      "purpose": "Host-owned transport"
     },
+    "host_net_floor": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The host's floor for a guest's network work (FIX 5978, FIX 5979)"
+    },
     "launcher": {
      "files": 1,
      "impl_vault": false,
@@ -68476,7 +68557,7 @@
      "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
     },
     "supervisor": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -68499,7 +68580,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 11,
+   "source_files": 13,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -70261,7 +70342,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit/geometry.rs",
-     "purpose": "`set_preset` and `set_glue`: a shape's or connector's preset geometry, and a connector's glue",
+     "purpose": "`set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue",
      "surface": {
       "crate-vis": 6
      }
@@ -71030,7 +71111,7 @@
      "path": "src/live/svg_fallback.rs",
      "purpose": "A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -82283,7 +82364,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 46
+      "crate-vis": 47
      }
     },
     {
@@ -84763,7 +84844,7 @@
      "path": "src/http_listener.rs",
      "purpose": "The TCP accept loop the server and the embedder endpoint serve through",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -86128,7 +86209,17 @@
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/media/jobs/custody.rs",
+     "purpose": "A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -88731,7 +88822,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 46,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -88873,7 +88964,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 889,
+   "source_files": 890,
    "test_files": 182
   },
   "oneiron-spawn": {
