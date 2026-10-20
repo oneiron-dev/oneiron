@@ -19,6 +19,8 @@
 mod bundle;
 mod content;
 #[cfg(feature = "sync")]
+mod content_landed;
+#[cfg(feature = "sync")]
 mod content_window;
 mod doors;
 mod kit;
@@ -51,6 +53,8 @@ pub use self::bundle::{
 };
 #[cfg(feature = "sync")]
 pub use self::bundle::{PadAdmissionTarget, SealedPadAdmissionGrant};
+#[cfg(feature = "sync")]
+pub(crate) use self::content_landed::unland_window_in_txn;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{

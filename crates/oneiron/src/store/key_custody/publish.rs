@@ -194,6 +194,25 @@ fn recorded(journal: &Journal) -> Result<Option<Publication>> {
     Ok(read_whole(&journal.dir().join(STATUS))?.and_then(|bytes| decode_status(&bytes)))
 }
 
+/// Records `publication` as where publishing got, under the journal's lock,
+/// unless the status recorded already is a pass's at a newer local position
+/// of the lineage: an older pass that finished last never moves the status
+/// back (FIX 6414). A pass at the same position replaces it, as it read the
+/// same log later.
+fn record_status(journal: &Journal, publication: &Publication) -> Result<()> {
+    let _lock = journal.lock()?;
+    let newer_held = recorded(journal)?
+        .and_then(|held| held.local)
+        .zip(publication.local)
+        .is_some_and(|(held, local)| {
+            held.same_lineage(&local) && (held.epoch, held.seq) > (local.epoch, local.seq)
+        });
+    if newer_held {
+        return Ok(());
+    }
+    replace_file(journal.dir(), STATUS, &encode_status(publication))
+}
+
 /// What sealing at the local position gave.
 enum Sealed {
     /// Nothing is in custody yet.
@@ -312,7 +331,7 @@ impl Store {
         };
         if publication.state != PublicationState::Nothing {
             publication.anchor_unset = anchor.is_none();
-            replace_file(journal.dir(), STATUS, &encode_status(&publication))?;
+            record_status(&journal, &publication)?;
         }
         Ok(publication)
     }

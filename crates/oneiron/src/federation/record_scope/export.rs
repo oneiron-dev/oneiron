@@ -60,6 +60,7 @@ impl Vault {
                 || crate::secret_custody::holds_masked_keys_in_txn(
                     &self.store,
                     &txn,
+                    &id,
                     h.entity_type,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
                 )?
