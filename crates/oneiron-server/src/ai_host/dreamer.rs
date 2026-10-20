@@ -40,7 +40,7 @@ use oneiron_driver::{
     WakeSupervisorConfig, WakeSupervisorReport,
 };
 
-use super::policy::extraction_egress;
+use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extraction_egress};
 
 mod compaction_check;
 mod free_time;
@@ -491,6 +491,35 @@ impl ObservedFactory {
                 return Err(error);
             }
         };
+        // The owner's live bound, checked again for every role this pass
+        // routes (SCAN C033), under the startup host permission: a route the
+        // owner's current defaults or extraction bound no longer allow stops
+        // this pass before any backend is built.
+        let localities = routes
+            .iter()
+            .map(|(role, route)| (dreamer_role_purpose(*role), route.locality))
+            .collect::<Vec<_>>();
+        let egress = match dreamer_route(&self.vault, &localities, self.egress)? {
+            DreamerRoute::Ready { egress } => egress,
+            DreamerRoute::Blocked(reason) => {
+                let error =
+                    oneiron::Error::InvalidConfig(format!("dreamer route blocked: {reason:?}"));
+                self.status.update(|status| {
+                    status.dreamer.reason = Some(reason);
+                    status.dreamer.last_error = Some(error.to_string());
+                });
+                return Err(error);
+            }
+        };
+        // A pass the bound allows again clears the reason a blocked one set.
+        self.status.update(|status| {
+            if matches!(
+                status.dreamer.reason,
+                Some(IdleReason::ExtractionEgressNotAllowed | IdleReason::ExtractionRouteNotSet)
+            ) {
+                status.dreamer.reason = None;
+            }
+        });
         // The pass's calls go out as one run per role, all on one line that
         // mirrors the pass's own: its limit, and the vault's budget policy
         // for the Dreamer's actor, so each rung's permit meets the same caps
@@ -548,7 +577,7 @@ impl ObservedFactory {
             self.actor,
             extraction.model,
             extraction.binding,
-            self.egress.then(|| extraction_egress(selected.collect())),
+            egress.then(|| extraction_egress(selected.collect())),
             Box::new(sink),
         )
         .with_role_backends(roles)

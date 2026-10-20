@@ -37,6 +37,7 @@ pub use self::types::{
 
 pub(crate) use self::actor_erase::erase_manifest_actor_in_txn;
 pub(crate) use self::codec::code_symbol_entity_path;
+pub(crate) use self::rust_source::prepare_code_symbol_graph;
 pub(crate) use self::storage::delete_code_symbol_manifest_in_txn;
 
 // The flat code_symbol.rs module used to provide these names to the sibling test

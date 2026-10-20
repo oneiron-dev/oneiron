@@ -701,9 +701,10 @@ by its receipt, in its `applied` line (group `dreamer.applied`, pointing here), 
 proposals that wait for you; a write you reverted first is left out. The Coach's and the healer's
 findings still wait in the run tray. So does any Dreamer finding the Gate holds, and every curator
 rung on a critical claim: that waits for your approval in the run tray, and your approval is its
-only consent. The next curator pass applies it once, as the Dreamer, with its receipt, and it lists
-here as a `curator` write you revert like any other. A rung whose claim changed since you approved
-it applies nothing.
+only consent. Once your approval commits, the rung applies once, as the Dreamer, with its receipt
+(a rung that cannot apply then is tried again by the next curator pass), and it lists here as a
+`curator` write you revert like any other. A rung whose claim changed since you approved it applies
+nothing.
 
 A saved plan never sends on its own. `GET /v1/owner/representation?proposal=<id>` shows it,
 `POST /v1/owner/representation/approve` records your send review (a receipt naming its exact

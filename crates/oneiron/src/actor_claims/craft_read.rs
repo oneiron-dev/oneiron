@@ -20,11 +20,13 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_surfaceable, encode_claim_body,
+    ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, ScopedRead, claim_surfaceable,
+    decode_claim_body, encode_claim_body,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_CLAIM;
 
 use super::candidate::is_approved_craft_verdict;
 use super::rows::{PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
@@ -112,6 +114,44 @@ pub fn resident_craft_pack(vault: &Vault, resident: &EntityId, at: u64) -> Resul
         .filter(|(_, body)| craft_note_line(body).is_some())
         .map(|(claim, body)| CraftNote::new(claim, body))
         .collect()
+}
+
+/// [`resident_craft_pack`] as `read`'s caller may be shown it (SCAN C009):
+/// the same craft, on one snapshot and in the same order, keeping only the
+/// notes whose current body `read` admits in that snapshot, each built from
+/// those admitted bytes. A note the caller cannot read, or whose admitted
+/// body is not the craft body listed (a projection, another revision), is
+/// left out; every other note is shown as the unscoped pack shows it.
+///
+/// # Errors
+///
+/// Storage and read-policy errors, a claim with no entity header, and a
+/// body that does not encode.
+pub fn resident_craft_pack_scoped(
+    vault: &Vault,
+    read: &ScopedRead<'_>,
+    resident: &EntityId,
+    at: u64,
+) -> Result<Vec<CraftNote>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let listed = resident_craft_in_txn(vault, &rtxn, resident, at)?;
+    let ids: Vec<EntityId> = listed.iter().map(|(id, _)| *id).collect();
+    let admitted = read.get_entities_parts_in_txn(&rtxn, &ids)?;
+    let mut notes = Vec::new();
+    for ((claim, body), parts) in listed.into_iter().zip(admitted) {
+        let Some((entity_type, _, bytes)) = parts else {
+            continue;
+        };
+        if entity_type != ENTITY_TYPE_CLAIM || craft_note_line(&body).is_none() {
+            continue;
+        }
+        if let Ok(shown) = decode_claim_body(&bytes, true)
+            && shown == body
+        {
+            notes.push(CraftNote::new(claim, shown)?);
+        }
+    }
+    Ok(notes)
 }
 
 /// `resident`'s current craft on `rtxn`, each id with its body, newest

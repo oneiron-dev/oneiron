@@ -134,6 +134,7 @@ fn reverse_rematerialize_scan(
     super::egress::scrub_local_claim_carriers(vault, window_key, doc)?;
     super::egress::scrub_local_only_carriers(vault, window_key, doc)?;
     super::egress::scrub_redacted_attribution_carriers(vault, window_key, doc)?;
+    crate::workspace_roster::scrub_audience_edits(vault, doc, Some(window_key))?;
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let redacted_authors = {
         let rtxn = vault.store.env.read_txn()?;
