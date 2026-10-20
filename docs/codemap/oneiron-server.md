@@ -67,7 +67,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/training_offer/cost.rs` | src | s | 3 crate-vis | — | Fixed-code projection on the same dated workload, with each tokenizer |
 | `src/ai_host/training_offer/pilot.rs` | src | s | 2 crate-vis | — | Measured per-seat pilot evidence beside the production offer skill's brief |
 | `src/ai_host/training_offer/sources.rs` | src | s | 6 crate-vis | — | The rows a Coach brief or check is gathered from (FIX 5482), ids only |
-| `src/ai_host/training_offer/unverifiable.rs` | src | s | 3 crate-vis | — | The check's outcome when the promise cannot be read (FIX 6265): `unverifiable_unpriced_cache` |
+| `src/ai_host/training_offer/unverifiable.rs` | src | s | 3 crate-vis | — | The check's outcome when the promise cannot be read (FIX 6265, 6317) |
 | `src/ai_host/training_pack.rs` | src | s | 3 crate-vis | — | An owner-authorized training run on the host (OF-577, OF-552) |
 | `src/ai_host/turn_actions.rs` | src | m | 1 crate-vis | — | The turn-action worker: runs each queued Continue and Retry (`vault.conversations.turn.continue` / `.retry`)… |
 | `src/ai_host/turn_program.rs` | src | s | 1 crate-vis | — | The host's half of DOOR-141: the wakes a landed turn's own commit owed its actor's armed programs, typed… |
@@ -825,7 +825,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/preview/http.rs` | src | m | 1 crate-vis | — | HTTP and WebSocket forwarding on a preview-only origin |
 | `src/managed/relay.rs` | src | m | 1 struct · 1 fn · 1 const | RelayConfig | A relay room has no engine, vault key, Loro document or inference worker |
 | `src/managed/settings.rs` | src | m | 5 crate-vis | — | The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in… |
-| `src/managed/shed.rs` | src | s | 1 crate-vis | — | Mapping the engine's shed transaction to the managed ctl contract |
+| `src/managed/shed.rs` | src | s | 3 crate-vis | — | Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the… |
 | `src/managed/state_serve.rs` | src | XL | 3 struct · 21 fn · 1 type · 1 const · 17 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/state_serve/control.rs` | src | s | 1 fn | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 5 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
@@ -1022,7 +1022,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_credentials.rs` | src | m | 13 crate-vis | — | Request fixtures mint real logged slips before crossing the production router |
 | `src/usage/codec.rs` | src | s | 1 enum · 1 fn · 4 crate-vis | UsageError | Msgpack codec for durable meter facts |
 | `src/usage/keys.rs` | src | s | 9 crate-vis | — | Owner/vault keys and validation for the durable meter queue |
-| `src/usage/ledger.rs` | src | m | 4 struct · 6 fn · 1 crate-vis | CycleSettlements, SeatUsage, UnpricedCache, UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
+| `src/usage/ledger.rs` | src | m | 4 struct · 7 fn · 1 crate-vis | CycleSettlements, SeatUsage, UnpricedCache, UsageLedger | Durable idempotent provider-list meters, aggregated only per owner and vault |
 | `src/usage/limit.rs` | src | s | 2 struct · 4 fn | CachedBudgetLimit, ExchangeRate | A host-pushed limit converts once |
 | `src/usage/mod.rs` | src | s | 5 re-export | — | Provider-list metering and host-pushed vault budget limits |
 | `src/usage/model.rs` | src | m | 10 struct · 4 enum · 9 fn · 3 crate-vis | CacheDimension, Money, UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates, UsageCounter, UsageEvent +6 | Provider-list money facts and per-vault usage counters |

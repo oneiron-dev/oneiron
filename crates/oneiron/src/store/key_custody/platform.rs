@@ -134,6 +134,17 @@ pub(super) fn lock_exclusive(file: &File) -> Result<()> {
     Ok(())
 }
 
+/// Opens the lock file at `path`, made owner-only when missing, and holds
+/// an exclusive lock on it until the returned file closes. Two opens
+/// exclude each other within one process as across processes.
+pub(super) fn lock_at(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    let lock = secure(&mut options).open(path)?;
+    lock_exclusive(&lock)?;
+    Ok(lock)
+}
+
 /// The identity of a directory custody made, so its cleanup never removes
 /// one that replaced it: device and inode on Unix; off Unix, its creation
 /// time, as no stable call reads a file index there.

@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 
 pub(crate) use self::frame::{frame_actor_parts, frame_owner, read_actor_parts};
 pub(crate) use self::restore::{
-    OpenedOwnerRows, Restored, no_join, restore_parts, restore_row_in_txn,
+    OpenedOwnerRows, Restored, no_join, restore_parts, restore_parts_keyed, restore_row_in_txn,
 };
 pub(crate) use self::typed::{
     ACTOR_KEYED_ROW, NOT_SPELLED_BACK, RoundTripPolicy, TypedRow, actor_keyed, admit_round_trip,
@@ -187,6 +187,11 @@ pub(crate) struct OwnerRows {
     pub(crate) rows: Vec<RowPart>,
     pub(crate) actor_parts: Vec<ActorPart>,
     pub(crate) dependencies: Vec<Dependency>,
+    /// The key each part whose locator does not name its row rests at in
+    /// the image, by that locator: a NOTE title reservation's, which its
+    /// join spells back from its author's part (FIX 6075). In memory only,
+    /// for the projection's claim on the row; never framed.
+    pub(crate) image_keys: BTreeMap<RowLocator, Vec<u8>>,
 }
 
 impl OwnerRows {
@@ -198,6 +203,7 @@ impl OwnerRows {
             rows: Vec::new(),
             actor_parts: Vec::new(),
             dependencies: Vec::new(),
+            image_keys: BTreeMap::new(),
         }
     }
 
@@ -213,6 +219,7 @@ impl OwnerRows {
         self.rows.extend(other.rows);
         self.actor_parts.extend(other.actor_parts);
         self.dependencies.extend(other.dependencies);
+        self.image_keys.extend(other.image_keys);
     }
 }
 
