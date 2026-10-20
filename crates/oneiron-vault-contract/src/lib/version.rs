@@ -69,8 +69,14 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// only at the slug those flags named. A `Ping` comes after the flags are
 /// parsed, so a supervisor pins installed engines and VM images at or after
 /// the floor before it stops passing them, and opens artifact ingress only
-/// once the vault reports the revision. Supervisor and vault move to v3
-/// together; no v2 reader is kept.
+/// once the vault reports the revision. The confirm on `host_order_holds`
+/// ([`HostHoldsCursor`](crate::restore::HostHoldsCursor), FIX 6820: a cursor
+/// at the family's end, answered with no bytes while the family is still
+/// the cursor's) carries a build floor too, at the engine revision it
+/// merged in: a supervisor confirms a source's family only on an installed
+/// engine at or after it, and a v3 vault built before it answers a confirm
+/// `cursor_invalid`, which confirms nothing. Supervisor and vault move to
+/// v3 together; no v2 reader is kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

@@ -388,6 +388,11 @@ impl Vault {
     /// unless the order forbids it until `secret_until` (C2). No owner,
     /// member or agent surface may route here.
     ///
+    /// A managed vault's host-order writes go through its supervisor, which
+    /// holds them while the vault is frozen for a restore and applies them
+    /// to the authoritative vault once the restore settles: never refused,
+    /// never dropped (FIX 6825).
+    ///
     /// # Errors
     /// Self-hosted, a reference or term that is not an opaque id, an order
     /// already ended, or a named claim whose erase has committed.
@@ -448,6 +453,11 @@ impl Vault {
     /// Host-only door: lifts host order `hold_id` on the authority's release
     /// notice, then runs the owner erases it kept waiting.
     ///
+    /// A managed vault's host-order writes go through its supervisor, which
+    /// holds them while the vault is frozen for a restore and applies them
+    /// to the authoritative vault once the restore settles: never refused,
+    /// never dropped (FIX 6825).
+    ///
     /// # Errors
     /// Self-hosted, an operator ref that is not an opaque id, or no standing
     /// host order `hold_id`.
@@ -480,6 +490,11 @@ impl Vault {
 
     /// Host-only door: moves a host order's stored end, as on a renewal
     /// (§2703(f) 90 more days, an EU preservation order 30 more).
+    ///
+    /// A managed vault's host-order writes go through its supervisor, which
+    /// holds them while the vault is frozen for a restore and applies them
+    /// to the authoritative vault once the restore settles: never refused,
+    /// never dropped (FIX 6825).
     ///
     /// # Errors
     /// Self-hosted, an operator ref that is not an opaque id, an end already
