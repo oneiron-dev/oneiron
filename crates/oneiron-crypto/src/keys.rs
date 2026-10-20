@@ -36,9 +36,18 @@ pub struct Kek(Zeroizing<[u8; 32]>);
 redacted_debug!(Kek);
 
 impl Kek {
-    /// Wraps existing key bytes.
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(Zeroizing::new(bytes))
+    /// Copies existing key bytes into guarded storage: zero-filled first, then
+    /// filled from `bytes`, so no unguarded copy of the key is made on the way
+    /// (FIX 6048). The caller's own bytes stay the caller's to wipe.
+    pub fn from_bytes_ref(bytes: &[u8; 32]) -> Self {
+        let mut guarded = Zeroizing::new([0u8; 32]);
+        guarded.copy_from_slice(bytes);
+        Self(guarded)
+    }
+
+    /// Takes key bytes already in guarded storage.
+    pub fn from_zeroizing(bytes: Zeroizing<[u8; 32]>) -> Self {
+        Self(bytes)
     }
 
     /// Draws a fresh key from `rng`.

@@ -282,7 +282,7 @@ fn seal_compartment(
         position.vault,
         &id,
         COMPARTMENT_RECIPIENT,
-        &Kek::from_bytes(*key),
+        &Kek::from_bytes_ref(&key),
         &plain,
     )?;
     let mut wraps = Vec::new();
@@ -323,7 +323,7 @@ fn seal_compartment(
                 position.vault,
                 &id,
                 DATA_KEY_RECIPIENT,
-                &Kek::from_bytes(**data_key),
+                &Kek::from_bytes_ref(data_key),
                 &key[..],
             )?,
         });
@@ -467,15 +467,20 @@ fn unwrap_key(
                 position.vault,
                 id,
                 DATA_KEY_RECIPIENT,
-                &Kek::from_bytes(**data_key),
+                &Kek::from_bytes_ref(data_key),
                 &wrap.envelope,
             )
             .ok()
         }
         _ => None,
     })?;
-    let key: [u8; 32] = opened.as_slice().try_into().ok()?;
-    Some(Zeroizing::new(key))
+    if opened.len() != 32 {
+        return None;
+    }
+    // Straight into guarded storage, never through a plain array (FIX 6048).
+    let mut key = Zeroizing::new([0u8; 32]);
+    key.copy_from_slice(&opened);
+    Some(key)
 }
 
 fn open_body(
@@ -489,7 +494,7 @@ fn open_body(
         position.vault,
         id,
         COMPARTMENT_RECIPIENT,
-        &Kek::from_bytes(**key),
+        &Kek::from_bytes_ref(key),
         sealed,
     )?;
     rmp_serde::from_slice(&plain).map_err(|_| head_corrupt())

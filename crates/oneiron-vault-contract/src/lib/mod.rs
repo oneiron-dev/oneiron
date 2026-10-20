@@ -12,6 +12,9 @@
 //! conformance before moving the pin.
 
 pub mod artifact_origin;
+/// The backup handoff: a label's retention pin and the supervisor's
+/// root-stage ack (LC backup shipper).
+pub mod backup_handoff;
 /// The publisher training outbox: offers, controls and receipts (OF-420).
 pub mod conversation_training;
 mod ctl;

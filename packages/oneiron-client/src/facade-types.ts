@@ -6849,7 +6849,7 @@ export type SummaryPath = "canonical" | { branch: string } | { branch_span: { af
 /** `oneiron::scope_summary::public_types::SummaryScope` */
 export type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean }
 /** `oneiron::scope_summary::public_types::SummaryCreateRequest` */
-export type SummaryCreateRequest = { scope: SummaryScope; purpose?: string | null; land_on?: string | null; as_record?: boolean }
+export type SummaryCreateRequest = { scope?: SummaryScope | null; note_refs?: string[]; purpose?: string | null; land_on?: string | null; as_record?: boolean }
 /** `oneiron::scope_summary::public_types::SummaryQueued` */
 export type SummaryQueued = { attempt: string; status: string; coalesced: boolean }
 /** `oneiron::scope_summary::public_types::SummarySpan` */
