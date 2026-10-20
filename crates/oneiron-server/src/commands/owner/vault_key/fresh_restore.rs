@@ -10,7 +10,7 @@ use oneiron::world_keys::VaultKeyUnlock;
 use oneiron_keystore::DeviceKeystore;
 use serde::Serialize;
 
-use super::super::vault_config;
+use super::super::base_vault_config;
 use super::{HostUnlock, backup_key, view};
 use crate::config::ServeConfig;
 use crate::owner::backup::{self, CustodyAnchorCredentials, RestoreTarget, RestoredFresh};
@@ -51,7 +51,7 @@ pub(crate) fn restore_fresh(
         }
         .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?,
     };
-    let mut target = vault_config(config);
+    let mut target = base_vault_config(config);
     target.page_seal = backup::restore_target_seal(RestoreTarget::Fresh {
         maximum_tier: config.maximum_tier,
         key: &key,

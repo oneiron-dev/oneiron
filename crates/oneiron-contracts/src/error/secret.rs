@@ -187,6 +187,15 @@ pub enum SecretError {
     /// A world key refusal by kind.
     #[error("world key refused: no capsule of the object opens for this key")]
     SealedBundleNoCapsule,
+    /// A sealed vault's page seal was unlocked from its mirror with a
+    /// credential whose wrap a change removed or replaced, or whose change
+    /// never committed: the vault holds no such wrap, so it opens nothing
+    /// (FIX 2347). A world key refusal by kind; the mirror stays as it is, and
+    /// a current credential opens the vault and repairs it.
+    #[error(
+        "world key refused: this credential is no longer a wrap of this vault; unlock with a current one"
+    )]
+    StalePageSealCredential,
     /// This install has no this-device-only keystore, so it can hold no machine
     /// secret and open no world key.
     #[error("no this-device-only keystore: {0}")]
@@ -246,7 +255,9 @@ impl SecretError {
             Self::SecretGrantSpent { .. } => ErrorKind::SecretGrantSpent,
             Self::SecretHostDeliveryRefused { .. } => ErrorKind::SecretHostDeliveryRefused,
             Self::SecretGrantCleanupKept { .. } => ErrorKind::SecretGrantCleanupKept,
-            Self::WorldKeyRefused(_) | Self::SealedBundleNoCapsule => ErrorKind::WorldKeyRefused,
+            Self::WorldKeyRefused(_)
+            | Self::SealedBundleNoCapsule
+            | Self::StalePageSealCredential => ErrorKind::WorldKeyRefused,
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
             Self::KitConfirmationStale { .. } => ErrorKind::KitConfirmationStale,

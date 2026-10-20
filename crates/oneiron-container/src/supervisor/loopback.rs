@@ -35,7 +35,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 /// The longest accept queue a listener keeps: a larger backlog is cut to
-/// it, and a connect to a full queue answers `EAGAIN`.
+/// it, and a connect to a full queue answers `EAGAIN`. A connection an
+/// accept has reserved still counts, so putting it back never overfills
+/// the queue (FIX 6791).
 const LOOPBACK_BACKLOG: usize = 128;
 /// The virtual ports a bind to port 0 and a client's own end take.
 const LOOPBACK_PORTS: RangeInclusive<u16> = 49152..=65535;
@@ -462,7 +464,7 @@ fn enqueue(
         if queue.closed {
             return Err(errno(libc::ECONNREFUSED));
         }
-        if queue.waiting.len() >= queue.backlog {
+        if queue.waiting.len() + queue.reserved.len() >= queue.backlog {
             return Err(errno(libc::EAGAIN));
         }
         let stream = peer.take().ok_or_else(|| errno(libc::EISCONN))?;

@@ -2927,6 +2927,9 @@ class Oneiron:
         def registry(self, spec):
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
             return json.loads(_translate(lambda: self._client.vault_consent_registry(json.dumps(spec))))
+        def failure_signals_held(self, spec=None):
+            """Read the carried failure-signal batch's exact content and approval digest as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_consent_failure_signals_held(json.dumps({} if spec is None else spec))))
         def revoke(self, spec):
             """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
             return json.loads(_translate(lambda: self._client.vault_consent_revoke(json.dumps(spec))))

@@ -11,7 +11,9 @@
 //!
 //! `qualify` is the one that runs a model: a native bundle on this machine,
 //! over qualification cases, through the local tagger the slot serves. It is
-//! a development tool and opens no vault and no network.
+//! a development tool and opens no vault and no network. Its conversation
+//! window, which tags a case's whole conversation as the model project's
+//! reference predictor does, is a window the slot never builds.
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -119,6 +121,21 @@ pub struct QualifyArgs {
     /// refinement) or `served` (the slot's).
     #[arg(long, value_enum, default_value_t = QualifyLayers::E4)]
     pub layers: QualifyLayers,
+    /// The window each case is tagged in: `live` (the slot's) or
+    /// `conversation` (the whole conversation in one window, as the model
+    /// project's reference predictor tags it, every turn's spans returned).
+    #[arg(long, value_enum, default_value_t = QualifyWindow::Live)]
+    pub window: QualifyWindow,
+    /// `oneironer.max_input_tokens` for this run, its default when absent:
+    /// the whole window's tokens, special tokens included. The conversation
+    /// window is cut there.
+    #[arg(long)]
+    pub max_input_tokens: Option<usize>,
+    /// `oneironer.live_window_tokens` for this run, its default when absent:
+    /// the earlier text the live window keeps. The conversation window does
+    /// not read it.
+    #[arg(long)]
+    pub live_window_tokens: Option<u32>,
 }
 
 /// The engine device a qualification runs on.
@@ -136,6 +153,21 @@ pub enum QualifyLayers {
     E4,
     /// What the slot serves.
     Served,
+}
+
+/// The window a qualification tags each case in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum QualifyWindow {
+    /// The slot's causal window: earlier text up to `live_window_tokens`,
+    /// then the current turn, whose spans alone return, each `message`
+    /// indexing the input's `messages`.
+    Live,
+    /// The whole conversation in one window, as the model project's
+    /// reference predictor tags it, cut at `max_input_tokens` rather than
+    /// refused. Every turn's spans return, each `message` the ordinal of
+    /// its message in the flattened conversation (context first, then the
+    /// current turn) and `start`/`end` UTF-8 byte offsets into it.
+    Conversation,
 }
 
 pub fn oneironer(command: OneironerCommand) -> anyhow::Result<()> {
@@ -221,17 +253,29 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
         QualifyLayers::E4 => "e4",
         QualifyLayers::Served => "served",
     };
+    let window = match args.window {
+        QualifyWindow::Live => "live",
+        QualifyWindow::Conversation => "conversation",
+    };
+    let defaults = OneironerConfig::default();
     let config = OneironerConfig {
         provider: OneironerProvider::Local,
         model_dir: Some(args.model_dir),
         device,
         checkpoint_sha16: Some(checkpoint.to_owned()),
         label_count: Some(u32::try_from(labels)?),
-        ..OneironerConfig::default()
+        max_input_tokens: args.max_input_tokens.unwrap_or(defaults.max_input_tokens),
+        live_window_tokens: args
+            .live_window_tokens
+            .unwrap_or(defaults.live_window_tokens),
+        ..defaults
     };
     let (mut tagger, _) = crate::oneironer::engines::load(&config)?;
     if args.layers == QualifyLayers::E4 {
         tagger.decode_as_e4();
+    }
+    if args.window == QualifyWindow::Conversation {
+        tagger.window_as_conversation()?;
     }
     let inputs = BufReader::new(std::fs::File::open(&args.inputs)?);
     let mut out = std::fs::OpenOptions::new()
@@ -265,6 +309,9 @@ fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
         "failed": failed,
         "device": device.as_str(),
         "layers": layers,
+        "window": window,
+        "max_input_tokens": config.max_input_tokens,
+        "live_window_tokens": config.live_window_tokens,
         "stack_sha16": tagger.card().stack_sha16,
     }))
 }
