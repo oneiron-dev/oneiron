@@ -69,10 +69,6 @@ impl PassControl {
     }
 
     /// The control of a host with no freeze: `admission`, never paused.
-    #[expect(
-        dead_code,
-        reason = "plain serve's tagging worker takes it with its before-claim check (FIX 6902)"
-    )]
     pub(crate) fn unpaused(admission: HousekeepingAdmission) -> Self {
         Self::new(admission, Arc::new(|| false))
     }
@@ -83,10 +79,6 @@ impl PassControl {
     }
 
     /// Whether the host has paused background passes now.
-    #[expect(
-        dead_code,
-        reason = "the tagging worker reads it before each claim (FIX 6902)"
-    )]
     pub(crate) fn paused(&self) -> bool {
         (self.pause)()
     }

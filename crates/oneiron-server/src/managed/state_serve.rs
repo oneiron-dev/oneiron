@@ -1218,7 +1218,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Witnessed turns' tagging markers drain under the same admission,
     // counted as tagging, with the reap freeze as their pause.
     let tagging = state.pass_control(WriteKind::BackgroundTagging);
-    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(tagging.admission()));
+    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(tagging));
     // Stored media is embedded under the same admission (OF-370).
     ladder_workers.extend(sync_server.spawn_media_embedding_worker_admitted(admitted()));
     // Queued and resumed agent runs, each admitted with its permit (OF-533):
