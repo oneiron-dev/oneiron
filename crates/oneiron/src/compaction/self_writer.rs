@@ -368,7 +368,7 @@ impl CompactionExecution {
 }
 
 /// A 64-character lowercase hex digest's bytes.
-fn hex32(hex: &str) -> Option<[u8; 32]> {
+pub(super) fn hex32(hex: &str) -> Option<[u8; 32]> {
     if hex.len() != 64 {
         return None;
     }
