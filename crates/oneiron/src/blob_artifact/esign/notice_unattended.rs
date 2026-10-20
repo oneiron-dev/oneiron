@@ -9,7 +9,8 @@
 //! live agent one live Grant names that confers now and lists
 //! `vault.esign.notices.dispatch`. Both are read once to bind the call, and
 //! again in every snapshot it writes in: each recovery, claim and lease
-//! return, and the sink snapshot that queues the delivery.
+//! return, the writer that records a notice's gate decision, and the sink
+//! snapshot that queues the delivery.
 //!
 //! The call then runs the door's own path
 //! ([`crate::memory::Memory::esign_notices_dispatch`]): the same principal and
@@ -111,14 +112,14 @@ fn bind_in<'a>(
 }
 
 impl UnattendedNotices<'_> {
-    /// The binding judged again in `txn`: the same send act still recorded
+    /// Whether the binding holds in `txn`: the same send act still recorded
     /// for the same principal and class, and that principal still standing.
     /// # Errors
-    /// An authority refusal once it does not, or the reads' own failure.
-    pub(super) fn stands_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+    /// The reads' own failure.
+    pub(super) fn stands(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
         let recorded = send_act_in(self.vault, txn, self.document)?
             .is_some_and(|act| act.principal == self.principal && act.class == self.class);
-        if recorded
+        Ok(recorded
             && principal_standing_in_txn(
                 self.vault,
                 txn,
@@ -126,8 +127,14 @@ impl UnattendedNotices<'_> {
                 self.class,
                 NOTICE_DISPATCH_VERB,
             )?
-            .is_some()
-        {
+            .is_some())
+    }
+
+    /// [`Self::stands`], a binding that no longer holds refused.
+    /// # Errors
+    /// An authority refusal once it does not hold, or the reads' own failure.
+    pub(super) fn stands_in(&self, txn: &heed::RoTxn<'_>) -> Result<()> {
+        if self.stands(txn)? {
             Ok(())
         } else {
             Err(crate::authority::authority_refused(NO_LONGER_STANDS))

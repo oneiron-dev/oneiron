@@ -147,8 +147,7 @@ impl NoticeScope<'_> {
                 })
             }
             Self::Unattended(notices) => {
-                vault
-                    .dispatch_esign_notice_in_scope(attempt, request, &|txn| notices.stands_in(txn))
+                vault.dispatch_esign_notice_in_scope(attempt, request, &|txn| notices.stands(txn))
             }
         }
     }
