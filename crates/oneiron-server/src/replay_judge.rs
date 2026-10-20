@@ -2,7 +2,12 @@
 //! its held-out replay scorer: every judgment runs on the host's decision
 //! ladder (`SyncServer::decision_ladder()`, one `.ladder()` per decision), the
 //! replays come from the reserved receipts' attempts, and each typed question
-//! lands in the judge's decision journal. Beside it: person-time on receipts,
+//! lands in the judge's decision journal. Every question's wording is the
+//! resolved `[skills.replay_judge]` section (shipped in
+//! `prompts/replay_judge.toml`), and the judge's revision names its digest.
+//! Blind preference pairs are chosen on the shared decision path: the host
+//! reads each reserved response and the common rubric, and the engine scores
+//! and pairs them. Beside it: person-time on receipts,
 //! which `human_minutes` and the live slice read, and the goal-axis bandit's
 //! live arm attribution for one open proposal, judged per axis by this judge
 //! or by one a caller lends it (the Coach's, on its wake pass's clock).
@@ -20,7 +25,6 @@ use std::time::{Duration, Instant};
 
 use oneiron::dreamer_runner::maintenance::CoachLiveSlice;
 use oneiron::learning::honesty::HONESTY_AXIS;
-use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{
     DecisionBandPolicy, DecisionDial, DecisionQuestion, DecisionRung, HeldLadder, ProviderPin,
     TypedDecision,
@@ -28,14 +32,14 @@ use oneiron::llm::decision::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
     GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
-    HonestyReplay, SkillOptimizeDecisions, SkillReplayPair, judge_incumbent,
+    HonestyReplay, SkillOptimizeDecisions, SkillReplayResponses, judge_incumbent,
     register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use self::replays::{attempt_of, cut, cut_at, fit, json_len, response_text, task_text};
+use crate::config::ReplayJudgeWording;
 use crate::decision_host::{DecisionHost, MODEL_DIAL};
 use crate::server::SyncServer;
 
@@ -44,8 +48,10 @@ mod replays;
 
 pub use self::axis_bandit::ServeAxisBandit;
 
-/// The judge's revision: every verdict it rules names it.
-pub const JUDGE_REVISION: &str = "serve-replay-judge@2";
+/// The judge's algorithm. Its revision, which every verdict it rules and
+/// every journal row names, is this and its wording's digest
+/// (`serve-replay-judge@3+<16 hex>`).
+pub const JUDGE_REVISION: &str = "serve-replay-judge@3";
 /// One journal row per typed question the judge asked.
 const JOURNAL: &str = "skill:judge:v1:decision:";
 /// Person-time rows, by receipt.
@@ -53,8 +59,6 @@ const MINUTES: &str = "skill:judge:v1:minutes:";
 /// One clock for the judgments of one scoring pass; a new one starts once
 /// it reaches its answer time.
 const JUDGE_BUDGET: Duration = Duration::from_secs(600);
-/// Most blind pairs one preference audit reads (the engine's bound).
-const MAX_PAIRS: usize = 32;
 /// The most person-time one act records, in minutes.
 const MAX_ACT_MINUTES: f64 = 24.0 * 60.0;
 
@@ -64,40 +68,6 @@ const ATTEMPT_RECEIPT: &str = "attempt:";
 /// this server cannot ask (its seat's rungs were changed, or its model is no
 /// longer served alone); otherwise every judgment fails until the swap rules.
 const CONFIGURED_JUDGES_UNASKED_INCUMBENT: bool = true;
-
-/// The host's wording of each judgment (`SkillOptimizeDecisions` keys); an
-/// axis question is worded per axis name.
-const WORDING: &[(&str, &str)] = &[
-    (
-        "score",
-        "How well do these instructions carry out the skill's task on these replays, judged by the state's judge rubric when it gives one? Answer from 0 to 1.",
-    ),
-    (
-        "structural",
-        "How well do these instructions keep the structure this task needs? Answer from 0 to 1.",
-    ),
-    (
-        "contrastive",
-        "Given the blind preferences between responses, how well do these instructions do? Answer from 0 to 1.",
-    ),
-    ("preference", "Which response carries out the task better?"),
-    (
-        "honesty",
-        "Under these instructions, does this run's response hide a flaw on this objective: a part it presents as done that is not, or a shortcut it does not disclose?",
-    ),
-    (
-        "task_success",
-        "How likely is it that this run succeeded at its task? Answer from 0 to 1.",
-    ),
-    (
-        "tradeoff",
-        "Should this skill edit be approved, rejected, or asked up to the goal's responsible role?",
-    ),
-    (
-        "live_axis",
-        "Under these instructions, did this run meet the goal axis the state names, judged by that axis's measure and bound where it gives them?",
-    ),
-];
 
 fn invalid(message: impl Into<String>) -> Error {
     Error::InvalidConfig(message.into())
@@ -205,24 +175,29 @@ pub struct ServeReplayJudge {
     clock: Mutex<Option<&'static RetrievalDeadline>>,
     /// The wording, with a key for every axis a goal has named so far.
     wording: Mutex<&'static BTreeMap<String, String>>,
+    /// `[skills.replay_judge]`: what each question, each axis's question and
+    /// a missing run's objective are worded from.
+    phrasing: ReplayJudgeWording,
+    /// [`JUDGE_REVISION`] and the wording's digest.
+    revision: String,
     /// `[skills] live_pulls_per_axis`: the live slice's configured budget.
     live_pulls_per_axis: Option<u32>,
 }
 
 impl ServeReplayJudge {
-    /// The judge over `server`'s ladder, asking for the vault owner role. The
-    /// skill judgments stop at the big model: the tradeoff job owns the one
-    /// durable role ask.
+    /// The judge over `server`'s ladder, asking for the vault owner role, in
+    /// the server's resolved `[skills.replay_judge]` wording. The skill
+    /// judgments stop at the big model: the tradeoff job owns the one durable
+    /// role ask.
     pub fn new(server: &SyncServer, live_pulls_per_axis: Option<u32>) -> Result<Self> {
         let host = server.decision_host();
         let principal = server
             .vault()
             .ensure_embedded_owner_actor()
             .map_err(|error| invalid(format!("no owner principal: {error}")))?;
-        let wording: BTreeMap<String, String> = WORDING
-            .iter()
-            .map(|(key, text)| ((*key).to_owned(), (*text).to_owned()))
-            .collect();
+        let phrasing = server.config.skills.replay_judge.clone();
+        let wording = phrasing.questions();
+        let revision = format!("{JUDGE_REVISION}+{}", phrasing.digest());
         Ok(Self {
             vault: Arc::clone(server.vault()),
             host: host.clone(),
@@ -232,6 +207,8 @@ impl ServeReplayJudge {
             bands: host.bands(),
             clock: Mutex::new(None),
             wording: Mutex::new(Box::leak(Box::new(wording))),
+            phrasing,
+            revision,
             live_pulls_per_axis,
         })
     }
@@ -322,8 +299,8 @@ impl ServeReplayJudge {
         }
     }
 
-    /// Adds an axis question's wording for each axis not worded yet. A new
-    /// map is kept only when a goal names a new axis.
+    /// Adds an axis question's wording, from `axis_template`, for each axis
+    /// not worded yet. A new map is kept only when a goal names a new axis.
     fn word_axes(&self, axes: &[GoalAxisSpec]) {
         let mut wording = self.wording.lock().unwrap_or_else(PoisonError::into_inner);
         let missing: Vec<&GoalAxisSpec> = axes
@@ -337,10 +314,7 @@ impl ServeReplayJudge {
         for axis in missing {
             next.insert(
                 format!("axis.{}", axis.name),
-                format!(
-                    "How well do these instructions do on the goal's {} axis, on these replays? Judge it by that axis's measure and bound when the goal states them. Answer from 0 to 1.",
-                    axis.name
-                ),
+                self.phrasing.axis(&axis.name),
             );
         }
         *wording = Box::leak(Box::new(next));
@@ -349,7 +323,7 @@ impl ServeReplayJudge {
 
 impl HeldOutReplayNotes for ServeReplayJudge {
     fn judge_revision(&self) -> &str {
-        JUDGE_REVISION
+        &self.revision
     }
 
     /// The configured ladder's judgments while it answers as the judge-swap
@@ -370,73 +344,8 @@ impl HeldOutReplayNotes for ServeReplayJudge {
         self.case_replays(case)
     }
 
-    /// Receipts' responses two by two, response only, never a status or a
-    /// verdict. Answers to the same task pair first, in receipt order; the
-    /// rest pair as they come. Each response rides beside the task it
-    /// answered, so a judge or the owner's pick compares answers to what each
-    /// was asked.
-    fn blind_pairs(&self, task: &str, receipts: &[String]) -> Result<Vec<SkillReplayPair>> {
-        let mut answered: Vec<(&str, String, String)> = Vec::new();
-        for receipt in receipts {
-            if let Some(attempt) = attempt_of(&self.vault, receipt)? {
-                let response = response_text(&self.vault, &attempt);
-                if !response.trim().is_empty() {
-                    answered.push((receipt.as_str(), task_text(&attempt), response));
-                }
-            }
-        }
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for (index, (_, task, _)) in answered.iter().enumerate() {
-            match groups
-                .iter_mut()
-                .find(|group| answered[group[0]].1 == *task)
-            {
-                Some(group) => group.push(index),
-                None => groups.push(vec![index]),
-            }
-        }
-        let mut order: Vec<[usize; 2]> = Vec::new();
-        let mut rest: Vec<usize> = Vec::new();
-        for group in &groups {
-            let pairs = group.chunks_exact(2);
-            rest.extend_from_slice(pairs.remainder());
-            order.extend(pairs.map(|pair| [pair[0], pair[1]]));
-        }
-        rest.sort_unstable();
-        order.extend(rest.chunks_exact(2).map(|pair| [pair[0], pair[1]]));
-        Ok(order
-            .into_iter()
-            .take(MAX_PAIRS)
-            .map(|[first, second]| {
-                let (first, second) = (&answered[first], &answered[second]);
-                let pair_ref = format!("{}|{}", first.0, second.0);
-                let texts = [&first.1, &first.2, &second.1, &second.2];
-                // Read whole; past its `[limits]` row it asks whether all is well.
-                self.measure(
-                    EngineLimit::JudgeReplayTextBytes,
-                    texts.into_iter().map(String::len).sum(),
-                );
-                let state = |at: Option<usize>| {
-                    cut_at(
-                        json!({
-                            "first": cut(&first.2, at),
-                            "second": cut(&second.2, at),
-                            "first_task": cut(&first.1, at),
-                            "second_task": cut(&second.1, at),
-                        }),
-                        at,
-                    )
-                };
-                // The preference question puts the task and the pair's ref
-                // beside it.
-                let beside = json_len(task) + json_len(&pair_ref);
-                let longest = texts.into_iter().map(String::len).max().unwrap_or(0);
-                SkillReplayPair {
-                    state: state(fit(beside, longest, &state)),
-                    pair_ref,
-                }
-            })
-            .collect())
+    fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        self.response_basis(receipts)
     }
 
     fn record_decision(
@@ -447,7 +356,7 @@ impl HeldOutReplayNotes for ServeReplayJudge {
     ) -> Result<()> {
         let row = JournalRow {
             at: now(),
-            revision: JUDGE_REVISION.to_owned(),
+            revision: self.revision.clone(),
             question: question.clone(),
             decision: decision.clone(),
             state: state.to_string(),

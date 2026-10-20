@@ -1,6 +1,8 @@
 //! The serve judge's replay evidence: each reserved receipt's task and
 //! response, read whole from its attempt, and the states the judge's
-//! questions read them in, cut only where the ladder's state bound needs.
+//! questions read them in, cut only where the ladder's state bound needs;
+//! and the whole responses and rubric the shared decision path scores and
+//! pairs blind preferences from.
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::{OutputRef, restore_output};
 use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
@@ -8,7 +10,8 @@ use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::MAX_DECISION_STATE_BYTES;
 use oneiron::skill_optimize::{
-    HeldOutReplayCase, HonestyReplay, SkillEditGoal, judge_rubric, skill_edit_goal,
+    HeldOutReplayCase, HonestyReplay, JudgeRubric, SkillEditGoal, SkillReplayResponse,
+    SkillReplayResponses, judge_rubric, skill_edit_goal,
 };
 use oneiron::{EntityId, Result, Vault};
 use serde::Serialize;
@@ -22,7 +25,7 @@ use super::{ATTEMPT_RECEIPT, ServeReplayJudge};
 const CALL_ROOM: usize = 1_024;
 
 /// `text` whole, or cut to `at` bytes on a character boundary.
-pub(super) fn cut(text: &str, at: Option<usize>) -> &str {
+fn cut(text: &str, at: Option<usize>) -> &str {
     let Some(at) = at else {
         return text;
     };
@@ -34,7 +37,7 @@ pub(super) fn cut(text: &str, at: Option<usize>) -> &str {
 }
 
 /// The bytes `value` takes as JSON.
-pub(super) fn json_len<T: Serialize + ?Sized>(value: &T) -> usize {
+fn json_len<T: Serialize + ?Sized>(value: &T) -> usize {
     serde_json::to_vec(value).map_or(0, |bytes| bytes.len())
 }
 
@@ -43,11 +46,7 @@ pub(super) fn json_len<T: Serialize + ?Sized>(value: &T) -> usize {
 /// ladder's state bound ([`MAX_DECISION_STATE_BYTES`]), which refuses a
 /// larger state. Past it, half the `longest` text, halving until it fits.
 /// The texts' own `[limits]` rows never cut; only the ladder's bound does.
-pub(super) fn fit(
-    beside: usize,
-    longest: usize,
-    state: impl Fn(Option<usize>) -> Value,
-) -> Option<usize> {
+fn fit(beside: usize, longest: usize, state: impl Fn(Option<usize>) -> Value) -> Option<usize> {
     let room = MAX_DECISION_STATE_BYTES.saturating_sub(beside.saturating_add(CALL_ROOM));
     let mut at = None;
     loop {
@@ -63,7 +62,7 @@ pub(super) fn fit(
 
 /// `state`, saying where its texts were cut (`cut_at_bytes`) when they were,
 /// so a provider knows it reads a cut text.
-pub(super) fn cut_at(mut state: Value, at: Option<usize>) -> Value {
+fn cut_at(mut state: Value, at: Option<usize>) -> Value {
     if let Some(bytes) = at {
         state["cut_at_bytes"] = json!(bytes);
     }
@@ -72,7 +71,7 @@ pub(super) fn cut_at(mut state: Value, at: Option<usize>) -> Value {
 
 /// The attempt behind a terminal pack receipt (`attempt:<32 hex>`), when its
 /// row is still kept.
-pub(super) fn attempt_of(vault: &Vault, receipt: &str) -> Result<Option<AttemptRecord>> {
+fn attempt_of(vault: &Vault, receipt: &str) -> Result<Option<AttemptRecord>> {
     let Some(hex) = receipt.strip_prefix(ATTEMPT_RECEIPT) else {
         return Ok(None);
     };
@@ -82,7 +81,7 @@ pub(super) fn attempt_of(vault: &Vault, receipt: &str) -> Result<Option<AttemptR
 
 /// The task an attempt was given: a Dreamer or agent payload's input, else
 /// the payload as text.
-pub(super) fn task_text(attempt: &AttemptRecord) -> String {
+fn task_text(attempt: &AttemptRecord) -> String {
     decode_dreamer_attempt_payload(&attempt.payload).map_or_else(
         |_| String::from_utf8_lossy(&attempt.payload).into_owned(),
         |payload| payload.input.to_string(),
@@ -92,7 +91,7 @@ pub(super) fn task_text(attempt: &AttemptRecord) -> String {
 /// What an attempt answered, through its result ref: a code-run output, a
 /// BYOA run's transcript (else its stdout), an entity's text, or the ref
 /// itself when nothing here resolves it.
-pub(super) fn response_text(vault: &Vault, attempt: &AttemptRecord) -> String {
+fn response_text(vault: &Vault, attempt: &AttemptRecord) -> String {
     let Some(result) = attempt.result_ref() else {
         return String::new();
     };
@@ -154,7 +153,7 @@ impl ServeReplayJudge {
 
     /// Measures `bytes` against `row`: past it the row asks whether all is
     /// well, and the text still rides whole.
-    pub(super) fn measure(&self, row: EngineLimit, bytes: usize) {
+    fn measure(&self, row: EngineLimit, bytes: usize) {
         self.vault
             .measure_limit(row, u64::try_from(bytes).unwrap_or(u64::MAX));
     }
@@ -255,7 +254,7 @@ impl ServeReplayJudge {
                     None => HonestyReplay {
                         receipt: receipt.clone(),
                         state: json!({"receipt": receipt, "kept": false}),
-                        objectives: vec![format!("the task of run {receipt}")],
+                        objectives: vec![self.phrasing.missing_objective(receipt)],
                     },
                     Some((kind, task, response)) => {
                         // Read whole; past its `[limits]` row it asks whether
@@ -288,5 +287,48 @@ impl ServeReplayJudge {
                 })
             })
             .collect()
+    }
+
+    /// Each reserved receipt's task and response, read whole, for the shared
+    /// decision path to score and pair, and the judge's rubric beside them;
+    /// never its status, verdict, success or the instructions it ran under.
+    /// A receipt whose row is gone, or whose response is empty, is left out.
+    pub(super) fn response_basis(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
+        let mut responses = Vec::with_capacity(receipts.len());
+        for receipt in receipts {
+            let Some(attempt) = attempt_of(&self.vault, receipt)? else {
+                continue;
+            };
+            let response = response_text(&self.vault, &attempt);
+            if response.trim().is_empty() {
+                continue;
+            }
+            let task = task_text(&attempt);
+            // Read whole; past its `[limits]` row it asks whether all is well.
+            self.measure(
+                EngineLimit::JudgeReplayTextBytes,
+                task.len() + response.len(),
+            );
+            responses.push(SkillReplayResponse {
+                receipt: receipt.clone(),
+                task,
+                response,
+            });
+        }
+        Ok(SkillReplayResponses {
+            responses,
+            rubric: self.rubric()?,
+        })
+    }
+
+    /// The judge's rubric, the active shared `judge` skill's text, when one
+    /// is in force: every response is scored by it. Read whole; past its
+    /// `[limits]` row it asks whether all is well.
+    pub(crate) fn rubric(&self) -> Result<Option<JudgeRubric>> {
+        let rubric = judge_rubric(&self.vault)?;
+        if let Some(rubric) = &rubric {
+            self.measure(EngineLimit::JudgeRubricBytes, rubric.text.len());
+        }
+        Ok(rubric)
     }
 }
