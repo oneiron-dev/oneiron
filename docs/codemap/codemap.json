@@ -19253,7 +19253,7 @@
      "path": "src/conversation/visibility/private_sources.rs",
      "purpose": "The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -22798,7 +22798,7 @@
       "const": 7,
       "crate-vis": 3,
       "fn": 14,
-      "re-export": 1,
+      "re-export": 3,
       "struct": 10
      }
     },
@@ -22818,12 +22818,39 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DigestPrivateSource"
+     ],
+     "path": "src/dreamer_runner/maintenance/digest/private_sources.rs",
+     "purpose": "The proactivity digest's screen of private thread words (FIX 6411; FIX 6381 and 6383: \"never the words\")",
+     "surface": {
+      "crate-vis": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/dreamer_runner/maintenance/digest/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProactivityDigestView"
+     ],
+     "path": "src/dreamer_runner/maintenance/digest/view.rs",
+     "purpose": "A delivered proactivity digest as one viewer reads it (FIX 6411)",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 2,
+      "struct": 1
+     }
     },
     {
      "bucket": "m",
@@ -27794,10 +27821,10 @@
      "path": "src/feedback/conversation_training/anonymous.rs",
      "purpose": "The anonymous training window's side of local custody (TL-6, FIX 5813): where each anonymous piece stands at…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 1,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27818,6 +27845,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "AnonymousFilesSeen",
+      "PieceFilesProblem"
+     ],
+     "path": "src/feedback/conversation_training/anonymous/files.rs",
+     "purpose": "A released anonymous offer whose outbox files ship nothing (FIX 6916): a manifest or chunk file the…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AnonymousStatusWork",
       "AnonymousUploadWork",
       "AnonymousWithdrawalWork"
@@ -27826,6 +27869,7 @@
      "purpose": "The self-host shipper's pages over anonymous custody (TL-6): the pieces to upload, the codes to withdraw and…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 4,
       "struct": 3
      }
@@ -27904,7 +27948,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AnonymousReceiptView",
@@ -65940,7 +65984,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 101,
+     "files": 103,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66059,7 +66103,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -66957,7 +67001,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4197,
+   "source_files": 4200,
    "test_files": 902
   },
   "oneiron-android": {
@@ -86597,7 +86641,7 @@
      "path": "src/conversation_training/shipper/stream.rs",
      "purpose": "A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -86611,7 +86655,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/conversation_training/shipper/walks.rs",
