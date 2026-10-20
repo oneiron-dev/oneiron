@@ -1,12 +1,15 @@
 //! A page's state as an engine switch reads it off the source and writes it
-//! into the target (FIX 6680, BROWSER-SPLIT PR3), over the same CDP calls on
-//! both engines: the URL (`Target.getTargetInfo`, then `Page.navigate`), the
-//! cookies (`Network.getAllCookies`, then `Network.setCookies`), the current
-//! origin's local and session storage (`Runtime.evaluate` both ways) and the
-//! scroll (`Runtime.evaluate`). Neither engine serves a storage domain for a
-//! departed document, so storage is read off the live page and written into
+//! into the target (FIX 6680, BROWSER-SPLIT PR3, PR3b), over the same CDP
+//! calls on both engines: the URL (`Target.getTargetInfo`, then
+//! `Page.navigate`), the cookies (`Network.getAllCookies`, then
+//! `Network.setCookies`), the current origin's local and session storage
+//! (`Runtime.evaluate` both ways) and the scroll (`Runtime.evaluate`).
+//! Neither engine serves a storage domain for a departed document, so the
+//! current origin's storage is read off the live page, every other origin's
+//! comes from the session's snapshots (`storage`), and each is written into
 //! a one-shot inert document of its origin, which the pipe answers locally
-//! through the target's own `Fetch` handler, before the real URL loads.
+//! through the target's own `Fetch` handler, before the real URL loads; its
+//! readback checks every key and value written.
 //!
 //! A store is read within the switch's bounds in the page itself, before
 //! its items cross, and checked again here. What crosses to the target goes
@@ -17,8 +20,8 @@
 use super::pages::{Base, session_token};
 use super::{CALL, CdpDriver, LOAD, page_targets, target_id};
 use crate::cdp::Visits;
-use crate::session::switch::SwitchStateLimits;
-use crate::{BrowserError, Observation};
+use crate::session::storage::SwitchStateLimits;
+use crate::{BrowserEngine, BrowserError, Observation};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -48,29 +51,39 @@ impl Store {
 
 /// One store as the source page answered it.
 pub(crate) enum StoreRead {
-    /// Its items, key and value, with their length in UTF-16 code units.
+    /// Its items, key and value, with their length in UTF-16 code units;
+    /// `relaxed` when a Lightpanda page relaxed `document.domain`, so the
+    /// store is its effective domain's bucket.
     Items {
         pairs: Vec<(String, String)>,
         chars: u64,
+        relaxed: bool,
     },
     /// Past the switch's bounds, holding `count` items.
     Over { count: u64 },
-    /// The page did not answer it, threw, or no longer stood at the origin.
-    Failed,
+    /// The page did not answer it, or no longer stood at the origin.
+    Lost,
+    /// The page threw reading it.
+    Threw,
 }
 
 /// One store's items, as the page reads them, within its bounds: the page's
-/// origin, how many items it holds, the items (null past a bound), and the
-/// UTF-16 code units of their keys and values. A store the page cannot read
-/// answers a count of -1.
-const STORE_READ: &str = "(() => { try { const s = window.__STORE__; const n = s.length; if (n > __ITEMS__) return [location.origin, n, null, 0]; const p = []; let c = 0; for (let i = 0; i < n; i++) { const k = s.key(i); if (k === null) continue; const v = s.getItem(k); if (v === null) continue; c += k.length + v.length; if (c > __CHARS__) return [location.origin, n, null, c]; p.push([k, v]); } return [location.origin, n, p, c]; } catch (e) { return [location.origin, -1, null, 0]; } })()";
+/// origin, how many items it holds, the items (null past a bound), the
+/// UTF-16 code units of their keys and values, and whether the page relaxed
+/// `document.domain`. A store the page cannot read answers a count of -1.
+const STORE_READ: &str = "(() => { let d = false; try { d = document.domain !== location.hostname; } catch (e) {} try { const s = window.__STORE__; const n = s.length; if (n > __ITEMS__) return [location.origin, n, null, 0, d]; const p = []; let c = 0; for (let i = 0; i < n; i++) { const k = s.key(i); if (k === null) continue; const v = s.getItem(k); if (v === null) continue; c += k.length + v.length; if (c > __CHARS__) return [location.origin, n, null, c, d]; p.push([k, v]); } return [location.origin, n, p, c, d]; } catch (e) { return [location.origin, -1, null, 0, d]; } })()";
 
 /// Clears one store of the seed document, sets the items its pieces
-/// spelled, and reads it back: how many items, and their UTF-16 code units.
-const STORE_SEED: &str = "(() => { const s = window.__STORE__; const t = window.__oneironSeed; delete window.__oneironSeed; s.clear(); if (t) { for (const [k, v] of JSON.parse(t)) s.setItem(k, v); } let c = 0; for (let i = 0; i < s.length; i++) { const k = s.key(i); c += k.length + s.getItem(k).length; } return [s.length, c]; })()";
+/// spelled, and reads it back: how many items, their UTF-16 code units, and
+/// whether it holds exactly those items, each key with its value.
+const STORE_SEED: &str = "(() => { const s = window.__STORE__; const t = window.__oneironSeed; delete window.__oneironSeed; s.clear(); const w = t ? JSON.parse(t) : []; for (const [k, v] of w) s.setItem(k, v); let c = 0; for (let i = 0; i < s.length; i++) { const k = s.key(i); c += k.length + s.getItem(k).length; } const e = s.length === w.length && w.every(([k, v]) => s.getItem(k) === v); return [s.length, c, e]; })()";
+
+/// A store's readback in the seed document: how many items, their UTF-16
+/// code units, and whether they are exactly the items written.
+pub(crate) type Readback = (u64, u64, bool);
 
 /// UTF-16 code units of `text`, as a page counts a string's length.
-fn utf16(text: &str) -> u64 {
+pub(super) fn utf16(text: &str) -> u64 {
     text.encode_utf16().count() as u64
 }
 
@@ -143,17 +156,20 @@ impl CdpDriver {
             "Runtime.evaluate",
             json!({"expression": expression, "returnByValue": true}),
         ) else {
-            return StoreRead::Failed;
+            return StoreRead::Lost;
         };
         if answer.get("exceptionDetails").is_some() {
-            return StoreRead::Failed;
+            return StoreRead::Threw;
         }
         let read = answer.pointer("/result/value").unwrap_or(&Value::Null);
         if read[0].as_str() != Some(origin) {
-            return StoreRead::Failed;
+            return StoreRead::Lost;
         }
-        let Some(count) = read[1].as_u64() else {
-            return StoreRead::Failed;
+        let Some(count) = read[1].as_i64() else {
+            return StoreRead::Lost;
+        };
+        let Ok(count) = u64::try_from(count) else {
+            return StoreRead::Threw;
         };
         let Some(items) = read[2].as_array() else {
             return StoreRead::Over { count };
@@ -162,7 +178,7 @@ impl CdpDriver {
         let mut chars = 0;
         for item in items {
             let (Some(key), Some(value)) = (item[0].as_str(), item[1].as_str()) else {
-                return StoreRead::Failed;
+                return StoreRead::Lost;
             };
             chars += utf16(key) + utf16(value);
             pairs.push((key.to_owned(), value.to_owned()));
@@ -172,7 +188,12 @@ impl CdpDriver {
         if pairs.len() > limits.items || chars > bound {
             return StoreRead::Over { count };
         }
-        StoreRead::Items { pairs, chars }
+        let relaxed = read[4].as_bool() == Some(true) && self.engine == BrowserEngine::Lightpanda;
+        StoreRead::Items {
+            pairs,
+            chars,
+            relaxed,
+        }
     }
 
     /// Sets `cookies`, each as `Network.setCookies` takes it, on the page in
@@ -200,13 +221,13 @@ impl CdpDriver {
     /// answered by the pipe and never fetched, checks it stands at
     /// `origin`, then clears each store and writes the items `stores` names
     /// for it (local, then session; none clears it only). Answers each
-    /// store's readback, its items and their UTF-16 code units, or none
-    /// where the write failed; or why the document did not stand.
+    /// store's [`Readback`], or none where the write failed; or why the
+    /// document did not stand.
     pub(crate) fn seed_origin(
         &self,
         origin: &str,
         stores: [Option<&[(String, String)]>; 2],
-    ) -> Result<[Option<(u64, u64)>; 2], String> {
+    ) -> Result<[Option<Readback>; 2], String> {
         let frame = self
             .page("Page.getFrameTree", json!({}))
             .ok()
@@ -251,7 +272,7 @@ impl CdpDriver {
 
     /// Writes `pairs` into `store` of the seed document, in pieces, and
     /// reads it back.
-    fn seed_store(&self, store: Store, pairs: Option<&[(String, String)]>) -> Option<(u64, u64)> {
+    fn seed_store(&self, store: Store, pairs: Option<&[(String, String)]>) -> Option<Readback> {
         if let Some(pairs) = pairs.filter(|pairs| !pairs.is_empty()) {
             let text = serde_json::to_string(pairs).ok()?;
             let mut rest = text.as_str();
@@ -290,7 +311,7 @@ impl CdpDriver {
             return None;
         }
         let read = answer.pointer("/result/value")?;
-        Some((read[0].as_u64()?, read[1].as_u64()?))
+        Some((read[0].as_u64()?, read[1].as_u64()?, read[2].as_bool()?))
     }
 
     /// Loads `url` in the tab in front and lets it settle; answers the URL

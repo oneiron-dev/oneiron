@@ -1891,20 +1891,42 @@ setting moves both.
 `self.browser.switch_engine({engine, reason})` moves the run's browser to
 the other engine when the model decides a page does not work on this one.
 It carries the page's URL, its cookies, the local and session storage of
-its current top-level origin, and its scroll position. The new engine's
-guest starts as the first one did (its own fence, the run's egress door);
-it takes the cookies first, then the storage, written into a one-shot
-document of that origin which the host answers itself, so no page script
-runs before it; then it loads the URL, scrolls, and reads the page whole.
-The answer carries the switch's `receipt` (verb `switch_engine`), whose
-`engine_switch` is its record (`{from, to, reason, url, carried,
-not_carried, outcome}`), and the new page's `observation`. `not_carried`
-lists, by component, origin, cookie `name@domain` and attribute, never a
-value, what the new engine does not hold exactly and why: Lightpanda
-refuses some cookie attributes (a priority other than Medium, `sameParty`,
-`sourceScheme`, `sourcePort`) and ignores `partitionKey`; the storage of
-origins the tab visited before reads `not_collected`; the browser's other
-tabs read `other_tab`. The browser switches all the same. A switch fails
+every top-level origin its tab visited, and its scroll position. The
+current origin's stores are read at the switch; every other origin's come
+from the session's last read of them while a document of it stood: right
+before each act's input (inside the change check's mark, in its window),
+once each act's or open's page settled, before a person's input in a
+takeover and when they hand the browser back, and on Chromium as each
+document is left (a `pagehide` listener in an isolated world of the
+driver's own, which no page script sees). Lightpanda 1.0.0 fires no
+`pagehide`, so writes a page made after its last read, before it was left,
+are not seen. The new engine's guest starts as the first one did (its own
+fence, the run's egress door); it takes the cookies first, then each
+origin's storage, one origin after another and the current one last,
+written into a one-shot document of that origin which the host answers
+itself, so no page script runs before it, and read back key by key; then
+it loads the URL, scrolls, and reads the page whole. The answer carries
+the switch's `receipt` (verb `switch_engine`), whose `engine_switch` is its
+record (`{from, to, reason, url, carried, not_carried, outcome}`), and the
+new page's `observation`. A carried store names its origin, its item
+count, its `phase` (`pre_input`, `post_act`, `exit`, `hand_back` or
+`switch_export`) and `after_receipt`, the last receipt the run had landed
+when it was read. `not_carried` lists, by component, origin, cookie
+`name@domain` and attribute, never a value, what the new engine does not
+hold exactly and why: Lightpanda refuses some cookie attributes (a
+priority other than Medium, `sameParty`, `sourceScheme`, `sourcePort`) and
+ignores `partitionKey`; an origin no read caught reads `never_sampled`;
+one whose page may have written after its last read reads
+`departure_tail_unobserved`, with that read's `after_receipt`; a store that
+gave no answer, threw or was past the bounds reads `context_lost`,
+`read_exception` or `limit`; an origin the session's snapshots gave up to
+stay within their bounds (64 origins a tab, 64 MiB in all, oldest read
+first) reads `evicted_oldest`; an in-page frame of another origin reads
+`cross_origin_frame`, a sandboxed page `opaque_origin`, a file or data
+page `not_web_page`, and a Lightpanda page that relaxed `document.domain`
+`effective_origin_mismatch`; a store that did not read back as written
+reads `readback_mismatch`; the browser's other tabs read `other_tab`. The
+browser switches all the same. A switch fails
 (`outcome` `{state: "failed", stage, code, detail}`) only when the new
 engine's guest does not start, its driver does not attach, it refuses the
 cookies or it does not load the URL; the page then stays on its engine as

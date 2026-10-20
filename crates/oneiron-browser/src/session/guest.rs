@@ -7,6 +7,7 @@
 //! host's own start path, so a switch's target guest gets its own proved
 //! fence, egress door and live-handle charge, as the first guest did.
 
+use super::storage::Sink;
 use crate::BrowserEngine;
 use crate::BrowserError;
 use crate::cdp::Pipe;
@@ -31,9 +32,10 @@ pub trait BrowserGuestStarter: Send {
     /// Starts a guest on `engine`.
     fn start(&mut self, engine: BrowserEngine) -> Result<StartedGuest, BrowserError>;
 
-    /// A charge on the host's retained line, holding nothing yet, for the
-    /// page state a switch holds while it carries it; apart from every
-    /// driver's live-handle charge.
+    /// A charge on the host's retained line, holding nothing yet, for page
+    /// state the session holds: its per-origin storage snapshots, taken
+    /// once at attach, and the state a switch holds while it carries it;
+    /// apart from every driver's live-handle charge.
     fn state_charge(&self) -> Box<dyn HandleRetention>;
 }
 
@@ -47,11 +49,13 @@ pub(crate) struct EngineGuest {
 impl EngineGuest {
     /// Attaches the driver for `engine` to a started guest whose fence the
     /// backend proved: its pipe on the engine's transport, behind the run's
-    /// relay, and its first page readied as every page is.
+    /// relay, keeping its pages' storage reads through `sink` when the
+    /// session keeps snapshots, and its first page readied as every page is.
     pub(crate) fn attach(
         engine: BrowserEngine,
         started: StartedGuest,
         wait_cap: Duration,
+        sink: Option<Sink>,
     ) -> Result<Self, BrowserError> {
         let StartedGuest {
             transport,
@@ -70,6 +74,9 @@ impl EngineGuest {
             lease,
         } = transport;
         let pipe = Pipe::for_engine(engine, reader, writer, Some(relay))?;
+        if let Some(sink) = sink {
+            pipe.collect(sink);
+        }
         let driver = CdpDriver::attach(pipe, engine, wait_cap, retention)?;
         Ok(Self {
             driver,

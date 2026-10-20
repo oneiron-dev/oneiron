@@ -64,8 +64,8 @@ pub use retention::HandleRetention;
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, StartedGuest};
 pub use switch::{
-    EngineSwitchRecord, SwitchCarried, SwitchComponent, SwitchEngineInput, SwitchEngineOutput,
-    SwitchLoss, SwitchNotCarried, SwitchOutcome, SwitchStage,
+    EngineSwitchRecord, StoragePhase, SwitchCarried, SwitchComponent, SwitchEngineInput,
+    SwitchEngineOutput, SwitchLoss, SwitchNotCarried, SwitchOutcome, SwitchStage,
 };
 
 /// One element a program can read or act on.
