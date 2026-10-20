@@ -78,6 +78,9 @@ impl Vault {
                 crate::world_keys::WorldKeyDestroyCause::LocalDelete,
                 request_id.copied(),
             )?;
+            // An erased custody record's known-value history goes, its
+            // entries' retirement staged; another record's stays (KS-3).
+            self.store.stage_known_history_erase_in_txn(wtxn, id)?;
         }
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;

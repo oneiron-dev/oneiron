@@ -66,6 +66,18 @@ impl Vault {
         // share, so one fork copies both: missing refuses by name, retired
         // takes its rows out (KS-2A).
         let retired = carried_bodies::require(&mut image, gate_custody.plan_mut())?;
+        // The known-value history the rows commit to, through the same plan
+        // (KS-3): every retained entry and the master, or the restore is
+        // refused by name, so it never claims to mask what the vault masked
+        // without them; an erased holder's references go. The no-head drop
+        // of claim rows never reaches it.
+        crate::store::require_known_history(
+            image
+                .databases
+                .get_mut("vault_meta")
+                .ok_or_else(codec_error)?,
+            gate_custody.plan_mut(),
+        )?;
         let body_custody = gate_custody.plan_mut().source().cloned();
         if fork {
             crate::store::refuse_custody_beside(destination)?;

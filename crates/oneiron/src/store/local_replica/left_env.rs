@@ -125,6 +125,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     // finishes and the custody stays this vault's.
     &side_table::KEY_CUSTODY_BINDING,
     &side_table::KEY_CUSTODY_RETIRE_PENDING,
+    // The known-value history references that custody's entries stand
+    // under (KS-3), never a payload.
+    &side_table::SECRET_KNOWN_HISTORY,
+    &side_table::SECRET_KNOWN_INDEX,
     &side_table::VAULT_ARCHIVED_BY_RESTORE,
     &side_table::RETRIEVAL_TRACE_KEY_LOCAL,
     &side_table::RECEIPT_FAMILY_INDEX_VERSION,

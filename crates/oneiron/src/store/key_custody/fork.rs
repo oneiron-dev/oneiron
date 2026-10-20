@@ -9,7 +9,7 @@
 //! byte for byte (never hard-linked, never re-encrypted), and everything is
 //! synced before the copy's binding commits.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::path::PathBuf;
 
@@ -32,9 +32,13 @@ pub(crate) enum Requirement {
 /// What a restore needs from custody: the custody its image binds
 /// (`source`) and, per subject, the newest generation a requirement or an
 /// intent names, with the newest one a carried-out retirement destroys.
+/// A subject required by exact id (a holder's known-value history, KS-3)
+/// copies those ids alone: no slot an aborted writer left, nor one no row
+/// commits to.
 pub(crate) struct CustodyPlan {
     source: Option<CustodyBinding>,
     subjects: BTreeMap<CustodySubject, (u64, Option<u64>)>,
+    exact: BTreeMap<CustodySubject, BTreeSet<u64>>,
 }
 
 impl CustodyPlan {
@@ -52,7 +56,11 @@ impl CustodyPlan {
                 (intent.through, carried.then_some(intent.through)),
             );
         }
-        Self { source, subjects }
+        Self {
+            source,
+            subjects,
+            exact: BTreeMap::new(),
+        }
     }
 
     /// The custody the image binds, when it binds one.
@@ -80,6 +88,25 @@ impl CustodyPlan {
             EntryState::Live => Ok(Requirement::Live),
             EntryState::Missing => Err(id.kind().corrupt()),
         }
+    }
+
+    /// [`Self::require`], with `id` the only generation of its subject a
+    /// fork copies besides the others required this way (KS-3).
+    pub(crate) fn require_exact(&mut self, id: &CustodyId) -> Result<Requirement> {
+        let requirement = self.require(id)?;
+        self.exact
+            .entry(id.subject().clone())
+            .or_default()
+            .insert(id.generation());
+        Ok(requirement)
+    }
+
+    /// Whether a fork copies `id` while it is live: every generation of a
+    /// subject not required by exact id, else only those required.
+    fn copies(&self, id: &CustodyId) -> bool {
+        self.exact
+            .get(id.subject())
+            .is_none_or(|generations| generations.contains(&id.generation()))
     }
 }
 
@@ -189,8 +216,9 @@ impl LocalCustody<'_> {
     /// retired stays retired there, whatever its subject. For each subject
     /// `plan` names, through its newest generation, one a carried-out
     /// retirement destroys is retired there as well, and every other entry
-    /// still live here is copied, each re-checked here as it is copied. The
-    /// copy thus counts generations as this custody does, so its own
+    /// still live here is copied (of a subject required by exact id, only
+    /// those ids), each re-checked here as it is copied. The copy thus
+    /// counts generations as this custody does, so its own
     /// retirements reach every entry it holds. Everything is synced before
     /// this returns; a fork that fails removes what it created. `None` when
     /// there is nothing to copy.
@@ -227,7 +255,7 @@ impl LocalCustody<'_> {
                     let id = subject.at(generation);
                     if committed.is_some_and(|newest| generation <= newest) {
                         target.retire_local(&id)?;
-                    } else if self.state(&id)? == EntryState::Live {
+                    } else if plan.copies(&id) && self.state(&id)? == EntryState::Live {
                         target.publish(&id, &self.read(&id)?)?;
                     }
                 }

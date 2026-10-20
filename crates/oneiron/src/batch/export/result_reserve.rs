@@ -13,14 +13,14 @@ use crate::Vault;
 use crate::code_run::StagedSinks;
 use crate::error::Result;
 
-/// What the import's run results sink through inside its writer: the
-/// values custody knows, read now, and an instance for each occurrence
-/// that may spill.
+/// What the import's run results sink through inside its writer: an
+/// instance for each occurrence that may spill. Whether a sweep may
+/// lengthen one is read now; its values, in the writer (KS-3).
 pub(super) fn staged_result_sinks<R: Read + Seek>(
     vault: &Vault,
     archive: &IndexedArchive<'_, R>,
 ) -> Result<StagedSinks> {
-    let sweeps = vault.known_values()?.is_some();
+    let sweeps = vault.known_source()?.is_some();
     let bound = vault.code_result_inline_bytes();
     let mut count = 0usize;
     let mut runs = archive.spool.rows(ArchiveRecordKind::Run);

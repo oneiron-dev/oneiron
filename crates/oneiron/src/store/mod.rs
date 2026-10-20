@@ -133,6 +133,7 @@ mod group_commit;
 mod handle;
 mod key_custody;
 mod key_encoding;
+mod known_history;
 pub(crate) mod legal_hold;
 mod local_queue_budget;
 pub(crate) use local_queue_budget::check_queue_capacity;
@@ -215,6 +216,11 @@ pub(crate) use key_custody::{
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
 };
 pub(crate) use key_encoding::*;
+// KS-3: the known-value index's master and history in typed custody.
+pub(crate) use known_history::{
+    KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, known_history_prefixes,
+    read_back_known_history, require_known_history,
+};
 pub use open_gates::*;
 pub(crate) use outbound_send_receipt::*;
 pub(crate) use page_bound::{PageLayout, TreeRows};

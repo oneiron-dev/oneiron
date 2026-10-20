@@ -31,7 +31,7 @@ use rustix::fs::{
 use rustix::io::Errno;
 
 use super::Store;
-use crate::secret_custody::{KnownSweep, KnownValues};
+use crate::secret_custody::{KnownSource, KnownSweep, KnownValues};
 use crate::{Error, Result};
 
 const BODIES_DIR: &str = "bodies";
@@ -573,7 +573,8 @@ pub(crate) struct BodySink {
     inline: Vec<u8>,
     spill: Option<super::BodySpill>,
     /// A swept body's known values (OF-560 C): each is replaced by its
-    /// custody handle before a byte is measured, kept or spilled.
+    /// custody handle before a byte is measured, kept or spilled. Each frame
+    /// reads them again (KS-3), so no fingerprint stays with the sink.
     sweep: Option<KnownSweep>,
 }
 
@@ -591,14 +592,27 @@ impl BodySink {
     }
 
     /// This sink with each value `known` holds replaced by its handle as it
-    /// streams, a value split across frames included.
-    pub(crate) fn sweeping(mut self, known: Option<Arc<KnownValues>>) -> Self {
+    /// streams, a value split across frames included. Fed outside any
+    /// write transaction: each frame takes the custody read guard.
+    pub(crate) fn sweeping(mut self, known: Option<KnownSource>) -> Self {
         self.sweep = known.map(KnownSweep::new);
         self
     }
 
+    /// [`Self::sweeping`] for a sink fed inside the writer `known` was read
+    /// in, and finished before it ends.
+    pub(crate) fn sweeping_in_writer(mut self, known: Option<Arc<KnownValues>>) -> Self {
+        self.sweep = known.map(KnownSweep::in_writer);
+        self
+    }
+
     pub(crate) fn write(&mut self, frame: &[u8]) -> Result<()> {
-        match self.sweep.as_mut().map(|sweep| sweep.feed(frame)) {
+        match self
+            .sweep
+            .as_mut()
+            .map(|sweep| sweep.feed(frame))
+            .transpose()?
+        {
             Some(swept) => self.write_through(&swept),
             None => self.write_through(frame),
         }
@@ -641,14 +655,14 @@ impl BodySink {
         // A swept body still holds its tail: the digest is the one its
         // finish leaves.
         let mut hasher = meter.hasher.clone();
-        hasher.update(&sweep.tail());
+        hasher.update(&sweep.tail()?);
         Ok(*hasher.finalize().as_bytes())
     }
 
     /// Finishes the body: a spilled one is published under its digest.
     pub(crate) fn finish(mut self, preview_chars: usize) -> Result<(BodyFacts, SunkBody)> {
         if let Some(sweep) = self.sweep.take() {
-            self.write_through(&sweep.tail())?;
+            self.write_through(&sweep.tail()?)?;
         }
         let facts = self
             .meter

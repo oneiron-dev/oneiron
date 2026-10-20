@@ -8,7 +8,7 @@ impl Vault {
     /// A writer for one result body, into this vault's `bodies/`. Each value
     /// custody knows is replaced by its handle as it streams (OF-560 C).
     pub(crate) fn code_run_output_sink(&self) -> Result<BodySink> {
-        Ok(self.code_run_script_sink()?.sweeping(self.known_values()?))
+        Ok(self.code_run_script_sink()?.sweeping(self.known_source()?))
     }
 
     /// [`Self::code_run_output_sink`] with no sweep, for a step's program:
@@ -118,28 +118,31 @@ impl Vault {
     /// [`Self::code_run_output_sink`] as `staged` holds it, prepared before
     /// its caller's write transaction opened (FIX 3678, KS-2A): the
     /// whole-vault import stages each result body inside its one
-    /// transaction, sweeping the values it read then and spilling into the
-    /// instances minted then.
-    pub(crate) fn code_run_output_sink_knowing(&self, staged: StagedSinks) -> Result<BodySink> {
+    /// transaction, spilling into the instances minted then and sweeping the
+    /// values `known` holds, which that writer read (KS-3).
+    pub(crate) fn code_run_output_sink_knowing(
+        &self,
+        staged: StagedSinks,
+        known: Option<std::sync::Arc<crate::secret_custody::KnownValues>>,
+    ) -> Result<BodySink> {
         Ok(BodySink::new(
             self.store.body_dir()?,
             self.limit_watch().bound(EngineLimit::CodeResultInlineBytes),
             Some(staged.mint),
         )
-        .sweeping(staged.known))
+        .sweeping_in_writer(known))
     }
 
     /// What `count` result bodies a caller stages inside one write
-    /// transaction sink through, read and minted now, before it opens: the
-    /// values custody knows, for the sweep, and `count` body instances, one
-    /// for each body that may spill. One left unspilled is debris.
+    /// transaction sink through, minted now, before it opens: `count` body
+    /// instances, one for each body that may spill. One left unspilled is
+    /// debris. The values custody knows are read in that writer (KS-3).
     ///
     /// # Errors
     ///
     /// Storage and custody errors.
     pub(crate) fn staged_result_sinks(&self, count: usize) -> Result<StagedSinks> {
         Ok(StagedSinks {
-            known: self.known_values()?,
             mint: self.store.body_mint()?.reserve(count)?,
         })
     }
@@ -371,11 +374,10 @@ impl Vault {
     }
 }
 
-/// What result bodies staged inside one write transaction sink through,
+/// What result bodies staged inside one write transaction spill into,
 /// prepared before it opened ([`Vault::staged_result_sinks`]).
 #[derive(Clone)]
 pub(crate) struct StagedSinks {
-    known: Option<std::sync::Arc<crate::secret_custody::KnownValues>>,
     mint: crate::store::BodyMint,
 }
 

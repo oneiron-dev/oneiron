@@ -422,6 +422,45 @@ impl LocalCustody<'_> {
         Ok(())
     }
 
+    /// Publishes `secret`, bytes its client computed, as the new entry `id`
+    /// and journals its Mint (KS-3): the entry synced, then the frame synced,
+    /// both before this returns, so before any reference to it commits. The
+    /// client takes `id` past every generation its subject holds, so an
+    /// interrupted call's entry is never published again: it is debris an
+    /// erase of the subject still retires.
+    pub(crate) fn publish_minted(&self, id: &CustodyId, secret: &CustodySecret) -> Result<()> {
+        self.publish(id, secret)?;
+        self.journal_entry(&super::log::LogEntry::Mint(id.clone()))?;
+        Ok(())
+    }
+
+    /// The newest generation `subject` holds an entry or a retirement marker
+    /// for, an unpublished temporary aside; `None` when it holds neither, or
+    /// has no directory yet.
+    pub(crate) fn newest_generation(&self, subject: &CustodySubject) -> Result<Option<u64>> {
+        let names = match fs::read_dir(self.subject_dir(subject)?) {
+            Ok(names) => names,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.into()),
+        };
+        let mut newest = None;
+        for name in names {
+            let name = name?.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            let generation = name
+                .strip_prefix(".retired-g")
+                .or_else(|| name.strip_prefix('g'))
+                .and_then(|hex| u64::from_str_radix(hex, 16).ok())
+                .filter(|&generation| {
+                    name == entry_name(generation) || name == marker_name(generation)
+                });
+            newest = newest.max(generation);
+        }
+        Ok(newest)
+    }
+
     /// `id`'s entry, minting it only while unpublished. A damaged entry is
     /// never treated as absent; only an unpublished temporary is discarded.
     pub(crate) fn get_or_create(&self, id: &CustodyId) -> Result<CustodySecret> {

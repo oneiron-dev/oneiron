@@ -112,6 +112,9 @@ impl Store {
     /// not listed: an image names each one its rows need beside them, and a
     /// restore requires each against the custody it lands (KS-2A), so the
     /// sealed manifest stays one frame however many bodies a vault keeps.
+    /// Nor is the known-value index's master or history (KS-3): an image's
+    /// references name each one it needs, which a restore requires the same
+    /// way, and an entry no reference names is never needed.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -126,7 +129,13 @@ impl Store {
             required: census
                 .into_iter()
                 .filter(|(id, state)| {
-                    *state == EntryState::Live && id.kind() != CustodyKind::BodyInstance
+                    *state == EntryState::Live
+                        && !matches!(
+                            id.kind(),
+                            CustodyKind::BodyInstance
+                                | CustodyKind::KnownValueIndex
+                                | CustodyKind::KnownValueEntry
+                        )
                 })
                 .map(|(id, _)| RequiredId {
                     kind: id.kind().tag(),

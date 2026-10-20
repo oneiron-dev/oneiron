@@ -247,7 +247,7 @@ impl crate::Vault {
         if !ASSET_FILE_PLANE {
             return Ok(None);
         }
-        Ok(KnownValues::load_backfilled_in_txn(&self.store, txn)?.map(Arc::new))
+        Ok(KnownValues::load_in_writer(&self.store, txn)?.map(Arc::new))
     }
 
     /// Streams `reader` into one staged ASSET body, before the transaction

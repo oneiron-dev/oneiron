@@ -10,7 +10,7 @@ impl SessionBinding<'_> {
     /// Each value custody knows is replaced by its handle as it streams
     /// (OF-560 C), as on the canonical vault.
     pub(super) fn output_sink(&self) -> Result<BodySink> {
-        let known = self.answered(|| self.session.known_values())?;
+        let known = self.answered(|| self.session.known_source())?;
         Ok(self.script_sink()?.sweeping(known))
     }
 

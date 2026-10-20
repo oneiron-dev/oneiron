@@ -292,8 +292,9 @@ impl Vault {
 
     /// The custody steps an erase of the records `erased` (their 16-byte
     /// ids) still owes, for its receipt's read: `None` when none of their
-    /// keys was ever in custody here. Their claim keys and the body
-    /// instances the erase retired or owes (KS-2A) count alike. Each
+    /// keys was ever in custody here. Their claim keys, the body instances
+    /// the erase retired or owes (KS-2A) and a custody record's known-value
+    /// history (KS-3) count alike. Each
     /// handed-off retirement is complete once the watermark passed it;
     /// until then, every member behind it and the anchor are owed (with no
     /// anchor configured, every member's ack completes it, rollback not
@@ -313,6 +314,12 @@ impl Vault {
                 return Ok(None);
             };
             owed.subject(&self.store, txn, &subject)?;
+            if let Some(history) = self
+                .store
+                .custody_subject(CustodyKind::KnownValueEntry, record)?
+            {
+                owed.subject(&self.store, txn, &history)?;
+            }
             #[cfg(unix)]
             for instance in self
                 .store
