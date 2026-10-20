@@ -227,6 +227,10 @@ side_tables! {
     /// Random 32-byte identity of this store, minted at its first open and compared by every
     /// same-vault check; node-local and never synced, so a replica holds its own. Key: ().
     VAULT_IDENTITY_LOCAL: VaultMeta b"vault_identity:local:v1" Raw;
+    /// The BLAKE3 fingerprint of the recipient public key each escrow label was sealed to, kept
+    /// after the label retires, so a later add of the same key under another label warns (FIX
+    /// 2857). Public facts only. Key: string (label).
+    VAULT_KEY_ESCROW_RECIPIENT: VaultMeta b"vault_key:escrow_recipient:v1:" Named;
     /// An escrow label retired after its recipient's secret was released, and the owner's receipt
     /// (OF-570, CROSS-ARCH-0022 #ov-custody-backend); nothing is sealed to it again. Key: string
     /// (label).

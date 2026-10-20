@@ -379,25 +379,53 @@ pub(crate) fn escrow_secret(raw: &[u8]) -> anyhow::Result<HybridSecretKey> {
     Ok(oneiron::world_keys::escrow_recipient(&seed)?)
 }
 
-/// A 32-byte secret as given: 32 raw bytes, 64 hex digits or base64url.
+/// A 32-byte secret as given: 32 raw bytes, 64 hex digits or base64url,
+/// decoded straight into the guard it returns (FIX 6334): no plain copy of
+/// the secret is made on the way, a refused one included.
 pub(crate) fn secret32(raw: &[u8], what: &str) -> anyhow::Result<Zeroizing<[u8; 32]>> {
     let mut out = Zeroizing::new([0u8; 32]);
     let decoded = match raw.len() {
-        32 => Some(Zeroizing::new(raw.to_vec())),
-        64 => std::str::from_utf8(raw)
-            .ok()
-            .and_then(unhex)
-            .map(Zeroizing::new),
-        _ => std::str::from_utf8(raw)
-            .ok()
-            .and_then(unb64)
-            .map(Zeroizing::new),
+        32 => {
+            out.copy_from_slice(raw);
+            true
+        }
+        64 => secret_hex_into(raw, &mut out),
+        _ => secret_b64_into(raw, &mut out),
     };
-    match decoded {
-        Some(bytes) if bytes.len() == 32 => out.copy_from_slice(&bytes),
-        _ => anyhow::bail!("{what} is 32 bytes: raw, 64 hex digits or base64url"),
-    }
+    anyhow::ensure!(decoded, "{what} is 32 bytes: raw, 64 hex digits or base64url");
     Ok(out)
+}
+
+/// 64 hex digits decoded into `out`, pair by pair; `false` for anything else.
+fn secret_hex_into(raw: &[u8], out: &mut [u8; 32]) -> bool {
+    if raw.len() != 2 * out.len() {
+        return false;
+    }
+    for (byte, pair) in out.iter_mut().zip(raw.chunks_exact(2)) {
+        let digit = |at: usize| char::from(pair[at]).to_digit(16);
+        let (Some(high), Some(low)) = (digit(0), digit(1)) else {
+            return false;
+        };
+        // Two hex digits make one byte.
+        *byte = u8::try_from(high * 16 + low).unwrap_or_default();
+    }
+    true
+}
+
+/// Base64url of 32 bytes decoded into `out` through a guarded buffer with
+/// room past them, so a longer input is refused rather than written short;
+/// `false` for anything else.
+fn secret_b64_into(raw: &[u8], out: &mut [u8; 32]) -> bool {
+    let mut room = Zeroizing::new([0u8; 48]);
+    let end = raw.iter().rposition(|byte| *byte != b'=').map_or(0, |at| at + 1);
+    let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    match engine.decode_slice(&raw[..end], &mut room[..]) {
+        Ok(len) if len == out.len() => {
+            out.copy_from_slice(&room[..len]);
+            true
+        }
+        _ => false,
+    }
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {

@@ -359,11 +359,18 @@ impl KeptValues {
         self.0.is_empty()
     }
 
-    /// Whether the owner ruled `value` no secret in `record`.
+    /// Whether the owner ruled `value` no secret in `record`, as it is or as
+    /// one of its spellings decodes (base64, percent or JSON escapes): the
+    /// ruling covers the value however it is written (FIX 2725).
     pub(crate) fn holds(&self, record: &EntityId, value: &[u8]) -> bool {
-        self.0
-            .get(record)
-            .is_some_and(|values| values.iter().any(|kept| kept.as_slice() == value))
+        let Some(values) = self.0.get(record) else {
+            return false;
+        };
+        let ruled = |bytes: &[u8]| values.iter().any(|kept| kept.as_slice() == bytes);
+        ruled(value)
+            || super::known_values::decodings(value)
+                .iter()
+                .any(|decoded| ruled(decoded.as_slice()))
     }
 
     /// `bytes` of `record` with each kept value in them overwritten by the

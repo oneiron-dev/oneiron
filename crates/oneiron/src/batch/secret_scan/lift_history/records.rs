@@ -12,14 +12,17 @@ use std::ops::Bound;
 
 use heed::{RoTxn, RwTxn};
 
+use super::super::mask::REASON_KNOWN_VALUE;
+use super::super::mask::known_marks::{holds_unmarked_known, remark_known_file_in_txn};
 use super::super::write_payload_hit;
-use super::{Done, LiftCause, Page, record_text};
+use super::{Done, LiftCause, LiftFamily, Page, proposals, record_text};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{
     ENTITY_TYPE_ASSET, ENTITY_TYPE_NOTE, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD,
 };
+use crate::secret_custody::{KeptValues, KnownValues, masked_file_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::{TimeRange, Vault};
 
@@ -28,8 +31,17 @@ const INDEX_SOURCE_TEXT: SideTable<EntityId, Vec<(String, String)>, Named> =
     SideTable::new(&side_table::INDEX_SOURCE_TEXT);
 
 /// The records after `after` (a record id; empty at the start), up to
-/// `limit`.
-pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize) -> Result<Page> {
+/// `limit`: each that holds a hit, or a file holding a value `known` knows
+/// that its mark does not cover yet (FIX 2781). A known-value pass
+/// (`known_only`) reads the files alone.
+pub(super) fn census(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    after: &[u8],
+    limit: usize,
+    known: Option<&KnownValues>,
+    known_only: bool,
+) -> Result<Page> {
     let start = if after.is_empty() {
         Bound::Unbounded
     } else {
@@ -49,7 +61,7 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
         let (key, raw) = row?;
         read += 1;
         if let Some(id) = record_id(&key)
-            && hit(vault, txn, &id, &materialized(vault, txn, &id, &raw)?)?.is_some()
+            && census_hit(vault, txn, &id, &raw, known, known_only)?
         {
             page.hits.push(key.to_vec());
         }
@@ -60,6 +72,99 @@ pub(super) fn census(vault: &Vault, txn: &RoTxn<'_>, after: &[u8], limit: usize)
     }
     page.read = u64::try_from(read).unwrap_or(u64::MAX);
     Ok(page)
+}
+
+/// Whether record `id`'s stored row `raw` is one the walk settles: a hit
+/// the door's rules place (a known-value pass reads none), or a file holding
+/// a value `known` knows that its mark does not cover yet.
+fn census_hit(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    known: Option<&KnownValues>,
+    known_only: bool,
+) -> Result<bool> {
+    let file = EntityMetadataHeader::parse(raw)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_ASSET);
+    if known_only && (!file || known.is_none()) {
+        return Ok(false);
+    }
+    let raw = materialized(vault, txn, id, raw)?;
+    if !known_only && hit(vault, txn, id, &raw)?.is_some() {
+        return Ok(true);
+    }
+    match known.filter(|_| file) {
+        Some(known) => known_hit(vault, txn, id, &raw, known),
+        None => Ok(false),
+    }
+}
+
+/// Whether the file ASSET `id` stores (its row `raw`, as its readers read
+/// it) holds a value `known` knows that its mark does not cover yet, past
+/// the owner's rulings in the record (FIX 2781). A file whose members the
+/// read fails on reads as one: its writer tries it, and keeps the failure
+/// to try again.
+fn known_hit(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+    known: &KnownValues,
+) -> Result<bool> {
+    if proposals::owner_kept_in_txn(vault, txn, LiftFamily::Records, id.as_bytes())? {
+        return Ok(false);
+    }
+    let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;
+    let prior = masked_file_in_txn(&vault.store, txn, blake3::hash(bytes).as_bytes())?;
+    Ok(
+        holds_unmarked_known(bytes, known, |value| kept.holds(id, value), prior.as_ref())
+            .unwrap_or(true),
+    )
+}
+
+/// A known-value pass over record `key` (FIX 2781): a file's mark takes
+/// each value custody knows that it does not cover yet, past the owner's
+/// rulings, in the writer's transaction. Its bytes, its index text and its
+/// proposals stay as they are; any other record is passed over, and a file
+/// a legal hold keeps files a proposal as a lift does.
+pub(super) fn remark(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Done> {
+    let Some(id) = record_id(key) else {
+        return Ok(Done::Clean);
+    };
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
+        return Ok(Done::Clean);
+    };
+    if EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != ENTITY_TYPE_ASSET)
+    {
+        return Ok(Done::Clean);
+    }
+    let raw = vault.materialized_row_in_txn(txn, &id, raw)?;
+    if proposals::owner_kept_in_txn(vault, txn, LiftFamily::Records, key)? {
+        return Ok(Done::Clean);
+    }
+    if crate::store::legal_hold::held_in_txn(&vault.store, txn, id.as_bytes())? {
+        return Ok(Done::Propose(LiftCause::Held, REASON_KNOWN_VALUE));
+    }
+    let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    Ok(if remark_file(vault, txn, &id, bytes)? {
+        Done::Marked
+    } else {
+        Done::Clean
+    })
+}
+
+/// The values custody knows in the file `bytes` ASSET `id` stores, marked
+/// beside its marks, past the owner's rulings in the record; `true` when
+/// one was added.
+fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) -> Result<bool> {
+    let Some(known) = KnownValues::load_in_writer(&vault.store, txn)? else {
+        return Ok(false);
+    };
+    let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;
+    remark_known_file_in_txn(&vault.store, txn, id, bytes, &known, &kept)
 }
 
 /// Reads record `key` again in the writer's transaction and writes it again
@@ -225,8 +330,9 @@ fn rewrite(
 
 /// A file keeps its bytes. Put again as they are, the batch door marks each
 /// key in them with its custody record and raises the file's band; a file
-/// already marked is left as it is. Its index text is text, not its bytes,
-/// and is lifted first ([`lift_file_text`]).
+/// already marked keeps its marks, and takes beside them each value custody
+/// came to know since, past the owner's rulings (FIX 2781). Its index text
+/// is text, not its bytes, and is lifted first ([`lift_file_text`]).
 fn mark_file(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -237,7 +343,10 @@ fn mark_file(
     lift_file_text(vault, txn, id)?;
     let bytes = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
     let hash = *blake3::hash(bytes).as_bytes();
-    if crate::secret_custody::masked_file_in_txn(&vault.store, txn, &hash)?.is_some() {
+    if masked_file_in_txn(&vault.store, txn, &hash)?.is_some() {
+        if !proposals::owner_kept_in_txn(vault, txn, LiftFamily::Records, id.as_bytes())? {
+            remark_file(vault, txn, id, bytes)?;
+        }
         return Ok(());
     }
     vault

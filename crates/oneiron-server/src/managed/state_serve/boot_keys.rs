@@ -32,7 +32,12 @@ pub(super) fn escrow_vault_key(
             matches!(&wrap.kind, oneiron::world_keys::VaultKeyWrapKind::Escrow { label: held } if *held == label)
         });
         if !sealed {
-            vault.add_vault_key_escrow(&label, &recipient)?;
+            // A key released and retired under another label still seals,
+            // with a warning (FIX 2857).
+            let added = vault.add_vault_key_escrow(&label, &recipient)?;
+            for warning in &added.warnings {
+                tracing::warn!(role, %label, ?warning, "an escrow recipient was retired before");
+            }
         }
     }
     Ok(())

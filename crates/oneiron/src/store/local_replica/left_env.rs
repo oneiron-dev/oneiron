@@ -79,6 +79,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::VAULT_KEY_STATE,
     &side_table::VAULT_KEY_WRAP,
     &side_table::VAULT_KEY_ESCROW_SPOOLED,
+    &side_table::VAULT_KEY_ESCROW_RECIPIENT,
     &side_table::VAULT_KEY_ESCROW_RETIRED,
     &side_table::RECOVERY_KIT,
     // Monotonic counters and floors, so no sequence or id is ever reused.
