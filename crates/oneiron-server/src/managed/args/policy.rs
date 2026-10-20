@@ -206,6 +206,18 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.publisher_training_outbox_dir.is_some(),
         ArgvUse::Read,
     ),
+    // Read, and inactive here (TL-6): `serve_config` keeps the self-host
+    // shipper off, as the supervisor pushes the intake's keys and ships.
+    (
+        "publisher-training-self-host-shipper",
+        |args| args.publisher_training_self_host_shipper,
+        ArgvUse::Read,
+    ),
+    (
+        "publisher-training-intake-origin",
+        |args| args.publisher_training_intake_origin.is_some(),
+        ArgvUse::Read,
+    ),
     // The supervisor's bindings for the guests' container CLIs, the pack
     // organ directory and the mesh listener (WILL-PLAN L14 rows 05, 14).
     (

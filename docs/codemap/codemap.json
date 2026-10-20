@@ -26137,7 +26137,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 50
+      "crate-vis": 51
      }
     },
     {
@@ -27206,6 +27206,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/grant/repo_bounds.rs",
+     "purpose": "The `repo_bounds` key of the FEDERATION_GRANT body (FIX 6867): the repo bounds an owner gave his agent, in…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -27289,7 +27299,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "mod": 2,
       "re-export": 18
      }
@@ -27463,6 +27473,16 @@
       "enum": 2,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/repo_access.rs",
+     "purpose": "The repo admission seams on an owner's agent Grant (FIX 6867): the L02 seams the Engine approved for L11 G1",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -27704,7 +27724,7 @@
      "purpose": "The publisher training files' crypto (OF-420): the install signature on what the vault writes (C1, D6), the…",
      "surface": {
       "crate-vis": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -27746,13 +27766,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/feedback/conversation_training/link.rs",
      "purpose": "The training link (TRAINING-LINK = C, TL-1): the opaque codes that stand in for this vault, its sources…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 18
      }
     },
     {
@@ -65861,7 +65881,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 41,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66766,7 +66786,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4182,
+   "source_files": 4184,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67393,8 +67413,8 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction…",
      "surface": {
-      "mod": 5,
-      "re-export": 2
+      "mod": 6,
+      "re-export": 3
      }
     },
     {
@@ -67413,6 +67433,24 @@
       "fn": 17,
       "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoAccessBounds",
+      "RepoAccessIntent",
+      "RepoAccessRefusal",
+      "RepoTarget"
+     ],
+     "path": "src/federation/repo_scope.rs",
+     "purpose": "Repo access bounds on an owner's agent Grant, and the pure admission of a repo target under them (FIX 6867…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -67510,7 +67548,7 @@
      "purpose": "Credential-door bounds the authority log's slip checks share with the door itself"
     },
     "federation": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67526,7 +67564,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 43,
+   "source_files": 44,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -69405,13 +69443,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/cdp/state.rs",
-     "purpose": "What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3): the page each watched…",
+     "purpose": "What the pipe keeps of its pages for an engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the page each…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cdp/storage.rs",
+     "purpose": "What the pipe keeps of its pages' storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -69449,7 +69497,7 @@
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a browser guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -69499,7 +69547,17 @@
      "path": "src/driver/state.rs",
      "purpose": "A page's state as an engine switch reads it off the source and writes it into the target (FIX 6680…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/driver/storage.rs",
+     "purpose": "The driver's reads of a page's storage for the session's snapshots (FIX 6680, BROWSER-SPLIT PR3b), on both…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -69705,7 +69763,7 @@
      "path": "src/session.rs",
      "purpose": "A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 23,
       "re-export": 1,
       "struct": 2
@@ -69730,10 +69788,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/session/switch.rs",
-     "purpose": "The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3), under the seat lock the call already holds…",
+     "path": "src/session/storage.rs",
+     "purpose": "The session's per-origin storage snapshots (FIX 6680, BROWSER-SPLIT PR3b): what an engine switch carries of…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session/switch.rs",
+     "purpose": "The engine switch's transaction (FIX 6680, BROWSER-SPLIT PR3, PR3b), under the seat lock the call already…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -69741,6 +69809,7 @@
      "kind": "src",
      "notable": [
       "EngineSwitchRecord",
+      "StoragePhase",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -69751,9 +69820,9 @@
       "SwitchStage"
      ],
      "path": "src/switch.rs",
-     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3): the model moves the run's browser to the other engine…",
+     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine…",
      "surface": {
-      "enum": 4,
+      "enum": 5,
       "struct": 5
      }
     }
@@ -69774,7 +69843,7 @@
      "purpose": "Repeat screenshots (AB-004)"
     },
     "cdp": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -69788,7 +69857,7 @@
      "purpose": "A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server…"
     },
     "driver": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -69851,7 +69920,7 @@
      "purpose": "The host's memory floor, as a browser session's live-handle registry meets it (C013)"
     },
     "session": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -69862,12 +69931,12 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3): the model moves the run's browser to the other engine…"
+     "purpose": "An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the run's browser to the other engine…"
     }
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 25,
+   "source_files": 28,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -82636,7 +82705,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs/browser_guest.rs",
      "purpose": "A run browser's guests (FIX 6680, BROWSER-SPLIT PR3): its first guest and every engine switch's target start…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -86193,10 +86262,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/conversation_training/account.rs",
-     "purpose": "C1 (CALLS-1): a self-hosted vault's binding to the publisher's intake as the person's Oneiron account…",
+     "path": "src/conversation_training/descriptor.rs",
+     "purpose": "The intake's public descriptor on a self-hosted vault (TL-6): the intake's sealing key and receipt keys…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/http.rs",
+     "purpose": "The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -86206,7 +86285,7 @@
      "path": "src/conversation_training/mod.rs",
      "purpose": "The publisher training outbox (OF-420 A1, \"Learn from my conversations\"): the worker that writes this…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -86216,7 +86295,17 @@
      "path": "src/conversation_training/outbox.rs",
      "purpose": "The outbox directory as the engine's training transport: three protocol subdirectories and the vault's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/retry.rs",
+     "purpose": "The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -87674,9 +87763,29 @@
      "purpose": "A relay room has no engine, vault key, Loro document or inference worker",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/ctl_client.rs",
+     "purpose": "The relay's client for its supervisor's hold-guard broker (FIX 6826)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/ctl_hold_guard.rs",
+     "purpose": "The relay's hold guard when its vault's engine runs as another process (FIX 6826, Engine 10-21)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -87697,6 +87806,26 @@
      "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/installer.rs",
+     "purpose": "The `host relay` installer (FIX 6826, Engine 10-21)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay_delete.rs",
+     "purpose": "The relay locker delete this engine executes (FIX 6826, Engine 10-21)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -87832,6 +87961,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/state_serve/read_only.rs",
+     "purpose": "The reap freeze's whitelist of requests a frozen vault still answers",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/state_serve/reap.rs",
      "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
      "surface": {
@@ -87847,6 +87986,16 @@
      "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/relay_delete.rs",
+     "purpose": "The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -89063,7 +89212,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -91140,7 +91289,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "conversation_training": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91315,7 +91464,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 53,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91471,7 +91620,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 944,
+   "source_files": 952,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94245,6 +94394,7 @@
       "ReplyRouteRule",
       "ReplyStripsPage",
       "ReplyStripsRequest",
+      "RepoAccessBounds",
       "RepoProposalDecision",
       "RepoProposalSettlement",
       "RepoProposalStatus",
@@ -94954,6 +95104,7 @@
       "StepTarget",
       "StepXfrm",
       "StopCause",
+      "StoragePhase",
       "StoredShapeSeed",
       "StreamCadence",
       "StreamFinality",
@@ -95376,8 +95527,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 896,
-      "struct": 2808
+      "enum": 897,
+      "struct": 2809
      }
     },
     {
@@ -95664,12 +95815,8 @@
       "CtlRequest",
       "CtlResponse",
       "CtlResumeOn",
-      "FacilityNotice",
-      "FacilityReason",
       "LegalHoldsNotProven",
       "LegalHoldsWire",
-      "ManagedFacility",
-      "ManagedReadiness",
       "ShedBlockerWire",
       "ShedCause",
       "ShedStatus",
@@ -95680,9 +95827,27 @@
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 4,
-      "enum": 15,
-      "fn": 9,
-      "struct": 5
+      "enum": 12,
+      "fn": 6,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FacilityNotice",
+      "FacilityReason",
+      "ManagedFacility",
+      "ManagedReadiness"
+     ],
+     "path": "src/lib/ctl/readiness.rs",
+     "purpose": "How a managed vault came up (contract v3): the readiness every `Ping` reports, and the facilities it names…",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -95903,7 +96068,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 18,
+      "mod": 19,
       "re-export": 9
      }
     },
@@ -95937,6 +96102,32 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RelayDeleteExecuteWire",
+      "RelayDeleteIoKind",
+      "RelayDeleteRechecksRequest",
+      "RelayDeleteRechecksWire",
+      "RelayDeleteRequest",
+      "RelayDeleteStage",
+      "RelayDeleteState",
+      "RelayDeleteUnknown",
+      "RelayLockerBindRequest",
+      "RelayLockerBindWire",
+      "RelayLockerRefusal"
+     ],
+     "path": "src/lib/relay_delete.rs",
+     "purpose": "The relay locker delete the engine executes (FIX 6826, Engine 10-21)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 7,
+      "fn": 17,
+      "struct": 4
      }
     },
     {
@@ -96266,7 +96457,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 43,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -96275,7 +96466,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 42,
+   "source_files": 44,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

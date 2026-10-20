@@ -3739,7 +3739,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def mint(self, spec):
-            """The owner grants one named agent an explicit verb list inside his exact scope, standing until he revokes it or until the expiry he sets; a second mint adds a second grant."""
+            """The owner grants one named agent an explicit verb list inside his exact scope, and optional repo bounds, until he revokes it or until the expiry he sets; a second mint adds a second grant."""
             return json.loads(_translate(lambda: self._client.vault_agents_grants_mint(json.dumps(spec))))
         def revoke(self, spec):
             """The owner revokes one agent grant by its id; the agent stops counting it at once, and a repeat changes nothing."""

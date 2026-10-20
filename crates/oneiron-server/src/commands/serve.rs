@@ -513,15 +513,12 @@ pub(crate) async fn start_desktop_workers(
             dir,
         )
     }));
-    // The publisher training outbox, only with its flag (OF-420).
-    workers.extend(config.publisher_training_outbox_dir.clone().map(|dir| {
-        crate::conversation_training::spawn(
-            Arc::clone(&sync_server),
-            crate::server::admit_every_pass(),
-            dir,
-            crate::conversation_training::Placement::SelfHost,
-        )
-    }));
+    // The publisher training outbox, only with its flag (OF-420), and the
+    // self-host shipper's descriptor fetch with it, only with its own (TL-6).
+    workers.extend(crate::conversation_training::spawn_self_host(
+        &sync_server,
+        config,
+    ));
     #[cfg(unix)]
     workers.extend(import_queue.map(|queue| queue.spawn(Arc::clone(&sync_server))));
     // Attached folders rescan after the import queue starts (OF-554).

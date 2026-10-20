@@ -59,12 +59,18 @@ pub enum ManagedError {
     RelativeRecipientFile { flag: &'static str },
 
     /// One leaf of the owner's settings file that a managed vault does not
-    /// take, named by its dotted field and never by its value.
-    #[error("--settings-file sets `{field}`, which a managed vault refuses: {reason}")]
+    /// take, named by its dotted field and never by its value. `cause` is
+    /// the finer reason an owner path was refused, when there is one: the
+    /// contract's path reason (FIX 6874).
+    #[error(
+        "--settings-file sets `{field}`, which a managed vault refuses: {reason}{}",
+        .cause.map_or_else(String::new, |cause| format!(" ({cause})"))
+    )]
     SettingsRefused {
         section: String,
         field: String,
         reason: SettingsRefusal,
+        cause: Option<&'static str>,
     },
 
     #[error("--artifact-http-socket must be an absolute path")]
@@ -617,6 +623,10 @@ impl ManagedArgs {
             esign_delivery_outbox_dir: self.esign_delivery_outbox.clone(),
             // The supervisor's training outbox, when it ships for one.
             publisher_training_outbox_dir: self.publisher_training_outbox.clone(),
+            // Read and inactive whatever argv says (TL-6): the supervisor
+            // pushes the intake's keys and ships, so this vault never fetches
+            // the intake's descriptor or ships through the anonymous window.
+            publisher_training_self_host_shipper: false,
             ..defaults
         };
         if let Some(log_level) = args.log_level.clone() {
