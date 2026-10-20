@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 use super::anchor::extends;
 use super::files::{open_dir, read_whole, replace_file, write_once};
 use super::head::head_position;
-use super::log::{CustodyPosition, FrameHeader, frame_name, log_corrupt};
+use super::log::{CustodyPosition, FrameHeader, Journal, frame_name, log_corrupt};
 use super::protocol::{
     CustodyBatch, CustodySource, CustodyTarget, DeletionEvidence, EvidenceKind, Lineage,
     PendingCode, TargetPending, TargetPublication, TargetSpec, hex,
@@ -98,9 +98,14 @@ impl CustodyTarget for FolderTarget {
             Ok(dir) => dir,
             Err(error) => return Ok(unreachable(&error)),
         };
+        // One pass at a time reads the head held here, checks this batch
+        // extends it and switches it in: a slower pass sealed at an older
+        // position never renames its head over a newer one (FIX 6394). The
+        // lock lives in the local journal, never on the folder.
+        let _lock = Journal::of_batch(batch).publish_lock(self.spec.id())?;
         let held = held_position(&dir);
-        if held.is_some_and(|held| !extends(&held, &position)) {
-            return Ok(moved());
+        if let Some(held) = held.filter(|held| !extends(held, &position)) {
+            return Ok(newer_head(&held, batch));
         }
         let after = held
             .filter(|held| held.epoch == position.epoch)
@@ -150,7 +155,14 @@ fn unreachable(error: &Error) -> TargetPublication {
     })
 }
 
-pub(super) fn moved() -> TargetPublication {
+/// What a target answers when its head at `held` is one `batch` does not
+/// extend: covered when it is a later head of the batch's own log, which a
+/// newer pass published and acks (FIX 6394); moved by another writer
+/// otherwise.
+pub(super) fn newer_head(held: &CustodyPosition, batch: &CustodyBatch) -> TargetPublication {
+    if batch.covered_by(held) {
+        return TargetPublication::Covered;
+    }
     TargetPublication::Pending(TargetPending {
         code: PendingCode::Moved,
         detail: "the target holds a newer custody head: another writer moved it".into(),
