@@ -194,6 +194,15 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 [oneiron::error::LEGAL_HOLD_SUGGESTION],
             )
         }
+        // An erase took the reply this read names (FIX 5718): the record's
+        // state, as the facade answers it, never this plane's 500.
+        ErrorKind::ResponseErased => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("response_erased".to_owned()),
+            },
+            ["An erase took this reply: what the call did stands, and no call sends it again."],
+        ),
         _ => ApiError::internal_server_error(message),
     }
 }
