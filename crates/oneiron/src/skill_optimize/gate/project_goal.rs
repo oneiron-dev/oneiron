@@ -11,6 +11,7 @@ use std::collections::VecDeque;
 
 use super::*;
 use crate::consent::AuthenticatedOwner;
+use crate::limit_ask::EngineLimit;
 use crate::workspace_roster::{GoalAxis, GoalPreference, GoalRecord};
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +19,6 @@ const BINDING_PREFIX: &[u8] = b"skill_optimize/project_goal/v1\0";
 const PROPOSAL_PREFIX: &[u8] = b"skill_optimize/project_goal_proposal/v1\0";
 const DISMISSED_PREFIX: &[u8] = b"skill_optimize/project_goal_dismissed/v1\0";
 const LABEL: &str = "skill project goal row";
-/// Bound on the parent walk; a lineage this deep ends at the vault owners.
-const MAX_ROLE_WALK: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -229,6 +228,16 @@ impl TradeoffRole {
             Self::Board { people, .. } | Self::VaultOwner(people) => people.first().copied(),
         }
     }
+
+    /// Whether `other` is this rung as the chain stands at another read: the
+    /// same kind and, for a board, the same project, whoever holds it now.
+    pub(super) fn same_rung(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Author(_), Self::Author(_)) | (Self::VaultOwner(_), Self::VaultOwner(_)) => true,
+            (Self::Board { project, .. }, Self::Board { project: now, .. }) => project == now,
+            _ => false,
+        }
+    }
 }
 
 fn live_people_in_txn(
@@ -260,13 +269,34 @@ pub(super) fn responsible_roles_in_txn(
     project: Option<&ProjectGoalJoin>,
     author: Option<EntityId>,
 ) -> Result<Vec<TradeoffRole>> {
+    let roles = current_roles_in_txn(vault, txn, project, author)?;
+    if roles.is_empty() {
+        return Err(invalid(
+            "no live person holds a role that can answer this tradeoff",
+        ));
+    }
+    Ok(roles)
+}
+
+/// [`responsible_roles_in_txn`] as its holders stand in `txn`, empty when no
+/// live person holds any rung, for a settler checked against the current
+/// holders (FIX 5967). The parent walk is whole, each project once; its
+/// length is measured, never cut (Rule 5).
+/// # Errors
+/// Storage errors.
+pub(super) fn current_roles_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<&ProjectGoalJoin>,
+    author: Option<EntityId>,
+) -> Result<Vec<TradeoffRole>> {
     let mut roles = Vec::new();
     match project {
         Some(join) => {
             let mut queue = VecDeque::from([join.project]);
             let mut seen = BTreeSet::new();
             while let Some(project) = queue.pop_front() {
-                if seen.len() >= MAX_ROLE_WALK || !seen.insert(project) {
+                if !seen.insert(project) {
                     continue;
                 }
                 let Some((_, effective)) = vault.effective_project_in_txn(txn, project)? else {
@@ -287,6 +317,10 @@ pub(super) fn responsible_roles_in_txn(
                         .filter_map(|hex| EntityId::from_hex(hex).ok()),
                 );
             }
+            let _ = vault.measure_limit(
+                EngineLimit::MaintenanceScanRows,
+                u64::try_from(seen.len()).unwrap_or(u64::MAX),
+            );
         }
         None => {
             if let Some(author) = author
@@ -299,11 +333,6 @@ pub(super) fn responsible_roles_in_txn(
     let owners = live_people_in_txn(vault, txn, crate::policy_model::owners_in_txn(vault, txn)?)?;
     if !owners.is_empty() {
         roles.push(TradeoffRole::VaultOwner(owners));
-    }
-    if roles.is_empty() {
-        return Err(invalid(
-            "no live person holds a role that can answer this tradeoff",
-        ));
     }
     Ok(roles)
 }

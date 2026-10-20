@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::shape::{
-    CORE_MAX_BATCH_ENTITIES, CoreWriteTextField, core_write_times, stage_core_put, text_pairs,
-    write_id,
+    AnnouncementAuthority, CORE_MAX_BATCH_ENTITIES, CoreWriteTextField, core_write_times,
+    stage_core_put, text_pairs, write_id,
 };
 use crate::Vault;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -64,7 +64,8 @@ pub enum CoreBatchCommit {
 }
 
 impl Vault {
-    /// Stages every put of `input` and commits them once, at `commit`.
+    /// Stages every put of `input` and commits them once, at `commit`. A
+    /// TURN is a platform announcement only at the owner's `announcement`.
     /// # Errors
     /// Too many entities, a bad id, interval or body, or the commit's
     /// refusal; nothing is written then.
@@ -72,6 +73,7 @@ impl Vault {
         &self,
         input: &CoreBatchWriteInput,
         commit: CoreBatchCommit,
+        announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         if input.entities.len() > CORE_MAX_BATCH_ENTITIES {
             return Err(MemoryError::bad_request(format!(
@@ -107,6 +109,7 @@ impl Vault {
                 entity.entity_type,
                 times,
                 &entity.body,
+                announcement,
                 entity.text.as_deref().map(text_pairs),
             )?;
             entities.push(CoreBatchEntityReceipt {
@@ -127,14 +130,16 @@ impl Vault {
 
 impl Memory<'_> {
     /// `vault.batch` on an embedded handle, which carries no credential
-    /// grade: it commits below owner grade, never above it.
+    /// grade: it commits below owner grade, never above it. Its TURNs are
+    /// platform announcements only while the bound actor is a live owner.
     /// # Errors
     /// As [`Vault::write_core_batch`].
     pub fn core_batch_write(
         &self,
         input: &CoreBatchWriteInput,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
+        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
         self.vault()
-            .write_core_batch(input, CoreBatchCommit::BelowOwner)
+            .write_core_batch(input, CoreBatchCommit::BelowOwner, announcement)
     }
 }

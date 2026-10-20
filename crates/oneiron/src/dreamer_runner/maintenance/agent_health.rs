@@ -13,7 +13,7 @@
 //! (`self.inbox.concern.move`, `ask`). The owner alone applies the Coach's
 //! skill edit (`/v1/owner/inbox/concern/apply`, `apply`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -1627,10 +1627,12 @@ fn add_recipients(recipients: &mut Vec<EntityId>, subject: EntityId, ids: &[Enti
     }
 }
 
-/// Adds each of `more` once, after every id the card already holds.
+/// Adds each of `more` once, after every id the card already holds. One set
+/// built from the held ids makes each test constant time (FIX 6006).
 fn add_ids(ids: &mut Vec<EntityId>, more: &[EntityId]) {
+    let mut seen: HashSet<EntityId> = ids.iter().copied().collect();
     for id in more {
-        if !ids.contains(id) {
+        if seen.insert(*id) {
             ids.push(*id);
         }
     }

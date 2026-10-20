@@ -150,6 +150,11 @@ side_tables! {
     GIT_WIRE_RECORD: VaultMeta b"git_wire:record:v2:" Named;
     /// Node-local Gmail page cursor keyed by lower-case hex identity id. Key: hex32.
     GMAIL_MAILBOX_CURSOR: VaultMeta b"gmail:mailbox_cursor:v1:" LegacyJson;
+    /// A polled Gmail message a mailbox run set aside so its page could go on (FIX 6007): the
+    /// identity and mailbox, the provider's message and thread ids, the stage, the full reason
+    /// and when. Node-local, as the cursor is. Key: id16 (identity) + bytes32 (sha256 of the
+    /// provider message id).
+    GMAIL_MAILBOX_SKIPPED: VaultMeta b"gmail:mailbox_skipped:v1:" Named;
     /// Append-only offer-answer log for consent-graduation ramps, scope-major then UUIDv7 row id.
     /// Key: id16 + id16.
     EDIT_DISTANCE_GRADUATION_ANSWER: VaultMeta b"graduation_answer:v1:" Raw;

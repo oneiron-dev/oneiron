@@ -3,6 +3,7 @@
 
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
+use std::collections::HashSet;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -145,10 +146,13 @@ pub(crate) fn maintain_skill_source_index_for_put(
     record: &SkillRecord,
 ) -> Result<()> {
     let next = source_message_refs(record)?;
+    // One set from the new refs keeps the dropped test linear inside the writer
+    // txn (FIX 5969); the rows and their order are unchanged.
+    let kept: HashSet<EntityId> = next.iter().copied().collect();
     let dropped = previous
         .and_then(|previous| source_message_refs(previous).ok())
         .unwrap_or_default();
-    for source in dropped.iter().filter(|source| !next.contains(source)) {
+    for source in dropped.iter().filter(|source| !kept.contains(*source)) {
         SOURCE_INDEX.delete(store, wtxn, &(*source, *skill))?;
     }
     for source in &next {

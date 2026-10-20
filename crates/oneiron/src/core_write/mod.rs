@@ -18,4 +18,4 @@ pub use conversations::{
 pub use dag::{
     CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt,
 };
-pub use shape::{CoreWriteTextField, CoreWriteTimes};
+pub use shape::{AnnouncementAuthority, CoreWriteTextField, CoreWriteTimes};

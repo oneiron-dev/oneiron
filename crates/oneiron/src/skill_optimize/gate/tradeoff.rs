@@ -25,8 +25,8 @@
 //! vault's owners. A pick there is learned for this goal and proposed, never
 //! written, to the project's record.
 use super::project_goal::{
-    TradeoffRole, project_goal_in_txn, project_rules, propose_learned_preference_in_txn,
-    responsible_roles_in_txn,
+    ProjectGoalJoin, TradeoffRole, current_roles_in_txn, project_goal_in_txn, project_rules,
+    propose_learned_preference_in_txn, responsible_roles_in_txn,
 };
 use super::*;
 use crate::consent::AuthenticatedOwner;
@@ -227,16 +227,40 @@ pub struct SkillTradeoffAsk {
 }
 
 impl SkillTradeoffAsk {
-    /// Whether `person` holds a role the ask has reached.
-    #[must_use]
-    pub fn may_answer(&self, person: &EntityId) -> bool {
+    /// Whether `role`, as the chain stands now, is a rung the ask has
+    /// reached: matched by kind and project, never by position.
+    fn reached(&self, role: &TradeoffRole) -> bool {
         let reached = usize::try_from(self.rung).map_or(usize::MAX, |rung| rung.saturating_add(1));
         self.question
             .roles
             .iter()
             .take(reached)
-            .any(|role| role.holds(person))
+            .any(|asked| asked.same_rung(role))
     }
+}
+
+/// Whether `person` holds NOW a role the ask has reached (FIX 5967). The
+/// chain is read again in `txn` and each reached rung is matched to its
+/// current holders, so a former board member or owner answers nothing and a
+/// replacement may. A reached rung no live person holds now answers for
+/// nobody: the ask stays pending and climbs on, never to a former holder.
+fn may_answer_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    ask: &SkillTradeoffAsk,
+    project: Option<&ProjectGoalJoin>,
+    preferences: Option<&SkillTradeoffPreferences>,
+    person: &EntityId,
+) -> Result<bool> {
+    let current = current_roles_in_txn(
+        vault,
+        txn,
+        project,
+        preferences.map(|preferences| preferences.responsible),
+    )?;
+    Ok(current
+        .iter()
+        .any(|role| ask.reached(role) && role.holds(person)))
 }
 
 fn key(prefix: &[u8], id: &EntityId) -> Vec<u8> {
@@ -440,7 +464,7 @@ pub(crate) fn skill_tradeoff_ask_in_txn(
 
 /// The bound asks `person` may answer now, for a host to render as that
 /// person's queue. An ask reaches a person when it has climbed to a role
-/// they hold ([`escalate_skill_tradeoff_ask`]).
+/// they hold now ([`escalate_skill_tradeoff_ask`]).
 /// # Errors
 /// An unreadable ask, verdict or goal row, or storage errors.
 pub fn skill_tradeoff_asks_for(vault: &Vault, person: &EntityId) -> Result<Vec<SkillTradeoffAsk>> {
@@ -455,9 +479,18 @@ pub fn skill_tradeoff_asks_for(vault: &Vault, person: &EntityId) -> Result<Vec<S
         let Some(pending) = standing_verdict_in_txn(vault, &txn, &ask.question.proposal)? else {
             continue;
         };
-        if let Some((bound, _)) = bound_ask_in_txn(vault, &txn, &pending)?
-            && bound.may_answer(person)
-        {
+        let Some((bound, preferences)) = bound_ask_in_txn(vault, &txn, &pending)? else {
+            continue;
+        };
+        let project = project_goal_in_txn(vault, &txn, &bound.question.goal_id)?;
+        if may_answer_in_txn(
+            vault,
+            &txn,
+            &bound,
+            project.as_ref(),
+            preferences.as_ref(),
+            person,
+        )? {
             asks.push(bound);
         }
     }
@@ -939,11 +972,6 @@ fn settle_ask_in_txn(
         if question.digest()? != expected_question_digest {
             return Err(invalid("tradeoff reply does not bind the pending question"));
         }
-        if !ask.may_answer(&actor) {
-            return Err(invalid(
-                "tradeoff pick must come from a responsible role the ask has reached",
-            ));
-        }
         let latest = standing_verdict_in_txn(vault, txn, proposal)?.ok_or(invalid(
             "no scored tradeoff verdict stands for this proposal",
         ))?;
@@ -955,6 +983,20 @@ fn settle_ask_in_txn(
         let project = project_goal_in_txn(vault, txn, &question.goal_id)?;
         if project.as_ref().map(|join| join.project) != question.project {
             return Err(invalid("tradeoff goal changed before the pick"));
+        }
+        // The current holders of the reached roles, read in this txn, decide
+        // (FIX 5967): the plan-time snapshot no longer authorizes.
+        if !may_answer_in_txn(
+            vault,
+            txn,
+            &ask,
+            project.as_ref(),
+            previous.as_ref(),
+            &actor,
+        )? {
+            return Err(invalid(
+                "tradeoff pick must come from a responsible role the ask has reached",
+            ));
         }
         let holder = previous
             .as_ref()
