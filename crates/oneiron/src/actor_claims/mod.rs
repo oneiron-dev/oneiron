@@ -101,7 +101,7 @@ mod write;
 
 pub use self::craft_read::{
     CRAFT_HEADING, CraftNote, craft_message_entries, craft_message_text, craft_note_line,
-    resident_craft_claim_ids, resident_craft_pack,
+    resident_craft_claim_ids, resident_craft_pack, resident_craft_pack_scoped,
 };
 pub use self::distill::{
     SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance,

@@ -35,6 +35,26 @@ pub(super) const NOVELTY_WINDOW_TURNS: usize = 8;
 /// Coarse prompt-cost proxy: four characters per model token.
 const CHARS_PER_ESTIMATED_TOKEN: usize = 4;
 
+/// Scratch budgets the scorer measures before it allocates anything for a
+/// turn (SCAN C035). A turn past any one passes unscored, as an unreadable
+/// one does: its work is kept whole, never skipped or cut, and only its
+/// statistics are not computed. Each bounds this screen's memory, never
+/// the owner's turn.
+///
+/// The most turn text one scoring tokenizes.
+const PREFILTER_SCRATCH_MAX_TEXT_BYTES: usize = 1 << 20;
+
+/// The most tokens one scoring holds (its token list, lowered copies and
+/// type set).
+const PREFILTER_SCRATCH_MAX_TOKENS: usize = 1 << 16;
+
+/// The longest single token the scorer lowercases.
+const PREFILTER_SCRATCH_MAX_TOKEN_BYTES: usize = 1 << 12;
+
+/// The most joined shingle bytes one turn's novelty set holds, measured on
+/// the tokens as written.
+const PREFILTER_SCRATCH_MAX_SHINGLE_BYTES: usize = 1 << 21;
+
 /// Capitalized tokens that are sentence openers rather than named things.
 /// Pinned and tiny on purpose: the density axis needs to not reward every
 /// sentence for starting, and a real stopword list would be a dictionary this
@@ -129,10 +149,15 @@ impl NoveltyWindow {
     }
 
     /// Admits one turn's text, evicting the oldest beyond
-    /// `NOVELTY_WINDOW_TURNS`.
+    /// `NOVELTY_WINDOW_TURNS`. A turn past the scratch budgets holds its
+    /// place with no shingles, so it makes no later turn less novel.
     pub fn observe(&mut self, text: &str) {
-        let tokens = normalized_tokens(text);
-        self.recent.push_back(shingles(&tokens));
+        let observed = if within_scratch_budget(text) {
+            shingles(&normalized_tokens(text))
+        } else {
+            BTreeSet::new()
+        };
+        self.recent.push_back(observed);
         while self.recent.len() > NOVELTY_WINDOW_TURNS {
             self.recent.pop_front();
         }
@@ -147,12 +172,46 @@ impl NoveltyWindow {
     }
 }
 
-/// Whitespace tokens with leading/trailing non-alphanumerics stripped.
-fn raw_tokens(text: &str) -> Vec<&str> {
+/// Whitespace tokens with leading/trailing non-alphanumerics stripped, as
+/// they come: the one tokenization the axes and the scratch budgets share.
+fn trimmed_tokens(text: &str) -> impl Iterator<Item = &str> {
     text.split_whitespace()
         .map(|token| token.trim_matches(|c: char| !c.is_alphanumeric()))
         .filter(|token| !token.is_empty())
-        .collect()
+}
+
+/// Whitespace tokens with leading/trailing non-alphanumerics stripped.
+fn raw_tokens(text: &str) -> Vec<&str> {
+    trimmed_tokens(text).collect()
+}
+
+/// Whether scoring `text` stays within every scratch budget, measured on
+/// the text itself before any token, lowered copy or shingle is allocated.
+fn within_scratch_budget(text: &str) -> bool {
+    if text.len() > PREFILTER_SCRATCH_MAX_TEXT_BYTES {
+        return false;
+    }
+    let mut tokens = 0_usize;
+    let mut shingle_bytes = 0_usize;
+    let mut window = [0_usize; NOVELTY_SHINGLE_LEN];
+    for token in trimmed_tokens(text) {
+        tokens += 1;
+        if tokens > PREFILTER_SCRATCH_MAX_TOKENS || token.len() > PREFILTER_SCRATCH_MAX_TOKEN_BYTES
+        {
+            return false;
+        }
+        window.rotate_left(1);
+        window[NOVELTY_SHINGLE_LEN - 1] = token.len();
+        if tokens >= NOVELTY_SHINGLE_LEN {
+            // One shingle: its tokens and the spaces that join them.
+            shingle_bytes = shingle_bytes
+                .saturating_add(window.iter().sum::<usize>() + NOVELTY_SHINGLE_LEN - 1);
+            if shingle_bytes > PREFILTER_SCRATCH_MAX_SHINGLE_BYTES {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// [`raw_tokens`] lowercased — the form every set-valued axis compares on.
@@ -261,6 +320,10 @@ pub fn prefilter_turn(
     known_names: &BTreeSet<String>,
     novelty_window: &NoveltyWindow,
 ) -> PrefilterVerdict {
+    // Past a scratch budget the turn is kept, unscored (SCAN C035).
+    if !within_scratch_budget(text) {
+        return PrefilterVerdict::unscored_pass();
+    }
     let raw = raw_tokens(text);
     let token_count = raw.len();
     let lowered: Vec<String> = raw.iter().copied().map(str::to_lowercase).collect();

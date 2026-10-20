@@ -148,6 +148,9 @@ impl WebFetcher {
         fetched_at: u64,
         require_witnessed_final_url: bool,
     ) -> WebFetchResult<(FetchResult, Vec<String>, Url)> {
+        // A managed node refuses hosted infrastructure before any rung runs
+        // (SCAN C447); a self-hosted one carries no guard.
+        self.admit_destination(url)?;
         let requested = url.to_string();
         let mut attempts = Vec::new();
         for (kind, requirement, slot) in [

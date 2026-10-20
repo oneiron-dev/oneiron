@@ -70,6 +70,9 @@ impl ResidentLend<'_> {
             oneiron::BudgetExhaustionPolicy::Suspend,
             WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
         )?;
+        // The driver settles what this line charges if the item fails or
+        // parks before it reports its spend (SCAN C012).
+        ctx.meter_run_line(&line);
         let backend = RunBackend::new(
             ladder,
             self.runtime.attributed_run(

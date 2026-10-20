@@ -1,5 +1,7 @@
 //! Wake request and outcome vocabulary plus the executor contract.
 
+use std::sync::OnceLock;
+
 use crate::Vault;
 use crate::attempt_queue::{
     AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord, AttemptResumePoint,
@@ -10,6 +12,7 @@ use crate::dreamer_runner::DreamerAttemptProgressProducer;
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerConsolidationScope, DreamerParkCause};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::llm::BudgetGuard;
 #[cfg(feature = "sync")]
 use crate::sync::EphemeralStore;
 use crate::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
@@ -177,9 +180,42 @@ pub struct WakeAttemptContext<'a> {
     pub prepared_wake: Option<&'a crate::dreamer_consolidation::PreparedWake>,
     /// Selected immutable branch plan. Non-consolidation jobs have None.
     pub prepared_attempt: Option<&'a crate::dreamer_consolidation::PreparedConsolidationAttempt>,
+    /// The attempt's own run line, as the driver observes it outside the
+    /// executor's future (SCAN C012): a failed or plainly parked attempt
+    /// settles what that line charged. `None` observes nothing.
+    pub spend_meter: Option<&'a WakeAttemptMeter>,
+}
+
+/// The run line an attempt's calls charge, registered by the executor that
+/// builds it and read by the driver once the attempt ends, a caught panic
+/// included (SCAN C012). Only the first registration counts.
+#[derive(Debug, Default)]
+pub struct WakeAttemptMeter {
+    line: OnceLock<(BudgetGuard, u64)>,
+}
+
+impl WakeAttemptMeter {
+    /// The units the registered line charged since it was registered: 0
+    /// when no line was registered, as for an attempt that never dispatched.
+    #[must_use]
+    pub fn charged_units(&self) -> u64 {
+        self.line.get().map_or(0, |(line, start)| {
+            line.read().used_units.saturating_sub(*start)
+        })
+    }
 }
 
 impl WakeAttemptContext<'_> {
+    /// Registers `line`, the attempt's own run line, at what it has already
+    /// used, so the driver settles what it charges if the attempt fails or
+    /// parks before reporting its spend (SCAN C012). A second line, or a
+    /// context with no meter, registers nothing.
+    pub fn meter_run_line(&self, line: &BudgetGuard) {
+        if let Some(meter) = self.spend_meter {
+            let _ = meter.line.set((line.clone(), line.read().used_units));
+        }
+    }
+
     /// The oldest stop this attempt has been asked for and not yet answered,
     /// with the trigger that motivated it — or `None` when nobody has asked.
     ///

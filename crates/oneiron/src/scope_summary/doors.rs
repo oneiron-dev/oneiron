@@ -22,8 +22,8 @@ use crate::memory::{Memory, MemoryError};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{
-    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_SUMMARY,
-    ENTITY_TYPE_TURN,
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SESSION,
+    ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
 };
 use crate::{
     ClaimCandidate, EntityId, TimeRange, Vault, WriteActor, WriteEnvelope, WriteProvenance,
@@ -57,12 +57,19 @@ pub(super) fn summary_in_txn(
 
 fn validate_covers_in_txn(vault: &Vault, txn: &RoTxn<'_>, body: &ScopeSummaryBody) -> Result<()> {
     // A composed body holds the words of every MESSAGE it names: once one is
-    // erased, the summary is not served again.
+    // erased, or edited past the revision it was composed from (SCAN C028),
+    // the summary is not served again.
     for message in &body.messages {
         if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &message.id)?.is_live()
             || vault.archive_tombstone_in_txn(txn, &message.id)?.is_some()
         {
             return Err(invalid("summary source message was erased"));
+        }
+        let stored = require_type(&vault.store, txn, &message.id, ENTITY_TYPE_MESSAGE)?;
+        let logical =
+            crate::entity_doc::resolve_record_body(&vault.store, txn, &message.id, &stored)?;
+        if crate::dreamer_consolidation::swarm_evidence_content_hash(&logical) != message.revision {
+            return Err(invalid("summary source message revision changed"));
         }
     }
     let scope = &body.scope;

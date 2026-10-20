@@ -269,6 +269,15 @@ fn fetch_error(error: WebFetchError) -> MemoryError {
         | WebFetchError::UnsupportedScheme { .. }
         | WebFetchError::CredentialsInUrl { .. }
         | WebFetchError::InvalidPageBudget) => MemoryError::bad_request(error.to_string()),
+        // A managed node's typed refusal (SCAN C447): its message names
+        // `hosted_infrastructure`.
+        error @ WebFetchError::HostedInfrastructure { .. } => MemoryError::new(
+            crate::memory::MEMORY_CODE_FORBIDDEN,
+            error.to_string(),
+            &[
+                "A hosted node never fetches the infrastructure it runs on; a self-hosted node fetches this address.",
+            ],
+        ),
         other => MemoryError::new("WEB_FETCH_FAILED", other.to_string(), &[]),
     }
 }

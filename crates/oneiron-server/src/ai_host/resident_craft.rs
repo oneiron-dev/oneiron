@@ -16,8 +16,12 @@
 //! as every step's does; the planner's, read on one snapshot, travels whole
 //! in its own message before it ([`planner_craft`]), and stamps nothing.
 
-use oneiron::actor_claims::{craft_message_entries, craft_message_text, resident_craft_pack};
+use oneiron::actor_claims::{
+    CraftNote, craft_message_entries, craft_message_text, resident_craft_pack,
+    resident_craft_pack_scoped,
+};
 use oneiron::attempt_queue::{AttemptId, ManifestEntry};
+use oneiron::memory::Memory;
 use oneiron::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault};
 
 /// What a call with no attempt to stamp is shown: its craft message, and
@@ -55,7 +59,39 @@ pub(crate) fn snapshot_craft(vault: &Vault, resident: &EntityId, at: u64) -> Opt
             return None;
         }
     };
-    let text = craft_message_text(&notes)?;
+    snapshot_of(&notes, at)
+}
+
+/// [`snapshot_craft`] for a chat answer (SCAN C009): only the notes the
+/// caller's own read admits, read through `reader`, the caller's handle
+/// where it sits, in one snapshot. `None` without such craft, or when the
+/// caller's read or the craft does not read.
+pub(crate) fn snapshot_craft_scoped(
+    vault: &Vault,
+    reader: &Memory<'_>,
+    resident: &EntityId,
+    at: u64,
+) -> Option<SnapshotCraft> {
+    let key = match reader.read_key() {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::warn!(code = %error.code, agent = %resident.to_hex(), "the caller's read did not open; its answer goes on without craft");
+            return None;
+        }
+    };
+    let read = vault.scoped_read(key);
+    let notes = match resident_craft_pack_scoped(vault, &read, resident, at) {
+        Ok(notes) => notes,
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), agent = %resident.to_hex(), "a resident's craft did not read; its answer goes on without it");
+            return None;
+        }
+    };
+    snapshot_of(&notes, at)
+}
+
+fn snapshot_of(notes: &[CraftNote], at: u64) -> Option<SnapshotCraft> {
+    let text = craft_message_text(notes)?;
     Some(SnapshotCraft {
         message: system(text),
         entries: notes.iter().map(|note| note.entry(at)).collect(),

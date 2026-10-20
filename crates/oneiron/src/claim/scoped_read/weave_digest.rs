@@ -898,9 +898,11 @@ impl Vault {
 
 impl Vault {
     /// One saved period as the lens's generate step reads it: a person's or
-    /// an agent's under its own current read, an owner's from the row with
-    /// its sources still live. The Dreamer holds no owner proof, and only the
-    /// owner's own door ever serves what it renders.
+    /// an agent's under its own current read, an owner's under his own
+    /// owner read, freshly resolved, with every check his own door applies
+    /// (SCAN C026). The Dreamer holds no owner proof, and only the owner's
+    /// own door ever serves what it renders; a period that is no longer that
+    /// owner's to read, or whose saved bodies changed, is withheld.
     pub(crate) fn weave_digest_for_lens(
         &self,
         reader: WeaveDigestReader,
@@ -909,31 +911,20 @@ impl Vault {
         let (class, lens_reader) = match reader {
             WeaveDigestReader::Person(id) => (EdgeActorClass::Human, WeaveReader::Person(id)),
             WeaveDigestReader::Agent(id) => (EdgeActorClass::Agent, WeaveReader::Agent(id)),
-            WeaveDigestReader::Owner(_) => {
-                let txn = self.store.env.read_txn()?;
-                let Some(bytes) = self
-                    .store
-                    .vault_meta
-                    .get(&txn, &digest_key(reader, scheduled_for))?
-                else {
-                    return Ok(None);
-                };
-                let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-                let rendered_at = wire.rendered_at;
-                let lens = wire.lens.take();
-                let lens_refused = wire.lens_refused.take();
-                let report = wire.into_report()?;
-                if !sources_live_in_txn(&self.store, &txn, &report.value)? {
+            WeaveDigestReader::Owner(owner) => {
+                let key = self
+                    .memory(owner, EdgeActorClass::Human)
+                    .read_key()
+                    .map_err(|error| {
+                        Error::InvalidConfig(format!("weave digest reader: {error}"))
+                    })?;
+                // Still that owner's own read, never a human's narrower one.
+                if key.vault_owner_ref() != Some(owner) {
                     return Ok(None);
                 }
-                return Ok(Some(StoredWeaveDigest {
-                    reader,
-                    scheduled_for,
-                    rendered_at,
-                    report,
-                    lens,
-                    lens_refused,
-                }));
+                let read = self.scoped_read(key);
+                let txn = self.store.env.read_txn()?;
+                return read.saved_weave_digest_in_txn(&txn, reader, scheduled_for);
             }
         };
         let memory = self.memory(reader.id(), class);
@@ -1117,23 +1108,43 @@ impl ScopedRead<'_> {
             WeaveReader::Owner(_) => WeaveDigestReader::Owner(id),
             WeaveReader::Agent(_) => WeaveDigestReader::Agent(id),
         };
-        let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
+        self.saved_weave_digest_in_txn(&txn, reader_key, scheduled_for)
+    }
+
+    /// `reader_key`'s saved period at `scheduled_for` in `txn`, under this
+    /// read's CURRENT policy: [`Self::read_weave_digest`]'s checks once its
+    /// reader is bound, shared with the owner's background lens (SCAN C026).
+    /// The saved sections must still be the reader's, each source live and
+    /// retrievable, each claim's current body exactly its saved one and
+    /// readable, each link still admitted and each card still the reader's;
+    /// anything else is withheld (`None`).
+    pub(super) fn saved_weave_digest_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reader_key: WeaveDigestReader,
+        scheduled_for: u64,
+    ) -> Result<Option<StoredWeaveDigest>> {
+        let id = reader_key.id();
+        let role = match reader_key {
+            WeaveDigestReader::Person(_) => "person",
+            WeaveDigestReader::Owner(_) => "owner",
+            WeaveDigestReader::Agent(_) => "agent",
+        };
+        let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         // Even an empty saved report must not reveal historical section names
         // or an old narrowing receipt to a caller with no current read door.
         if filter.deny_all {
             return Ok(None);
         }
-        let Some(allowed) =
-            crate::gate::weave_policy::effective_resolved(&policy, reader.role(), id)
-        else {
+        let Some(allowed) = crate::gate::weave_policy::effective_resolved(&policy, role, id) else {
             return Ok(None);
         };
-        let key = [
-            reader_key.key(DIGEST_PREFIX),
-            scheduled_for.to_be_bytes().to_vec(),
-        ]
-        .concat();
-        let Some(bytes) = self.vault.store.vault_meta.get(&txn, &key)? else {
+        let Some(bytes) = self
+            .vault
+            .store
+            .vault_meta
+            .get(txn, &digest_key(reader_key, scheduled_for))?
+        else {
             return Ok(None);
         };
         let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
@@ -1148,12 +1159,12 @@ impl ScopedRead<'_> {
             .sections
             .iter()
             .any(|section| !allowed.sections.contains(section.kind.policy_name()))
-            || !sources_live_in_txn(&self.vault.store, &txn, &report.value)?
+            || !sources_live_in_txn(&self.vault.store, txn, &report.value)?
         {
             return Ok(None);
         }
         for source in report_sources(&report.value)? {
-            if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &source)? {
+            if !self.is_entity_retrievable_with_policy_in(txn, &policy, &filter, &source)? {
                 return Ok(None);
             }
         }
@@ -1163,7 +1174,7 @@ impl ScopedRead<'_> {
                     WeaveItem::Claim { id, body } => {
                         let Some(current) = crate::ports::EntityStoreRead::port_entity_raw(
                             &self.vault.store,
-                            &txn,
+                            txn,
                             id,
                         )?
                         else {
@@ -1184,7 +1195,7 @@ impl ScopedRead<'_> {
                             current[..crate::batch::ENTITY_METADATA_HEADER_LEN].to_vec();
                         historical.extend_from_slice(&saved_body);
                         if !self.is_entity_raw_readable_with_filter_in(
-                            &txn,
+                            txn,
                             &policy,
                             id,
                             &historical,
@@ -1194,7 +1205,7 @@ impl ScopedRead<'_> {
                         }
                         // Readable endpoints are not pair authority: an edge
                         // claim keeps the live lens's exact-relation admission.
-                        if !self.weave_claim_edge_admitted_in(&txn, &policy, &filter, body)? {
+                        if !self.weave_claim_edge_admitted_in(txn, &policy, &filter, body)? {
                             return Ok(None);
                         }
                     }
@@ -1203,12 +1214,12 @@ impl ScopedRead<'_> {
                         kind,
                         target,
                     } => {
-                        let Some(edge) = self.live_weave_edge_in(&txn, *source, *kind, *target)?
+                        let Some(edge) = self.live_weave_edge_in(txn, *source, *kind, *target)?
                         else {
                             return Ok(None);
                         };
                         if !self
-                            .admit_stored_edge_in(&txn, &policy, &filter, *source, edge)?
+                            .admit_stored_edge_in(txn, &policy, &filter, *source, edge)?
                             .visible()
                         {
                             return Ok(None);
@@ -1226,12 +1237,12 @@ impl ScopedRead<'_> {
                     WeaveItem::AgentHealth { card } => {
                         match crate::dreamer_runner::maintenance::agent_health::agent_health_card_in_txn(
                             self.vault,
-                            &txn,
+                            txn,
                             &card.card_ref(),
                         )? {
                             Some(current)
                                 if super::weave_report::weave_card_admitted(
-                                    self.vault, &txn, &current, id,
+                                    self.vault, txn, &current, id,
                                 )? => {}
                             _ => return Ok(None),
                         }
