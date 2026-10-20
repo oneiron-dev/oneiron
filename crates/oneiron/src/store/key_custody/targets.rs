@@ -241,8 +241,9 @@ impl Journal {
     }
 
     /// Holds the journal's lock for the life of the returned file: every
-    /// read-modify-write of the set, an ack, the cursor or the watermark.
-    fn lock(&self) -> Result<File> {
+    /// read-modify-write of the set, an ack, the cursor, the watermark or a
+    /// pass's recorded status.
+    pub(super) fn lock(&self) -> Result<File> {
         open_dir(self.dir(), true, None)?;
         let mut options = OpenOptions::new();
         options.read(true).write(true).create(true).truncate(false);

@@ -847,7 +847,7 @@ async fn self_inbox_mark(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
+    auth.require_granted(CoreScope::Write)?;
     auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
@@ -27737,7 +27737,7 @@ async fn vault_esign_notices_dispatch(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
+    auth.require_granted(CoreScope::Write)?;
     auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;

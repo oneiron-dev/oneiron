@@ -487,7 +487,8 @@
       "call": "memory.inbox_mark(&input.notification_ref, input.mark)?",
       "scope": "Write",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"
@@ -14739,7 +14740,8 @@
       "call": "memory.esign_notices_dispatch(&input)?",
       "scope": "Write",
       "admission": {
-        "lane_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "mcp_fields": {
         "spec": "$"

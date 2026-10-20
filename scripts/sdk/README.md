@@ -19,6 +19,9 @@ HTTP credential scope, and MCP argument fields. The optional `admission` object 
 checks before actor resolution (an empty object still checks the DTO shape).
 `validate` is Rust over the typed `input`, shared by embedded and remote
 preflight; `unrestricted_record_scope` requires an unrestricted HTTP credential.
+`require_granted_scope` (only beside `lane_record_scope` on a non-`Read` row) makes the HTTP
+head check the grant alone, for a write whose engine door judges the credential's lane in each
+snapshot it reads and writes, so a world-, facet- or record-scoped credential reaches it as over MCP.
 `proposes` marks a `Write` row whose write lands at the actor's ceiling, so under
 `proposed` it waits for review: the MCP door admits it with `core:propose` (ARCH-0028
 propose-only). Every other write takes effect at once and needs `core:write`.
