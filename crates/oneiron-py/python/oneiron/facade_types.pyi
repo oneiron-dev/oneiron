@@ -1731,6 +1731,8 @@ class FanoutStatement(TypedDict):
     task_count: int
     per_peer: list[PeerCount]
     expected: ExpectedSpend
+    priced_subtotal_usd_micros: NotRequired[int | None]
+    unpriced_parts: list[str]
     unit: LeaseUnit
     cap: NotRequired[SpendCapView | None]
     over_available: bool
@@ -10880,6 +10882,7 @@ class WorkflowRunView(TypedDict):
     active_attempt_ref: EntityId
     steps: list[WorkflowStepCapture]
     results: list[WorkflowStepRun]
+    task_ref: NotRequired[EntityId | None]
 class WorkflowPersonDispatchRequest(TypedDict):
     workflow_ref: EntityId
     intent_key: str
@@ -17391,7 +17394,8 @@ class SummaryScope(TypedDict):
     session: NotRequired[str | None]
     include_forks: NotRequired[bool]
 class SummaryCreateRequest(TypedDict):
-    scope: SummaryScope
+    scope: NotRequired[SummaryScope | None]
+    note_refs: NotRequired[list[str]]
     purpose: NotRequired[str | None]
     land_on: NotRequired[str | None]
     as_record: NotRequired[bool]

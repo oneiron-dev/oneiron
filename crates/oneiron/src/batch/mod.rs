@@ -52,6 +52,7 @@ pub(crate) use self::vad_postcommit::queue_pad_tombstone_window;
 pub(crate) use self::vad_postcommit::queue_proactivity_change;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_room_join;
+pub(crate) use self::vad_postcommit::queue_settled_tasks;
 #[cfg(feature = "sync")]
 pub(crate) use self::vad_postcommit::queue_task_updates;
 

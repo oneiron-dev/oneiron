@@ -4930,6 +4930,14 @@ pub struct FanoutStatement {
     pub per_peer: Vec<PeerCount>,
     #[serde(rename = "expected")]
     pub expected: ExpectedSpend,
+    #[serde(
+        rename = "priced_subtotal_usd_micros",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub priced_subtotal_usd_micros: Option<u64>,
+    #[serde(rename = "unpriced_parts")]
+    pub unpriced_parts: Vec<String>,
     #[serde(rename = "unit")]
     pub unit: String,
     #[serde(rename = "cap", default, skip_serializing_if = "Option::is_none")]
@@ -33908,6 +33916,8 @@ pub struct WorkflowRunView {
     pub steps: Vec<WorkflowStepCapture>,
     #[serde(rename = "results")]
     pub results: Vec<WorkflowStepRun>,
+    #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_workflows::WorkflowPersonDispatchRequest`.
@@ -53169,8 +53179,10 @@ pub struct SummaryScope {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryCreateRequest {
-    #[serde(rename = "scope")]
-    pub scope: SummaryScope,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<SummaryScope>,
+    #[serde(rename = "note_refs", default, skip_serializing_if = "Option::is_none")]
+    pub note_refs: Option<Vec<String>>,
     #[serde(rename = "purpose", default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
     #[serde(rename = "land_on", default, skip_serializing_if = "Option::is_none")]

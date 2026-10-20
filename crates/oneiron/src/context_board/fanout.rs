@@ -39,8 +39,9 @@ fn fanout_action_row(launch: &FanoutLaunchReceipt) -> Option<(u8, String)> {
     let launch_ref = launch.launch_ref.to_hex();
     let digest = bytes_to_hex_lower(&launch.plan_digest);
     let tasks = launch.statement.task_count;
-    // The statement's expected spend in dollars, never native units.
-    let spend = launch.statement.expected.dollar_line();
+    // The statement's expected spend in dollars, never native units: with
+    // only some parts priced, their subtotal and each unpriced part.
+    let spend = super::one_line_token(&launch.statement.dollar_line());
     let budget = budget_segment(&launch.statement);
     let width = width_segment(&launch.statement);
     if let Some(pause) = &launch.paused {
