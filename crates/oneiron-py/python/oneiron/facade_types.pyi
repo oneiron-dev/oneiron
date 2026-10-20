@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1082 facade rows, 3696 declarations.
+Census: 1082 facade rows, 3706 declarations.
 Inputs: 1017 of 1082 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 971 of 1082 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 108; unread shapes: 0.
+Results: 970 of 1082 fully typed, 112 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 109; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -15218,6 +15218,16 @@ class EsignDraftView(TypedDict):
     fields: int
 class EsignGetRequest(TypedDict):
     document_ref: str
+EsignDeliveryEndReason = Literal["document_ended", "recipient_ended"]
+EsignDeliveryWait = Literal["document_awaits_owner", "document_unreadable", "notice_unreadable", "send_unreadable", "links_unreadable"]
+class EsignDeliveryReceiptStateEnded(TypedDict):
+    state: Literal["ended"]
+    reason: EsignDeliveryEndReason
+class EsignDeliveryReceiptStateWaits(TypedDict):
+    state: Literal["waits"]
+    reason: EsignDeliveryWait
+EsignDeliveryReceiptState = EsignDeliveryReceiptStateEnded | EsignDeliveryReceiptStateWaits
+EsignDeliveryReceipt = dict[str, Any]
 DeliveryStatus = Literal["unsent", "sent", "viewed"]
 SigningStatus = Literal["waiting", "ready", "completed", "rejected"]
 AccessStatus = Literal["unverified", "verified"]
@@ -15291,18 +15301,57 @@ class EsignEventRow(TypedDict):
     event: EsignEvent
     actor: EsignAuditActor
     at: int
-EsignDeliveryEndReason = Literal["document_ended", "recipient_ended"]
-EsignDeliveryWait = Literal["document_awaits_owner", "document_unreadable", "notice_unreadable", "send_unreadable"]
-class EsignDeliveryReceiptStateEnded(TypedDict):
-    state: Literal["ended"]
-    reason: EsignDeliveryEndReason
-class EsignDeliveryReceiptStateWaits(TypedDict):
-    state: Literal["waits"]
-    reason: EsignDeliveryWait
-EsignDeliveryReceiptState = EsignDeliveryReceiptStateEnded | EsignDeliveryReceiptStateWaits
-EsignDeliveryReceipt = dict[str, Any]
-class EsignDocumentView(TypedDict):
-    document_ref: str
+class MemoryGateDenial(TypedDict):
+    outcome: str
+    reason_codes: list[str]
+    ask_ref: NotRequired[str | None]
+class MemoryPolicyExceptionProposal(TypedDict):
+    action: str
+    row_ref: str
+    required_role: str
+class MemoryPolicyDenial(TypedDict):
+    level: str
+    row_ref: str
+    role: str
+    exception_proposal: MemoryPolicyExceptionProposal
+class MemoryWrongRoot(TypedDict):
+    attempted: str
+    replacement: str
+    schemaRef: str
+class VerbHookStopSkipped(TypedDict):
+    status: Literal["skipped"]
+    hook: str
+    reason: str
+class VerbHookStopPending(TypedDict):
+    status: Literal["pending"]
+    invocation: str
+    ask: str
+class VerbHookStopHidden(TypedDict):
+    status: Literal["hidden"]
+    hook: str
+class VerbHookStopCompleted(TypedDict):
+    status: Literal["completed"]
+    invocation: str
+    result: Any
+class VerbHookStopCompletedWithError(TypedDict):
+    status: Literal["completed_with_error"]
+    invocation: str
+    code: str
+    message: str
+    receipt_ref: NotRequired[str | None]
+VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
+class MemoryError(MemoryWrongRoot):
+    code: str
+    message: str
+    suggestions: list[str]
+    successor_short_id: NotRequired[str | None]
+    gate_denial: NotRequired[MemoryGateDenial | None]
+    narrowing: NotRequired[ScopedReadReceipt | None]
+    policy_denial: NotRequired[MemoryPolicyDenial | None]
+    hook: NotRequired[VerbHookStop | None]
+    retry_after: NotRequired[int | None]
+class EsignDocumentTrailReadable(TypedDict):
+    trail: Literal["readable"]
     status: DocumentStatus
     awaits_owner_answer: bool
     document: EsignDocument
@@ -15311,7 +15360,11 @@ class EsignDocumentView(TypedDict):
     rejection: NotRequired[str | None]
     sealed_sha256: list[str]
     audit: list[EsignEventRow]
-    delivery_receipts: list[EsignDeliveryReceipt]
+class EsignDocumentTrailUnreadable(TypedDict):
+    trail: Literal["unreadable"]
+    error: MemoryError
+EsignDocumentTrail = EsignDocumentTrailReadable | EsignDocumentTrailUnreadable
+EsignDocumentView = dict[str, Any]
 class EsignLinksIssueRequest(TypedDict):
     document_ref: str
     rotate: NotRequired[bool]
@@ -15705,6 +15758,16 @@ Preset = Literal["rect", "round_rect", "ellipse", "triangle", "right_arrow"]
 class HeldMedia(TypedDict):
     part: str
     hash: Digest
+class TableMerge(TypedDict):
+    first_row: NodeId
+    first_column: NodeId
+    last_row: NodeId
+    last_column: NodeId
+class TableBody(TypedDict):
+    rows: list[NodeId]
+    columns: list[NodeId]
+    cells: NotRequired[dict[str, dict[str, str]]]
+    merges: NotRequired[list[TableMerge]]
 ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
 class ChartSeries(TypedDict):
     name: str
@@ -15767,11 +15830,8 @@ class NodePayloadHeldPictureBody(TypedDict):
     media: HeldMedia
 class NodePayloadHeldPicture(TypedDict):
     held_picture: NodePayloadHeldPictureBody
-class NodePayloadTableBody(TypedDict):
-    header: list[str]
-    rows: list[list[str | None]]
 class NodePayloadTable(TypedDict):
-    table: NodePayloadTableBody
+    table: TableBody
 class NodePayloadChartBody(TypedDict):
     family: ChartKind
     categories: list[str]
@@ -15965,6 +16025,45 @@ class XlsxBodyOpDeleteColumns(TypedDict):
     at: int
     count: int
 XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpSetSheetVisibility | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
+class TableEditInsertRowBody(TypedDict):
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+class TableEditInsertRow(TypedDict):
+    insert_row: TableEditInsertRowBody
+class TableEditInsertColumnBody(TypedDict):
+    id: NotRequired[NodeId | None]
+    after: NotRequired[NodeId | None]
+class TableEditInsertColumn(TypedDict):
+    insert_column: TableEditInsertColumnBody
+class TableEditDeleteRowBody(TypedDict):
+    row: NodeId
+class TableEditDeleteRow(TypedDict):
+    delete_row: TableEditDeleteRowBody
+class TableEditDeleteColumnBody(TypedDict):
+    column: NodeId
+class TableEditDeleteColumn(TypedDict):
+    delete_column: TableEditDeleteColumnBody
+class TableEditMoveRowBody(TypedDict):
+    row: NodeId
+    after: NotRequired[NodeId | None]
+class TableEditMoveRow(TypedDict):
+    move_row: TableEditMoveRowBody
+class TableEditMoveColumnBody(TypedDict):
+    column: NodeId
+    after: NotRequired[NodeId | None]
+class TableEditMoveColumn(TypedDict):
+    move_column: TableEditMoveColumnBody
+class TableEditSetCellBody(TypedDict):
+    row: NodeId
+    column: NodeId
+    text: str
+class TableEditSetCell(TypedDict):
+    set_cell: TableEditSetCellBody
+class TableEditMerge(TypedDict):
+    merge: TableMerge
+class TableEditUnmerge(TypedDict):
+    unmerge: TableMerge
+TableEdit = TableEditInsertRow | TableEditInsertColumn | TableEditDeleteRow | TableEditDeleteColumn | TableEditMoveRow | TableEditMoveColumn | TableEditSetCell | TableEditMerge | TableEditUnmerge
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -16015,13 +16114,18 @@ class DeckOpSetPayloadBody(TypedDict):
     payload: NodePayload
 class DeckOpSetPayload(TypedDict):
     set_payload: DeckOpSetPayloadBody
+class DeckOpEditTableBody(TypedDict):
+    node: NodeId
+    edits: list[TableEdit]
+class DeckOpEditTable(TypedDict):
+    edit_table: DeckOpEditTableBody
 class DeckOpReplaceOpaqueBody(TypedDict):
     part: str
     expected: list[int]
     replacement: list[int]
 class DeckOpReplaceOpaque(TypedDict):
     replace_opaque: DeckOpReplaceOpaqueBody
-DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpReplaceOpaque
+DeckOp = DeckOpAddSlide | DeckOpAddNode | DeckOpRemoveNode | DeckOpMoveNode | DeckOpSetText | DeckOpSetRunMarks | DeckOpSetGeometry | DeckOpSetPreset | DeckOpSetPayload | DeckOpEditTable | DeckOpReplaceOpaque
 class OfficeBodyOpsDocx(TypedDict):
     format: Literal["docx"]
     ops: list[DocxBodyOp]
@@ -16255,7 +16359,13 @@ class ConflictPayloadVsPayloadBody(TypedDict):
     node: NodeId
 class ConflictPayloadVsPayload(TypedDict):
     payload_vs_payload: ConflictPayloadVsPayloadBody
-Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload
+class ConflictCellVsCellBody(TypedDict):
+    node: NodeId
+    row: NodeId
+    column: NodeId
+class ConflictCellVsCell(TypedDict):
+    cell_vs_cell: ConflictCellVsCellBody
+Conflict = ConflictBothMoved | ConflictDeletedVsEdited | ConflictTextVsText | ConflictGeometryVsReparent | ConflictBothReplacedOpaque | ConflictPayloadVsPayload | ConflictCellVsCell
 class RelationshipChange(TypedDict):
     source: str
     id: str
@@ -17664,9 +17774,10 @@ class NoteReadRequest(TypedDict):
 class NoteAccessRequest(TypedDict):
     note_ref: str
     reason: NotRequired[str | None]
+NoteActor = str
 class NoteAuthorship(TypedDict):
     operation: str
-    actor: str
+    actor: NoteActor
     actor_class: str
     grant: NotRequired[str | None]
     command_hash: list[int]
@@ -17795,7 +17906,6 @@ class NoteEditOutcomeReviewRequired(TypedDict):
 NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
-NoteActor = str
 class NoteSeal(TypedDict):
     note: str
     document: str

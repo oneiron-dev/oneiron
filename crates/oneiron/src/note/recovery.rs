@@ -127,10 +127,12 @@ pub(crate) fn restore(
     if old.markdown == text && old.title.as_deref() == title && old.authorship == authorship {
         return Ok(());
     }
+    // An erased twin keeps its record (ErasedWins); a live actor never
+    // resurrects over an erased one.
     if old
         .authorship
         .iter()
-        .any(|record| !authorship.contains(record))
+        .any(|record| !authorship.iter().any(|kept| record.kept_by(kept)))
     {
         return Err(invalid("NOTE recovery would discard admitted provenance"));
     }

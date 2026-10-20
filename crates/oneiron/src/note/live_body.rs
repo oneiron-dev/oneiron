@@ -27,12 +27,7 @@ pub(crate) fn live_body_in_txn<'b>(
     let slot = crate::ports::DocumentSlot::of(*id);
     if crate::ports::DocumentRowStore::port_document_present(store, txn, slot)? {
         let doc = super::storage::load_seeded(store, txn, *id, || {
-            Ok(super::document::NoteDocument::birth(
-                *id,
-                &note.markdown,
-                &crate::WriteActor::new(note.author_ref, crate::EdgeActorClass::Agent),
-            )?
-            .doc)
+            Ok(super::document::NoteDocument::birth_by(*id, &note.markdown, note.author_ref)?.doc)
         })?;
         let mut note = note;
         note.markdown = super::document::NoteDocument::from_loro(*id, doc)?

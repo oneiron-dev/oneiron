@@ -227,10 +227,16 @@ impl Memory<'_> {
             } else {
                 None
             };
+            // An erased diary author is no agent, so no Grant covers the entry:
+            // it stays held, never admitted through a stand-in author.
             if core.kind == NoteKind::Diary
                 && let Some(diary) = &mut gate
-                && diary.admit(self.vault(), txn, core.author_ref, note)?
-                    != DiaryEntryAdmission::Read
+                && match core.author_ref.id() {
+                    Some(author) => {
+                        diary.admit(self.vault(), txn, author, note)? != DiaryEntryAdmission::Read
+                    }
+                    None => true,
+                }
             {
                 return Ok((None, gate));
             }

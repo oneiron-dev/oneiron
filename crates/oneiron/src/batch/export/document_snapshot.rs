@@ -341,7 +341,8 @@ impl Vault {
                 continue;
             }
             // OF-490: a diary goes out only as a read the owner's grant
-            // covers and its agent has not asked to review first.
+            // covers and its agent has not asked to review first. A diary
+            // whose author was erased is still a diary: the ledger holds it.
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
                 && let Some(author) =
                     note_diary_author(self, &rtxn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])?
@@ -618,13 +619,15 @@ impl Vault {
     }
 }
 
-/// The author of a NOTE row when it is a diary, read from its committed text.
+/// The author of a NOTE row when it is a diary, read from its committed text:
+/// a live agent, or no one once erased; `None` only for a row that is no
+/// diary.
 fn note_diary_author(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
     body: &[u8],
-) -> Result<Option<EntityId>> {
+) -> Result<Option<crate::note::NoteActor>> {
     #[cfg(feature = "sync")]
     let body = crate::entity_doc::resolve_record_body(&vault.store, rtxn, id, body)?;
     #[cfg(not(feature = "sync"))]

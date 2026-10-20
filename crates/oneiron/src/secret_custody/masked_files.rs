@@ -265,18 +265,20 @@ impl Vault {
     }
 
     /// [`Vault::export_blob_artifact_as`] with a DOCX's default-author token
-    /// kept, for a door that reads the file's units and hands no file out.
+    /// kept, for a door that reads the file's units and hands no file out. A
+    /// version whose body is its ASSET's file is masked as it is read, never
+    /// held whole beside its copy (FIX 6507).
     pub(crate) fn export_blob_artifact_as_raw(
         &self,
         id: &EntityId,
         version: Option<u64>,
         sight: SecretSight,
     ) -> Result<Option<ArtifactExport>> {
-        let Some(mut file) = self.export_blob_artifact_raw(id, version)? else {
-            return Ok(None);
-        };
-        file.bytes = self.sighted_asset_bytes(std::mem::take(&mut file.bytes), sight)?;
-        Ok(Some(file))
+        let txn = self.store.env.read_txn()?;
+        self.export_blob_artifact_read_in_txn(&txn, id, version, |record| {
+            self.read_blob_artifact_version_sighted_in_txn(&txn, id, record.version, sight)?
+                .ok_or(Error::EntityNotFound)
+        })
     }
 
     /// [`Vault::read_blob_artifact_version`] for a reader at a serving door.
@@ -289,21 +291,76 @@ impl Vault {
         sight: SecretSight,
     ) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
-        if let Some((asset, hash)) =
-            self.blob_artifact_version_file_in_txn(&rtxn, artifact_id, version)?
-        {
-            let bytes = self
-                .sighted_body_file_in_txn(&rtxn, &asset, &hash, sight)?
-                .ok_or(Error::EntityNotFound)?;
+        self.read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, version, sight)?
             // FIX 4513: once, after custody read the stored bytes.
-            return self.resolve_docx_authors_in_txn(&rtxn, bytes).map(Some);
+            .map(|bytes| self.resolve_docx_authors_in_txn(&rtxn, bytes))
+            .transpose()
+    }
+
+    /// The version an export of `artifact`'s `version` (the head when
+    /// `None`) reads, with its stored digest, when that version's body is
+    /// kept in its ASSET's file and a mark covers the file (FIX 6507): the
+    /// stored bytes are verified through the checked reader and dropped as
+    /// they pass, before any receipt is written. `None` for any other
+    /// version, and for one whose bytes may not leave.
+    pub(crate) fn marked_blob_version_file(
+        &self,
+        artifact: &EntityId,
+        version: Option<u64>,
+    ) -> Result<Option<(u64, [u8; 32])>> {
+        let txn = self.store.env.read_txn()?;
+        let version = match version {
+            Some(version) => version,
+            None => match crate::blob_artifact::read_blob_artifact_head_in_txn(
+                &self.store,
+                &txn,
+                artifact,
+            )? {
+                Some(head) => head.version,
+                None => return Ok(None),
+            },
+        };
+        if self
+            .blob_artifact_version_metadata_in_txn(&txn, artifact, version)?
+            .is_none()
+        {
+            return Ok(None);
         }
-        self.read_blob_artifact_version_in_txn(&rtxn, artifact_id, version)?
-            .map(|bytes| {
-                let bytes = sighted_bytes_in_txn(&self.store, &rtxn, bytes, sight)?;
-                // FIX 4513: once, after custody read the stored bytes.
-                self.resolve_docx_authors_in_txn(&rtxn, bytes)
-            })
+        let Some((asset, hash)) =
+            self.blob_artifact_version_file_in_txn(&txn, artifact, version)?
+        else {
+            return Ok(None);
+        };
+        if masked_file_in_txn(&self.store, &txn, &hash)?.is_none()
+            || !self.check_body_file_in_txn(&txn, &asset, &hash)?
+        {
+            return Ok(None);
+        }
+        Ok(Some((version, hash)))
+    }
+
+    /// One version's bytes as `sight` reads them in `txn`, before any DOCX
+    /// author projection. A body kept in its ASSET's file is read through
+    /// the checked reader and masked as it passes ([`Self::sighted_body_file_in_txn`],
+    /// FIX 5507, 6507); any other body is read whole, checked, and masked by
+    /// its mark. `None` when the version's bytes may not leave.
+    pub(crate) fn read_blob_artifact_version_sighted_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+        sight: SecretSight,
+    ) -> Result<Option<Vec<u8>>> {
+        if let Some((asset, hash)) =
+            self.blob_artifact_version_file_in_txn(txn, artifact_id, version)?
+        {
+            return self
+                .sighted_body_file_in_txn(txn, &asset, &hash, sight)?
+                .ok_or(Error::EntityNotFound)
+                .map(Some);
+        }
+        self.read_blob_artifact_version_in_txn(txn, artifact_id, version)?
+            .map(|bytes| sighted_bytes_in_txn(&self.store, txn, bytes, sight))
             .transpose()
     }
 }

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1082 facade rows, 3671 generated types.
+// UniFFI census: 1082 facade rows, 3681 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1034.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -47090,6 +47090,57 @@ pub struct EsignGetRequest {
     pub document_ref: String,
 }
 
+/// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryEndReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EsignDeliveryEndReason {
+    #[serde(rename = "document_ended")]
+    DocumentEnded,
+    #[serde(rename = "recipient_ended")]
+    RecipientEnded,
+}
+
+/// `oneiron::blob_artifact::esign::delivery_capability::EsignDeliveryWait`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EsignDeliveryWait {
+    #[serde(rename = "document_awaits_owner")]
+    DocumentAwaitsOwner,
+    #[serde(rename = "document_unreadable")]
+    DocumentUnreadable,
+    #[serde(rename = "notice_unreadable")]
+    NoticeUnreadable,
+    #[serde(rename = "send_unreadable")]
+    SendUnreadable,
+    #[serde(rename = "links_unreadable")]
+    LinksUnreadable,
+}
+
+/// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryReceiptState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state", content = "reason")]
+pub enum EsignDeliveryReceiptState {
+    #[serde(rename = "ended")]
+    Ended(EsignDeliveryEndReason),
+    #[serde(rename = "waits")]
+    Waits(EsignDeliveryWait),
+}
+
+/// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EsignDeliveryReceipt {
+    #[serde(rename = "attempt_ref")]
+    pub attempt_ref: String,
+    #[serde(rename = "attempt_count")]
+    pub attempt_count: u32,
+    #[serde(rename = "recipient")]
+    pub recipient: String,
+    #[serde(rename = "transition")]
+    pub transition: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(flatten)]
+    pub esign_delivery_receipt_state: EsignDeliveryReceiptState,
+}
+
 /// `oneiron::blob_artifact::esign::model::DeliveryStatus`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeliveryStatus {
@@ -47267,78 +47318,179 @@ pub struct EsignEventRow {
     pub at: u64,
 }
 
-/// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryEndReason`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum EsignDeliveryEndReason {
-    #[serde(rename = "document_ended")]
-    DocumentEnded,
-    #[serde(rename = "recipient_ended")]
-    RecipientEnded,
-}
-
-/// `oneiron::blob_artifact::esign::delivery_capability::EsignDeliveryWait`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum EsignDeliveryWait {
-    #[serde(rename = "document_awaits_owner")]
-    DocumentAwaitsOwner,
-    #[serde(rename = "document_unreadable")]
-    DocumentUnreadable,
-    #[serde(rename = "notice_unreadable")]
-    NoticeUnreadable,
-    #[serde(rename = "send_unreadable")]
-    SendUnreadable,
-}
-
-/// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryReceiptState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "state", content = "reason")]
-pub enum EsignDeliveryReceiptState {
-    #[serde(rename = "ended")]
-    Ended(EsignDeliveryEndReason),
-    #[serde(rename = "waits")]
-    Waits(EsignDeliveryWait),
-}
-
-/// `oneiron::blob_artifact::esign::delivery_settlement::EsignDeliveryReceipt`.
+/// `oneiron_contracts::memory::error::MemoryGateDenial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct EsignDeliveryReceipt {
-    #[serde(rename = "attempt_ref")]
-    pub attempt_ref: String,
-    #[serde(rename = "attempt_count")]
-    pub attempt_count: u32,
-    #[serde(rename = "recipient")]
-    pub recipient: String,
-    #[serde(rename = "transition")]
-    pub transition: String,
-    #[serde(rename = "at")]
-    pub at: u64,
-    #[serde(flatten)]
-    pub esign_delivery_receipt_state: EsignDeliveryReceiptState,
+pub struct MemoryGateDenial {
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(rename = "reason_codes")]
+    pub reason_codes: Vec<String>,
+    #[serde(rename = "ask_ref", default, skip_serializing_if = "Option::is_none")]
+    pub ask_ref: Option<String>,
 }
 
-/// `oneiron::blob_artifact::esign::door::EsignDocumentView`.
+/// `oneiron_contracts::memory::error::MemoryPolicyExceptionProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemoryPolicyExceptionProposal {
+    #[serde(rename = "action")]
+    pub action: String,
+    #[serde(rename = "row_ref")]
+    pub row_ref: String,
+    #[serde(rename = "required_role")]
+    pub required_role: String,
+}
+
+/// `oneiron_contracts::memory::error::MemoryPolicyDenial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemoryPolicyDenial {
+    #[serde(rename = "level")]
+    pub level: String,
+    #[serde(rename = "row_ref")]
+    pub row_ref: String,
+    #[serde(rename = "role")]
+    pub role: String,
+    #[serde(rename = "exception_proposal")]
+    pub exception_proposal: MemoryPolicyExceptionProposal,
+}
+
+/// `oneiron_contracts::error::hook::VerbHookStop`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum VerbHookStop {
+    #[serde(rename = "skipped")]
+    Skipped {
+        #[serde(rename = "hook")]
+        hook: String,
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+    #[serde(rename = "pending")]
+    Pending {
+        #[serde(rename = "invocation")]
+        invocation: String,
+        #[serde(rename = "ask")]
+        ask: String,
+    },
+    #[serde(rename = "hidden")]
+    Hidden {
+        #[serde(rename = "hook")]
+        hook: String,
+    },
+    #[serde(rename = "completed")]
+    Completed {
+        #[serde(rename = "invocation")]
+        invocation: String,
+        #[serde(rename = "result")]
+        result: crate::WireJson,
+    },
+    #[serde(rename = "completed_with_error")]
+    CompletedWithError {
+        #[serde(rename = "invocation")]
+        invocation: String,
+        #[serde(rename = "code")]
+        code: String,
+        #[serde(rename = "message")]
+        message: String,
+        #[serde(
+            rename = "receipt_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        receipt_ref: Option<String>,
+    },
+}
+
+/// `oneiron_contracts::memory::error::MemoryWrongRoot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemoryWrongRoot {
+    #[serde(rename = "attempted")]
+    pub attempted: String,
+    #[serde(rename = "replacement")]
+    pub replacement: String,
+    #[serde(rename = "schemaRef")]
+    pub schema_ref: String,
+}
+
+/// `oneiron_contracts::memory::error::MemoryError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemoryError {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "suggestions")]
+    pub suggestions: Vec<String>,
+    #[serde(
+        rename = "successor_short_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub successor_short_id: Option<String>,
+    #[serde(
+        rename = "gate_denial",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub gate_denial: Option<MemoryGateDenial>,
+    #[serde(rename = "narrowing", default, skip_serializing_if = "Option::is_none")]
+    pub narrowing: Option<ScopedReadReceipt>,
+    #[serde(
+        rename = "policy_denial",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub policy_denial: Option<MemoryPolicyDenial>,
+    #[serde(rename = "hook", default, skip_serializing_if = "Option::is_none")]
+    pub hook: Option<VerbHookStop>,
+    #[serde(
+        rename = "retry_after",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub retry_after: Option<u64>,
+    #[serde(flatten)]
+    pub memory_wrong_root: Option<MemoryWrongRoot>,
+}
+
+/// `oneiron::blob_artifact::esign::document_view::EsignDocumentTrail`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "trail")]
+pub enum EsignDocumentTrail {
+    #[serde(rename = "readable")]
+    Readable {
+        #[serde(rename = "status")]
+        status: DocumentStatus,
+        #[serde(rename = "awaits_owner_answer")]
+        awaits_owner_answer: bool,
+        #[serde(rename = "document")]
+        document: EsignDocument,
+        #[serde(rename = "recipients")]
+        recipients: std::collections::HashMap<String, RecipientState>,
+        #[serde(rename = "signatures")]
+        signatures: Vec<SignatureRow>,
+        #[serde(rename = "rejection", default, skip_serializing_if = "Option::is_none")]
+        rejection: Option<String>,
+        #[serde(rename = "sealed_sha256")]
+        sealed_sha256: Vec<String>,
+        #[serde(rename = "audit")]
+        audit: Vec<EsignEventRow>,
+    },
+    #[serde(rename = "unreadable")]
+    Unreadable {
+        #[serde(rename = "error")]
+        error: MemoryError,
+    },
+}
+
+/// `oneiron::blob_artifact::esign::document_view::EsignDocumentView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct EsignDocumentView {
     #[serde(rename = "document_ref")]
     pub document_ref: String,
-    #[serde(rename = "status")]
-    pub status: DocumentStatus,
-    #[serde(rename = "awaits_owner_answer")]
-    pub awaits_owner_answer: bool,
-    #[serde(rename = "document")]
-    pub document: EsignDocument,
-    #[serde(rename = "recipients")]
-    pub recipients: std::collections::HashMap<String, RecipientState>,
-    #[serde(rename = "signatures")]
-    pub signatures: Vec<SignatureRow>,
-    #[serde(rename = "rejection", default, skip_serializing_if = "Option::is_none")]
-    pub rejection: Option<String>,
-    #[serde(rename = "sealed_sha256")]
-    pub sealed_sha256: Vec<String>,
-    #[serde(rename = "audit")]
-    pub audit: Vec<EsignEventRow>,
     #[serde(rename = "delivery_receipts")]
     pub delivery_receipts: Vec<EsignDeliveryReceipt>,
+    #[serde(flatten)]
+    pub esign_document_trail: EsignDocumentTrail,
 }
 
 /// `oneiron::blob_artifact::esign::door::EsignLinksIssueRequest`.
@@ -48523,6 +48675,32 @@ pub struct HeldMedia {
     pub hash: String,
 }
 
+/// `oneiron_docedit::live::pptx::table::TableMerge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TableMerge {
+    #[serde(rename = "first_row")]
+    pub first_row: u64,
+    #[serde(rename = "first_column")]
+    pub first_column: u64,
+    #[serde(rename = "last_row")]
+    pub last_row: u64,
+    #[serde(rename = "last_column")]
+    pub last_column: u64,
+}
+
+/// `oneiron_docedit::live::pptx::table::TableBody`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TableBody {
+    #[serde(rename = "rows")]
+    pub rows: Vec<u64>,
+    #[serde(rename = "columns")]
+    pub columns: Vec<u64>,
+    #[serde(rename = "cells", default, skip_serializing_if = "Option::is_none")]
+    pub cells: Option<std::collections::HashMap<String, std::collections::HashMap<String, String>>>,
+    #[serde(rename = "merges", default, skip_serializing_if = "Option::is_none")]
+    pub merges: Option<Vec<TableMerge>>,
+}
+
 /// `oneiron_docedit::live::pptx::ChartKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ChartKind {
@@ -48710,12 +48888,7 @@ pub enum NodePayload {
         media: HeldMedia,
     },
     #[serde(rename = "table")]
-    Table {
-        #[serde(rename = "header")]
-        header: Vec<String>,
-        #[serde(rename = "rows")]
-        rows: Vec<Vec<Option<String>>>,
-    },
+    Table(TableBody),
     #[serde(rename = "chart")]
     Chart {
         #[serde(rename = "family")]
@@ -49107,6 +49280,62 @@ pub enum XlsxBodyOp {
     },
 }
 
+/// `oneiron_docedit::live::pptx::table::TableEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TableEdit {
+    #[serde(rename = "insert_row")]
+    InsertRow {
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "insert_column")]
+    InsertColumn {
+        #[serde(rename = "id", default, skip_serializing_if = "Option::is_none")]
+        id: Option<u64>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "delete_row")]
+    DeleteRow {
+        #[serde(rename = "row")]
+        row: u64,
+    },
+    #[serde(rename = "delete_column")]
+    DeleteColumn {
+        #[serde(rename = "column")]
+        column: u64,
+    },
+    #[serde(rename = "move_row")]
+    MoveRow {
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "move_column")]
+    MoveColumn {
+        #[serde(rename = "column")]
+        column: u64,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<u64>,
+    },
+    #[serde(rename = "set_cell")]
+    SetCell {
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "column")]
+        column: u64,
+        #[serde(rename = "text")]
+        text: String,
+    },
+    #[serde(rename = "merge")]
+    Merge(TableMerge),
+    #[serde(rename = "unmerge")]
+    Unmerge(TableMerge),
+}
+
 /// `oneiron_docedit::live::pptx::DeckOp`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DeckOp {
@@ -49182,6 +49411,13 @@ pub enum DeckOp {
         node: u64,
         #[serde(rename = "payload")]
         payload: NodePayload,
+    },
+    #[serde(rename = "edit_table")]
+    EditTable {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "edits")]
+        edits: Vec<TableEdit>,
     },
     #[serde(rename = "replace_opaque")]
     ReplaceOpaque {
@@ -49838,6 +50074,15 @@ pub enum Conflict {
     PayloadVsPayload {
         #[serde(rename = "node")]
         node: u64,
+    },
+    #[serde(rename = "cell_vs_cell")]
+    CellVsCell {
+        #[serde(rename = "node")]
+        node: u64,
+        #[serde(rename = "row")]
+        row: u64,
+        #[serde(rename = "column")]
+        column: u64,
     },
 }
 
