@@ -80174,7 +80174,7 @@
      "path": "src/api/discover.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -82036,7 +82036,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -87555,7 +87555,7 @@
       "const": 16,
       "crate-vis": 10,
       "enum": 4,
-      "fn": 16,
+      "fn": 18,
       "struct": 3
      }
     },
