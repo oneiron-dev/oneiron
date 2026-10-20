@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::server::SyncServer;
-use crate::wire_telemetry::{WireLimitQuestion, WireQuestion, WireThresholds};
+use crate::wire_telemetry::{WireLimitQuestion, WireQuestion, WireThresholds, WireWindowReceipt};
 
 /// One check per crossing subject.
 const CHECK: &str = "wire:health:v1:check:";
@@ -232,9 +232,50 @@ fn wire_crossing(key: String, question: &WireQuestion, thresholds: &WireThreshol
             "calls": window.by_actor.values().fold(0u64, |sum, calls| sum.saturating_add(*calls)),
             "verbs": verbs.iter().map(|(verb, calls)| json!({"verb": verb, "calls": calls})).collect::<Vec<_>>(),
             "actors": actors.iter().map(|(actor, calls)| json!({"actor": actor, "calls": calls})).collect::<Vec<_>>(),
+            // Which tools the named callers called and who called each named
+            // tool; MCP envelopes and their errors with no caller ride beside
+            // the calls, never counted as any caller's (FIX 1085).
+            "actor_tools": actor_tools(window, &actors),
+            "tool_callers": tool_callers(window, &verbs),
+            "mcp_envelopes": window.mcp_envelopes,
+            "mcp_errors": window.mcp_errors,
         }),
         read: Some((CURSOR_WIRE.to_owned(), key)),
     }
+}
+
+/// The tools each named caller called, most first.
+fn actor_tools(window: &WireWindowReceipt, actors: &[(String, u64)]) -> Vec<Value> {
+    actors
+        .iter()
+        .filter_map(|(actor, _)| {
+            let tools = named(window.by_actor_tool.get(actor)?, 0);
+            let tools: Vec<Value> = tools
+                .iter()
+                .map(|(tool, calls)| json!({"tool": tool, "calls": calls}))
+                .collect();
+            Some(json!({"actor": actor, "tools": tools}))
+        })
+        .collect()
+}
+
+/// The callers of each named verb that is an MCP tool, most first.
+fn tool_callers(window: &WireWindowReceipt, verbs: &[(String, u64)]) -> Vec<Value> {
+    verbs
+        .iter()
+        .filter_map(|(verb, _)| {
+            let callers: std::collections::BTreeMap<String, u64> = window
+                .by_actor_tool
+                .iter()
+                .filter_map(|(actor, tools)| Some((actor.clone(), *tools.get(verb)?)))
+                .collect();
+            let callers: Vec<Value> = named(&callers, 0)
+                .iter()
+                .map(|(actor, calls)| json!({"actor": actor, "calls": calls}))
+                .collect();
+            (!callers.is_empty()).then(|| json!({"tool": verb, "callers": callers}))
+        })
+        .collect()
 }
 
 fn limit_crossing(key: String, question: &WireLimitQuestion) -> Crossing {

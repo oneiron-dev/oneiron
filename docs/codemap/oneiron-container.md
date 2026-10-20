@@ -17,6 +17,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib.rs` | src | m | 8 struct · 2 enum · 12 fn · 1 type · 5 re-export | ContainerRuntime, Error, FenceConfig, FenceProof, GuestLimits, GuestSeccomp, GuestSession, GuestSpec +2 | Container sessions with an engine-owned Linux Landlock/seccomp fence |
 | `src/linux.rs` | src | m | 12 crate-vis | — | Linux UAPI used on both sides of the seccomp listener |
 | `src/relay_protocol.rs` | src | s | 1 struct · 1 enum · 2 fn | RelayReply, RelayRequest | Bounded host/guest network transport over the no-NIC VM's private vsock |
+| `src/socket_lifetime.rs` | src | s | 3 crate-vis | — | The launcher's inventory of the socket inodes its guest still holds (FIX 5978) |
 | `src/supervisor.rs` | src | m | 1 struct · 1 fn · 6 crate-vis | NativeFenceGuard | Host custody of the seccomp listener and all network transports |
+| `src/supervisor/lifetime.rs` | src | s | 2 crate-vis | — | A guest socket's host entry lives as long as the guest holds the socket (FIX 5978) |
 | `src/transport.rs` | src | s | 1 struct · 1 trait · 1 fn | SessionLease, SessionTransport | A selected backend's private duplex transport and lifetime custody |
-| `src/wire.rs` | src | s | 8 crate-vis | — | Private, bounded launcher/supervisor protocol |
+| `src/wire.rs` | src | s | 11 crate-vis | — | Private, bounded launcher/supervisor protocol |

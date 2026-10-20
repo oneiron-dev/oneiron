@@ -219,16 +219,19 @@ impl AgentVerbDoor for RunHostDoor {
     }
 
     /// The run's own calls keep the run's own admission. A consult landing
-    /// reads its refs, and a TASK binding its TASK and workflow (FIX 5316),
-    /// on the agent's own lane, on this device (DOOR-063): the run holds no
-    /// credential, and its lane is never the owner's.
+    /// reads its refs, a TASK binding its TASK and workflow (FIX 5316), and
+    /// a search its hits (FIX 5976), on the agent's own lane, on this device
+    /// (DOOR-063): the run holds no credential, and its lane is never the
+    /// owner's.
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         if !matches!(
             call,
-            RunCall::Bridge(SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch)
+            RunCall::Bridge(
+                SelfEffect::ConsultResult | SelfEffect::WorkflowDispatch | SelfEffect::MemorySearch
+            )
         ) {
             return Ok(None);
         }
@@ -239,6 +242,11 @@ impl AgentVerbDoor for RunHostDoor {
             .read_key()
             .map(Some)
             .map_err(|error| AgentVerbRefusal { code: error.code })
+    }
+
+    /// Its keyed search drops only rows the agent's lane may not read.
+    fn keyed_search_surfaceable_only(&self) -> bool {
+        false
     }
 
     /// The run's answer to its own connector call's questions (ONE-2510),

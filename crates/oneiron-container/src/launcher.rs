@@ -1,7 +1,7 @@
 //! Unprivileged in-container launcher and syscall-argument broker.
 
-use crate::{linux, wire};
-use std::collections::HashMap;
+use crate::{linux, socket_lifetime, wire};
+use std::collections::{BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -10,8 +10,8 @@ use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, mpsc};
 use std::time::{Duration, Instant};
 
 struct Pending {
@@ -22,6 +22,12 @@ struct Bridge {
     next: AtomicU64,
     writer: Mutex<Option<UnixStream>>,
     pending: Mutex<HashMap<u64, Pending>>,
+    /// A socket call holds it shared until its reply; an inventory scan
+    /// holds it alone, so no socket the supervisor is still creating can be
+    /// missing from a scan (FIX 5978).
+    sockets: RwLock<()>,
+    /// Whether a socket was brokered: until then there is nothing to scan.
+    brokered: AtomicBool,
 }
 impl Bridge {
     fn call(&self, id: u64, op: wire::Operation) -> io::Result<wire::Reply> {
@@ -30,11 +36,11 @@ impl Bridge {
         let mut bytes = Vec::new();
         wire::write(
             &mut bytes,
-            &wire::Request {
+            &wire::Frame::Request(wire::Request {
                 id,
                 notification,
                 op,
-            },
+            }),
         )?;
         let (sender, rx) = mpsc::channel();
         self.pending
@@ -57,6 +63,61 @@ impl Bridge {
             let _ = writer.write_all(&bytes);
         }
         rx.recv().map_err(io::Error::other)
+    }
+
+    /// Sends one complete scan, in chunks, while the bridge is connected. A
+    /// scan the bridge lost on the way is superseded by the next one.
+    fn send_inventory(&self, generation: u64, inodes: &BTreeSet<u64>) -> io::Result<()> {
+        use std::io::Write;
+        let inodes: Vec<u64> = inodes.iter().copied().collect();
+        let mut chunks = inodes.chunks(wire::INVENTORY_CHUNK).peekable();
+        let mut frames = Vec::new();
+        if chunks.peek().is_none() {
+            frames.push(Vec::new());
+        }
+        frames.extend(chunks.map(<[u64]>::to_vec));
+        let count = frames.len();
+        for (index, inodes) in frames.into_iter().enumerate() {
+            let mut bytes = Vec::new();
+            wire::write(
+                &mut bytes,
+                &wire::Frame::Inventory(wire::SocketInventory {
+                    generation,
+                    inodes,
+                    last: index + 1 == count,
+                }),
+            )?;
+            let mut writer = self
+                .writer
+                .lock()
+                .map_err(|_| io::Error::other("fence state poisoned"))?;
+            let writer = writer
+                .as_mut()
+                .ok_or_else(|| io::Error::from(io::ErrorKind::NotConnected))?;
+            writer.write_all(&bytes)?;
+        }
+        Ok(())
+    }
+}
+
+/// Takes the guest's socket inventory every [`socket_lifetime::SOCKET_INVENTORY_EVERY`]
+/// once a socket was brokered, and sends each complete one to the supervisor
+/// (FIX 5978). An incomplete scan is not sent; the next one tries again.
+fn inventory(bridge: &Bridge, launcher: u32) {
+    let mut generation = 0_u64;
+    loop {
+        std::thread::sleep(socket_lifetime::SOCKET_INVENTORY_EVERY);
+        if !bridge.brokered.load(Ordering::Acquire) {
+            continue;
+        }
+        let Ok(_alone) = bridge.sockets.write() else {
+            return;
+        };
+        let Ok(inodes) = socket_lifetime::collect_guest_socket_inodes(launcher) else {
+            continue;
+        };
+        generation += 1;
+        let _ = bridge.send_inventory(generation, &inodes);
     }
 }
 
@@ -127,6 +188,8 @@ pub fn launch(
         next: AtomicU64::new(1),
         writer: Mutex::new(None),
         pending: Mutex::new(HashMap::new()),
+        sockets: RwLock::new(()),
+        brokered: AtomicBool::new(false),
     });
     let stream = connect(socket, &hello, &listener)?;
     *bridge
@@ -134,6 +197,8 @@ pub fn launch(
         .lock()
         .map_err(|_| io::Error::other("fence state poisoned"))? = Some(stream.try_clone()?);
     let monitor_bridge = Arc::clone(&bridge);
+    let inventory_bridge = Arc::clone(&bridge);
+    std::thread::spawn(move || inventory(&inventory_bridge, std::process::id()));
     let socket = socket.to_owned();
     let listener = Arc::new(listener);
     let monitor_listener = Arc::clone(&listener);
@@ -291,12 +356,7 @@ fn monitor(
     }
 }
 fn socket_inode(pid: u32, fd: u64) -> Option<u64> {
-    let path = std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).ok()?;
-    path.to_str()?
-        .strip_prefix("socket:[")?
-        .strip_suffix(']')?
-        .parse()
-        .ok()
+    socket_lifetime::socket_link_inode(&std::fs::read_link(format!("/proc/{pid}/fd/{fd}")).ok()?)
 }
 fn remote(pid: u32, address: u64, bytes: &mut [u8], write: bool) -> io::Result<()> {
     let local = libc::iovec {
@@ -434,16 +494,23 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
         if matches!(family, libc::AF_UNIX | libc::AF_NETLINK) {
             return linux::respond(fd, n.id, 0, 0, linux::CONTINUE);
         }
-        let reply = bridge.call(
-            n.id,
-            wire::Operation::Socket {
-                family,
-                kind: a[1] as i32,
-                protocol: a[2] as i32,
-            },
-        )?;
+        let reply = {
+            let _shared = bridge
+                .sockets
+                .read()
+                .map_err(|_| io::Error::other("fence state poisoned"))?;
+            bridge.call(
+                n.id,
+                wire::Operation::Socket {
+                    family,
+                    kind: a[1] as i32,
+                    protocol: a[2] as i32,
+                },
+            )?
+        };
         // The successful socket syscall was completed by the host's ADDFD.
         return if reply.errno == 0 {
+            bridge.brokered.store(true, Ordering::Release);
             Ok(())
         } else {
             linux::respond(fd, n.id, 0, reply.errno, 0)

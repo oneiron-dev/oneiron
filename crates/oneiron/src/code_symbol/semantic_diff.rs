@@ -214,6 +214,11 @@ fn identity(node: tree_sitter::Node<'_>, source: &str) -> Option<String> {
 
 // Remove child definitions from the parent's comparison bytes. Changing a
 // method does not also report its unchanged impl header as a second change.
+//
+// The walk is an explicit post-order frame stack, never native recursion:
+// how deeply a source nests decides how many frames are held, not how deep
+// the caller's thread stack goes. Output and unit order match the
+// recursive walk exactly.
 fn collect(
     node: tree_sitter::Node<'_>,
     source: &str,
@@ -221,6 +226,62 @@ fn collect(
     units: &mut Units,
     implementations: &mut BTreeMap<String, Vec<ImplBlock>>,
 ) -> Result<String> {
+    let Some(root) = open_frame(node, source, scope) else {
+        return Ok(String::new());
+    };
+    let mut stack = vec![root];
+    loop {
+        let Some(frame) = stack.last_mut() else {
+            return Err(invalid());
+        };
+        if let Some(&child) = frame.children.get(frame.next) {
+            frame.next += 1;
+            let gap = &source[frame.end..child.start_byte()];
+            if frame.node.kind() != "source_file" || !gap.trim().is_empty() {
+                frame.own.push_str(gap);
+            }
+            match open_frame(child, source, &frame.child_scope) {
+                Some(opened) => stack.push(opened),
+                None => frame.end = child.end_byte(),
+            }
+            continue;
+        }
+        let Some(done) = stack.pop() else {
+            return Err(invalid());
+        };
+        let done_end = done.node.end_byte();
+        let residual = close_frame(done, source, units, implementations)?;
+        match stack.last_mut() {
+            Some(parent) => {
+                parent.own.push_str(&residual);
+                parent.end = done_end;
+            }
+            None => return Ok(residual),
+        }
+    }
+}
+
+/// One node of the `collect` walk whose children are still being folded
+/// into its own comparison bytes.
+struct CollectFrame<'tree> {
+    node: tree_sitter::Node<'tree>,
+    name: Option<String>,
+    key: Option<String>,
+    /// The scope this node's children are qualified by.
+    child_scope: String,
+    own: String,
+    end: usize,
+    children: Vec<tree_sitter::Node<'tree>>,
+    next: usize,
+}
+
+/// `None` is a comment or attribute that belongs to the next definition:
+/// it contributes no residual bytes and its children are not walked.
+fn open_frame<'tree>(
+    node: tree_sitter::Node<'tree>,
+    source: &str,
+    scope: &str,
+) -> Option<CollectFrame<'tree>> {
     if matches!(
         node.kind(),
         "line_comment" | "block_comment" | "attribute_item" | "inner_attribute_item"
@@ -228,7 +289,7 @@ fn collect(
         let mut next = node.next_named_sibling();
         while let Some(sibling) = next {
             if identity(sibling, source).is_some() {
-                return Ok(String::new());
+                return None;
             }
             if !matches!(
                 sibling.kind(),
@@ -247,24 +308,37 @@ fn collect(
             format!("{scope}::{n}")
         }
     });
-    let child_scope = key.as_deref().unwrap_or(scope);
-    let mut own = String::new();
-    let mut end = node.start_byte();
+    let child_scope = key.clone().unwrap_or_else(|| scope.to_owned());
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        let gap = &source[end..child.start_byte()];
-        if node.kind() != "source_file" || !gap.trim().is_empty() {
-            own.push_str(gap);
-        }
-        own.push_str(&collect(
-            child,
-            source,
-            child_scope,
-            units,
-            implementations,
-        )?);
-        end = child.end_byte();
-    }
+    let children = node.children(&mut cursor).collect();
+    Some(CollectFrame {
+        node,
+        name,
+        key,
+        child_scope,
+        own: String::new(),
+        end: node.start_byte(),
+        children,
+        next: 0,
+    })
+}
+
+/// Every child is folded in: add the tail, file the unit and hand back the
+/// residual the parent keeps in its own bytes.
+fn close_frame(
+    frame: CollectFrame<'_>,
+    source: &str,
+    units: &mut Units,
+    implementations: &mut BTreeMap<String, Vec<ImplBlock>>,
+) -> Result<String> {
+    let CollectFrame {
+        node,
+        name,
+        key,
+        mut own,
+        end,
+        ..
+    } = frame;
     let tail = &source[end..node.end_byte()];
     if node.kind() != "source_file" || !tail.trim().is_empty() {
         own.push_str(tail);
