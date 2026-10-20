@@ -2011,7 +2011,7 @@
      "path": "src/attempt_queue/encoding.rs",
      "purpose": "Storage key derivation and LMDB row encode/decode for the attempt queue",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
@@ -6949,6 +6949,7 @@
      "purpose": "The ordinary signature revision, written on the engine's side of the seal (ARCH-0075…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -7183,20 +7184,34 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BlobArtifactVersion",
-      "BlobBytes",
       "CalcEngineStamp"
      ],
      "path": "src/blob_artifact/versions.rs",
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 27,
-      "fn": 16,
-      "struct": 3
+      "crate-vis": 24,
+      "fn": 8,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BlobBytes"
+     ],
+     "path": "src/blob_artifact/versions/reads.rs",
+     "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -15790,7 +15805,7 @@
      "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 3,
       "fn": 4,
       "struct": 6
@@ -21126,7 +21141,7 @@
      "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
      "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -23461,7 +23476,7 @@
      "path": "src/edge.rs",
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 20,
       "enum": 2,
       "fn": 2,
       "re-export": 2,
@@ -31996,7 +32011,7 @@
      "purpose": "The engine's `[limits]` rows and their question port, defined in `oneiron-contracts`",
      "surface": {
       "crate-vis": 2,
-      "fn": 2,
+      "fn": 3,
       "re-export": 1
      }
     },
@@ -32094,7 +32109,7 @@
      "path": "src/linear_sync/mirror_event.rs",
      "purpose": "The mirror's durable event rows and each TASK's mirror control (OF-427)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "struct": 2
      }
     },
@@ -32175,7 +32190,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinearExternalActor",
@@ -38067,7 +38082,7 @@
      "path": "src/off_record/lifecycle/overlay_writes.rs",
      "purpose": "Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -62012,7 +62027,7 @@
      "path": "src/workspace_roster/rooms/thread_reads.rs",
      "purpose": "A room's threads as one reader reaches them (FIX 5545, Engine ruling 2026-10-19)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -63589,7 +63604,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65024,9 +65039,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 192,
+   "over_bar": 191,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4035,
+   "source_files": 4036,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68046,6 +68061,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/socket_lifetime.rs",
+     "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -68057,6 +68082,16 @@
       "crate-vis": 6,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/lifetime.rs",
+     "purpose": "A guest socket's host entry lives as long as the guest holds the socket (FIX 5978)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68081,7 +68116,7 @@
      "path": "src/wire.rs",
      "purpose": "Private, bounded launcher/supervisor protocol",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     }
    ],
@@ -68114,11 +68149,18 @@
      "layout": "file",
      "purpose": "Bounded host/guest network transport over the no-NIC VM's private vsock"
     },
-    "supervisor": {
+    "socket_lifetime": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
+     "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
+    },
+    "supervisor": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Host custody of the seccomp listener and all network transports"
     },
     "transport": {
@@ -68138,7 +68180,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 9,
+   "source_files": 11,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -68646,11 +68688,21 @@
      "path": "src/limit_ask.rs",
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)",
      "surface": {
-      "const": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 9,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/limit_ask/engine_rows.rs",
+     "purpose": "The engine rows' tables: every row, its config key and its default (moved out of `limit_ask.rs` whole, so…",
+     "surface": {
+      "const": 1,
+      "fn": 2
      }
     },
     {
@@ -69037,10 +69089,10 @@
      "purpose": "Identity-topology lifecycle states and per-op rejections: the values the topology ledger, the sync replay…"
     },
     "limit_ask": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The engine's `[limits]` rows and the port a crossed row asks through (ARCH-0044 C5, OF-520)"
     },
     "limits": {
@@ -69137,7 +69189,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 57,
+   "source_files": 58,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -74337,9 +74389,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/asks.rs",
-     "purpose": "Protocol 1.1 asks, the engine side: who answers, within which caps, and what the receipt records",
+     "purpose": "Protocol 1.1 asks, the engine side: who answers, and what the receipt records",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -74353,7 +74405,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BudgetConfig"
@@ -74361,7 +74413,7 @@
      "path": "src/budget.rs",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 22,
       "fn": 1,
       "struct": 1
      }
@@ -74388,7 +74440,7 @@
      "path": "src/fetch.rs",
      "purpose": "The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -74428,6 +74480,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/host/outputs.rs",
+     "purpose": "A call's reply, checked: its outputs mapped, hashed and kept in the call's room, which grows to hold them…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CallMeasure",
       "CallSize"
@@ -74459,6 +74521,16 @@
      "surface": {
       "mod": 2,
       "re-export": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/measure.rs",
+     "purpose": "The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74530,7 +74602,7 @@
      "path": "src/process.rs",
      "purpose": "One live organ process: spawn, handshake, a reader thread, calls",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -74546,9 +74618,9 @@
       "Unanswered"
      ],
      "path": "src/receipt.rs",
-     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes",
+     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 1,
       "struct": 6
      }
@@ -74623,7 +74695,17 @@
      "path": "src/seal/binding.rs",
      "purpose": "The seal's binding (ARCH-0075 `#organ-host-design-seal-binding`)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/fetch.rs",
+     "purpose": "The seal's `net.fetch`: the host's guarded fetch, for a timestamp or a CRL only, each fetch inside the fetch…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74646,7 +74728,17 @@
      "path": "src/seal/observe.rs",
      "purpose": "What one seal or verification call measured, against the engine's `[limits]` rows (OF-520, Rule 5)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/seal/verify.rs",
+     "purpose": "The seal's fresh verification and its suffix gate (OF-415, C032, Engine ruling D)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -74743,12 +74835,12 @@
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Protocol 1.1 asks, the engine side: who answers, within which caps, and what the receipt records"
+     "purpose": "Protocol 1.1 asks, the engine side: who answers, and what the receipt records"
     },
     "budget": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "One admission budget for every organ: threads, memory, in-flight calls"
     },
@@ -74774,7 +74866,7 @@
      "purpose": "The handlers a caller supplies for an organ's asks (protocol 1.1)"
     },
     "host": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -74786,6 +74878,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "An organ's results onto the artifact family's one landing (ARCH-0078 \"A proposal landing\"): each export file…"
+    },
+    "measure": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host…"
     },
     "mesh": {
      "files": 3,
@@ -74820,7 +74919,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's bounded notes"
+     "purpose": "The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them…"
     },
     "regions": {
      "files": 1,
@@ -74844,7 +74943,7 @@
      "purpose": "What the host does to an organ process between fork and exec"
     },
     "seal": {
-     "files": 4,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -74874,7 +74973,7 @@
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 27,
+   "source_files": 31,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -74889,7 +74988,7 @@
      "purpose": "Framing: `len: u32 LE | MessagePack body`, with descriptors riding as `SCM_RIGHTS` on the send that carries…",
      "surface": {
       "enum": 1,
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -74899,7 +74998,7 @@
      "path": "src/lib.rs",
      "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
-      "mod": 2,
+      "mod": 3,
       "re-export": 6
      }
     },
@@ -74913,7 +75012,7 @@
      "path": "src/region.rs",
      "purpose": "Read-only shared regions: how blob bytes cross without being copied",
      "surface": {
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -74937,6 +75036,27 @@
       "fn": 10,
       "struct": 7,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealByteRangeEvidence",
+      "SealCheckVerdict",
+      "SealModificationLevel",
+      "SealModifications",
+      "SealRevisionClassification",
+      "SealRevisionEvidence",
+      "SealRevisionKind",
+      "SealSignatureEvidence",
+      "SealSignatureKind"
+     ],
+     "path": "src/seal.rs",
+     "purpose": "The seal organ's revision classification, as its verdicts carry it (OF-415, C032)",
+     "surface": {
+      "enum": 5,
+      "struct": 4
      }
     },
     {
@@ -75046,6 +75166,13 @@
      "layout": "file",
      "purpose": "The organ side: handshake, frames, a small worker pool and cancel flags"
     },
+    "seal": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The seal organ's revision classification, as its verdicts carry it (OF-415, C032)"
+    },
     "shape": {
      "files": 1,
      "impl_vault": false,
@@ -75070,7 +75197,7 @@
    },
    "over_bar": 0,
    "purpose": "The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 7,
+   "source_files": 8,
    "test_files": 2
   },
   "oneiron-py": {
@@ -76131,7 +76258,7 @@
      "path": "src/native/fetch.rs",
      "purpose": "SSRF-guarded fetcher (§5)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -76470,6 +76597,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/organ/report.rs",
+     "purpose": "A verdict as the engine reads it: the native report's coarse fields, its full JSON, and the revision…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -76561,16 +76698,16 @@
      "purpose": "Native implementation modules (feature `native`)"
     },
     "organ": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The seal organ: `seal.pdf` (schema 2) and `seal.verify` (schema 1), run as its own process behind the organ…"
     }
    },
    "over_bar": 0,
    "purpose": "Native Rust PAdES seal and verification engine (ONE-1837)",
-   "source_files": 44,
+   "source_files": 45,
    "test_files": 12
   },
   "oneiron-server": {
@@ -86545,6 +86682,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/usage/pricing.rs",
+     "purpose": "The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -86645,7 +86792,7 @@
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
       "crate-vis": 18,
-      "fn": 18,
+      "fn": 16,
       "re-export": 1,
       "struct": 1
      }
@@ -86659,6 +86806,16 @@
      "surface": {
       "crate-vis": 8,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/core/usage.rs",
+     "purpose": "The usage meter the trusted host binds to this vault before work starts",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -87133,7 +87290,7 @@
      "path": "src/usage/mod.rs",
      "purpose": "Provider-list metering and host-pushed vault budget limits",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -87158,8 +87315,18 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 6,
+      "fn": 7,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/usage/pricing.rs",
+     "purpose": "Catalog list prices as fixed-point usage rates",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -87481,7 +87648,6 @@
      "kind": "src",
      "notable": [
       "LimitQuestions",
-      "LimitRow",
       "WireLimitQuestion",
       "WireQuestion",
       "WireQuestionKind",
@@ -87491,11 +87657,10 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "const": 1,
       "crate-vis": 11,
-      "enum": 2,
-      "fn": 12,
-      "re-export": 1,
+      "enum": 1,
+      "fn": 11,
+      "re-export": 2,
       "struct": 5
      }
     },
@@ -87507,6 +87672,20 @@
      "purpose": "The HTTP observer every routed request passes, and the tick that keeps the observed window",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LimitRow"
+     ],
+     "path": "src/wire_telemetry/rows.rs",
+     "purpose": "The `[limits]` rows this server's questions name (moved out of `wire_telemetry.rs` whole, so the telemetry…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -88191,7 +88370,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88205,7 +88384,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88233,7 +88412,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88268,7 +88447,7 @@
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -88277,7 +88456,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 878,
+   "source_files": 882,
    "test_files": 182
   },
   "oneiron-spawn": {

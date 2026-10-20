@@ -114,11 +114,15 @@ fn open_fresh_name() -> io::Result<(String, OwnedFd)> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let pid = std::process::id();
-    for attempt in 0u32..16 {
+    // A name another region holds is a collision, never a size: the next
+    // fresh name is tried, as many times as it takes (Rule 5).
+    let mut attempt = 0u32;
+    loop {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.subsec_nanos());
-        // PSHMNAMLEN on macOS is 31 bytes, slash included.
+        // PSHMNAMLEN on macOS is 31 bytes, slash included: three u32s in
+        // hex fit it.
         let name = format!("/onr.{pid:x}.{nanos:x}.{attempt:x}");
         match shm::open(
             name.as_str(),
@@ -126,14 +130,10 @@ fn open_fresh_name() -> io::Result<(String, OwnedFd)> {
             Mode::RUSR | Mode::WUSR,
         ) {
             Ok(fd) => return Ok((name, fd)),
-            Err(rustix::io::Errno::EXIST) => {}
+            Err(rustix::io::Errno::EXIST) => attempt = attempt.wrapping_add(1),
             Err(err) => return Err(err.into()),
         }
     }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "no fresh shared-memory name",
-    ))
 }
 
 /// A read-only view of a region, unmapped on drop.
@@ -189,6 +189,29 @@ impl MappedRegion {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = (fd, max);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "regions from an organ cross only on Linux and Android",
+            ))
+        }
+    }
+
+    /// The size of a region another process made and sealed, read without
+    /// mapping it: its seals proven first, so the size cannot change after.
+    /// A receiver makes room for that many bytes, then maps them with
+    /// [`Self::map_sealed`].
+    ///
+    /// # Errors
+    /// Fails if the region is unsealed, or not on Linux or Android.
+    pub fn sealed_len(fd: &OwnedFd) -> io::Result<u64> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            require_seals(fd)?;
+            sealed_size(fd)
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            let _ = fd;
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 "regions from an organ cross only on Linux and Android",

@@ -7,7 +7,7 @@
 
 use std::net::IpAddr;
 
-use crate::api::{FetchPolicy, FetchPurpose};
+use crate::api::FetchPolicy;
 
 /// Rule 1: only configured exact origins, scheme included. Origins are
 /// compared as `scheme://host[:port]`; query strings never participate.
@@ -106,17 +106,6 @@ fn is_globally_routable(ip: IpAddr) -> bool {
     }
 }
 
-/// Rule 5: per-purpose streaming cap.
-#[cfg_attr(not(feature = "network-fetch"), allow(dead_code))]
-pub(crate) fn purpose_cap(policy: &FetchPolicy, purpose: FetchPurpose) -> usize {
-    match purpose {
-        FetchPurpose::AuthorityInformationAccess => policy.max_aia_bytes,
-        FetchPurpose::Ocsp => policy.max_ocsp_bytes,
-        FetchPurpose::Crl => policy.max_crl_bytes,
-        FetchPurpose::Timestamp => policy.max_tsa_bytes,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Production guarded HTTP fetcher (network-fetch)
 // ---------------------------------------------------------------------------
@@ -134,7 +123,7 @@ mod http {
         FetchError, FetchMethod, FetchPolicy, FetchRequest, FetchResponse, SealFetcher,
     };
 
-    use super::{addr_allowed, origin_allowed, purpose_cap};
+    use super::{addr_allowed, origin_allowed};
 
     const CACHE_MAX_ENTRIES: usize = 64;
     /// Conservative validity bound: well inside typical OCSP/CRL windows.
@@ -147,9 +136,9 @@ mod http {
         inserted: Instant,
     }
 
-    /// SSRF-guarded HTTP fetcher. Redirects are followed manually (at most
-    /// `max_redirects`, default three) with the complete policy re-run on
-    /// every hop. Environment/system proxies are disabled. Error values
+    /// SSRF-guarded HTTP fetcher. Redirects are followed manually, with the
+    /// complete policy re-run on every hop, for as long as the deadline
+    /// allows. Environment/system proxies are disabled. Error values
     /// never carry URL query strings or response bodies.
     pub struct SsrfGuardedHttpFetcher {
         policy: FetchPolicy,
@@ -186,16 +175,11 @@ mod http {
             key
         }
 
-        fn cache_get(&self, key: &str, cap: usize) -> Option<FetchResponse> {
+        fn cache_get(&self, key: &str) -> Option<FetchResponse> {
             let mut cache = self.cache.lock().ok()?;
             let entry = cache.get(key)?;
             if entry.inserted.elapsed() > CACHE_TTL {
                 cache.remove(key);
-                return None;
-            }
-            // Cap is enforced before any cached byte is served: a stored body
-            // larger than this request's purpose cap is a miss, never a hit.
-            if entry.body.len() > cap {
                 return None;
             }
             // Integrity self-check: the cached body must still match the
@@ -297,14 +281,13 @@ mod http {
             Ok(resp)
         }
 
-        /// Stream the body under the per-purpose cap AND the request's total
-        /// deadline: the header-phase timeout does not cover the body phase,
-        /// so every chunk read races the same deadline (a stalled body is a
-        /// Timeout, not an unbounded wait).
+        /// Stream the whole body inside the request's total deadline: the
+        /// header-phase timeout does not cover the body phase, so every chunk
+        /// read races the same deadline (a stalled body is a Timeout, not an
+        /// unbounded wait). No size cuts it short (Rule 5).
         async fn stream_body<S>(
             stream: &mut S,
             content_type: Option<String>,
-            cap: usize,
             deadline: tokio::time::Instant,
         ) -> Result<FetchResponse, FetchError>
         where
@@ -317,9 +300,6 @@ mod http {
                     .map_err(|_| FetchError::Timeout)?;
                 let Some(chunk) = chunk else { break };
                 let chunk = chunk.map_err(|_| FetchError::Unavailable)?;
-                if body.len() + chunk.len() > cap {
-                    return Err(FetchError::ResponseTooLarge);
-                }
                 body.extend_from_slice(&chunk);
             }
             Ok(FetchResponse { body, content_type })
@@ -351,23 +331,18 @@ mod http {
     #[async_trait]
     impl SealFetcher for SsrfGuardedHttpFetcher {
         async fn fetch(&self, request: FetchRequest) -> Result<FetchResponse, FetchError> {
-            // Purpose cap first: it gates both the cache hit and the network
-            // path, so no byte is served before the cap is known.
-            let cap = purpose_cap(&self.policy, request.purpose);
             let key = Self::cache_key(&request);
-            if let Some(hit) = self.cache_get(&key, cap) {
+            if let Some(hit) = self.cache_get(&key) {
                 return Ok(hit);
             }
             let deadline =
                 tokio::time::Instant::now() + Duration::from_millis(self.policy.timeout_ms);
             let mut url = request.url.clone();
-            let mut hops = 0u8;
+            // Every hop is followed, its policy re-run, inside the deadline:
+            // `max_redirects` is a threshold, never a refusal (Rule 5).
             let response = loop {
                 let resp = self.one_hop(&url, &request, deadline).await?;
                 if resp.status().is_redirection() {
-                    if hops >= self.policy.max_redirects {
-                        return Err(FetchError::Denied);
-                    }
                     let location = resp
                         .headers()
                         .get(reqwest::header::LOCATION)
@@ -375,7 +350,6 @@ mod http {
                         .and_then(|l| url.join(l).ok())
                         .ok_or(FetchError::InvalidResponse)?;
                     url = location; // next loop iteration re-runs the full policy
-                    hops += 1;
                     continue;
                 }
                 if !resp.status().is_success() {
@@ -389,7 +363,7 @@ mod http {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
             let mut stream = response.bytes_stream();
-            let out = Self::stream_body(&mut stream, content_type, cap, deadline).await?;
+            let out = Self::stream_body(&mut stream, content_type, deadline).await?;
             self.cache_put(key, &out);
             Ok(out)
         }

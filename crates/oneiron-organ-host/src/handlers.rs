@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use oneiron_organ_protocol::AskRefusal;
 
+use crate::budget::{CallRoom, Stop};
 use crate::receipt::{AskReceipt, FetchTarget, SignedReceipt};
 use crate::spec::FetchGrant;
 
@@ -33,12 +34,18 @@ pub struct AskRequest<'a> {
     /// The call's deadline. A handler returns before it; an answer after it
     /// is dropped and the call cancelled.
     pub deadline: Instant,
-    /// The answer bytes the call has left.
+    /// The answer bytes the call may be lent before its `[limits]` row
+    /// asks; never a refusal (Rule 5).
     pub max_bytes: u64,
     /// The install grant's fetch allowlist.
     pub fetch: &'a FetchGrant,
     /// What a key signed for this ask, for the receipt.
     pub(crate) signing: &'a Mutex<Option<SignedReceipt>>,
+    /// The call's room, which a handler grows for a body as it reads it;
+    /// none for a mesh call, whose room is its own host's.
+    pub(crate) room: Option<&'a CallRoom>,
+    /// What ends a wait for room: the call's grant revoked.
+    pub(crate) revoked: Stop<'a>,
 }
 
 impl AskRequest<'_> {

@@ -98,6 +98,8 @@ pub(super) fn copy_admitted_edges(
             }
             let verdict = if kind == EdgeKind::AddressedTo {
                 admitted_addressing_verdict(vault, &rtxn, source_entities, src, tgt, value)
+            } else if kind == EdgeKind::Regenerates {
+                admitted_regeneration_verdict(vault, &rtxn, src, tgt)
             } else {
                 admitted_facet_of_verdict(vault, &rtxn, source_entities, brought, src, kind, tgt)
             };
@@ -549,6 +551,28 @@ fn admitted_addressing_verdict(
         Err(local_error) if local.is_some() => Err(local_error),
         Err(_) => Ok(reject()),
     }
+}
+
+/// FIX 5972: a new `regenerates` pair that the MESSAGEs this vault stores
+/// refute is a forgery, dropped with typed evidence. Any other is carried as
+/// a candidate, for the materializers to prove on the topology they apply,
+/// the pair's MESSAGEs and axes included; a stored pair is no new one.
+#[cfg(feature = "sync")]
+fn admitted_regeneration_verdict(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    src: EntityId,
+    tgt: EntityId,
+) -> Result<AdmittedEdgeVerdict> {
+    if !crate::edge::regeneration_stored(&vault.store, txn, &src, &tgt)?
+        && crate::edge::regeneration_pair(&vault.store, txn, &src, &tgt)?
+            == crate::edge::Regeneration::Refuses
+    {
+        return Ok(AdmittedEdgeVerdict::DropRejected(
+            crate::edge::reserved_regenerates(),
+        ));
+    }
+    Ok(AdmittedEdgeVerdict::Copy)
 }
 /// Resolves the ONE-1645 `FacetOf` table for ONE admitted row.
 ///
