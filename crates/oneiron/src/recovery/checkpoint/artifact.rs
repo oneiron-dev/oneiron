@@ -62,15 +62,17 @@ use serde::{Deserialize, Serialize};
 use self::sink::Sealer;
 pub(super) use self::sink::{ArtifactBody, write_artifact};
 use super::commitment::{self, CheckpointSigner, Trust};
+use super::payload::PayloadSection;
 use crate::world_keys::{
     CarriedVaultKey, OpenedDataKey, VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal, refused,
 };
 use crate::{Error, Result, Vault};
 
 const SEAL_CONTEXT: &str = "oneiron/checkpoint-seal/v1";
-/// Plaintext per chunk, before compression: well under E0's 16 MiB.
-const CHUNK_LEN: usize = 4 << 20;
-const ZSTD_LEVEL: i32 = 3;
+/// Plaintext per chunk, before compression: well under E0's 16 MiB. A
+/// payload compartment's pieces are as long (KS-7).
+pub(super) const CHUNK_LEN: usize = 4 << 20;
+pub(super) const ZSTD_LEVEL: i32 = 3;
 
 fn codec() -> Error {
     Error::CorruptedIndex("sealed checkpoint artifact")
@@ -265,6 +267,14 @@ struct Manifest {
     /// `None` where the vault never published one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     custody: Option<crate::store::CustodyRequirement>,
+    /// The ordinary payload's owner compartments (KS-7), never a key, a
+    /// wrap, a head or a pad. `None`, and the manifest as before, while
+    /// CHECKPOINT_PAYLOADS_ENABLED is off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    payload: Option<PayloadSection>,
+    /// Each payload bundle's stream, after every body's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    payload_streams: Vec<StreamEntry>,
 }
 
 /// The clear head of an artifact file.
@@ -313,6 +323,9 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) bodies: SealedBodies<'k>,
     /// The manifest's custody requirement (KS-4).
     pub(super) custody: Option<crate::store::CustodyRequirement>,
+    /// The payload compartments it carries, apart from its bodies (KS-7).
+    #[allow(dead_code, reason = "KS7-5 opens the compartments")]
+    pub(super) payload: Option<SealedPayload<'k>>,
 }
 
 /// The result bodies an opened artifact carries, each read back through its
@@ -411,6 +424,7 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
         + manifest
             .bodies
             .iter()
+            .chain(&manifest.payload_streams)
             .map(|body| body.chunks.len())
             .sum::<usize>();
     if at != manifest_at || frames.len() != named {
@@ -432,14 +446,35 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
     {
         return Err(codec());
     }
-    let streams: Vec<_> = manifest
+    let first = u32::try_from(manifest.bodies.len() + 1).map_err(|_| codec())?;
+    let mut streams: Vec<_> = manifest
         .bodies
         .into_iter()
+        .chain(manifest.payload_streams)
         .map(|entry| {
             let frames: Vec<_> = rest.by_ref().take(entry.chunks.len()).collect();
             (entry, frames)
         })
         .collect();
+    // The payload's streams follow the bodies' and are read apart from
+    // them (KS-7).
+    let payload_streams = streams.split_off(first as usize - 1);
+    let payload = match manifest.payload {
+        Some(section) if section.names_streams(payload_streams.len()) => Some(SealedPayload {
+            section,
+            file: file.try_clone()?,
+            sealer: Sealer {
+                key,
+                purpose: sealer.purpose,
+                commitment: sealer.commitment,
+                snapshot: sealer.snapshot,
+            },
+            first,
+            streams: payload_streams,
+        }),
+        None if payload_streams.is_empty() => None,
+        _ => return Err(codec()),
+    };
     Ok(OpenedArtifact {
         image,
         image_id: manifest.image.digest,
@@ -450,7 +485,47 @@ pub(super) fn open_artifact<'k>(path: &Path, key: &'k CheckpointKey) -> Result<O
             streams,
         },
         custody: manifest.custody,
+        payload,
     })
+}
+
+/// The payload compartments an opened artifact carries (KS-7), read apart
+/// from its bodies: each bundle's stream after the last body's.
+#[allow(dead_code, reason = "KS7-5 opens the compartments")]
+pub(super) struct SealedPayload<'k> {
+    pub(super) section: PayloadSection,
+    file: File,
+    sealer: Sealer<'k>,
+    /// The first payload stream's number.
+    first: u32,
+    streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
+}
+
+#[allow(dead_code, reason = "KS7-5 opens the compartments")]
+impl SealedPayload<'_> {
+    /// The `index`th payload stream's bytes, each chunk checked against the
+    /// manifest and opened as it is read, the whole checked after.
+    pub(super) fn stream(&mut self, index: usize) -> Result<Vec<u8>> {
+        let (entry, frames) = self.streams.get(index).ok_or_else(codec)?;
+        let stream = u32::try_from(index)
+            .ok()
+            .and_then(|index| self.first.checked_add(index))
+            .filter(|stream| *stream != MANIFEST_STREAM)
+            .ok_or_else(codec)?;
+        let mut out = Vec::new();
+        for (chunk, &(offset, len)) in frames.iter().enumerate() {
+            let envelope = read_at(&mut self.file, offset, len)?;
+            if *blake3::hash(&envelope).as_bytes() != entry.chunks[chunk] {
+                return Err(codec());
+            }
+            let chunk = u32::try_from(chunk).map_err(|_| codec())?;
+            out.extend_from_slice(&self.sealer.open(stream, chunk, &envelope)?);
+        }
+        if out.len() as u64 != entry.len || *blake3::hash(&out).as_bytes() != entry.digest {
+            return Err(codec());
+        }
+        Ok(out)
+    }
 }
 
 /// The custody position a manifest's requirement names, as the commitment
