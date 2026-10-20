@@ -45,8 +45,9 @@ side_tables! {
     /// kept to relay until its holder answers. Holds no plaintext. Key: hash32 (the ciphertext
     /// digest the request names).
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
-    /// Name index mapping a live secret-custody record's name to its EntityId. Key: string (secret
-    /// name).
+    /// Name index mapping a live secret-custody record's name to its EntityId, then the name's
+    /// generation high-water as a big-endian u32, kept after the record is gone (FIX 5958). Key:
+    /// string (secret name).
     SECRET_CUSTODY_NAME_INDEX: VaultMeta b"secret_custody:name:v1:" Raw Custody;
     /// What one custody request's executor committed (WILL L04 row 04): the digest of the custody
     /// transition it signed and the rotation receipt it wrote, immutable once written, beside the

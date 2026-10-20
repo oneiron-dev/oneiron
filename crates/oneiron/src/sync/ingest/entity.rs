@@ -24,11 +24,12 @@ use crate::vault::Vault;
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
 /// lease vault its receipts verify against, and that window's tombstones, indexed once per pass.
 pub(in crate::sync) struct IngestCtx<'a> {
-    vault: &'a Vault,
+    pub(super) vault: &'a Vault,
     window_key: &'a str,
     lease_vault_id: u64,
     tombstones: &'a TombstoneIndex,
     residence: Option<Residence<'a>>,
+    pub(super) staged: super::task_pairs::Staging,
 }
 
 /// How an entry holds a body that does not belong to its window's residence.
@@ -57,6 +58,7 @@ impl<'a> IngestCtx<'a> {
             lease_vault_id,
             tombstones,
             residence: None,
+            staged: Default::default(),
         }
     }
 
@@ -583,19 +585,8 @@ fn admit(
     // LMDB. The public gate would drop them; `put_replicated` admits both engine-authored bands
     // while still validating structure: unknown type bytes, ungrammatical predicates, malformed
     // CLAIM bodies and ONE-1159 provenance records fail typed, and come back as refusals.
-    let applied = vault
-        .batch_in()
-        .put_replicated(
-            &id,
-            header.entity_type,
-            crate::temporal::TimeRange {
-                start: header.occurred_start,
-                end: header.occurred_end,
-            },
-            header.learned_at,
-            &data,
-        )
-        .apply(wtxn);
+    // A TASK row its component stages lands in the component's batch (FIX 5998).
+    let applied = super::task_pairs::put_or_stage(&ctx.staged, vault, wtxn, id, header, &data);
     if let Err(err) = applied {
         if let Some(quota_debit) = quota_debit {
             quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;

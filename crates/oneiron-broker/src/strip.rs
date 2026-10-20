@@ -22,13 +22,21 @@
 //! part-encoded echo never splits across runs. The whole reply is buffered
 //! first, so a form cannot split across reads.
 //!
+//! A base64 form may also come wrapped, with whitespace among its characters
+//! (a MIME body's lines, say). So each stretch of base64 characters and
+//! whitespace, in the reply and in each reading of a run, is also searched
+//! for the base64 forms with its whitespace skipped. Only the matched bytes,
+//! with the whitespace between them, become [`MARKER`]; a stretch nothing
+//! matches passes as it came.
+//!
 //! The rule works on bytes, never through a parsed JSON tree: each decoded
 //! reading sits in a buffer wiped on drop.
 //!
 //! A reply that streams past the buffer (a binary body,
 //! [`crate::Shape::streams`]) is read through [`KeyWatch`] instead: the same
 //! forms and the same runs, checked chunk by chunk, and the body passed
-//! unchanged or cut, never rewritten.
+//! unchanged or cut, never rewritten. It does not read wrapped base64, so it
+//! cuts no stream it passed before.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
@@ -43,6 +51,7 @@ pub const MARKER: &[u8] = b"[redacted]";
 #[must_use]
 pub fn strip(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
     let forms = forms(key);
+    let wrapped = base64_forms(key);
     let mut out = Zeroizing::new(bytes.to_vec());
     for form in &forms {
         if memchr::memmem::find(&out, form).is_some() {
@@ -50,7 +59,16 @@ pub fn strip(key: &[u8], bytes: &[u8]) -> Zeroizing<Vec<u8>> {
         }
     }
     if memchr::memchr2(b'\\', b'%', &out).is_some() {
-        out = strip_encoded_runs(key, &forms, &out);
+        out = strip_encoded_runs(key, &forms, &wrapped, &out);
+    }
+    let mut marked = vec![0_u64; out.len().div_ceil(64)];
+    wrapped_base64_matches(&wrapped, &out, |start, end| {
+        mark(&mut marked, start, end);
+    });
+    if marked.iter().any(|&word| word != 0) {
+        let mut kept = Zeroizing::new(Vec::with_capacity(out.len()));
+        write_marked(&out, &marked, &mut kept);
+        out = kept;
     }
     out
 }
@@ -110,6 +128,17 @@ fn forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
     }
     forms.push(percent_encoded(key, b"0123456789ABCDEF"));
     forms.push(percent_encoded(key, b"0123456789abcdef"));
+    forms.extend(base64_forms(key));
+    forms.retain(|form| !form.is_empty());
+    forms.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    forms.dedup();
+    forms
+}
+
+/// The base64 forms of `key`: its encoding in both alphabets, with and
+/// without padding, and the core of it at each byte offset.
+fn base64_forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+    let mut forms = Vec::new();
     for engine in [&STANDARD, &STANDARD_NO_PAD, &URL_SAFE, &URL_SAFE_NO_PAD] {
         forms.push(Zeroizing::new(engine.encode(key).into_bytes()));
     }
@@ -119,9 +148,86 @@ fn forms(key: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
         }
     }
     forms.retain(|form| !form.is_empty());
-    forms.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-    forms.dedup();
     forms
+}
+
+/// A byte a base64 text holds, in either alphabet, padding included.
+fn is_base64_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"+/-_=".contains(&byte)
+}
+
+/// Calls `found` with the `text` range of each match of a form in `wrapped`
+/// (the key's base64 forms) in a stretch of `text` that holds base64 bytes
+/// with whitespace among them, read with that whitespace skipped. A range
+/// runs from the match's first byte to its last, the whitespace between
+/// them included. A stretch with no whitespace inside is the contiguous
+/// search's, and is skipped.
+fn wrapped_base64_matches(
+    wrapped: &[Zeroizing<Vec<u8>>],
+    text: &[u8],
+    mut found: impl FnMut(usize, usize),
+) {
+    if wrapped.is_empty() || !text.iter().any(u8::is_ascii_whitespace) {
+        return;
+    }
+    // Sized once, so the reply bytes it copies never move and leave a copy
+    // behind; each byte's source in `text` is no secret.
+    let mut squeezed = Zeroizing::new(Vec::with_capacity(text.len()));
+    let mut sources = Vec::new();
+    let mut at = 0;
+    while at < text.len() {
+        if !is_base64_byte(text[at]) {
+            at += 1;
+            continue;
+        }
+        squeezed.clear();
+        sources.clear();
+        while let Some(&byte) = text.get(at) {
+            if is_base64_byte(byte) {
+                squeezed.push(byte);
+                sources.push(at);
+            } else if !byte.is_ascii_whitespace() {
+                break;
+            }
+            at += 1;
+        }
+        let (Some(&first), Some(&last)) = (sources.first(), sources.last()) else {
+            continue;
+        };
+        if last - first + 1 == sources.len() {
+            continue;
+        }
+        for form in wrapped {
+            for start in memchr::memmem::find_iter(&squeezed, form.as_slice()) {
+                found(sources[start], sources[start + form.len() - 1] + 1);
+            }
+        }
+    }
+}
+
+/// Marks the bytes from `start` up to `end`.
+fn mark(marked: &mut [u64], start: usize, end: usize) {
+    for at in start..end {
+        marked[at / 64] |= 1 << (at % 64);
+    }
+}
+
+/// Writes `text` to `out` with one [`MARKER`] for each stretch of marked
+/// bytes.
+fn write_marked(text: &[u8], marked: &[u64], out: &mut Vec<u8>) {
+    let is_marked = |at: usize| (marked[at / 64] >> (at % 64)) & 1 == 1;
+    let mut at = 0;
+    while at < text.len() {
+        if is_marked(at) {
+            out.extend_from_slice(MARKER);
+            while at < text.len() && is_marked(at) {
+                at += 1;
+            }
+        } else {
+            out.push(text[at]);
+            at += 1;
+        }
+    }
 }
 
 /// Each byte outside the URL-unreserved set as `%XX`, in the given hex case.
@@ -199,6 +305,7 @@ fn percent_decoded_from(run: &[u8]) -> Decoded {
 fn strip_encoded_runs(
     key: &[u8],
     forms: &[Zeroizing<Vec<u8>>],
+    wrapped: &[Zeroizing<Vec<u8>>],
     bytes: &[u8],
 ) -> Zeroizing<Vec<u8>> {
     let mut out = Zeroizing::new(Vec::with_capacity(bytes.len()));
@@ -212,7 +319,7 @@ fn strip_encoded_runs(
         }
         let run = &bytes[at..end];
         if memchr::memchr2(b'\\', b'%', run).is_some() {
-            strip_run(forms, run, &mut out);
+            strip_run(forms, wrapped, run, &mut out);
         } else {
             out.extend_from_slice(run);
         }
@@ -250,35 +357,41 @@ type Decoding = (u8, fn(&[u8]) -> Decoded);
 /// one [`MARKER`] per stretch of marked bytes. A match marks one bit per run
 /// byte, so overlapping and repeated matches cost no more room. A reading
 /// [`DEPTH`] decodings deep that can still be decoded marks the whole run.
-fn strip_run(forms: &[Zeroizing<Vec<u8>>], run: &[u8], out: &mut Vec<u8>) {
+/// Each reading is also searched for the `wrapped` forms with the whitespace
+/// inside its base64 stretches skipped; the stream's watch passes none.
+fn strip_run(
+    forms: &[Zeroizing<Vec<u8>>],
+    wrapped: &[Zeroizing<Vec<u8>>],
+    run: &[u8],
+    out: &mut Vec<u8>,
+) {
     let mut marked = vec![0_u64; run.len().div_ceil(64)];
-    search(forms, run, None, 0, run.len(), &mut marked);
-    let is_marked = |at: usize| (marked[at / 64] >> (at % 64)) & 1 == 1;
-    let mut at = 0;
-    while at < run.len() {
-        if is_marked(at) {
-            out.extend_from_slice(MARKER);
-            while at < run.len() && is_marked(at) {
-                at += 1;
-            }
-        } else {
-            out.push(run[at]);
-            at += 1;
-        }
-    }
+    let reading = Reading {
+        forms,
+        wrapped,
+        run_len: run.len(),
+    };
+    search(&reading, run, None, 0, &mut marked);
+    write_marked(run, &marked, out);
+}
+
+/// What every reading of one run is searched for, and the run's length.
+struct Reading<'f> {
+    forms: &'f [Zeroizing<Vec<u8>>],
+    wrapped: &'f [Zeroizing<Vec<u8>>],
+    run_len: usize,
 }
 
 /// Marks the run bytes of each form in `text`, a reading `depth` decodings
-/// deep whose bytes' sources start at `starts` in the run of `run_len` bytes
-/// (the run itself when `None`), then reads it through each decoding that
-/// changes it. Depth first, so only one chain of readings is held at a time.
-/// At [`DEPTH`], a reading that can still be decoded marks every run byte.
+/// deep whose bytes' sources start at `starts` in the run (the run itself
+/// when `None`), then reads it through each decoding that changes it. Depth
+/// first, so only one chain of readings is held at a time. At [`DEPTH`], a
+/// reading that can still be decoded marks every run byte.
 fn search(
-    forms: &[Zeroizing<Vec<u8>>],
+    reading: &Reading<'_>,
     text: &[u8],
     starts: Option<&[usize]>,
     depth: usize,
-    run_len: usize,
     marked: &mut [u64],
 ) {
     // The run span of `text[first..end]`: from its first byte's start to the
@@ -290,18 +403,20 @@ fn search(
                 .iter()
                 .copied()
                 .find(|&start| start != starts[end - 1])
-                .unwrap_or(run_len),
+                .unwrap_or(reading.run_len),
         ),
         None => (first, end),
     };
-    for form in forms {
+    for form in reading.forms {
         for found in memchr::memmem::find_iter(text, form.as_slice()) {
             let (start, end) = span(found, found + form.len());
-            for at in start..end {
-                marked[at / 64] |= 1 << (at % 64);
-            }
+            mark(marked, start, end);
         }
     }
+    wrapped_base64_matches(reading.wrapped, text, |first, end| {
+        let (start, end) = span(first, end);
+        mark(marked, start, end);
+    });
     if depth == DEPTH {
         if still_decodes(text) {
             marked.fill(u64::MAX);
@@ -321,7 +436,7 @@ fn search(
             Some(starts) => from.into_iter().map(|at| starts[at]).collect(),
             None => from,
         };
-        search(forms, &decoded, Some(&from), depth + 1, run_len, marked);
+        search(reading, &decoded, Some(&from), depth + 1, marked);
     }
 }
 
@@ -507,7 +622,7 @@ impl<'k> KeyWatch<'k> {
             let run = &data[at..stop];
             if memchr::memchr2(b'\\', b'%', run).is_some() {
                 let mut read = Zeroizing::new(Vec::with_capacity(run.len()));
-                strip_run(&self.forms, run, &mut read);
+                strip_run(&self.forms, &[], run, &mut read);
                 if read.as_slice() != run {
                     return Err(KeyFound);
                 }
