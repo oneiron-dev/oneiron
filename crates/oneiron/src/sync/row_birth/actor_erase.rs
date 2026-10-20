@@ -13,8 +13,8 @@
 //! stores its removals as one more pending update of that window, so a loaded
 //! copy takes them when it next merges its stored state. The window is pinned
 //! history-free, since a removed carrier stays in its history until the erase
-//! sweep compacts it; its queued sends go but the delete-bearing, and it owes
-//! a full resync. Until a loaded copy merges, and whenever a peer's copy
+//! sweep compacts it, and the erase owes the sweep that compaction (FIX 6387);
+//! its queued sends go but the delete-bearing, and it owes a full resync. Until a loaded copy merges, and whenever a peer's copy
 //! brings a carrier back, every export, persist and mirror drops it first
 //! ([`scrub_erased_actor_births`], [`drop_erased_carrier`]), and the birth
 //! itself never lands again (`stamp_replicated_row_birth_in_txn`).
@@ -201,7 +201,8 @@ fn maker(bytes: &[u8]) -> Option<EntityId> {
 /// rebuilt, and stores the removal in `wtxn` as one more pending update of
 /// the window, which it pins history-free and marks for a full resync: the
 /// removed carriers stay in its history, and a queued send may carry one, so
-/// every queued send of it goes but the delete-bearing.
+/// every queued send of it goes but the delete-bearing. The history goes when
+/// the erasure sweep compacts the window, which this owes it (FIX 6387).
 fn drop_from_stored_window_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -220,6 +221,7 @@ fn drop_from_stored_window_in_txn(
     HISTORY_FREE_WINDOW.put(&vault.store, wtxn, &label, &[1u8])?;
     crate::sync::queue::scrub_window_updates_in_txn(vault, wtxn, &label)?;
     WINDOW_FULL_RESYNC_MARKER.put(&vault.store, wtxn, &label, &[1u8])?;
+    crate::sweep::owed::owe_window_compaction_in_txn(vault, wtxn, key)?;
     // Last: the pending update marks the stored state vector stale too.
     persist_window_update_in_txn(vault, wtxn, &label, &removal)
 }

@@ -108,6 +108,8 @@
 
 mod compact;
 mod finalize;
+#[cfg(feature = "sync")]
+pub(crate) mod owed;
 mod run;
 
 #[cfg(all(test, feature = "sync"))]

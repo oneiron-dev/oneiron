@@ -76,6 +76,18 @@ pub(in crate::sync) fn mirror_local_birth(
     Ok(true)
 }
 
+/// Drops `doc`'s birth carriers whose maker this vault erased, as each export
+/// does ([`actor_erase::scrub_erased_actor_births`]), for the erasure sweep's
+/// compaction (FIX 6387). Its shallow export drops the history the removal
+/// leaves, so no window is pinned. Whether anything changed.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn scrub_erased_births_for_compaction(vault: &Vault, doc: &LoroDoc) -> Result<bool> {
+    actor_erase::scrub_erased_actor_births(vault, doc, None)
+}
+
 /// Copies the births `src` carries for `owners` into `dst`. Selector, guest
 /// and federation rebuilds call it with the owners they finally kept, never
 /// with candidates, so a birth can never bring a denied row into scope.
