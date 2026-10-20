@@ -25,6 +25,12 @@
 //! its actors, and a campaign enrollment's outbound leg. A press on either
 //! family, once its admission spent it, is kept for that same send's retry
 //! ([`ApprovalTarget::keeps_spent_press`]), so the retry reuses it.
+//!
+//! FIX 6424 part 3 (2b, Engine 10-20 21:0x) adds a scoped-MCP tool call on a
+//! catalogued connector (a payment or webhook tool a connector exposes
+//! included), whose spent press is kept the same way, and a channel-identity
+//! lifecycle intent, which applies in the Gate's own writer and keeps no
+//! Pending row: its retry replays the request's recorded receipt instead.
 
 use crate::calendar::CalendarInvitePayload;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -119,6 +125,77 @@ pub(crate) enum ApprovalTarget {
     /// A campaign enrollment's outbound leg (CALLS `FIX 6424 campaign event
     /// row versus logical event`).
     Campaign(CampaignLegFacts),
+    /// A tool call on a catalogued connector through the scoped-MCP path,
+    /// a payment or webhook tool the connector exposes included (FIX 6424
+    /// part 3).
+    ScopedMcp(ScopedMcpCallFacts),
+    /// A channel-identity provision, bind, rotate, release or inbound
+    /// route (FIX 6424 part 3, CALLS `FIX 6424 channel-identity request
+    /// nonce`).
+    ChannelIdentityLifecycle(ChannelIdentityLifecycleFacts),
+}
+
+/// The facts one scoped-MCP call pins (Engine 10-20 17:4x, ruling 7): its
+/// server, tool and resolved endpoint, its nonce, the call's attempt and
+/// call sequence (fixed before it is prepared, kept by its held row, so a
+/// resume of the call names them again), and the digest of the exact bytes
+/// its preparation froze.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ScopedMcpCallFacts {
+    pub(crate) server: String,
+    pub(crate) tool: String,
+    pub(crate) resolved_endpoint: String,
+    pub(crate) attempt_id: [u8; 16],
+    pub(crate) call_seq: u64,
+    pub(crate) payload_digest: [u8; 32],
+}
+
+impl ScopedMcpCallFacts {
+    fn hash(&self, hasher: &mut blake3::Hasher) {
+        field(hasher, &self.server);
+        field(hasher, &self.tool);
+        field(hasher, &self.resolved_endpoint);
+        field(hasher, &bytes_to_hex_lower(&self.attempt_id));
+        field(hasher, &self.call_seq.to_string());
+        field(hasher, &bytes_to_hex_lower(&self.payload_digest));
+    }
+}
+
+/// The facts one channel-identity lifecycle request pins (Engine 10-20
+/// 17:4x): the verb, the identity, the typed intent's parameters (the
+/// fulfillment mode of a provision or bind, the digest of a provision's
+/// requested identity, a release's quarantine bound), and the request's
+/// nonce, minted before its first ask and kept with the request, never the
+/// address a provider assigns later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChannelIdentityLifecycleFacts {
+    pub(crate) verb: &'static str,
+    pub(crate) identity_id: EntityId,
+    pub(crate) fulfillment_mode: Option<&'static str>,
+    pub(crate) specification_digest: Option<[u8; 32]>,
+    pub(crate) quarantine_until: Option<u64>,
+    pub(crate) request_ref: EntityId,
+}
+
+impl ChannelIdentityLifecycleFacts {
+    fn hash(&self, hasher: &mut blake3::Hasher) {
+        field(hasher, self.verb);
+        field(hasher, &self.identity_id.to_hex());
+        optional(hasher, self.fulfillment_mode);
+        optional(
+            hasher,
+            self.specification_digest
+                .map(|digest| bytes_to_hex_lower(&digest))
+                .as_deref(),
+        );
+        optional(
+            hasher,
+            self.quarantine_until
+                .map(|until| until.to_string())
+                .as_deref(),
+        );
+        field(hasher, &self.request_ref.to_hex());
+    }
 }
 
 /// The facts one Linear mirror operation pins (Engine 10-20 17:4x): its
@@ -280,12 +357,17 @@ impl ApprovalTarget {
     /// Whether a press on this target, once the admission it released spent
     /// it, is kept for that same send's retry (Engine 10-20 21:0x ruling 8,
     /// CALLS `FIX 6424 pinned Pending proof retention`): a Linear mutation,
-    /// for each of its actors, and a campaign leg. The retry reuses the kept
-    /// press only while its own pinned digest is the kept one.
+    /// for each of its actors, a campaign leg, and a scoped-MCP call. The
+    /// retry reuses the kept press only while its own pinned digest is the
+    /// kept one. A lifecycle intent applies in the Gate's writer and keeps
+    /// no Pending row to retry.
     pub(crate) fn keeps_spent_press(&self) -> bool {
         matches!(
             self,
-            Self::LinearDispatch { .. } | Self::LinearMirror(_) | Self::Campaign(_)
+            Self::LinearDispatch { .. }
+                | Self::LinearMirror(_)
+                | Self::Campaign(_)
+                | Self::ScopedMcp(_)
         )
     }
 
@@ -296,6 +378,7 @@ impl ApprovalTarget {
         match self {
             Self::LinearDispatch { .. } => Some(PinnedApprovalFamily::LinearDispatch),
             Self::Campaign(_) => Some(PinnedApprovalFamily::CampaignLeg),
+            Self::ScopedMcp(_) => Some(PinnedApprovalFamily::ScopedMcp),
             _ => None,
         }
     }
@@ -404,6 +487,14 @@ impl ApprovalTarget {
             }
             Self::Campaign(facts) => {
                 field(&mut hasher, "campaign");
+                facts.hash(&mut hasher);
+            }
+            Self::ScopedMcp(facts) => {
+                field(&mut hasher, "scoped_mcp");
+                facts.hash(&mut hasher);
+            }
+            Self::ChannelIdentityLifecycle(facts) => {
+                field(&mut hasher, "channel_identity_lifecycle");
                 facts.hash(&mut hasher);
             }
         }

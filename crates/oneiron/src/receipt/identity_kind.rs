@@ -356,6 +356,13 @@ fn channel_identity_lifecycle_receipt(
             format!("gate:{}", decision_id.to_hex()),
         );
     }
+    // FIX 6424 part 3: a held request's digest and its ref, copied.
+    if let Some(digest) = record.approval_digest.as_ref() {
+        fields.insert("approval_digest".to_owned(), digest.clone());
+    }
+    if let Some(request_ref) = record.request_ref.as_ref() {
+        fields.insert("request_ref".to_owned(), request_ref.clone());
+    }
 
     ReceiptRecord {
         receipt_id: crate::channel_identity_lifecycle::lifecycle_receipt_ref(record.receipt_id),

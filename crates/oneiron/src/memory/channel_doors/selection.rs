@@ -188,6 +188,7 @@ impl Memory<'_> {
             .map(|candidate| {
                 let identity = self.channel_identity_get(ChannelIdentityRequest {
                     identity_ref: candidate.identity_ref,
+                    request_ref: None,
                 })?;
                 Ok(ChannelIdentityCandidate {
                     identity_ref: candidate.identity_ref,
@@ -224,6 +225,7 @@ impl Memory<'_> {
         } else {
             let identity = self.channel_identity_get(ChannelIdentityRequest {
                 identity_ref: decision.identity_ref,
+                request_ref: None,
             })?;
             ThreadMask {
                 identity_ref: decision.identity_ref,
