@@ -53900,7 +53900,7 @@
      "path": "src/sync/ingest/tombstone.rs",
      "purpose": "The tombstone classification every replicated tombstone takes before replay",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -55089,7 +55089,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/window/forward/tombstone_pass.rs",
