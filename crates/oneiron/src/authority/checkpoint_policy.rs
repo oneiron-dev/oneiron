@@ -4,9 +4,10 @@
 //! never from the image it received.
 //!
 //! Managed mode requires the managed host root. Relay and self-host use
-//! owner-root keys: the sole root when only one is eligible, else at least two
-//! distinct roots. Workers, agents and capability holders never vote, and
-//! several software keys never stand in for a hardware root.
+//! owner-root keys: one root while one or two are eligible, and two distinct
+//! roots from three on (owner ruling 10-19, CHECKPOINT QUORUM = C; FIX 4936).
+//! Workers, agents and capability holders never vote, and several software
+//! keys never stand in for a hardware root.
 //!
 //! The owner may select the roots and quorum himself, on any host, Hosted
 //! included (mesh PR2c, §A 06, K06): a main-log choice carrying his act
@@ -24,7 +25,11 @@ use super::*;
 use crate::error::{Error, RecordError, Result};
 use crate::{HostingPrivacyPosture, Vault};
 
-/// Distinct roots a checkpoint needs once two or more roots are eligible.
+/// The most eligible roots one root's signature still attests for (FIX 4936:
+/// one signature at one or two roots).
+pub const CHECKPOINT_SINGLE_ROOT_QUORUM_MAX_ROOTS: usize = 2;
+/// Distinct roots a checkpoint needs once more than
+/// [`CHECKPOINT_SINGLE_ROOT_QUORUM_MAX_ROOTS`] roots are eligible.
 pub const CHECKPOINT_MULTI_ROOT_QUORUM: usize = 2;
 /// A configured quorum floor above the canon minimum; 0 configures none.
 pub const CHECKPOINT_CONFIGURED_QUORUM: usize = 0;
@@ -143,7 +148,7 @@ impl CheckpointRootPolicy {
             .collect();
         let canon = match roots.len() {
             0 => return Err(policy_refused(NO_ELIGIBLE_ROOTS)),
-            1 => 1,
+            n if n <= CHECKPOINT_SINGLE_ROOT_QUORUM_MAX_ROOTS => 1,
             _ if managed => 1,
             _ => CHECKPOINT_MULTI_ROOT_QUORUM,
         };
@@ -167,10 +172,10 @@ impl CheckpointRootPolicy {
     /// (mesh PR2c), with `configured` as a quorum floor (0 for none). Each
     /// chosen key the roster no longer holds as a selectable root drops out
     /// (CALLS "mesh PR2c selectable roots"), and the rest must still meet the
-    /// quorum: there is no silent fallback to the posture's policy. Several
-    /// roots need the multi-root quorum on every host, the host-voter rule's
-    /// managed exception included, since an owner's choice has no host
-    /// voter.
+    /// quorum: there is no silent fallback to the posture's policy. More than
+    /// [`CHECKPOINT_SINGLE_ROOT_QUORUM_MAX_ROOTS`] roots need the multi-root
+    /// quorum on every host, the host-voter rule's managed exception included,
+    /// since an owner's choice has no host voter.
     pub fn from_choice(
         roster: &BTreeMap<AuthorityKey, FoldedDevice>,
         posture: HostingPrivacyPosture,
@@ -195,7 +200,7 @@ impl CheckpointRootPolicy {
             .collect();
         let canon = match roots.len() {
             0 => return Err(policy_refused(NO_ELIGIBLE_ROOTS)),
-            1 => 1,
+            n if n <= CHECKPOINT_SINGLE_ROOT_QUORUM_MAX_ROOTS => 1,
             _ => CHECKPOINT_MULTI_ROOT_QUORUM,
         };
         let quorum = usize::from(choice.quorum);
