@@ -179,7 +179,7 @@ impl Control {
     }
 
     fn derive(&self, context: &str) -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(blake3::derive_key(context, &self.secret[..]))
+        crate::world_keys::derive_guarded(context, &[&self.secret[..]])
     }
 
     fn log_kek(&self) -> Kek {

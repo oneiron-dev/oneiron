@@ -14,16 +14,18 @@
 //! handle in place of what an operation wrote; [`scan_document_in_txn`]
 //! refuses a hit there instead.
 
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use heed::{RoTxn, RwTxn};
 
 use super::super::{SecretScanMode, scan_payload, secret_scan_mode_in_txn};
 use super::secret_spans;
 use super::side_row::{SidePart, admit_seeded_parts};
+use super::wipe::{PlanValues, replace_wiped, wipe_part};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::secret_custody::KnownValues;
 use crate::side_table::SideTableDbs;
 
 /// What a stream's admitted text keeps in place of a secret it may still be
@@ -34,9 +36,10 @@ const WITHHELD: &str = "[secret redacted]";
 /// The secrets one writer lifted into custody so far, by value, each with its
 /// handle: a stream reads its whole text again at each checkpoint and keeps
 /// the handle an earlier checkpoint minted. What one transaction adds is kept
-/// only once that transaction commits.
+/// only once that transaction commits. Each value is wiped when its copy
+/// drops (FIX 1101).
 #[derive(Clone, Default)]
-pub(crate) struct Lifted(pub(super) HashMap<Vec<u8>, String>);
+pub(crate) struct Lifted(pub(super) PlanValues<String>);
 
 /// One part of a record a writer stores outside a batch: text, read as the
 /// batch door reads a text field, or a body, read as it reads a put.
@@ -60,6 +63,19 @@ pub(crate) fn admit_parts_in_txn(
     parts: &mut [(&str, Part<'_>)],
     lifted: &mut Lifted,
 ) -> Result<bool> {
+    admit_parts_with(vault, wtxn, record, parts, lifted, None)
+}
+
+/// [`admit_parts_in_txn`] with the known values the caller already read in
+/// this writer, if it did.
+fn admit_parts_with(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    record: EntityId,
+    parts: &mut [(&str, Part<'_>)],
+    lifted: &mut Lifted,
+    known: Option<Arc<KnownValues>>,
+) -> Result<bool> {
     let origins = parts
         .iter()
         .map(|(place, _)| (record, *place))
@@ -71,14 +87,19 @@ pub(crate) fn admit_parts_in_txn(
             Part::Body(data) => SidePart::Body((**data).clone()),
         })
         .collect::<Vec<_>>();
-    if !admit_seeded_parts(vault, wtxn, &origins, &mut admitted, lifted, |_| true)? {
-        return Ok(false);
+    // The parts' copies hold the secrets until they are written back; a
+    // copy not written back is wiped (FIX 1101).
+    let placed = admit_seeded_parts(vault, wtxn, &origins, &mut admitted, lifted, known);
+    if !matches!(placed, Ok(true)) {
+        admitted.iter_mut().for_each(wipe_part);
+        return placed;
     }
     for ((_, part), admitted) in parts.iter_mut().zip(admitted) {
         match (part, admitted) {
-            (Part::Text(text), SidePart::Text(masked)) => **text = masked,
-            (Part::Body(data), SidePart::Body(masked)) => **data = masked,
-            _ => {
+            (Part::Text(text), SidePart::Text(masked)) => replace_wiped(&mut **text, masked),
+            (Part::Body(data), SidePart::Body(masked)) => replace_wiped(&mut **data, masked),
+            (_, mut admitted) => {
+                wipe_part(&mut admitted);
                 return Err(Error::InvariantViolation(
                     "an admitted part is no longer what it was",
                 ));
@@ -91,9 +112,14 @@ pub(crate) fn admit_parts_in_txn(
 /// [`admit_parts_in_txn`] for a stream's text, read again whole at each
 /// checkpoint. While the stream is `open`, a span that reaches the end of the
 /// text may still grow (a key arriving a token at a time): the admitted text
-/// withholds it ([`WITHHELD`]) and nothing is minted for it yet. Once the text
-/// goes past it, or the stream ends, it goes to custody whole. Returns the
-/// admitted text and whether it withholds a span.
+/// withholds it ([`WITHHELD`]) and nothing is minted for it yet. A known
+/// value may be arriving the same way (FIX 2722): a window of the text's
+/// last bytes that opens one is withheld from there as a growing span is,
+/// and the last bytes no window can test yet are held back unseen
+/// (`KnownValues::growing`). Once the text goes past them, or the stream
+/// ends, they are read whole: a known value keeps its handle, and a secret
+/// goes to custody. Returns the admitted text and whether it withholds or
+/// holds back anything.
 pub(crate) fn admit_stream_text_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -110,18 +136,40 @@ pub(crate) fn admit_stream_text_in_txn(
         .last()
         .filter(|(span, _)| open && span.end == text.len())
         .map(|(span, _)| span.start);
-    let mut admitted = match growing {
-        Some(start) => [&text[..start], WITHHELD].concat(),
-        None => text.to_owned(),
+    let known = KnownValues::load_in_writer(&vault.store, wtxn)?.map(Arc::new);
+    let (opens, held) = match known.as_deref().filter(|_| open) {
+        Some(known) => {
+            let growing = known.growing(text.as_bytes());
+            (growing.opens, char_floor(text, growing.held))
+        }
+        None => (None, text.len()),
     };
-    admit_parts_in_txn(
+    let withheld = [growing, opens.map(|at| char_floor(text, at))]
+        .into_iter()
+        .flatten()
+        .min();
+    let mut admitted = match withheld {
+        Some(start) => [&text[..start.min(held)], WITHHELD].concat(),
+        None => text[..held].to_owned(),
+    };
+    admit_parts_with(
         vault,
         wtxn,
         record,
         &mut [(place, Part::Text(&mut admitted))],
         lifted,
+        known,
     )?;
-    Ok((admitted, growing.is_some()))
+    Ok((admitted, withheld.is_some() || held < text.len()))
+}
+
+/// The nearest character boundary of `text` at or before `at`.
+fn char_floor(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
 }
 
 /// The batch door's scan of content a writer stores outside a batch, under

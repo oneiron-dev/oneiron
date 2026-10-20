@@ -145,9 +145,7 @@ impl VaultPageSeal {
         data_key: Arc<VaultDataKey>,
         origin: SealOrigin,
     ) -> Self {
-        let page_key = Arc::new(Zeroizing::new(
-            data_key.derive(PAGE_KEY_CONTEXT, &incarnation),
-        ));
+        let page_key = Arc::new(data_key.derive(PAGE_KEY_CONTEXT, &incarnation));
         Self {
             vault_id,
             incarnation,
@@ -251,7 +249,7 @@ impl OpenedDataKey {
     /// The key for `context` of this data key (FIX 5348: a restore opens the
     /// artifact's body-file keys with it).
     pub(crate) fn subkey(&self, context: &str) -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(self.key.derive(context, &self.vault_id))
+        self.key.derive(context, &self.vault_id)
     }
 
     /// A seal for a vault restored from the artifact: its vault id and data
@@ -413,7 +411,7 @@ fn select_incarnation(vault_path: &Path, mirror: &Mirror, key: &VaultDataKey) ->
         return Ok(*only);
     }
     for incarnation in &mirror.incarnations {
-        let page_key = Zeroizing::new(key.derive(PAGE_KEY_CONTEXT, incarnation));
+        let page_key = key.derive(PAGE_KEY_CONTEXT, incarnation);
         if opens_under(vault_path, &page_key) {
             return Ok(*incarnation);
         }

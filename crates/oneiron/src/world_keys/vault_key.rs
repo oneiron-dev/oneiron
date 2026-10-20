@@ -97,17 +97,14 @@ impl VaultDataKey {
     /// `BLAKE3-derive_key("oneiron/vault-key-commitment/v1", vault id ‖ key)`: it
     /// pins which bytes are this vault's key and reveals nothing about them.
     pub(super) fn commitment(&self, vault_id: &[u8; 32]) -> [u8; 32] {
-        self.derive(COMMITMENT_CONTEXT, vault_id)
+        // Public: the guard's copy is wiped as it drops.
+        *self.derive(COMMITMENT_CONTEXT, vault_id)
     }
 
-    /// A key of its own for one use, `BLAKE3-derive_key(context, vault id ‖ key)`.
-    pub(super) fn derive(&self, context: &str, vault_id: &[u8; 32]) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new_derive_key(context);
-        hasher.update(vault_id);
-        hasher.update(&self.0[..]);
-        let out = *hasher.finalize().as_bytes();
-        zeroize::Zeroize::zeroize(&mut hasher);
-        out
+    /// A key of its own for one use, `BLAKE3-derive_key(context, vault id ‖ key)`,
+    /// derived straight into its guard (FIX 6334).
+    pub(super) fn derive(&self, context: &str, vault_id: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+        super::derive_guarded(context, &[&vault_id[..], &self.0[..]])
     }
 }
 
@@ -162,12 +159,11 @@ pub(super) struct WrapDigest {
     envelope: [u8; 32],
 }
 
-/// A passkey's PRF output as a KEK: copied once into guarded storage, then
-/// the raw bytes wiped where they came, before anything can return (FIX 6048).
-fn passkey_kek(prf: &mut [u8; 32]) -> Kek {
-    let kek = Kek::from_bytes_ref(prf);
-    zeroize::Zeroize::zeroize(prf);
-    kek
+/// A passkey's PRF output as a KEK: copied once from the caller's guard into
+/// guarded storage (FIX 6048, FIX 6334). The output never travels as a
+/// plain array; the caller's guard wipes it.
+fn passkey_kek(prf: &Zeroizing<[u8; 32]>) -> Kek {
+    Kek::from_bytes_ref(prf)
 }
 
 /// A host-chosen name inside a wrap id: 1 to 64 of `A-Z a-z 0-9 . _ -`.
@@ -219,8 +215,12 @@ pub enum NewVaultKeyWrap<'a> {
         password: &'a [u8],
         cost: Option<Argon2Cost>,
     },
-    /// A passkey's PRF output at [`passkey_prf_input`].
-    Passkey { credential: &'a str, prf: [u8; 32] },
+    /// A passkey's PRF output at [`passkey_prf_input`], borrowed from the
+    /// guard that wipes it (FIX 6334).
+    Passkey {
+        credential: &'a str,
+        prf: &'a Zeroizing<[u8; 32]>,
+    },
     /// A recovery or transfer public key.
     Escrow {
         label: &'a str,
@@ -234,9 +234,11 @@ pub enum VaultKeyUnlock<'a> {
     /// This install's keystore, holding the slot of one of the device wraps.
     Device(&'a dyn DeviceKeystore),
     Password(&'a [u8]),
+    /// A passkey's PRF output, borrowed from the guard that wipes it (FIX
+    /// 6334).
     Passkey {
         credential: &'a str,
-        prf: [u8; 32],
+        prf: &'a Zeroizing<[u8; 32]>,
     },
     Escrow {
         label: &'a str,
@@ -319,7 +321,7 @@ impl CarriedVaultKey {
         context: &str,
     ) -> Result<(Zeroizing<[u8; 32]>, OpenedDataKey)> {
         let key = self.open(vault_id, unlock)?;
-        let subkey = Zeroizing::new(key.derive(context, vault_id));
+        let subkey = key.derive(context, vault_id);
         Ok((subkey, OpenedDataKey::new(*vault_id, key)))
     }
 
@@ -742,7 +744,7 @@ impl Vault {
         #[cfg(unix)]
         self.store.body_seal.admit(crate::store::BodySeal::new(
             vault_id,
-            &Zeroizing::new(key.derive(crate::store::BODY_FILE_WRAP_CONTEXT, &vault_id)),
+            &key.derive(crate::store::BODY_FILE_WRAP_CONTEXT, &vault_id),
         ));
         Ok(())
     }
@@ -822,7 +824,7 @@ impl Vault {
             .collect();
         Ok((
             CarriedVaultKey::new(state.commitment, wraps),
-            Zeroizing::new(key.derive(context, &vault_id)),
+            key.derive(context, &vault_id),
         ))
     }
 
@@ -865,7 +867,7 @@ impl Vault {
         // to itself on a later unlock. A wrap that committed on a sealed
         // vault rewrites its mirror, or says it did not.
         match self.commit_vault_key_wrap(kind, &WrapSecret::Kek(kek), None) {
-            Ok((_, transition)) => transition.finish()?,
+            Ok((_, _, transition)) => transition.finish()?,
             Err(error) => tracing::warn!(%error, "the vault key was not wrapped to this install"),
         }
         Ok(())
@@ -881,9 +883,14 @@ impl Vault {
         )
     }
 
-    /// Unlocks the vault data key with one passkey's PRF output.
-    pub fn unlock_vault_key_with_passkey(&self, credential: &str, mut prf: [u8; 32]) -> Result<()> {
-        let kek = passkey_kek(&mut prf);
+    /// Unlocks the vault data key with one passkey's PRF output, borrowed
+    /// from the guard that wipes it.
+    pub fn unlock_vault_key_with_passkey(
+        &self,
+        credential: &str,
+        prf: &Zeroizing<[u8; 32]>,
+    ) -> Result<()> {
+        let kek = passkey_kek(prf);
         check_name(credential)?;
         let kind = VaultKeyWrapKind::Passkey {
             credential: credential.to_owned(),
@@ -982,13 +989,14 @@ impl Vault {
         )
     }
 
-    /// Wraps the held vault data key to one passkey, by its PRF output.
+    /// Wraps the held vault data key to one passkey, by its PRF output,
+    /// borrowed from the guard that wipes it.
     pub fn add_vault_key_passkey(
         &self,
         credential: &str,
-        mut prf: [u8; 32],
+        prf: &Zeroizing<[u8; 32]>,
     ) -> Result<VaultKeyWrapInfo> {
-        let kek = passkey_kek(&mut prf);
+        let kek = passkey_kek(prf);
         check_name(credential)?;
         self.add_vault_key_wrap(
             VaultKeyWrapKind::Passkey {
@@ -999,18 +1007,43 @@ impl Vault {
     }
 
     /// Seals the held vault data key to a recovery or transfer public key.
+    /// The answer warns, value-free, when the key is one a retired label
+    /// was released to (FIX 2857); the wrap is sealed either way.
     pub fn add_vault_key_escrow(
         &self,
         label: &str,
         recipient: &HybridPublicKey,
-    ) -> Result<VaultKeyWrapInfo> {
+    ) -> Result<EscrowAdded> {
+        self.add_vault_key_escrow_checked(label, recipient, None)
+    }
+
+    /// [`Self::add_vault_key_escrow`] on an owner's request, rechecked in
+    /// the transaction that stores it.
+    pub fn add_vault_key_escrow_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        label: &str,
+        recipient: &HybridPublicKey,
+    ) -> Result<EscrowAdded> {
+        self.add_vault_key_escrow_checked(label, recipient, Some(owner))
+    }
+
+    fn add_vault_key_escrow_checked(
+        &self,
+        label: &str,
+        recipient: &HybridPublicKey,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
+    ) -> Result<EscrowAdded> {
         check_name(label)?;
-        self.add_vault_key_wrap(
+        let (wrap, warnings, transition) = self.commit_vault_key_wrap(
             VaultKeyWrapKind::Escrow {
                 label: label.to_owned(),
             },
             &WrapSecret::Hybrid(recipient),
-        )
+            owner,
+        )?;
+        transition.finish()?;
+        Ok(EscrowAdded { wrap, warnings })
     }
 
     /// Seals the held vault data key to `recipient` as escrow wrap `label`, in
@@ -1045,6 +1078,10 @@ impl Vault {
             label: label.to_owned(),
         };
         self.refuse_retired_escrow_in_txn(txn, &kind)?;
+        let fingerprint = recipient_fingerprint(recipient);
+        let warnings = self.escrow_warnings_in_txn(txn, label, &fingerprint)?;
+        ESCROW_RECIPIENT.put(&self.store, txn, &label.to_owned(), &fingerprint)?;
+        log_escrow_warnings(label, &warnings);
         let envelope = seal_wrap(
             &vault_id,
             &commitment,
@@ -1077,7 +1114,7 @@ impl Vault {
     pub fn add_vault_key_wrap_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
-        mut wrap: NewVaultKeyWrap<'_>,
+        wrap: NewVaultKeyWrap<'_>,
     ) -> Result<VaultKeyWrapInfo> {
         match wrap {
             NewVaultKeyWrap::Device => {
@@ -1096,10 +1133,7 @@ impl Vault {
                     Some(owner),
                 )
             }
-            NewVaultKeyWrap::Passkey {
-                credential,
-                ref mut prf,
-            } => {
+            NewVaultKeyWrap::Passkey { credential, prf } => {
                 let kek = passkey_kek(prf);
                 check_name(credential)?;
                 self.add_vault_key_wrap_checked(
@@ -1137,20 +1171,25 @@ impl Vault {
         secret: &WrapSecret<'_>,
         owner: Option<&crate::consent::AuthenticatedOwner>,
     ) -> Result<VaultKeyWrapInfo> {
-        let (info, transition) = self.commit_vault_key_wrap(kind, secret, owner)?;
+        let (info, warnings, transition) = self.commit_vault_key_wrap(kind, secret, owner)?;
         transition.finish()?;
+        if let VaultKeyWrapKind::Escrow { label } = &info.kind {
+            log_escrow_warnings(label, &warnings);
+        }
         Ok(info)
     }
 
     /// Seals one wrap of the held key and commits it, staged first in a
     /// sealed vault's page-seal mirror. The change's last step, the mirror
     /// rewritten from the committed wraps, is the caller's ([`WrapTransition`]).
+    /// An escrow wrap records its recipient's fingerprint and answers what
+    /// the add warns of (FIX 2857).
     fn commit_vault_key_wrap(
         &self,
         kind: VaultKeyWrapKind,
         secret: &WrapSecret<'_>,
         owner: Option<&crate::consent::AuthenticatedOwner>,
-    ) -> Result<(VaultKeyWrapInfo, WrapTransition<'_>)> {
+    ) -> Result<(VaultKeyWrapInfo, Vec<EscrowAddWarning>, WrapTransition<'_>)> {
         let key = self
             .held_vault_key()
             .ok_or_else(|| refused("unlock the vault key first"))?;
@@ -1158,7 +1197,7 @@ impl Vault {
         let commitment = key.commitment(&vault_id);
         let envelope = seal_wrap(&vault_id, &commitment, &kind, secret, &key)?;
         let transition = self.begin_wrap_transition()?;
-        let info = self.with_write_txn(|txn| {
+        let (info, warnings) = self.with_write_txn(|txn| {
             if let Some(owner) = owner {
                 owner.revalidate_in_txn(self, txn)?;
             }
@@ -1169,6 +1208,15 @@ impl Vault {
             if state.commitment != commitment {
                 return Err(refused("this handle holds another vault key"));
             }
+            let warnings = match (&kind, secret) {
+                (VaultKeyWrapKind::Escrow { label }, WrapSecret::Hybrid(recipient)) => {
+                    let fingerprint = recipient_fingerprint(recipient);
+                    let warnings = self.escrow_warnings_in_txn(txn, label, &fingerprint)?;
+                    ESCROW_RECIPIENT.put(&self.store, txn, label, &fingerprint)?;
+                    warnings
+                }
+                _ => Vec::new(),
+            };
             let info = VaultKeyWrapInfo {
                 id: kind.id(),
                 kind,
@@ -1180,9 +1228,9 @@ impl Vault {
             };
             transition.stage(|| self.staged_wraps_in_txn(txn, Some(&stored)))?;
             WRAPS.put(&self.store, txn, &info.id, &stored)?;
-            Ok(info)
+            Ok((info, warnings))
         })?;
-        Ok((info, transition))
+        Ok((info, warnings, transition))
     }
 
     /// Removes one wrap. The last wrap stays: without it the key is lost.
@@ -1289,6 +1337,38 @@ impl Vault {
             .collect())
     }
 
+    /// What sealing an escrow wrap `label` to the recipient whose fingerprint
+    /// is `fingerprint` warns of, read in `txn` (FIX 2857): each label
+    /// retired after its recipient was released that named this same key,
+    /// by the fingerprint recorded when it was sealed, or by the fingerprint
+    /// a managed label carries. A released recipient is never meant to be
+    /// reused (CROSS-ARCH-0022), but only its label is refused; a new label
+    /// on the same key warns and still seals.
+    fn escrow_warnings_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        label: &str,
+        fingerprint: &[u8; 32],
+    ) -> Result<Vec<EscrowAddWarning>> {
+        let hex = blake3::Hash::from(*fingerprint).to_hex();
+        let mut warnings = Vec::new();
+        for (retired, _) in ESCROW_RETIRED.scan(&self.store, txn)? {
+            if retired == label {
+                continue;
+            }
+            let reused = ESCROW_RECIPIENT
+                .get(&self.store, txn, &retired)?
+                .is_some_and(|sealed| sealed == *fingerprint)
+                || restore::label_prefix_of(&retired).is_some_and(|prefix| prefix == &hex[..16]);
+            if reused {
+                warnings.push(EscrowAddWarning::RetiredRecipient {
+                    retired_label: retired,
+                });
+            }
+        }
+        Ok(warnings)
+    }
+
     /// Refuses a wrap of `kind` sealed to a retired escrow label.
     fn refuse_retired_escrow_in_txn(
         &self,
@@ -1321,9 +1401,7 @@ impl Vault {
         let key = self
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is locked"))?;
-        Ok(Zeroizing::new(
-            key.derive(context, self.vault_id().as_bytes()),
-        ))
+        Ok(key.derive(context, self.vault_id().as_bytes()))
     }
 }
 
@@ -1335,6 +1413,50 @@ const ESCROW_SPOOLED: SideTable<String, [u8; 32], Named> =
 /// The escrow labels retired after their recipients were released, by label.
 const ESCROW_RETIRED: SideTable<String, EscrowRetirement, Named> =
     SideTable::new(&side_table::VAULT_KEY_ESCROW_RETIRED);
+
+/// The fingerprint of the recipient each escrow label was sealed to, kept
+/// once the label retires, so a later add of the same key under another
+/// label warns (FIX 2857). Public facts only.
+const ESCROW_RECIPIENT: SideTable<String, [u8; 32], Named> =
+    SideTable::new(&side_table::VAULT_KEY_ESCROW_RECIPIENT);
+
+/// An escrow recipient's fingerprint: the BLAKE3 of its public key's wire
+/// form, as a managed label and a restore's recipient facts name it.
+fn recipient_fingerprint(recipient: &HybridPublicKey) -> [u8; 32] {
+    *blake3::hash(&recipient.to_bytes()).as_bytes()
+}
+
+/// Logs what an escrow add warned of, by label only.
+fn log_escrow_warnings(label: &str, warnings: &[EscrowAddWarning]) {
+    for warning in warnings {
+        let EscrowAddWarning::RetiredRecipient { retired_label } = warning;
+        tracing::warn!(
+            label,
+            retired_label = %retired_label,
+            "an escrow wrap was sealed to a recipient released and retired under another label"
+        );
+    }
+}
+
+/// What an escrow add warns of (FIX 2857). The wrap is sealed either way;
+/// a warning names labels only, never a key or a value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "warning")]
+pub enum EscrowAddWarning {
+    /// The recipient's key is one an escrow label was released to and then
+    /// retired under: a released recipient is not meant to be sealed to
+    /// again. Seal to a new key, and remove this wrap.
+    RetiredRecipient { retired_label: String },
+}
+
+/// One escrow wrap added, and what the add warns of.
+#[derive(Debug, Clone, Serialize)]
+pub struct EscrowAdded {
+    pub wrap: VaultKeyWrapInfo,
+    /// Empty when nothing warns.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<EscrowAddWarning>,
+}
 
 /// One escrow recipient retired after its secret was released, and the
 /// owner's receipt for it ([`Vault::retire_vault_key_escrow_as`]). Ids and

@@ -185,6 +185,26 @@ pub(super) fn review(vault: &Vault) -> Result<()> {
     Ok(())
 }
 
+/// Whether the owner closed `key`'s own proposal as no secret, or kept the
+/// row as it stands: a known-value pass marks nothing more in that row (FIX
+/// 2781). A close for a rotation, or one the sweep made, leaves it open to
+/// marking.
+pub(super) fn owner_kept_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    family: LiftFamily,
+    key: &[u8],
+) -> Result<bool> {
+    Ok(PROPOSALS
+        .get_lenient(&vault.store, txn, &own_key(family, key))?
+        .is_some_and(|held| {
+            matches!(
+                held.close_reason,
+                Some(LiftCloseReason::NotASecret | LiftCloseReason::Accepted)
+            )
+        }))
+}
+
 /// Whether a closed proposal opens again when its row holds a hit again: one
 /// that closed because the row read clean or was gone. The owner's close and
 /// a found-key answer stand.

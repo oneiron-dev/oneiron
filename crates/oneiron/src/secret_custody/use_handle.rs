@@ -34,6 +34,7 @@ mod bind;
 mod lease;
 
 use std::fmt;
+use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Value, json};
 
@@ -47,6 +48,7 @@ use crate::connector_key::{
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
+use crate::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use crate::skill_hub::pack_catalog::{PackSetupAuth, PackSetupSecret};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::vault::Vault;
@@ -143,6 +145,21 @@ pub(crate) struct SecretUseTarget<'a> {
     operation: &'a str,
     /// The custody record the handle names.
     pub(crate) custody: EntityId,
+    /// The record's handle, whose text stands in for the value.
+    handle: &'a str,
+    /// For a table operation under a secret grant, the grant as presented
+    /// and its target: the operation redeems it at its real send (FIX 4491).
+    grant: Option<(SecretGrantRef, &'a SecretGrantTarget)>,
+    /// The redemption's refusal at that send, when it refused: nothing was
+    /// sent, and the use answers with it.
+    refusal: Mutex<Option<Error>>,
+}
+
+impl SecretUseTarget<'_> {
+    /// Keeps the refusal a redemption at the send gave.
+    fn refuse(&self, refusal: Error) {
+        *self.refusal.lock().unwrap_or_else(PoisonError::into_inner) = Some(refusal);
+    }
 }
 
 /// What an operation's consumer came to: its answer, why it failed, and
@@ -347,19 +364,22 @@ impl Vault {
         } else {
             self.check_secret_at_door(&rec.name, effector)
         };
-        self.use_admitted(&used, &rec.name, admitted, consume)
+        self.use_admitted(&used, &rec.name, admitted, None, consume)
     }
 
     /// The half of a use every entry shares once its admission is settled:
     /// a refused admission writes its refused record and returns the
     /// refusal; an admitted one runs `consume` on the record `used` names
-    /// (its live name is `name`), clears what came back of the value, and
-    /// writes the used record.
+    /// (its live name is `name`; `grant`, for a table operation under a
+    /// grant, is redeemed at its send), clears what came back of the value,
+    /// and writes the used record. A grant the send's redemption refused
+    /// writes the refused record and answers with that refusal (FIX 4491).
     fn use_admitted(
         &self,
         used: &Used<'_>,
         name: &str,
         admitted: Result<()>,
+        grant: Option<(SecretGrantRef, &SecretGrantTarget)>,
         consume: &mut dyn FnMut(&SecretUseTarget<'_>) -> SecretUseConsumed,
     ) -> Result<SecretUseOutcome> {
         if let Err(refusal) = admitted {
@@ -372,12 +392,24 @@ impl Vault {
             effector,
             operation: used.operation,
             custody: id,
+            handle: &used.handle,
+            grant,
+            refusal: Mutex::new(None),
         };
         let SecretUseConsumed {
             mut result,
             mut failure,
             mut send,
         } = consume(&target);
+        let refused = target
+            .refusal
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(refusal) = refused {
+            used.record(self, SecretUseDecision::Refused, SecretUseSend::NotSent)?;
+            return Err(refusal);
+        }
         // The value is read once more, through the same door, only to find
         // it in what came back. If it cannot be, nothing comes back.
         let text = handle_text(&used.handle);
@@ -613,17 +645,32 @@ fn provider_check(
         effector: target.effector.to_owned(),
         hint: None,
     }];
-    let evidence = checks.verify(
-        vault,
-        &PackConnectionCheck {
-            pack: USE_PACK,
-            connection: target.operation,
-            check,
-            auth,
-            secrets: &secrets,
-            allowed_scopes: &[],
-        },
-    )?;
+    let check = PackConnectionCheck {
+        pack: USE_PACK,
+        connection: target.operation,
+        check,
+        auth,
+        secrets: &secrets,
+        allowed_scopes: &[],
+    };
+    let evidence = match target.grant {
+        None => checks.verify(vault, &check)?,
+        // Under a grant, the grant is redeemed at the send itself, at the
+        // generation it pins, and what comes back is cleared with the value
+        // that went (FIX 4491).
+        Some((grant, granted)) => {
+            let text = handle_text(target.handle);
+            let scrub = |string: &mut String, value: &[u8]| clear_text(string, value, &text);
+            match checks.verify_granted(vault, &check, &grant, granted, &scrub) {
+                Ok(answer) => answer?,
+                Err(refusal) => {
+                    let failure = refusal.to_string();
+                    target.refuse(refusal);
+                    return Err(failure);
+                }
+            }
+        }
+    };
     Ok(json!({
         "account": evidence.account,
         "provider_account": evidence.provider_account,

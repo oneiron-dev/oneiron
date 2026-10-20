@@ -98,6 +98,34 @@ impl MaskedFile {
         );
         places
     }
+
+    /// Adds `key` at `path` (the stored bytes' own place for an empty path)
+    /// unless a key there overlaps it, each place's keys kept in byte order
+    /// (FIX 2781): the marks already held stay as they are. `true` when it
+    /// was added.
+    pub(crate) fn unite(&mut self, path: &[MemberStep], key: KeySpan) -> bool {
+        let keys = if path.is_empty() {
+            &mut self.keys
+        } else if let Some(at) = self.members.iter().position(|member| member.path == path) {
+            &mut self.members[at].keys
+        } else {
+            self.members.push(MemberKeys {
+                path: path.to_vec(),
+                keys: Vec::new(),
+            });
+            let last = self.members.len() - 1;
+            &mut self.members[last].keys
+        };
+        if keys
+            .iter()
+            .any(|held| held.start < key.end && key.start < held.end)
+        {
+            return false;
+        }
+        let at = keys.partition_point(|held| held.start < key.start);
+        keys.insert(at, key);
+        true
+    }
 }
 
 /// One key: its byte span in the stored file, or in the decoded member that

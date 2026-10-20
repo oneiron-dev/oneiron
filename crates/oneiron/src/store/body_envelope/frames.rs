@@ -93,7 +93,7 @@ impl FileKey {
         instance: [u8; 16],
         raw: Zeroizing<[u8; 32]>,
     ) -> Self {
-        let lines = Zeroizing::new(blake3::derive_key(LINES_CONTEXT, &raw[..]));
+        let lines = crate::world_keys::derive_guarded(LINES_CONTEXT, &[&raw[..]]);
         Self {
             vault_id,
             instance,

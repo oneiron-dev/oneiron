@@ -439,8 +439,13 @@ fn put_custody_body_in_txn(
         NAME_INDEX.put(write.store, wtxn, &rec.name, &entry)?;
     }
     // Every custody write lands here, so the known-value index keys each
-    // value a record holds, at each generation (OF-560 C).
-    super::known_values::remember_in_txn(write.store, wtxn, id, rec)
+    // value a record holds, at each generation (OF-560 C). A value newly
+    // known reaches the files stored before it: a pass of the lift sweep
+    // marks them, in the writer that made it known (FIX 2781).
+    if super::known_values::remember_in_txn(write.store, wtxn, id, rec)? {
+        crate::batch::secret_scan::enqueue_known_remark_in_txn(write.store, wtxn, occurred_at)?;
+    }
+    Ok(())
 }
 
 impl Vault {

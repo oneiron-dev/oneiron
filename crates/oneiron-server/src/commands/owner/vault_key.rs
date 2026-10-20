@@ -36,7 +36,8 @@ use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
 use oneiron::world_keys::{
-    self, HybridSecretKey, NewVaultKeyWrap, VaultKeyUnlock, VaultKeyWrapInfo, VaultPageSeal,
+    self, EscrowAddWarning, HybridSecretKey, NewVaultKeyWrap, VaultKeyUnlock, VaultKeyWrapInfo,
+    VaultPageSeal,
 };
 use oneiron_keystore::DeviceKeystore;
 use rand_core::RngCore as _;
@@ -397,7 +398,7 @@ fn add_passkey(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
         &owner,
         NewVaultKeyWrap::Passkey {
             credential: &args.name,
-            prf: *prf,
+            prf: &prf,
         },
     )?)
 }
@@ -408,6 +409,9 @@ struct EscrowEnrolled {
     wrap: VaultKeyWrapInfo,
     /// Where the recipient's seed rests.
     recovery_box: String,
+    /// What the add warns of (FIX 2857), by label only; omitted when none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<EscrowAddWarning>,
 }
 
 fn add_escrow(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
@@ -423,16 +427,11 @@ fn add_escrow(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
     // The box keeps the seed before the vault seals to it: a wrap no box can
     // open is never made.
     recovery_box.store(&vault.vault_key_vault_id(), &args.name, &seed)?;
-    let wrap = vault.add_vault_key_wrap_as(
-        &owner,
-        NewVaultKeyWrap::Escrow {
-            label: &args.name,
-            recipient: recipient.public_key(),
-        },
-    )?;
+    let added = vault.add_vault_key_escrow_as(&owner, &args.name, recipient.public_key())?;
     emit(&EscrowEnrolled {
-        wrap,
+        wrap: added.wrap,
         recovery_box: where_,
+        warnings: added.warnings,
     })
 }
 
@@ -815,10 +814,7 @@ impl HostUnlock {
         match self {
             Self::Device => None,
             Self::Password(password) => Some(VaultKeyUnlock::Password(password)),
-            Self::Passkey { credential, prf } => Some(VaultKeyUnlock::Passkey {
-                credential,
-                prf: **prf,
-            }),
+            Self::Passkey { credential, prf } => Some(VaultKeyUnlock::Passkey { credential, prf }),
             Self::Escrow { label, secret } => Some(VaultKeyUnlock::Escrow { label, secret }),
             Self::EscrowCapsule {
                 label,
@@ -848,7 +844,7 @@ impl HostUnlock {
             Self::Device => vault.unlock_vault_key(),
             Self::Password(password) => vault.unlock_vault_key_with_password(password),
             Self::Passkey { credential, prf } => {
-                vault.unlock_vault_key_with_passkey(credential, **prf)
+                vault.unlock_vault_key_with_passkey(credential, prf)
             }
             Self::Escrow { label, secret } => vault.unlock_vault_key_with_escrow(label, secret),
             // The restored vault need not carry the capsule's wrap.

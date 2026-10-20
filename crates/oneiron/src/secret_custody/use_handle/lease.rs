@@ -5,11 +5,13 @@
 //! came back, the same Gate record (which also names the grant). There is no
 //! other dispatch.
 //!
-//! A table operation reads the value through its own door right after the
-//! redemption: a rotation landing between the two hands the operation the
-//! newer value, never an older one. A connector call carries the grant on
-//! its row and redeems it again at every real send, a held send resumed
-//! later included, so a stale grant sends nothing.
+//! A table operation redeems the grant at its real send, inside the
+//! provider check's door, and that redemption counts the send (FIX 4491):
+//! the value sent is the generation the grant pins, and a rotation landing
+//! between the admission here and the send refuses as stale, as a connector
+//! call's does, so the caller renews and asks again. A connector call carries
+//! the grant on its row and redeems it again at every real send, a held send
+//! resumed later included, so a stale grant sends nothing.
 
 use serde_json::Value;
 
@@ -64,17 +66,19 @@ impl Vault {
     }
 
     /// The use under a grant every target shares: the grant `caller` holds
-    /// is read, redeemed for `target` (a door operation counts its send
-    /// here; a connector call counts each real send at its door), and then
-    /// `consume` runs on its record with the grant as `caller` presents it,
-    /// what came back is cleared of the value, and one Gate record of
-    /// `operation` is written. A grant `caller` does not hold reads as
-    /// unknown and writes no record.
+    /// is read and checked for `target`, counting nothing (a table
+    /// operation redeems it at its real send, which counts it; a connector
+    /// call counts each real send at its door), and then `consume` runs on
+    /// its record with the grant as `caller` presents it, what came back is
+    /// cleared of the value, and one Gate record of `operation` is written.
+    /// A grant `caller` does not hold reads as unknown and writes no record.
     ///
     /// # Errors
     /// [`SecretError::SecretLeaseNotFound`] for a grant `caller` does not
     /// hold. Then, each with its refused Gate record, the redemption's
-    /// refusals ([`Vault::check_secret_grant`]).
+    /// refusals ([`Vault::check_secret_grant`]), and for a table operation
+    /// its redemption's at the send: [`SecretError::SecretGrantStale`] once
+    /// the record rotated after the check, nothing sent.
     pub(crate) fn use_secret_grant_with(
         &self,
         caller: &SecretGrantCaller,
@@ -110,9 +114,10 @@ impl Vault {
             effector: &held.effector,
             grant: Some(held.grant_id),
         };
-        let count = matches!(target, SecretGrantTarget::Operation { .. });
-        let admitted = self.admit_secret_grant(&presented, target, count).map(drop);
-        self.use_admitted(&used, &rec.name, admitted, &mut |target| {
+        let admitted = self.check_secret_grant(&presented, target).map(drop);
+        let granted =
+            matches!(target, SecretGrantTarget::Operation { .. }).then_some((presented, target));
+        self.use_admitted(&used, &rec.name, admitted, granted, &mut |target| {
             consume(target, &presented)
         })
     }

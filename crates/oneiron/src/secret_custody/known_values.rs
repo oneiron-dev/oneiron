@@ -26,7 +26,15 @@
 //! the writer it runs in ([`KnownValues::load_in_writer`]), or, for a
 //! stream, once per frame through the ids the stream began with
 //! ([`KnownSource`]), under the custody read guard.
+//!
+//! A value spelled another way (base64, percent or JSON escapes) is found
+//! where its spelling sits, under the same handle (FIX 2725, `forms`); a
+//! stream's open text holds back a value it may still be writing (FIX
+//! 2722, [`KnownValues::growing`]).
 
+mod forms;
+
+use std::cmp::Reverse;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -40,6 +48,8 @@ use crate::ports::ShortIdStoreRead;
 use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, Store};
 use crate::vault::Vault;
 
+pub(super) use self::forms::decodings;
+
 /// The shortest value matched exactly: every non-empty value (FIX 5270). An
 /// empty body is a revoked record's absent value. One constant, so a ruling
 /// changes one line.
@@ -51,6 +61,14 @@ const TAG_WINDOW: usize = 12;
 
 /// How many bytes of a value's first window its tag keeps.
 const TAG_BYTES: usize = KNOWN_TAG_BYTES;
+
+/// How many of an open stream's last bytes, at most, are held back unseen
+/// because no window can tell yet whether a known value starts there (FIX
+/// 2722; CALLS KNOWN_GROWING_HOLD, open): the bytes short of a full tag
+/// window, or of the longest value when that is shorter. They show once the
+/// text goes past them, and the stream's end admits them whole. One
+/// constant, so a ruling changes one line.
+const KNOWN_GROWING_HOLD: usize = TAG_WINDOW - 1;
 
 const FINGERPRINT_CONTEXT: &str = "oneiron secret_custody known-value fingerprint v1";
 const TAG_CONTEXT: &str = "oneiron secret_custody known-value tag v1";
@@ -64,8 +82,8 @@ struct Keys {
 impl Keys {
     fn derive(key: &[u8; 32]) -> Self {
         Self {
-            fingerprint: Zeroizing::new(blake3::derive_key(FINGERPRINT_CONTEXT, key)),
-            tag: Zeroizing::new(blake3::derive_key(TAG_CONTEXT, key)),
+            fingerprint: crate::world_keys::derive_guarded(FINGERPRINT_CONTEXT, &[&key[..]]),
+            tag: crate::world_keys::derive_guarded(TAG_CONTEXT, &[&key[..]]),
         }
     }
 
@@ -88,17 +106,18 @@ fn tag_of(hash: &blake3::Hash) -> [u8; TAG_BYTES] {
 
 /// Records `rec`'s value under `id`, in the custody write's transaction: its
 /// entry, under the master key custody holds (minted with the first value),
-/// is published to custody and referenced in `wtxn` (KS-3).
+/// is published to custody and referenced in `wtxn` (KS-3). Returns whether
+/// the history changed: a value the record already held changes nothing.
 pub(super) fn remember_in_txn(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     rec: &SecretCustodyRecord,
-) -> Result<()> {
+) -> Result<bool> {
     let value = rec.value_bytes.as_slice();
     // An empty body is a revoked record's absent value: nothing to match.
     if value.len() < KNOWN_VALUE_MIN_BYTES {
-        return Ok(());
+        return Ok(false);
     }
     let len =
         u32::try_from(value.len()).map_err(|_| Error::ArithmeticOverflow("known value length"))?;
@@ -148,7 +167,20 @@ pub(crate) struct KnownValues {
     /// Each tag window length some value has, ascending: [`TAG_WINDOW`], and
     /// the length of each shorter value.
     windows: Vec<usize>,
+    /// Each value length the index knows, ascending.
+    lengths: Vec<usize>,
     longest: usize,
+}
+
+/// Where an open stream's text may still be writing a known value (FIX
+/// 2722).
+pub(crate) struct Growing {
+    /// The earliest place a window of [`TAG_WINDOW`] bytes opens a known
+    /// value longer than the text left after it: withheld as a growing
+    /// shape is.
+    pub(crate) opens: Option<usize>,
+    /// Where the last bytes no window can test yet start: held back unseen.
+    pub(crate) held: usize,
 }
 
 /// One known value in incoming bytes: where, the custody record that holds
@@ -169,6 +201,7 @@ impl KnownValues {
     ) -> Result<Option<Self>> {
         let mut buckets: Vec<Bucket> = Vec::new();
         let mut windows = Vec::new();
+        let mut lengths = Vec::new();
         let mut longest = 0;
         for (custody, entries) in &history.holders {
             let Some(handle) = handle_of(custody)? else {
@@ -207,6 +240,7 @@ impl KnownValues {
                     continue;
                 }
                 longest = longest.max(len);
+                lengths.push(len);
                 bucket.known.push(Known {
                     len,
                     fingerprint: entry.fingerprint,
@@ -224,10 +258,13 @@ impl KnownValues {
                 .sort_by_key(|known| std::cmp::Reverse(known.len));
         }
         windows.sort_unstable();
+        lengths.sort_unstable();
+        lengths.dedup();
         Ok(Some(Self {
             keys: Keys::derive(&history.master),
             buckets,
             windows,
+            lengths,
             longest,
         }))
     }
@@ -248,14 +285,91 @@ impl KnownValues {
         })
     }
 
-    /// The longest value the index knows, in bytes.
-    pub(crate) const fn longest(&self) -> usize {
-        self.longest
+    /// The most bytes a known value takes in incoming bytes, spelled the
+    /// longest way a spelling reaches (CALLS KNOWN_FORM_REACH_FACTOR): what
+    /// a stream holds back so a value still arriving is never let through
+    /// in part.
+    pub(crate) const fn reach(&self) -> usize {
+        self.longest.saturating_mul(forms::KNOWN_FORM_REACH_FACTOR)
     }
 
     /// Each known value in `data`, leftmost first, never overlapping: at
-    /// each place the longest value there wins.
+    /// each place the longest value there wins. A value spelled in base64,
+    /// in percent escapes or in JSON escapes is found where its spelling
+    /// sits, under its own record's handle (FIX 2725).
     pub(crate) fn spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
+        let mut spans = self.raw_spans(data);
+        let mut spelled = Vec::new();
+        for view in [forms::percent_view(data), forms::json_view(data)]
+            .into_iter()
+            .flatten()
+        {
+            for hit in self.raw_spans(&view.bytes) {
+                if let Some(span) = view.source(hit.span) {
+                    spelled.push(KnownSpan { span, ..hit });
+                }
+            }
+        }
+        let fits = |len: usize| self.lengths.binary_search(&len).is_ok();
+        for (run, decoded) in forms::base64_runs(data, self.reach(), fits) {
+            if let Some(known) = self.whole(&decoded) {
+                spelled.push(KnownSpan {
+                    span: run,
+                    custody: known.custody,
+                    handle: &known.handle,
+                });
+            }
+        }
+        if spelled.is_empty() {
+            return spans;
+        }
+        spans.extend(spelled);
+        spans.sort_by_key(|hit| (hit.span.start, Reverse(hit.span.end)));
+        let mut end = 0;
+        spans.retain(|hit| {
+            let free = hit.span.start >= end;
+            if free {
+                end = hit.span.end;
+            }
+            free
+        });
+        spans
+    }
+
+    /// The known value `data` is, whole.
+    fn whole(&self, data: &[u8]) -> Option<&Known> {
+        self.longest_at(data).filter(|known| known.len == data.len())
+    }
+
+    /// Where an open stream's `text` may still be writing a known value
+    /// (FIX 2722): the earliest window of its last bytes, short of the
+    /// longest value, whose keyed tag opens a value longer than what
+    /// follows; and the last bytes no window can test yet
+    /// ([`KNOWN_GROWING_HOLD`]). No value is minted for either; the text
+    /// that goes past them, or the stream's end, reads them whole.
+    pub(crate) fn growing(&self, text: &[u8]) -> Growing {
+        let hold = self.longest.saturating_sub(1);
+        let from = text.len().saturating_sub(hold);
+        let opens = (from..text.len()).find(|&at| {
+            let rest = &text[at..];
+            rest.len() >= TAG_WINDOW
+                && self
+                    .bucket(&self.keys.tag(&rest[..TAG_WINDOW]))
+                    .is_some_and(|known| {
+                        known
+                            .iter()
+                            .any(|known| known.len >= TAG_WINDOW && known.len > rest.len())
+                    })
+        });
+        Growing {
+            opens,
+            held: text.len() - hold.min(KNOWN_GROWING_HOLD).min(text.len()),
+        }
+    }
+
+    /// Each known value in `data` as its bytes are, leftmost first, never
+    /// overlapping: at each place the longest value there wins.
+    fn raw_spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
         let mut spans = Vec::new();
         let mut at = 0;
         while at < data.len() {
@@ -349,8 +463,9 @@ impl KnownSource {
         Some(self.handles[at].1.clone())
     }
 
-    /// Runs `use_pass` over the index this source names, read now.
-    fn pass<T>(&self, use_pass: impl FnOnce(Option<&KnownValues>) -> T) -> Result<T> {
+    /// Runs `use_pass` over the index this source names, read now, under the
+    /// custody read guard: `use_pass` takes no custody guard of its own.
+    pub(crate) fn pass<T>(&self, use_pass: impl FnOnce(Option<&KnownValues>) -> T) -> Result<T> {
         self.ids.with_history(|history| {
             let known = match history {
                 Some(history) => KnownValues::of(history, |custody| Ok(self.handle(custody)))?,
@@ -443,7 +558,7 @@ impl KnownSweep {
             let Some(known) = known else {
                 return held.drain(..).collect::<Vec<u8>>();
             };
-            let hold = known.longest().saturating_sub(1);
+            let hold = known.reach().saturating_sub(1);
             if held.len() <= hold {
                 return Vec::new();
             }

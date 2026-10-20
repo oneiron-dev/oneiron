@@ -44,6 +44,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, GateError, Result};
+use crate::secret_custody::KnownValues;
 use crate::secret_snapshot::SecretLiftProposal;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -125,6 +126,9 @@ pub enum LiftTrigger {
     Switch,
     /// The owner asked for a run.
     Owner,
+    /// Custody came to know a value (FIX 2781): a pass marks it in the files
+    /// stored before, and reads nothing else.
+    KnownValue,
 }
 
 /// Why the sweep filed a proposal instead of placing a hit.
@@ -243,9 +247,35 @@ struct LiftRun {
     counts: Vec<LiftCounts>,
     /// Rows to try again once the walk ends.
     retry: Vec<(LiftFamily, Vec<u8>)>,
+    /// A known-value pass (FIX 2781): it reads the files among the records
+    /// and marks the values custody knows that their marks do not cover,
+    /// and ends after the records.
+    #[serde(default)]
+    known_only: bool,
+    /// Custody came to know a value while this run walked: a known-value
+    /// pass follows it once it ends. The walk in progress is never reset.
+    #[serde(default)]
+    known_pending: bool,
 }
 
 impl LiftRun {
+    /// A known-value pass queued at `at` (FIX 2781).
+    fn known_pass(store: &Store, at: u64) -> Result<Self> {
+        Ok(Self {
+            run_id: store.clock.entity_id()?,
+            trigger: LiftTrigger::KnownValue,
+            requested_by: None,
+            requested_at: at,
+            epoch: 0,
+            family: LiftFamily::Records,
+            after: Vec::new(),
+            counts: Vec::new(),
+            retry: Vec::new(),
+            known_only: true,
+            known_pending: false,
+        })
+    }
+
     fn counts(&mut self, family: LiftFamily) -> &mut LiftCounts {
         if let Some(at) = self.counts.iter().position(|row| row.family == family) {
             return &mut self.counts[at];
@@ -371,7 +401,8 @@ pub(crate) struct LiftPass {
 }
 
 /// Queues a run in the caller's transaction. A run already queued walks
-/// again from its first family and keeps what it counted.
+/// again from its first family and keeps what it counted; a known-value
+/// pass becomes this full run.
 pub(crate) fn enqueue_lift_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -380,6 +411,16 @@ pub(crate) fn enqueue_lift_in_txn(
     at: u64,
 ) -> Result<()> {
     let run = match RUN.get_lenient(store, txn, &())? {
+        Some(run) if run.known_only => LiftRun {
+            trigger,
+            requested_by,
+            requested_at: at,
+            epoch: run.epoch.wrapping_add(1),
+            family: LiftFamily::Records,
+            after: Vec::new(),
+            known_only: false,
+            ..run
+        },
         Some(run) => LiftRun {
             epoch: run.epoch.wrapping_add(1),
             family: LiftFamily::Records,
@@ -396,9 +437,34 @@ pub(crate) fn enqueue_lift_in_txn(
             after: Vec::new(),
             counts: Vec::new(),
             retry: Vec::new(),
+            known_only: false,
+            known_pending: false,
         },
     };
     RUN.put(store, txn, &(), &run)
+}
+
+/// Queues a known-value pass in the transaction that made a value known
+/// (FIX 2781): with no run, one starts; a run in flight finishes its walk
+/// and the pass follows it, so no change resets a walk and none is lost.
+pub(crate) fn enqueue_known_remark_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    at: u64,
+) -> Result<()> {
+    match RUN.get_lenient(store, txn, &())? {
+        Some(run) if run.known_pending => Ok(()),
+        Some(run) => RUN.put(
+            store,
+            txn,
+            &(),
+            &LiftRun {
+                known_pending: true,
+                ..run
+            },
+        ),
+        None => RUN.put(store, txn, &(), &LiftRun::known_pass(store, at)?),
+    }
 }
 
 /// What one row came to.
@@ -408,6 +474,9 @@ enum Done {
     /// Rewritten with its handles; `history` when the record's retained
     /// history still holds the value.
     Masked { history: bool, reason: &'static str },
+    /// A file whose mark took the known values it held (FIX 2781): its
+    /// bytes and its proposals stay as they are.
+    Marked,
     /// Left for the owner.
     Propose(LiftCause, &'static str),
 }
@@ -457,19 +526,37 @@ pub(crate) fn run_lift_pass(vault: &Vault, passed: impl Fn() -> bool) -> Result<
 /// One page of the run's walk; `false` when the switch went off under it.
 fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> {
     let family = run.family;
-    let (mut page, cleared) = {
+    let read = |known: Option<&KnownValues>| -> Result<(Page, Vec<Vec<u8>>)> {
         let txn = vault.store.env.read_txn()?;
+        let after = &run.after;
         let page = match family {
-            LiftFamily::Records => records::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
-            LiftFamily::Attempts => attempts::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
-            LiftFamily::SideRows => side_rows::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
-            LiftFamily::Carriers => carriers::census(vault, &txn, &run.after, LIFT_PAGE_ROWS)?,
+            LiftFamily::Records => {
+                records::census(vault, &txn, after, LIFT_PAGE_ROWS, known, run.known_only)?
+            }
+            LiftFamily::Attempts => attempts::census(vault, &txn, after, LIFT_PAGE_ROWS)?,
+            LiftFamily::SideRows => side_rows::census(vault, &txn, after, LIFT_PAGE_ROWS)?,
+            LiftFamily::Carriers => carriers::census(vault, &txn, after, LIFT_PAGE_ROWS)?,
         };
         // A row an open proposal names that this page read without a hit
-        // is settled too, so its proposal closes.
-        let cleared =
-            proposals::open_in_page(vault, &txn, family, &run.after, page.next.as_deref())?;
-        (page, cleared)
+        // is settled too, so its proposal closes. A known-value pass
+        // settles only the files it marks.
+        let cleared = if run.known_only {
+            Vec::new()
+        } else {
+            proposals::open_in_page(vault, &txn, family, after, page.next.as_deref())?
+        };
+        Ok((page, cleared))
+    };
+    // The records' census also reads each file for the values custody
+    // knows that its mark does not cover (FIX 2781), with the index read
+    // once for the page under the custody read guard.
+    let source = match family {
+        LiftFamily::Records => vault.known_source()?,
+        _ => None,
+    };
+    let (mut page, cleared) = match &source {
+        Some(source) => source.pass(read)??,
+        None => read(None)?,
     };
     pass.read += page.read;
     let mut keys = std::mem::take(&mut page.hits);
@@ -490,6 +577,11 @@ fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> 
         current.counts(family).read += page.read;
         match page.next {
             Some(next) => current.after = next,
+            // A known-value pass ends after the records.
+            None if current.known_only => {
+                current.family = LiftFamily::Carriers;
+                current.after = vec![u8::MAX];
+            }
             None => {
                 current.after = Vec::new();
                 // The last family's end leaves the cursor past it, for the
@@ -507,7 +599,8 @@ fn walk_page(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> 
 }
 
 /// Retries the rows the walk could not finish and writes the receipt once
-/// the walk is past its last family; `true` when the run ended.
+/// the walk is past its last family; `true` when the run ended and no
+/// known-value pass follows it.
 fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<bool> {
     let current = {
         let txn = vault.store.env.read_txn()?;
@@ -553,7 +646,13 @@ fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<boo
         families: ended.counts.clone(),
     };
     RECEIPTS.put(&vault.store, &mut txn, &ended.run_id, &receipt)?;
-    RUN.delete(&vault.store, &mut txn, &())?;
+    // A value custody came to know while the run walked gets its own pass.
+    if ended.known_pending {
+        let next = LiftRun::known_pass(&vault.store, finished_at)?;
+        RUN.put(&vault.store, &mut txn, &(), &next)?;
+    } else {
+        RUN.delete(&vault.store, &mut txn, &())?;
+    }
     notice::after_run_in_txn(
         vault,
         &mut txn,
@@ -570,7 +669,8 @@ fn run_finished(vault: &Vault, run: &LiftRun, pass: &mut LiftPass) -> Result<boo
         failed = receipt.failed,
         "secret lift: a run ended"
     );
-    Ok(true)
+    // A pass queued behind it walks on within this pass's deadline.
+    Ok(!ended.known_pending)
 }
 
 /// Reads one row again in its own write transaction and settles it: the
@@ -592,6 +692,7 @@ fn settle(
         return Ok(false);
     }
     let lifted = match family {
+        LiftFamily::Records if run.known_only => records::remark(vault, &mut txn, key),
         LiftFamily::Records => records::lift(vault, &mut txn, key),
         LiftFamily::Attempts => attempts::lift(vault, &mut txn, key),
         LiftFamily::SideRows => side_rows::lift(vault, &mut txn, key),
@@ -613,7 +714,9 @@ fn settle(
                         "secret lift: a row could not be rewritten"
                     );
                     progress_in_txn(vault, &mut txn, run, family, key, |current| {
-                        if first && current.retry.len() < RETRY_BOUND {
+                        // A known-value pass keeps every row it could not
+                        // mark to try again (FIX 2781).
+                        if first && (current.known_only || current.retry.len() < RETRY_BOUND) {
                             current.retry.push((family, key.to_vec()));
                             return;
                         }
@@ -634,13 +737,14 @@ fn settle(
         Done::Clean | Done::Masked { .. } => {
             proposals::close_clean_in_txn(vault, &mut txn, family, key)?
         }
-        Done::Propose(..) => false,
+        Done::Marked | Done::Propose(..) => false,
     };
     if closed {
         notice::settle_in_txn(vault, &mut txn)?;
     }
     let filed = match done {
         Done::Clean => None,
+        Done::Marked => Some((true, false)),
         Done::Masked { history, reason } => {
             let filed = (history && PROPOSE_HISTORY)
                 .then(|| {

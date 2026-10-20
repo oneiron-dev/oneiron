@@ -3711,7 +3711,7 @@ export type SecretLiftRequest = { start?: boolean; close?: SecretLiftClose | nul
 /** `oneiron::batch::secret_scan::SecretScanMode` */
 export type SecretScanMode = "on" | "off"
 /** `oneiron::batch::secret_scan::lift_history::LiftTrigger` */
-export type LiftTrigger = "switch" | "owner"
+export type LiftTrigger = "switch" | "owner" | "known_value"
 /** `oneiron::batch::secret_scan::lift_history::LiftFamily` */
 export type LiftFamily = "records" | "attempts" | "side_rows" | "carriers"
 /** `oneiron::batch::secret_scan::lift_history::LiftCounts` */
