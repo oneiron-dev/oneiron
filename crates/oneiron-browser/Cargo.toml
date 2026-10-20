@@ -14,7 +14,7 @@ doctest = false
 [features]
 # The CDP driver and the container guest it runs in. Without it the crate is
 # the verb shapes and the driver trait only, which is all the engine needs.
-driver = ["dep:base64", "dep:blake3", "dep:image", "dep:oneiron-container"]
+driver = ["dep:base64", "dep:blake3", "dep:image", "dep:oneiron-container", "dep:tungstenite"]
 
 [dependencies]
 base64 = { version = "0.22", optional = true }
@@ -25,6 +25,9 @@ schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# Lightpanda's CDP WebSocket, over the guest's relay byte stream only: no
+# TLS and no socket of its own (cdp/websocket.rs).
+tungstenite = { version = "=0.29.0", default-features = false, features = ["handshake"], optional = true }
 
 [lints]
 workspace = true

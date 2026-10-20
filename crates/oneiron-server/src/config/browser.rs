@@ -4,7 +4,7 @@
 //! browser verb answers `browser_unbound`. Each bound below is a manifest
 //! row for one guest; none of them counts or refuses a program's calls.
 
-use oneiron_browser::{BrowserGuest, GuestLimits, ImageRef};
+use oneiron_browser::{BrowserEngine, BrowserGuest, GuestLimits, ImageRef};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -28,6 +28,10 @@ pub struct BrowserConfig {
     /// The longest one `wait_for` call holds its run.
     #[serde(default = "default_wait_cap_ms")]
     pub wait_cap_ms: u32,
+    /// The engine a run's browser starts on: `lightpanda`, the one agents
+    /// start on when the file names none, or `chromium`.
+    #[serde(default = "BrowserEngine::agent_default")]
+    pub engine: BrowserEngine,
 }
 
 const fn default_memory_mib() -> u32 {
@@ -96,6 +100,7 @@ impl BrowserConfig {
             // policy from the vault's standing grants before any call.
             policy: oneiron_browser::SendPolicy::default(),
             fixture: None,
+            engine: self.engine,
         }
     }
 }
