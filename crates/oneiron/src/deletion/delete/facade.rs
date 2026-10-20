@@ -748,6 +748,14 @@ impl Vault {
             // retires them, read before the sweep releases them (FIX 5718).
             #[cfg(unix)]
             crate::code_run::retire_actor_responses_in_txn(&self.store, &mut wtxn, id)?;
+            // So do the responses its stamps named, as the provenance
+            // door retires them (KS-2B1, KS-2B2, FIX 6530).
+            #[cfg(unix)]
+            {
+                crate::llm::erase_step_state_owner_in_txn(&self.store, &mut wtxn, id)?;
+                crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
+                crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
+            }
             crate::deletion::actor_fields::erase_actor_fields_in_txn(self, &mut wtxn, id)?;
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
