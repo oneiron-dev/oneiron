@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1075 facade rows, 3682 declarations.
-Inputs: 1010 of 1075 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 964 of 1075 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1076 facade rows, 3685 declarations.
+Inputs: 1011 of 1076 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 965 of 1076 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -12373,6 +12373,12 @@ class RoomThreadWait(TypedDict):
     since: int
     next_nudge: NotRequired[int | None]
     until: NotRequired[int | None]
+RoomThreadAudienceOp = Literal["walk_in", "open_full_history"]
+class RoomThreadAudienceEvent(TypedDict):
+    event_ref: str
+    op: RoomThreadAudienceOp
+    person_ref: NotRequired[str | None]
+    at: int
 class RoomThread(TypedDict):
     handle: EntityId
     trunk: EntityId
@@ -12381,6 +12387,8 @@ class RoomThread(TypedDict):
     waits: list[RoomThreadWait]
     result_header: NotRequired[EntityId | None]
     converted_project: NotRequired[EntityId | None]
+    audience: NotRequired[list[str]]
+    audience_events: NotRequired[list[RoomThreadAudienceEvent]]
 class RoomTrunkHeader(TypedDict):
     thread: EntityId
     task: EntityId
@@ -12428,6 +12436,9 @@ class ThreadAudienceAddRequest(TypedDict):
 class ThreadAudienceReceipt(TypedDict):
     thread_ref: str
     event_ref: str
+    history: NotRequired[ThreadAudienceHistory | None]
+class ThreadAudienceOpenFullHistoryRequest(TypedDict):
+    thread_ref: str
 class ThreadAudienceRemoveRequest(TypedDict):
     thread_ref: str
     person_ref: str

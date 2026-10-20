@@ -3059,6 +3059,8 @@ class Oneiron:
     class _VaultRoomsThreadAudienceVerbs:
         def add(self, spec: Facade.ThreadAudienceAddRequest) -> Facade.ThreadAudienceReceipt:
             """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
+        def open_full_history(self, spec: Facade.ThreadAudienceOpenFullHistoryRequest) -> Facade.ThreadAudienceReceipt:
+            """Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."""
         def remove(self, spec: Facade.ThreadAudienceRemoveRequest) -> Facade.ThreadAudienceReceipt:
             """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
     class _VaultRoomsOfferVerbs:

@@ -710,6 +710,7 @@ both bindings and their export-census tests in one change.
 - `vault.rooms.claim`
 - `vault.rooms.speak`
 - `vault.rooms.thread_audience.add`
+- `vault.rooms.thread_audience.open_full_history`
 - `vault.rooms.thread_audience.remove`
 - `vault.projects.propose`
 - `vault.projects.proposals`
