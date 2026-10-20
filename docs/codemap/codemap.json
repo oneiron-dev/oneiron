@@ -79841,7 +79841,7 @@
      "path": "src/api/mcp_gateway/booking_call.rs",
      "purpose": "A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
