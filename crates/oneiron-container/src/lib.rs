@@ -5,7 +5,10 @@ mod egress;
 mod host_net_floor;
 mod relay_protocol;
 mod transport;
-pub use egress::{EgressRelay, HttpRequest, HttpResponse};
+pub use egress::{
+    EgressRelay, HttpRequest, HttpResponse, LoopbackOperation, LoopbackRefusal,
+    LoopbackRefusalReason,
+};
 pub use host_net_floor::{
     HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit, UnmeteredFloor,
     floor_saturated, known_floor, saturated_floor,
