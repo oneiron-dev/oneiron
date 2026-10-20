@@ -368,9 +368,10 @@
   // No std/os modules, timers, fetch, process, require, network or WASI are installed.
   // The closure, not a global property the script can replace, owns completion.
   // The answer and files are already with the host; only the lines still
-  // gathering are sent, and only when no finish replaced them.
+  // gathering are sent. A finished step's lines go too: its answer is the
+  // result, and the host keeps the lines beside it.
   return () => {
-    if (!done) flushLog();
+    flushLog();
     return {resultJson: nativeStringify({done}), proposals};
   };
 })();
