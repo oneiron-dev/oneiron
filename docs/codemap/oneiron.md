@@ -2762,7 +2762,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/entity_delete.rs` | src | s | 3 fn · 4 crate-vis | — | Owner-bound preview and one-call unshare-before-delete confirmation |
 | `src/memory/entity_erase.rs` | src | m | 2 struct · 3 enum · 2 fn · 2 crate-vis | EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome | Owner erase that can also take every record in this vault holding the same bytes |
 | `src/memory/erase_sweep.rs` | src | s | 3 struct · 1 fn · 1 const | RecordEraseCustody, RecordEraseSweep, RecordEraseSweepRequest | Owner-bound historical erasure timing from the immutable redaction receipt |
-| `src/memory/export.rs` | src | m | 4 struct · 11 fn · 2 const · 2 crate-vis | ExportOptions, ExportReceipt, MemoryExport, MemoryExportReceipt | Full-vault memory export: the whole-vault archive (OF-222) |
+| `src/memory/export.rs` | src | m | 3 struct · 10 fn · 2 const · 2 crate-vis | ExportOptions, MemoryExport, MemoryExportReceipt | Full-vault memory export: the whole-vault archive (OF-222) |
+| `src/memory/export_audit.rs` | src | m | 1 struct · 1 enum · 2 fn · 7 crate-vis | ExportAuditScope, ExportReceipt | The vault's export audit (FIX 6427, owner ruling RT-EXPORT 2026-10-20) |
 | `src/memory/expression_preference.rs` | src | s | 3 struct · 3 fn | ExpressionPreferenceInput, ExpressionPreferenceReceipt, ExpressionPreferenceView | Typed `companion.expression.*` doors on the [`Memory`] surface |
 | `src/memory/extraction/mod.rs` | src | s | 2 re-export · 1 crate-vis | — | Host-served extraction beside witness, followed by a separately authorized save of its tags |
 | `src/memory/extraction/persist.rs` | src | s | 1 fn | — | A host's shadow output, once it clears parity, saved as its turn's tags the way the tagging slot saves an… |
@@ -2788,7 +2789,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | m | 25 mod · 54 re-export · 19 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | m | 25 mod · 55 re-export · 20 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -4899,7 +4900,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/audience_events.rs` | src | m | 1 enum · 32 crate-vis | ThreadAudienceHistory | A private thread's audience edits (FIX 5545) |
 | `src/workspace_roster/rooms/audience_find.rs` | src | s | 4 crate-vis | — | What the vault's Owner or an Admin learns of a room's private threads (FIX 5545): that they exist, by root… |
 | `src/workspace_roster/rooms/audience_history.rs` | src | s | 1 struct · 1 fn | ThreadAudienceOpenFullHistoryRequest | OPEN FULL HISTORY, the Owner's alone (owner ruling 2026-10-20, FIX 6383): the explicit act that opens a… |
-| `src/workspace_roster/rooms/audience_notices.rs` | src | m | 1 enum · 5 crate-vis | ThreadNotice | What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20… |
+| `src/workspace_roster/rooms/audience_notices.rs` | src | m | 1 enum · 6 crate-vis | ThreadNotice | What a private thread's members are told, and the audience its own view shows them (owner ruling 2026-10-20… |
 | `src/workspace_roster/rooms/audience_overlay.rs` | src | s | 1 crate-vis | — | A thread turn a session overlay stages (FIX 3122, the rest of FIX 2951) |
 | `src/workspace_roster/rooms/carrier_erase.rs` | src | m | 8 crate-vis | — | A room side row as this vault takes it from a carrier (FIX 4227, 4228): another machine's copy, a window's… |
 | `src/workspace_roster/rooms/fact_subject.rs` | src | s | 1 enum · 1 const · 8 crate-vis | ParticipationKeyErase | Who a participation fact's key names (FIX 4228): a live subject, or no one once that subject was erased |
