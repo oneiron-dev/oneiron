@@ -26137,7 +26137,7 @@
      "path": "src/engine_executor/store.rs",
      "purpose": "Output envelope and path helpers for the routed raw-output store",
      "surface": {
-      "crate-vis": 50
+      "crate-vis": 51
      }
     },
     {
