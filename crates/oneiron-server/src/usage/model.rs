@@ -77,6 +77,33 @@ pub struct UsageTokenCounts {
     pub cache_read_tokens: u64,
     pub cache_write_tokens: u64,
 }
+impl UsageTokenCounts {
+    /// The measured count in one cache dimension.
+    pub fn cache_tokens(&self, dimension: CacheDimension) -> u64 {
+        match dimension {
+            CacheDimension::CacheRead => self.cache_read_tokens,
+            CacheDimension::CacheWrite => self.cache_write_tokens,
+        }
+    }
+}
+
+/// A cached prompt-token dimension a list price may quote a rate for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheDimension {
+    CacheRead,
+    CacheWrite,
+}
+
+/// Why a measured call has no price, as its settlement recorded it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnpricedReason {
+    /// The rates frozen on the call quote no rate for these cache dimensions,
+    /// each measured above zero, listed once each in order. Every other count
+    /// had a quoted rate.
+    UnquotedCache { dimensions: Vec<CacheDimension> },
+}
 
 /// Fixed-point provider money: one amount unit is 10^-9 of the named currency.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -123,6 +150,19 @@ impl UsageCostRates {
     pub fn prices(&self, counts: &UsageTokenCounts) -> bool {
         (counts.cache_read_tokens == 0 || self.cache_read_per_million.is_some())
             && (counts.cache_write_tokens == 0 || self.cache_write_per_million.is_some())
+    }
+
+    /// The cache dimensions `counts` measured above zero that these rates
+    /// quote no rate for, in order: empty exactly when they price `counts`.
+    pub fn unquoted_cache(&self, counts: &UsageTokenCounts) -> Vec<CacheDimension> {
+        [
+            (CacheDimension::CacheRead, self.cache_read_per_million),
+            (CacheDimension::CacheWrite, self.cache_write_per_million),
+        ]
+        .into_iter()
+        .filter(|(dimension, rate)| rate.is_none() && counts.cache_tokens(*dimension) > 0)
+        .map(|(dimension, _)| dimension)
+        .collect()
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -253,6 +293,10 @@ pub struct UsageEvent {
     /// Absent when only quantities are known, including custom-key endpoints.
     #[serde(default)]
     pub cost_rates: Option<UsageCostRates>,
+    /// Why the call has no price, when its settlement knew: `None` on a
+    /// priced call, and on one whose record names no reason.
+    #[serde(default)]
+    pub unpriced: Option<UnpricedReason>,
     #[serde(default)]
     pub service_amount: u64,
     #[serde(default)]
@@ -274,6 +318,20 @@ impl UsageEvent {
             return Err(UsageError::InvalidField {
                 field: "serviceAmount",
                 message: "requires a currency and price-table snapshot in costRates",
+            });
+        }
+        if let Some(UnpricedReason::UnquotedCache { dimensions }) = &self.unpriced
+            && (self.cost_rates.is_some()
+                || dimensions.is_empty()
+                || !dimensions.is_sorted_by(|a, b| a < b)
+                || dimensions
+                    .iter()
+                    .any(|dimension| self.token_counts.cache_tokens(*dimension) == 0))
+        {
+            return Err(UsageError::InvalidField {
+                field: "unpriced",
+                message: "names each unquoted cache dimension once, in order, each measured, \
+                          on an event with no costRates",
             });
         }
         validate_dimension("owner", &self.owner, MAX_DIMENSION_LEN)?;
