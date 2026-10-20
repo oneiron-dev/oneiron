@@ -5,8 +5,10 @@ mod ledger;
 mod lifecycle;
 mod model;
 mod notice_dispatch;
+mod notice_door;
 pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
 pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
+pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
 #[cfg(test)]
 mod tests;
 pub use ledger::PROJECT_MEMBERS_ONLY;
