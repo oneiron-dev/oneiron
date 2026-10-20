@@ -11,9 +11,11 @@
 //! home answers the ack it persisted; the journal keeps it only when it names
 //! that batch exactly and the home attests as the machine its socket proved.
 //! A home out of reach, refusing or moved stays pending by name, and the next
-//! pass retries. A home this machine left stays a member, pending, never
-//! removed. With nothing in custody, or every residence member current, it
-//! dials nothing.
+//! pass retries. A home already holding a newer head of this machine's own
+//! log (a newer pass committed it) is nothing to ship and nothing pending:
+//! that pass acks it (FIX 6394). A home this machine left stays a member,
+//! pending, never removed. With nothing in custody, or every residence
+//! member current, it dials nothing.
 
 use std::sync::Arc;
 
@@ -38,6 +40,27 @@ use crate::sync::transport::TransportError;
 struct HeldReply {
     #[serde(default)]
     seq: Option<u64>,
+    #[serde(default)]
+    position: Option<AckPosition>,
+}
+
+impl HeldReply {
+    /// Whether the home's head is a later one of `batch`'s own log, which
+    /// a newer pass committed and acks (FIX 6394).
+    fn covers(&self, batch: &CustodyBatch) -> bool {
+        self.position
+            .as_ref()
+            .and_then(AckPosition::position)
+            .is_some_and(|held| batch.covered_by(&held))
+    }
+}
+
+/// What an upload left.
+enum Uploaded {
+    /// The home's ack of the batch.
+    Acked(CustodyBatch, AckRecord),
+    /// The home holds a newer head of this log: nothing to note.
+    Covered,
 }
 
 #[derive(Deserialize)]
@@ -171,7 +194,8 @@ pub(crate) async fn relay_custody(
         },
     };
     let (batch, ack) = match upload(&mut rpc, batch, home).await? {
-        Ok(uploaded) => uploaded,
+        Ok(Uploaded::Acked(batch, ack)) => (batch, ack),
+        Ok(Uploaded::Covered) => return Ok(()),
         Err(why) => return note(vault, spec, why).await,
     };
     let accepted = Arc::clone(vault);
@@ -188,6 +212,22 @@ pub(crate) async fn relay_custody(
     }
 }
 
+/// What the home holds of `lineage`; `None` when it refused the read.
+async fn home_held(
+    rpc: &mut ResidenceRpc,
+    lineage: &Value,
+) -> Result<Option<HeldReply>, TransportError> {
+    match rpc
+        .call("residence.custody.status", lineage.clone())
+        .await?
+    {
+        Ok(reply) => Ok(Some(
+            serde_json::from_value::<HeldReply>(reply).map_err(|_| refused())?,
+        )),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Ships `batch` to the home `home`: the frames it lacks, the head in parts,
 /// then the commit. `Ok(Err(_))` says why the home stays pending; an ack
 /// that is not the home's own `ResidenceSweep` for this target never comes
@@ -196,16 +236,16 @@ async fn upload(
     rpc: &mut ResidenceRpc,
     batch: CustodyBatch,
     home: EntityId,
-) -> Result<Result<(CustodyBatch, AckRecord), TargetPending>, TransportError> {
+) -> Result<Result<Uploaded, TargetPending>, TransportError> {
     let (vault_hex, namespace_hex) = batch.lineage().to_hex();
     let lineage = json!({"vault": vault_hex, "namespace": namespace_hex});
-    let held = match rpc.call("residence.custody.status", lineage).await? {
-        Ok(reply) => serde_json::from_value::<HeldReply>(reply).map_err(|_| refused())?,
-        Err(_) => {
-            let why = "the residence home refused its custody status read";
-            return Ok(Err(pending(PendingCode::Denied, why)));
-        }
+    let Some(held) = home_held(rpc, &lineage).await? else {
+        let why = "the residence home refused its custody status read";
+        return Ok(Err(pending(PendingCode::Denied, why)));
     };
+    if held.covers(&batch) {
+        return Ok(Ok(Uploaded::Covered));
+    }
     let after = held.seq.unwrap_or(0);
     if after > batch.position().seq {
         let why = "the residence home holds a newer custody position: another writer moved it";
@@ -273,6 +313,14 @@ async fn upload(
                 .ack
         }
         Err(_) => {
+            // A newer pass's commit may have landed since the status read:
+            // the home refuses an older head under its lock (FIX 6394).
+            if home_held(rpc, &lineage)
+                .await?
+                .is_some_and(|held| held.covers(&batch))
+            {
+                return Ok(Ok(Uploaded::Covered));
+            }
             let why = "the residence home refused the custody commit";
             return Ok(Err(pending(PendingCode::Failed, why)));
         }
@@ -284,5 +332,5 @@ async fn upload(
         let why = "the residence home's ack is not its own sweep of this target";
         return Ok(Err(pending(PendingCode::Failed, why)));
     }
-    Ok(Ok((batch, ack)))
+    Ok(Ok(Uploaded::Acked(batch, ack)))
 }

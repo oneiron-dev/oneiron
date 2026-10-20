@@ -204,17 +204,22 @@ impl VaultUsage {
                         || usage.input.cache_read != 0
                         || usage.input.cache_write != 0
                 }) || service_quantity.is_some();
-                // A reservation is not measured provider usage. Rates that do
-                // not price the measured counts (cached tokens with no quoted
-                // cache rate) leave the call unpriced, never priced at zero,
-                // and its record names the unquoted dimensions.
+                // A reservation is not measured provider usage. A call left
+                // without a price is never priced at zero, and its record
+                // says why, the first that holds: it measured no tokens; no
+                // rates were frozen on it at admission; or they quote no rate
+                // for cache dimensions it measured, named.
                 let measured = usage_reported && usage.is_some();
-                let unpriced = rates
-                    .as_ref()
-                    .filter(|_| measured)
-                    .map(|rates| rates.unquoted_cache(&token_counts))
-                    .filter(|dimensions| !dimensions.is_empty())
-                    .map(|dimensions| UnpricedReason::UnquotedCache { dimensions });
+                let unpriced = match &rates {
+                    Some(rates) if measured && rates.prices(&token_counts) => None,
+                    _ if token_counts == UsageTokenCounts::default() => {
+                        Some(UnpricedReason::NoUsage)
+                    }
+                    None => Some(UnpricedReason::UnpricedModel),
+                    Some(rates) => Some(UnpricedReason::UnquotedCache {
+                        dimensions: rates.unquoted_cache(&token_counts),
+                    }),
+                };
                 let rates = rates.filter(|rates| measured && rates.prices(&token_counts));
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
