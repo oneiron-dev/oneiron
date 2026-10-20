@@ -3,13 +3,16 @@
 
 use super::codec::{expect_key, expect_map, expect_u64, invalid_step, pinned_key_index};
 use super::types::{
-    DREAMER_STEP_STATE_KEYS, DREAMER_STEP_STATE_SCHEMA_VERSION, KEY_PROGRESSION, KEY_RESPONSE,
-    KEY_SCHEMA_VERSION, KEY_STARTED_AT, KEY_UPDATED_AT, StepProgression,
+    DREAMER_STEP_STATE_KEYS, DREAMER_STEP_STATE_SCHEMA_VERSION, DurableStepContext,
+    KEY_PROGRESSION, KEY_RESPONSE, KEY_SCHEMA_VERSION, KEY_STARTED_AT, KEY_STATE_ACTOR,
+    KEY_STATE_CLAIM, KEY_STATE_ERASED, KEY_STATE_SUBJECT, KEY_UPDATED_AT, StepProgression,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, CodecError, Raw, RawValue, SideTable, SideTableDbs};
+use crate::store::ResponseCarriage;
 use rmpv::Value;
 
 // ---------------------------------------------------------------------------
@@ -20,10 +23,60 @@ pub(super) struct StepStateRow {
     pub(super) started_at: u64,
     pub(super) updated_at: u64,
     pub(super) response_payload: Option<Vec<u8>>,
+    /// Whose the response is, stamped as the row is written (KS-2B1).
+    pub(super) owners: StepStateOwners,
+    /// Its owner's erase took the response (KS-2B1): the step is over, and
+    /// is never asked again.
+    pub(super) erased: bool,
+}
+
+/// Who a step-state row's response belongs to, stamped from its step's
+/// context as the row is written (KS-2B1): its actor and its subject, and
+/// the terminal claim that logged it. An erase of any of them takes the
+/// payload, and retires every image's copy of it. A payer alone is never
+/// an owner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct StepStateOwners {
+    pub(super) actor: Option<EntityId>,
+    pub(super) subject: Option<EntityId>,
+    pub(super) claim: Option<EntityId>,
+}
+
+impl StepStateOwners {
+    /// The owners `ctx`'s step stamps: its envelope actor and subject.
+    pub(super) const fn of(ctx: &DurableStepContext<'_>) -> Self {
+        Self {
+            actor: Some(ctx.envelope_actor.entity_ref()),
+            subject: Some(ctx.subject),
+            claim: None,
+        }
+    }
+
+    fn ids(&self) -> Vec<EntityId> {
+        [self.actor, self.subject, self.claim]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
 }
 
 const STEP_STATE: SideTable<(AttemptId, [u8; 32]), StepStateRow, Raw> =
     SideTable::new(&side_table::DREAMER_STEP_STATE);
+
+fn id_value(id: EntityId) -> Value {
+    Value::Binary(id.as_bytes().to_vec())
+}
+
+fn id_of(value: &Value) -> std::result::Result<EntityId, CodecError> {
+    let Value::Binary(bytes) = value else {
+        return Err(invalid_step("dreamer step state owner must be binary").into());
+    };
+    let raw: [u8; 16] = bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| invalid_step("dreamer step state owner must be 16 bytes"))?;
+    Ok(EntityId::from_bytes(raw)?)
+}
 
 impl RawValue for StepStateRow {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
@@ -42,6 +95,18 @@ impl RawValue for StepStateRow {
         if let Some(payload) = &self.response_payload {
             entries.push((Value::from(KEY_RESPONSE), Value::Binary(payload.clone())));
         }
+        for (key, owner) in [
+            (KEY_STATE_ACTOR, self.owners.actor),
+            (KEY_STATE_SUBJECT, self.owners.subject),
+            (KEY_STATE_CLAIM, self.owners.claim),
+        ] {
+            if let Some(owner) = owner {
+                entries.push((Value::from(key), id_value(owner)));
+            }
+        }
+        if self.erased {
+            entries.push((Value::from(KEY_STATE_ERASED), Value::Boolean(true)));
+        }
         let mut encoded = Vec::new();
         rmpv::encode::write_value(&mut encoded, &Value::Map(entries))
             .map_err(|_| invalid_step("dreamer step state row MessagePack encode failed"))?;
@@ -58,6 +123,8 @@ impl RawValue for StepStateRow {
         let mut started_at = None;
         let mut updated_at = None;
         let mut response_payload = None;
+        let mut owners = StepStateOwners::default();
+        let mut erased = false;
         let mut seen = [false; DREAMER_STEP_STATE_KEYS.len()];
 
         for (key, value) in entries {
@@ -106,6 +173,14 @@ impl RawValue for StepStateRow {
                     };
                     response_payload = Some(bytes.clone());
                 }
+                KEY_STATE_ACTOR => owners.actor = Some(id_of(value)?),
+                KEY_STATE_SUBJECT => owners.subject = Some(id_of(value)?),
+                KEY_STATE_CLAIM => owners.claim = Some(id_of(value)?),
+                KEY_STATE_ERASED => {
+                    erased = value
+                        .as_bool()
+                        .ok_or(invalid_step("dreamer step state erased must be a boolean"))?;
+                }
                 _ => unreachable!("index resolved from DREAMER_STEP_STATE_KEYS"),
             }
         }
@@ -122,15 +197,40 @@ impl RawValue for StepStateRow {
             started_at: started_at.ok_or(invalid_step("missing dreamer step state started_at"))?,
             updated_at: updated_at.ok_or(invalid_step("missing dreamer step state updated_at"))?,
             response_payload,
+            owners,
+            erased,
         })
     }
 }
 
+/// A step-state row as an earlier writer seeded it, with no owner stamped.
+#[cfg(test)]
 pub(super) fn step_state_write(
     vault: &Vault,
     attempt_id: AttemptId,
     step_hash: &[u8; 32],
     progression: StepProgression,
+    response_payload: Option<&[u8]>,
+    now_ms: u64,
+) -> Result<()> {
+    step_state_write_owned(
+        vault,
+        attempt_id,
+        step_hash,
+        progression,
+        StepStateOwners::default(),
+        response_payload,
+        now_ms,
+    )
+}
+
+/// Writes one step-state row, its owners stamped from its step (KS-2B1).
+pub(super) fn step_state_write_owned(
+    vault: &Vault,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+    progression: StepProgression,
+    owners: StepStateOwners,
     response_payload: Option<&[u8]>,
     now_ms: u64,
 ) -> Result<()> {
@@ -147,6 +247,8 @@ pub(super) fn step_state_write(
             started_at,
             updated_at: now_ms,
             response_payload: response_payload.map(<[u8]>::to_vec),
+            owners,
+            erased: false,
         },
     )?;
     wtxn.commit()?;
@@ -180,5 +282,66 @@ pub(super) fn step_state_delete(
     let mut wtxn = vault.store.env.write_txn()?;
     STEP_STATE.delete(&vault.store, &mut wtxn, &(attempt_id, *step_hash))?;
     wtxn.commit()?;
+    Ok(())
+}
+
+/// What a checkpoint carries of the step-state row `value` (KS-2B1): its
+/// response payload, the row without it, marked erased, as the stub its
+/// erased disposition keeps whole: the step is over and is never asked, or
+/// paid for, again. `None` for a row with no payload and for one that does
+/// not decode.
+pub(crate) fn step_state_carriage(value: &[u8]) -> Option<ResponseCarriage> {
+    let mut row = StepStateRow::from_raw(value).ok()?;
+    row.response_payload.take()?;
+    row.erased = true;
+    let stub = row.to_raw().ok()?;
+    Some(ResponseCarriage {
+        keep: 0,
+        retired: stub.len(),
+        stub,
+    })
+}
+
+/// Who owns the step-state row `value`'s response, by its stamps: none for
+/// a row that does not decode.
+pub(crate) fn step_state_owners(value: &[u8]) -> Vec<EntityId> {
+    StepStateRow::from_raw(value)
+        .map(|row| row.owners.ids())
+        .unwrap_or_default()
+}
+
+/// The erase of `owner` takes the response out of every step-state row its
+/// stamps name (KS-2B1), in the erase's own writer: the row stays, marked
+/// erased, so its step is never asked, or paid for, again. A row that does
+/// not decode names no owner and stays as it is. Images' copies retire
+/// through the rows' obligations.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_step_state_owner_in_txn(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: &EntityId,
+) -> Result<()> {
+    let mut owned = Vec::new();
+    for row in STEP_STATE.iter_raw_from(dbs, wtxn, &[])? {
+        let (key, bytes) = row?;
+        if let Ok(mut state) = StepStateRow::from_raw(&bytes)
+            && state.response_payload.is_some()
+            && state.owners.ids().contains(owner)
+        {
+            state.response_payload = None;
+            state.erased = true;
+            owned.push((key, state));
+        }
+    }
+    for (key, state) in owned {
+        let Some(key) = <(AttemptId, [u8; 32]) as crate::side_table::SideKey>::decode_key(&key)
+        else {
+            continue;
+        };
+        STEP_STATE.put(dbs, wtxn, &key, &state)?;
+    }
     Ok(())
 }

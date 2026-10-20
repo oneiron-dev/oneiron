@@ -111,9 +111,10 @@ impl Sender {
 
     /// Sends a call whose shape streams ([`crate::Shape::streams`]) and
     /// writes its reply to `writer` as it comes: the header, then the body in
-    /// chunks [`KeyWatch`] has cleared, then the end. The body is never
-    /// changed: one that holds a form of the key is cut, never stripped. So
-    /// the key stays until the last chunk is checked. `checked` is the call's
+    /// chunks [`KeyWatch`] has released, then the end. Each form of the key
+    /// in the body is replaced at its bytes as the buffered strip replaces
+    /// it, and the stream goes on (FIX 6103): nothing is cut for holding the
+    /// key. So the key stays until the last chunk is read. `checked` is the call's
     /// [`CallHeader::check`]. Each write has `deadline`; a daemon that takes
     /// longer is gone, and the reply is dropped.
     pub(crate) async fn stream<W: AsyncWrite + Unpin>(
@@ -165,7 +166,7 @@ impl Sender {
         let mut cleared = Zeroizing::new(Vec::new());
         let mut read = 0_usize;
         let cut = loop {
-            let (next, last) = match response.chunk().await {
+            let (passed, last) = match response.chunk().await {
                 Ok(Some(chunk)) if read + chunk.len() > MAX_STREAM => {
                     break Some(Failure::ReplyTooLarge);
                 }
@@ -175,9 +176,6 @@ impl Sender {
                 }
                 Ok(None) => (watch.finish(), true),
                 Err(error) => break Some(failure(&error)),
-            };
-            let Ok(passed) = next else {
-                break Some(Failure::ReplyHoldsKey);
             };
             push_wiped(&mut cleared, &passed);
             // Whole chunks as they fill; at the end, the rest too.
