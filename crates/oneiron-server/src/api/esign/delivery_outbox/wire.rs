@@ -69,10 +69,10 @@ impl AckStatus {
 /// What one queued intent exports: its key, its file stem and its frozen
 /// payload.
 pub(super) struct Export<'a> {
-    dedupe_key: &'a str,
+    pub(super) dedupe_key: &'a str,
     pub(super) stem: String,
     payload: &'a RawValue,
-    payload_sha256: String,
+    pub(super) payload_sha256: String,
 }
 
 pub(super) enum FileRole {

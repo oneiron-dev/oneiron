@@ -22,8 +22,17 @@
 //!   `lease_owner`, `attempt_count` and `payload_sha256`, a `status` of
 //!   "ok" or "failed", and a `reason` (null for ok, a nonempty code for
 //!   failed).
+//! - Once an ok completes an intent, the vault answers with
+//!   `esign-delivery-<key>.done.json`, its completion receipt
+//!   ([`oneiron_vault_contract::esign_delivery`], FIX 5306): `schema_version`
+//!   1, `kind`, `state` ("completed"), and the completed lease's
+//!   `dedupe_key`, `attempt_id`, `lease_owner`, `attempt_count` and
+//!   `payload_sha256`.
 //!
-//! An ok completes the intent. A failed one is tried again a minute later,
+//! An ok completes the intent: its envelope goes, its receipt is written,
+//! and its ack goes last. The sender removes the receipt once it has retired
+//! its record of the send; until then no newer envelope is written under
+//! that key, and that lease waits. A failed one is tried again a minute later,
 //! with its reason kept. With no ack the lease stands until it expires; then
 //! the intent is queued again, and its next claim replaces the envelope. An
 //! ack that does not echo the current lease settles nothing. Nothing here
@@ -55,6 +64,7 @@ use self::wire::{
 };
 use crate::server::{HousekeepingAdmission, SyncServer};
 
+mod completion;
 mod wire;
 
 /// The queue kind the vault keeps authorized e-sign mail under.
@@ -130,10 +140,23 @@ struct Outbox {
     dir: PathBuf,
 }
 
+/// What writing one lease's envelope came to, least pressing first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Published {
+    /// Written, already written, or left unexported (not an e-sign notice).
+    Done,
+    /// Its slot still holds a completion the sender has not taken: the lease
+    /// stays leased and unwritten until it has.
+    Held,
+    /// The write failed.
+    Failed,
+}
+
 impl Outbox {
     /// One tick: acks, reclaim, then envelopes. `Ok(true)` when an envelope
-    /// could not be written, so the next tick writes the leases it holds
-    /// before it claims more.
+    /// could not be written or waits on its slot, so the next tick writes the
+    /// leases it holds first; after a failed write it claims no more until
+    /// those are written.
     fn tick(&self, vault: &Vault, recover: bool) -> anyhow::Result<bool> {
         let Some(_lock) = self.lock()? else {
             return Ok(recover);
@@ -157,10 +180,14 @@ impl Outbox {
                 "esign deliveries no ack answered are queued again"
             );
         }
-        if recover && !self.publish_leased(&queue)? {
-            return Ok(true);
+        let mut pending = Published::Done;
+        if recover {
+            pending = self.publish_leased(&queue)?;
+            if pending == Published::Failed {
+                return Ok(true);
+            }
         }
-        Ok(!self.claim_ready(&queue)?)
+        Ok(pending.max(self.claim_ready(&queue)?) != Published::Done)
     }
 
     /// The directory's lock, or `None` while another publisher holds it.
@@ -278,6 +305,12 @@ impl Outbox {
             // Queued again or paused: its next claim retires this ack.
             return Ok(false);
         }
+        // An ok that completed this try, now or before a stop that left its
+        // ack, hands the slot to the sender through its completion receipt.
+        let completed = matches!(row.state, AttemptState::Leased | AttemptState::Completed);
+        if bound && ack.status == AckStatus::Ok && completed {
+            return self.hand_off(stem, &row, &path, &bytes);
+        }
         // Settled, now or before a stop that left its files: they go only
         // after the commit, the envelope first, and only the ones naming
         // this try. An ack naming a settled try can never settle anything.
@@ -325,24 +358,26 @@ impl Outbox {
         Ok(())
     }
 
-    /// Writes the envelope of every lease this outbox holds, after a stop or
-    /// a failed write. `Ok(false)` when one could not be written.
-    fn publish_leased(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<bool> {
-        let mut whole = true;
+    /// Writes the envelope of every lease this outbox holds, after a stop, a
+    /// failed write or a held slot: the most pressing outcome of them all.
+    fn publish_leased(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
+        let mut outcome = Published::Done;
         for row in queue.list()? {
             if row.kind == DELIVERY_KIND
                 && row.state == AttemptState::Leased
                 && row.lease_owner.as_deref() == Some(LEASE_OWNER)
             {
-                whole &= self.publish_logged(&row);
+                outcome = outcome.max(self.publish_logged(queue, &row));
             }
         }
-        Ok(whole)
+        Ok(outcome)
     }
 
-    /// Claims every ready intent and writes its envelope. `Ok(false)` when
-    /// one could not be written: it stays leased, and claiming stops.
-    fn claim_ready(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<bool> {
+    /// Claims every ready intent and writes its envelope. One that could not
+    /// be written stays leased, and claiming stops; one whose slot is held
+    /// stays leased and unwritten, and claiming goes on.
+    fn claim_ready(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
+        let mut outcome = Published::Done;
         loop {
             let claimed = queue.claim_kind(
                 DELIVERY_KIND,
@@ -352,43 +387,53 @@ impl Outbox {
                 },
             )?;
             let ClaimOutcome::Claimed(row) = claimed else {
-                return Ok(true);
+                return Ok(outcome);
             };
-            if !self.publish_logged(&row) {
-                return Ok(false);
+            outcome = outcome.max(self.publish_logged(queue, &row));
+            if outcome == Published::Failed {
+                return Ok(outcome);
             }
         }
     }
 
-    fn publish_logged(&self, row: &AttemptRecord) -> bool {
-        match self.publish(row) {
-            Ok(()) => true,
+    fn publish_logged(&self, queue: &AttemptQueue<'_>, row: &AttemptRecord) -> Published {
+        match self.publish(queue, row) {
+            Ok(published) => published,
             Err(error) => {
                 tracing::warn!(
                     error = %format!("{error:#}"),
                     attempt = %hex(row.id.as_bytes()),
                     "esign delivery envelope not written; the next tick writes it"
                 );
-                false
+                Published::Failed
             }
         }
     }
 
     /// Writes `row`'s envelope for its current lease, unless the file
-    /// already holds it. A row that is not an e-sign notice with a dedupe key
-    /// is left leased and unexported, never dropped.
-    fn publish(&self, row: &AttemptRecord) -> anyhow::Result<()> {
+    /// already holds it or its slot still holds a completion the sender has
+    /// not taken. A row that is not an e-sign notice with a dedupe key is
+    /// left leased and unexported, never dropped.
+    fn publish(&self, queue: &AttemptQueue<'_>, row: &AttemptRecord) -> anyhow::Result<Published> {
         let Some(export) = export(row) else {
             tracing::warn!(
                 attempt = %hex(row.id.as_bytes()),
                 "esign delivery is not an e-sign notice with a dedupe key; it stays queued, unexported"
             );
-            return Ok(());
+            return Ok(Published::Done);
         };
         let bytes = envelope_bytes(row, &export)?;
         let path = self.envelope_path(&export.stem);
         if read_if_present(&path)?.as_deref() == Some(bytes.as_slice()) {
-            return Ok(());
+            return Ok(Published::Done);
+        }
+        if self.holds_slot(queue, &export.stem)? {
+            tracing::debug!(
+                attempt = %hex(row.id.as_bytes()),
+                stem = %export.stem,
+                "esign delivery waits: its slot holds a completion the sender has not taken"
+            );
+            return Ok(Published::Held);
         }
         // The sender has not seen this lease, so an ack beside it answers an
         // older one.
@@ -400,7 +445,7 @@ impl Outbox {
             stem = %export.stem,
             "esign delivery written to its outbox"
         );
-        Ok(())
+        Ok(Published::Done)
     }
 
     fn envelope_path(&self, stem: &str) -> PathBuf {
