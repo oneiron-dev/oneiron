@@ -15,6 +15,7 @@ use std::sync::Arc;
 use oneiron::Vault;
 use oneiron::channel_identity_provider::stalwart::StalwartClient;
 use oneiron::code_sandbox::SandboxGuestTier;
+use oneiron::code_sandbox::egress::EgressConfig;
 use oneiron::code_sandbox::microvm::select_backend_for_session;
 use oneiron::connector_key::{
     BROWSER_SESSION_CHECK, NATIVE_MAIL_JMAP_CHECK, PackConnectionCheck, PackConnectionEvidence,
@@ -151,10 +152,16 @@ fn browser_session_ready(
         read_only_mounts: Vec::new(),
     };
     let relay: Arc<dyn EgressRelay> = Arc::new(NoEgress);
+    // The guest's browser takes the CDP messages a run's egress door would
+    // hand it (FIX 6815). This check has no egress, so an unreadable egress
+    // file costs it nothing: the door's default stands.
+    let egress = EgressConfig::from_env().unwrap_or_default();
+    let command = guest.engine.guest_argv(egress.max_response_bytes);
     let transport = backend
-        .start_session(&spec, &guest.engine.guest_argv(), Arc::clone(&relay))
+        .start_session(&spec, &command, Arc::clone(&relay))
         .map_err(|error| format!("the browser guest did not start: {error}"))?;
-    let session = BrowserSession::attach(guest, transport, relay, retention)
+    // No starter: the readiness session serves no engine switch.
+    let session = BrowserSession::attach(guest, transport, relay, retention, None)
         .map_err(|error| format!("the browser driver did not open a page: {error}"))?;
     let manifest = session.manifest().clone();
     drop(session);
