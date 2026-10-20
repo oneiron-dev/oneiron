@@ -594,6 +594,9 @@ struct ConfirmedView {
 enum RootWorkReport {
     /// Answered refused: the request is closed.
     Refused { reason: OwnerWorkRefusal },
+    /// Not run: the target has not synced every root or mark the owner saw
+    /// (FIX 5551). Nothing was written; the request stays pending.
+    AwaitingBasis,
     /// The activation's kit, issued: its pieces, to this caller only. The
     /// request stays pending until the kit's confirm.
     KitIssued(Box<IssuedView>),
@@ -629,6 +632,7 @@ impl RootWorkAnswer {
         let text = done.text();
         let report = match done {
             RootWorkDone::Refused { reason } => RootWorkReport::Refused { reason },
+            RootWorkDone::AwaitingBasis => RootWorkReport::AwaitingBasis,
             RootWorkDone::KitIssued(issued) => RootWorkReport::KitIssued(Box::new(IssuedView {
                 vault_id: hex(&issued.vault_id),
                 kit_id: kit_id(issued.manifest.kit_id),

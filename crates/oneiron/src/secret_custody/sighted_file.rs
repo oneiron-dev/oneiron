@@ -135,4 +135,41 @@ impl Vault {
         }
         Ok(Some(copy))
     }
+
+    /// Whether ASSET `id` holds a readable body file named `expected`, its
+    /// stored bytes read once through the checked reader, which verifies
+    /// their length and BLAKE3, and dropped as they pass (FIX 6507): a door
+    /// that must judge a file before its receipt is written checks it this
+    /// way, never holding it whole. `false` when `id` holds no readable body
+    /// file.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::CorruptedIndex`] for a file the door does not name; the
+    /// checked reader's errors.
+    pub(crate) fn check_body_file_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+        expected: &[u8; 32],
+    ) -> Result<bool> {
+        let Some(row) = self.store.port_entity_record(txn, id)? else {
+            return Ok(false);
+        };
+        if row.entity_type != ENTITY_TYPE_ASSET {
+            return Ok(false);
+        }
+        let Some(manifest) = crate::store::asset_file_in_txn(&self.store, txn, id, &row.body)?
+        else {
+            return Ok(false);
+        };
+        if manifest.facts.blake3 != *expected {
+            return Err(Error::CorruptedIndex("blob content hash"));
+        }
+        // The checked reader reads whatever the callback leaves, so the
+        // whole file is verified.
+        Ok(self
+            .with_asset_body_reader_in_txn(txn, id, |_| Ok(()))?
+            .is_some())
+    }
 }

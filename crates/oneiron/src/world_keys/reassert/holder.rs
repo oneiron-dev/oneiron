@@ -16,22 +16,24 @@
 //! The holder's read checks (the key ids its own records name, the pad, the
 //! opening record or counted wrap, the recipients that lack a wrap) are one
 //! read ([`HolderRead`]) that its writer and its owner's executor diagnostics
-//! share (FIX 4686); only the writer appends.
+//! share (FIX 4686); so is the plan of each key's records, which says
+//! whether one record names their frontier (FIX 5552). Only the writer
+//! appends.
 
 use std::collections::BTreeSet;
 
 use ed25519_dalek::SigningKey;
 use oneiron_crypto::HybridPublicKey;
 
-use super::super::doors::{RootRecipient, require_mine_reader};
+use super::super::doors::{ChainHead, Parents, RootRecipient, WrapPlanInput, require_mine_reader};
 use super::super::pads::pad_in_txn;
 use super::super::{
     MachineSecret, SequenceCounter, WorldKey, WorldKeyBinding, WorldKeyId, WrapRecipient,
     open_counted, open_world_key, recipients,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityView, EffectiveRead, WorldKeyWrapsRecord, invalid_authority,
-    own_world_key_records_in_txn,
+    AuthorityEntryHash, AuthorityKey, AuthorityView, EffectiveRead, WorldKeyWrapsRecord,
+    invalid_authority, own_world_key_records_in_txn,
 };
 use crate::error::Result;
 use crate::store::Store;
@@ -172,6 +174,47 @@ impl HolderRead {
             owner,
             missing,
         })
+    }
+
+    /// Every recipient the world's settings allow, with this holder's pinned
+    /// root: what an ensure wraps the world's key to.
+    pub(crate) fn allowed(&self) -> Vec<(WrapRecipient, HybridPublicKey)> {
+        recipients(&self.fold, self.world, self.root.clone())
+    }
+
+    /// The row this holder's first record of the world names beside its
+    /// parents, before any append.
+    pub(crate) fn chain_head(&self) -> ChainHead {
+        let signer = AuthorityKey::Ed25519(self.signing.verifying_key().to_bytes());
+        ChainHead::of(&self.fold, &signer, self.world)
+    }
+
+    /// Whether `machine`'s wraps of one key to `missing`, for `request`, would
+    /// name more rows than one record may, its first record naming `chain`:
+    /// the writer's own plan in `txn`'s snapshot (FIX 5552). Reads only:
+    /// nothing is sealed, signed or raised.
+    pub(crate) fn wraps_wide(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        (machine, request): (EntityId, Option<AuthorityEntryHash>),
+        missing: &[(WrapRecipient, HybridPublicKey)],
+        chain: ChainHead,
+    ) -> Result<bool> {
+        if missing.is_empty() {
+            return Ok(false);
+        }
+        let to: Vec<WrapRecipient> = missing.iter().map(|(recipient, _)| *recipient).collect();
+        let input = WrapPlanInput {
+            fold: &self.fold,
+            machine,
+            world: self.world,
+            recipients: &to,
+            chain,
+            request,
+            parents: Parents::Frontier,
+        };
+        Ok(vault.plan_world_key_wraps_in_txn(txn, &input)?.is_err())
     }
 }
 

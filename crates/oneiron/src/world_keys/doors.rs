@@ -9,6 +9,7 @@
 //! record names the owner work request it does, if any ([`provenance`]).
 
 mod append;
+mod frontier;
 mod provenance;
 
 use std::sync::Arc;
@@ -17,6 +18,7 @@ use ed25519_dalek::SigningKey;
 use oneiron_crypto::{Envelope, HybridPublicKey, HybridSecretKey};
 
 pub(crate) use self::append::SequenceCounter;
+pub(crate) use self::frontier::{ChainHead, Parents, WrapPlanInput};
 use super::pads::{WorldKeyPad, require_pad_in_txn};
 use super::{
     FIRST_GENERATION, WorldKey, WorldKeyBinding, WorldKeyId, WorldRecoveryState, WrapRecipient,
