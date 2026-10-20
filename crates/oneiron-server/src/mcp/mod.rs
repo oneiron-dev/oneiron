@@ -82,7 +82,7 @@ pub use self::surface::{
     MCP_STREAM_CONNECTION_PREFIX, MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool,
     McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError,
     McpSurfaceMode, McpVerbFamily, exported_verb_rows, generated_verb_tools, project_verb_rows,
-    registered_surface,
+    registered_surface, try_registered_surface,
 };
 pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION, McpToolValidationError,
