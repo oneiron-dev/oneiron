@@ -46,8 +46,23 @@ pub(crate) async fn write_core_turn(
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
     let receipt = tokio::task::spawn_blocking(move || {
-        let writer = crate::api::scoped_read_for_core_auth(&vault, &auth)
-            .map_err(|refused| super::FacadeApiError::from(refused).into_memory_error())?;
+        let writer = match crate::api::scoped_read_for_core_auth(&vault, &auth) {
+            Ok(writer) => writer,
+            Err(refused) => {
+                // The owner's own credential that grants no read still
+                // writes as the owner (FIX 6066); any other keeps its refusal.
+                if matches!(
+                    refused.details(),
+                    crate::error::ApiErrorDetails::Unauthorized
+                ) && let Some(proof) = auth.verified_slip()
+                    && let Some(receipt) =
+                        vault.write_core_conversation_turn_as_owner(&input, proof)?
+                {
+                    return Ok(receipt);
+                }
+                return Err(super::FacadeApiError::from(refused).into_memory_error());
+            }
+        };
         vault.write_core_conversation_turn(&input, &writer)
     })
     .await

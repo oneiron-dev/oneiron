@@ -11,8 +11,10 @@ use super::shape::{
     CoreWriteTextField, core_body_for_write, core_text_pairs, core_write_times, entity_id,
     stage_core_put, text_pairs, write_id,
 };
+use crate::authority::VerifiedSlip;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::conversation::ConversationBody;
+use crate::edge::EdgeActorClass;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault, WriteActor};
@@ -154,6 +156,66 @@ impl Vault {
         input: &ConversationTurnCreateInput,
         writer: &ScopedRead<'_>,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
+        self.write_core_conversation_turn_admitted(input, |txn, conversation| {
+            Ok(self.turn_doors_owner_in(writer, txn)?
+                || writer.is_entity_readable_in(txn, conversation)?)
+        })?
+        .ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the conversation is outside this credential's read",
+                &["Write the turn into a conversation this credential reads."],
+            )
+        })
+    }
+
+    /// [`Self::write_core_conversation_turn`] for the owner's own credential
+    /// that grants no read (FIX 6066, Engine 10-20): it writes as the owner
+    /// while `proof` is the live vault owner's own, judged in the batch's own
+    /// writer. `None`, with nothing written, for any other credential.
+    /// # Errors
+    /// As [`Self::write_core_conversation_turn`], or a broken owner check.
+    pub fn write_core_conversation_turn_as_owner(
+        &self,
+        input: &ConversationTurnCreateInput,
+        proof: &VerifiedSlip,
+    ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
+        self.write_core_conversation_turn_admitted(input, |txn, _| {
+            self.slip_is_owner_in(txn, proof)
+        })
+    }
+
+    /// Whether `proof` is the vault owner's own credential in `txn`, by the
+    /// owner rule a credential's read key follows
+    /// ([`Self::credential_read_key_in_txn`]): a person's, untransferred,
+    /// live, and held by the owner the binding proves.
+    fn slip_is_owner_in(&self, txn: &heed::RoTxn<'_>, proof: &VerifiedSlip) -> crate::Result<bool> {
+        let claims = proof.claims();
+        if !matches!(claims.actor_class.as_deref(), None | Some("human")) || proof.is_transferred()
+        {
+            return Ok(false);
+        }
+        let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
+            return Ok(false);
+        };
+        let owner =
+            crate::memory::actor_is_vault_owner_in_txn(self, txn, holder, EdgeActorClass::Human)
+                .map_err(|refusal| {
+                    crate::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                        refusal,
+                    )))
+                })?;
+        Ok(owner && self.capability_slip_is_live_in_txn(txn, proof)?)
+    }
+
+    /// One TURN under a conversation, written only when `admits` passes the
+    /// conversation in the batch's own writer; `None`, nothing written,
+    /// when it does not.
+    fn write_core_conversation_turn_admitted(
+        &self,
+        input: &ConversationTurnCreateInput,
+        admits: impl FnOnce(&heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>,
+    ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
         let conversation = entity_id(&input.conversation, "conversation")?;
         match self.get_entity_type(&conversation)? {
             Some(ENTITY_TYPE_CONVERSATION) => {}
@@ -190,28 +252,22 @@ impl Vault {
         )?
         .edge_checked(&id, &conversation, 1.0)
         .commit_with_target_guard(|txn| {
-            if self.turn_doors_owner_in(writer, txn)?
-                || writer.is_entity_readable_in(txn, &conversation)?
-            {
+            if admits(txn, &conversation)? {
                 return Ok(());
             }
             outside.set(true);
             Err(crate::Error::EntityNotFound)
         });
         if outside.get() {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "the conversation is outside this credential's read",
-                &["Write the turn into a conversation this credential reads."],
-            ));
+            return Ok(None);
         }
         committed?;
-        Ok(CoreEntityWriteReceipt::new(
+        Ok(Some(CoreEntityWriteReceipt::new(
             id,
             ENTITY_TYPE_TURN,
             times.learned_at,
             core_body_for_write(ENTITY_TYPE_TURN, &input.body).into_owned(),
-        ))
+        )))
     }
 }
 
