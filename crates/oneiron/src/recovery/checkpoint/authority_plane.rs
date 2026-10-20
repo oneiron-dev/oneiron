@@ -62,12 +62,13 @@ fn fenced_id(key: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Rewrites `databases` so every live row is `current`'s, or refuses when a
-/// refused family moved since the checkpoint.
+/// refused family moved since the checkpoint. Returns the notes for the home
+/// tables that came from the image (FIX 5661 C2b).
 pub(super) fn carry_current_authority(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
-) -> Result<()> {
-    let classes = Classes::new(current)?;
+) -> Result<Vec<super::HomeTableNote>> {
+    let classes = Classes::new(current, databases)?;
     let live = current_rows(current, &classes)?;
     // A store's random id, minted at its first open, names the vault even
     // before it has an authority log. Every image carries one; a missing or
@@ -145,7 +146,7 @@ pub(super) fn carry_current_authority(
         merged.extend(live_rows.iter().filter(|row| is_live(row)).cloned());
         *rows = merged.into_iter().collect();
     }
-    Ok(())
+    Ok(classes.home_notes())
 }
 
 /// The live vault's rows that are not content.
