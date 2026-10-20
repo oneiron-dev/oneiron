@@ -48,6 +48,9 @@ pub(super) const CRYPTO_EPOCH: u64 = 1;
 const LOG_KEY_CONTEXT: &str = "oneiron/custody-log/v1";
 const ANCHOR_KEY_CONTEXT: &str = "oneiron/custody-anchor/v1";
 const LOG_KEY_ID: &[u8] = b"oneiron/custody-log-frame/v1";
+/// The derive-key context of a frame's envelope recipient
+/// ([`frame_recipient`]).
+const FRAME_RECIPIENT_CONTEXT: &str = "oneiron/custody-log-frame/recipient/v1";
 const OP_MINT: u8 = 1;
 const OP_RETIRE: u8 = 2;
 /// A released escrow recipient retired (LC FIX 5384/5385): an op of its
@@ -376,7 +379,36 @@ pub(super) fn seal_sym(
     };
     seal(&params, SealKey::SymmetricKek(kek), plaintext, &mut SysRng)
         .map(|envelope| envelope.to_bytes())
-        .map_err(|_| crate::world_keys::refused("sealing key custody failed"))
+        .map_err(|error| seal_refused(&error))
+}
+
+/// Why a custody envelope did not seal, by the crypto error's kind: a fixed
+/// reason, never the error's values or a key's bytes.
+pub(super) fn seal_refused(error: &oneiron_crypto::Error) -> Error {
+    use oneiron_crypto::Error as Crypto;
+    crate::world_keys::refused(match error {
+        Crypto::FieldLength {
+            field: "key_id" | "recipient" | "vault_id",
+            ..
+        } => "sealing key custody failed: an envelope id is out of range",
+        Crypto::FieldLength {
+            field: "plaintext" | "ciphertext",
+            ..
+        } => "sealing key custody failed: the plaintext is out of range",
+        Crypto::Rng => "sealing key custody failed: the random source failed",
+        Crypto::UnknownSuite(_)
+        | Crypto::ForbiddenSuite(_)
+        | Crypto::ReservedSuite(_)
+        | Crypto::WrongSuiteKind { .. }
+        | Crypto::SuiteNotAccepted(_)
+        | Crypto::EpochBelowSuiteMinimum { .. }
+        | Crypto::EpochBelowPolicyMinimum { .. } => {
+            "sealing key custody failed: the suite or epoch was refused"
+        }
+        Crypto::KemKeyRejected => "sealing key custody failed: the key encapsulation was refused",
+        Crypto::Primitive(_) => "sealing key custody failed: a crypto primitive failed",
+        _ => "sealing key custody failed",
+    })
 }
 
 /// Opens a custody envelope [`seal_sym`] sealed, refused unless every bound
@@ -406,6 +438,13 @@ pub(super) fn open_sym(
         .map_err(|_| crate::world_keys::refused("key custody does not open with this key"))
 }
 
+/// A frame's envelope recipient: a 32-byte commitment to its whole clear
+/// header, which the frame carries as it is, so every header byte stays
+/// bound and the recipient fits an envelope (FIX 6769).
+fn frame_recipient(clear: &[u8; FRAME_HEADER_LEN]) -> [u8; 32] {
+    blake3::derive_key(FRAME_RECIPIENT_CONTEXT, clear)
+}
+
 /// Seals one frame at `header` recording `entry`.
 fn seal_frame(control: &Control, header: FrameHeader, entry: &LogEntry) -> Result<Vec<u8>> {
     let clear = header.to_bytes();
@@ -413,7 +452,7 @@ fn seal_frame(control: &Control, header: FrameHeader, entry: &LogEntry) -> Resul
         Purpose::CustodyLogFrame,
         header.vault,
         LOG_KEY_ID,
-        &clear,
+        &frame_recipient(&clear),
         &control.log_kek(),
         &entry.encode(),
     )?;
@@ -434,7 +473,7 @@ pub(super) fn open_frame(control: &Control, frame: &[u8]) -> Result<(FrameHeader
         Purpose::CustodyLogFrame,
         header.vault,
         LOG_KEY_ID,
-        &header.to_bytes(),
+        &frame_recipient(&header.to_bytes()),
         &control.log_kek(),
         body,
     )?;

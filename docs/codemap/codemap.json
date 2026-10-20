@@ -52693,7 +52693,7 @@
      "path": "src/store/key_custody/log.rs",
      "purpose": "The keyless custody log (KS-4, FIX 5685) and the local journal it is kept in, beside the vault and outside…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 30,
       "fn": 3,
       "struct": 2
      }

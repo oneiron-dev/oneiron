@@ -113,9 +113,10 @@ impl AgentDispatcher<'_> {
     /// Under a member's bound run (FIX 5416) the projection is read on that
     /// member's own lane, the rows it does not read left out and counted.
     /// Under an owner's or agent's, each row meets the private threads it
-    /// sits in under that binder's own cut alone (FIX 6412). Each comes from
-    /// the wrapper the fold crosses, which still adds no level; every level
-    /// resolves as it does for any run.
+    /// sits in under that binder's own cut (FIX 6412), and under an agent's
+    /// or the system's, that binder's own admission too (FIX 6715). Each
+    /// comes from the wrapper the fold crosses, which still adds no level;
+    /// every level resolves as it does for any run.
     pub(super) fn resolve_ancestor_projection(
         &self,
         attempt: AttemptId,

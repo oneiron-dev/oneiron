@@ -28,7 +28,9 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::error::{Error, Result};
 
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
-use super::log::{AEAD, CRYPTO_EPOCH, Control, CustodyPosition, POSITION_LEN, open_sym, seal_sym};
+use super::log::{
+    AEAD, CRYPTO_EPOCH, Control, CustodyPosition, POSITION_LEN, open_sym, seal_refused, seal_sym,
+};
 use super::recipients::RecipientRetirement;
 
 const HEAD_MAGIC: &[u8; 4] = b"OCHD";
@@ -36,6 +38,8 @@ const HEAD_VERSION: u16 = 1;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 const DATA_KEY_RECIPIENT: &[u8] = b"oneiron/custody-head/data-key/v1";
 const COMPARTMENT_RECIPIENT: &[u8] = b"oneiron/custody-head/compartment/v1";
+/// The derive-key context of a compartment's envelope key id ([`key_id`]).
+const KEY_ID_CONTEXT: &str = "oneiron/custody-head/compartment-key-id/v1";
 const TO_ROOT: u8 = 1;
 const TO_DATA_KEY: u8 = 2;
 /// The most entries, live or retired, one compartment holds: a codec bound
@@ -251,13 +255,15 @@ pub(super) mod serde_bytes_vec {
     }
 }
 
-/// `position | u32be index | scope`: what binds a compartment and its key's
-/// wraps to their place in exactly this head.
-fn key_id(position: &[u8; POSITION_LEN], index: u32, scope: Option<CompartmentScope>) -> Vec<u8> {
-    let mut out = position.to_vec();
-    out.extend_from_slice(&index.to_be_bytes());
-    out.push(scope.map_or(0, CompartmentScope::code));
-    out
+/// What binds a compartment and its key's wraps to their place in exactly
+/// this head: a 32-byte commitment to the whole of `position | u32be index |
+/// scope`, which fits an envelope's key id (FIX 6769).
+fn key_id(position: &[u8; POSITION_LEN], index: u32, scope: Option<CompartmentScope>) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(KEY_ID_CONTEXT);
+    hasher.update(position);
+    hasher.update(&index.to_be_bytes());
+    hasher.update(&[scope.map_or(0, CompartmentScope::code)]);
+    *hasher.finalize().as_bytes()
 }
 
 fn wrap_policy<'a>(
@@ -322,7 +328,7 @@ fn seal_compartment(
             &key[..],
             &mut SysRng,
         )
-        .map_err(|_| crate::world_keys::refused("sealing key custody failed"))?;
+        .map_err(|error| seal_refused(&error))?;
         wraps.push(WrapWire {
             to: TO_ROOT,
             root: Some(*root),
