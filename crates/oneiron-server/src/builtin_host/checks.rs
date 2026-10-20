@@ -21,7 +21,8 @@ use oneiron::connector_key::{
 };
 use oneiron_browser::{BrowserGuest, BrowserSession, HandleRetention};
 use oneiron_container::{
-    EgressRelay, GuestSeccomp, GuestSpec, HttpRequest, HttpResponse, ImageRef, SessionManifest,
+    EgressRelay, GuestSeccomp, GuestSpec, HostNetFloor, HttpRequest, HttpResponse, ImageRef,
+    SessionManifest, UnmeteredFloor,
 };
 
 use crate::config::NativeMailConfig;
@@ -208,4 +209,10 @@ impl EgressRelay for NoEgress {
     }
 
     fn transferred(&self, _target: SocketAddr, _content_hash: [u8; 32], _bytes: u64) {}
+
+    /// One short session whose every relay is refused at once: it is not
+    /// charged to the host floor.
+    fn host_net_floor(&self) -> &dyn HostNetFloor {
+        &UnmeteredFloor
+    }
 }

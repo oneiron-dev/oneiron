@@ -26,7 +26,9 @@ const TASK_WORK: usize = 2_048;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LimitsConfig {
     /// Connections the listener holds open at once, from every peer together:
-    /// the descriptor floor. Past it, new sockets wait in the backlog.
+    /// the descriptor floor. Past it, new sockets wait in the backlog. Guests'
+    /// network work draws on the same floor; past it, a guest's socket call
+    /// waits or gets EAGAIN (FIX 5978, FIX 5979).
     pub max_connections: usize,
     /// Connections one off-device peer address may hold before any of them
     /// has authenticated, and never more than half of `max_connections`. A

@@ -37,6 +37,9 @@ use axum::{BoxError, Router};
 use hyper::body::{Frame, Incoming, SizeHint};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use hyper_util::service::TowerToHyperService;
+use oneiron_container::{
+    HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR, HostNetFloor, HostNetPermit, floor_saturated,
+};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
@@ -124,6 +127,32 @@ impl ConnectionPool {
             ),
             strangers: Strangers::new(stranger_share(limits)),
         }
+    }
+
+    /// The descriptor floor, lent to guests' network work (FIX 5978,
+    /// FIX 5979): a guest's socket entries and relayed datagrams hold its
+    /// permits beside the connections until their work ends. They take only
+    /// free permits and never wait in the floor's line, so a socket waiting
+    /// for the floor gets the next permit that comes free.
+    pub(crate) fn host_net_floor(&self) -> Arc<dyn HostNetFloor> {
+        Arc::new(DescriptorFloor(self.floor.clone()))
+    }
+}
+
+/// [`ConnectionPool`]'s descriptor floor, as guests' network work takes it:
+/// a permit for each descriptor and each worker thread.
+struct DescriptorFloor(Admission<()>);
+
+impl HostNetFloor for DescriptorFloor {
+    fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
+        let mut held: Vec<Permit> = Vec::with_capacity(fds + workers);
+        for (count, floor) in [(fds, HOST_NET_FD_FLOOR), (workers, HOST_NET_WORKER_FLOOR)] {
+            for _ in 0..count {
+                let permit = self.0.try_admit_background();
+                held.push(permit.ok_or_else(|| floor_saturated(floor))?);
+            }
+        }
+        Ok(HostNetPermit::new(held))
     }
 }
 
