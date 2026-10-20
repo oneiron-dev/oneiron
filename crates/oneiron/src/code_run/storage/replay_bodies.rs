@@ -10,9 +10,10 @@
 //! its generation), so a resumed run that reaches an erased call traps on
 //! it, never takes an empty success and never runs a fresh effect. Under a
 //! live instance the exact record lands, and replay checks it as before.
-//! Its owners are the run, the actor its live run binding names, and the
-//! actor a turn program's run runs as. The live record's erase scrub is
-//! L11-B's (FIX 5718); this retires every image's copy beside it.
+//! Its owners are the run, the actor its live run binding names, the actor
+//! a turn program's run runs as, and the source rows its verb calls served.
+//! The live record's erase scrub is L11-B's (FIX 5718); this retires every
+//! image's copy beside it.
 
 use super::records::REPLAY_RECORDS;
 use crate::code_run::payload::self_dispatch_outcome_value;
@@ -58,8 +59,9 @@ pub(crate) fn replay_carriage(value: &[u8]) -> Option<ResponseCarriage> {
 }
 
 /// Who owns the replay record `value`'s outcomes: its run, the actor its
-/// live run binding names, and the actor a turn program's run runs as.
-/// None for a record that does not decode.
+/// live run binding names, the actor a turn program's run runs as, and the
+/// source rows its verb calls listed as served. None for a record that does
+/// not decode.
 ///
 /// # Errors
 ///
@@ -74,6 +76,7 @@ pub(crate) fn replay_owners(
     };
     let mut owners = vec![record.run_id];
     owners.extend(record.live_run.as_ref().map(|live| live.actor));
+    owners.extend(record.agent_verb_rows().into_iter().flatten());
     owners.extend(crate::dreamer_runner::program_run_actor_in_txn(
         dbs,
         txn,

@@ -52,11 +52,14 @@ fn body_prefixes() -> [&'static [u8]; 6] {
 }
 
 /// What an activation's prune changes in the archive: the `vault_meta` rows
-/// it deletes and the ones it rewrites, the inline ASSETs it shells and the
-/// row-held responses it leaves their erased disposition.
+/// it deletes and the ones it rewrites, the files it queues for the
+/// collector, the inline ASSETs it shells and the row-held responses it
+/// leaves their erased disposition.
 struct ArchivePrune {
     deleted: BTreeSet<Vec<u8>>,
     rewritten: Vec<(Vec<u8>, Vec<u8>)>,
+    /// Each retired body file, queued for the collector.
+    files: Vec<[u8; 32]>,
     assets: BTreeSet<EntityId>,
     responses: BTreeSet<Vec<u8>>,
     /// The body rows that stay, read back under the forked custody.
@@ -86,9 +89,25 @@ impl ArchivePrune {
                 Some(_) => {}
             }
         }
+        // A retired file goes to the collector, as any file whose last
+        // holder went: a plain one is unlinked by its digest, so no erased
+        // body rests on disk in the clear; a sealed one, under a key no
+        // custody holds, waits for the orphan sweep.
+        let mut files = Vec::new();
+        for (key, value) in rows {
+            if let Some(digest) = key
+                .strip_prefix(BODY_KEYS.decl().prefix)
+                .and_then(<[u8; 32]>::decode_key)
+                && pruned.digests.contains(&digest)
+                && !BODY_KEYS.decode_value(value)?.inline
+            {
+                files.push(digest);
+            }
+        }
         Ok(Self {
             deleted,
             rewritten,
+            files,
             assets: pruned.assets,
             responses: pruned.responses,
             kept,
@@ -163,6 +182,9 @@ impl Store {
         destination::delete_vault_meta_in_txn(&self.env, wtxn, &prune.deleted)?;
         for (key, value) in &prune.rewritten {
             self.side_vault_meta().put(wtxn, key, value)?;
+        }
+        for digest in &prune.files {
+            crate::provenance::body::queue_pruned_file_in_txn(self, wtxn, digest)?;
         }
         if !prune.assets.is_empty() {
             let at = crate::ports::recorded_at_in_txn(self, wtxn)?;
