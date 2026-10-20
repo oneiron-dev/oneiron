@@ -34,8 +34,10 @@ pub(crate) async fn vault_conversations_turns_create(
     })
 }
 
-/// One TURN under a conversation, then its landing on the vault. Every
-/// caller runs this: the row's door and the REST route alike. It is a
+/// One TURN under a conversation, held to the read `auth`'s credential
+/// reads under on every `/v1` door (FIX 5939), then its landing on the
+/// vault. Every caller runs this: the row's door and the REST route alike.
+/// A host credential that acts as no person gets its refusal. It is a
 /// platform announcement only at `auth`'s owner authority.
 pub(crate) async fn write_core_turn(
     server: &Arc<SyncServer>,
@@ -44,8 +46,26 @@ pub(crate) async fn write_core_turn(
 ) -> MemoryResult<CoreEntityWriteReceipt> {
     let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
+    let auth = auth.clone();
     let receipt = tokio::task::spawn_blocking(move || {
-        vault.write_core_conversation_turn(&input, announcement)
+        let writer = match crate::api::scoped_read_for_core_auth(&vault, &auth) {
+            Ok(writer) => writer,
+            Err(refused) => {
+                // The owner's own credential that grants no read still
+                // writes as the owner (FIX 6066); any other keeps its refusal.
+                if matches!(
+                    refused.details(),
+                    crate::error::ApiErrorDetails::Unauthorized
+                ) && let Some(proof) = auth.verified_slip()
+                    && let Some(receipt) =
+                        vault.write_core_conversation_turn_as_owner(&input, proof, announcement)?
+                {
+                    return Ok(receipt);
+                }
+                return Err(super::FacadeApiError::from(refused).into_memory_error());
+            }
+        };
+        vault.write_core_conversation_turn(&input, &writer, announcement)
     })
     .await
     .map_err(|_| internal("vault.conversations.turns.create"))??;

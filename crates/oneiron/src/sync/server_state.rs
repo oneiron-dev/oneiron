@@ -12,7 +12,8 @@
 //! These helpers are the server-side Observer-A-equivalent:
 //! `subscribe_local_update` (see [`super::bridge::register_observer_a`]) does
 //! not fire for imported remote updates, so the server persists imported
-//! update bytes explicitly after `import_with`. All multi-key writes are
+//! update bytes explicitly, between their admission on a fork and the observed
+//! `import_with`. All multi-key writes are
 //! atomic (single LMDB write transaction), matching the sync-state access
 //! convention used by the bridge.
 
@@ -21,7 +22,7 @@ use loro::LoroDoc;
 use super::loro_support::{doc_from_snapshot, doc_version_vector, export_snapshot, import_doc};
 use super::types::WindowKey;
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::sync::window_rows::{
     ROOT_SHALLOW_FENCE, ROOT_SNAPSHOT, ROOT_STATE_VECTOR, ROOT_UPDATE, WINDOW_SHALLOW_FENCE,
@@ -31,9 +32,10 @@ use crate::sync::window_rows::{
 
 /// Persists an imported window update (Observer-A-equivalent).
 ///
-/// The bytes must already have been imported into the window's observed
-/// document, whose Observer B applies or fences the deletes they carry; this
-/// half writes no deletion state of its own.
+/// The bytes must already have passed the window's admission on a fork; the
+/// caller imports them into the window's observed document once this commits,
+/// and its Observer B applies or fences the deletes they carry, so this half
+/// writes no deletion state of its own.
 ///
 /// Atomically (one LMDB write txn), per the ARCH-0023b key layout:
 /// - bumps `m:u_seq:w:{key}` (u32 LE, crash-safe monotonic counter),
@@ -50,7 +52,25 @@ pub fn persist_imported_window_update(
     key: &WindowKey,
     update_bytes: &[u8],
 ) -> Result<u32> {
+    persist_admitted_window_update(vault, key, update_bytes, |_| true)
+}
+
+/// [`persist_imported_window_update`] for a peer's write: `session_is_live`
+/// rechecks the writer's credential in the committing transaction, before a
+/// sequence number is taken (FIX 5999). A refusal writes nothing and is
+/// `DocumentAdmissionDenied`.
+pub fn persist_admitted_window_update(
+    vault: &Vault,
+    key: &WindowKey,
+    update_bytes: &[u8],
+    session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
+) -> Result<u32> {
     vault.with_write_txn_grouped(|wtxn| {
+        if !session_is_live(wtxn) {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
+        }
         let seq_key = key.as_str().to_owned();
         let seq: u32 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
             None => 0,

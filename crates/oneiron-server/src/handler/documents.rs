@@ -163,7 +163,9 @@ pub(super) fn handle_document(
                 .ok_or(ProtocolError::InvalidPayload("document not admitted"))?;
             // Cached subscription state is only the requested selector. The
             // committing engine writer re-reads its role, scope, expiry, pact
-            // and live entity selection; an earlier export is not authority.
+            // and live entity selection, and the Write credential's liveness;
+            // an earlier export is not authority.
+            let auth = require_bound_app_auth(server, state)?;
             let document = open_for(server, entity, &request.selector.member_ref)?;
             document
                 .import_from_peer(
@@ -172,6 +174,7 @@ pub(super) fn handle_document(
                     selector_grant_scope(),
                     &request.selector,
                     peer,
+                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
                 )
                 .map_err(storage_error)?;
             let vv = document.version_vector().map_err(storage_error)?;
