@@ -7,6 +7,9 @@
 //! ports and the guest bridges each connection onto them, and the ledger push
 //! leaves through a guest-local socket bridged to the host's ledger port.
 //! The credential frame and the ready byte ride the vsock boot channel.
+//! The outbox carrier is the root companion's, beside the engine
+//! (`vm_outbox`); the engine only asks it its revision at boot and parks it
+//! around an idle report.
 
 use super::args::ManagedArgs;
 use super::listener::{ServeListener, bind_unix_socket};
@@ -38,6 +41,8 @@ pub(super) struct VmGuestHost {
     hypnos_socket: PathBuf,
     artifact_socket: Option<PathBuf>,
     shutdown: ManagedShutdown,
+    /// The outbox carrier's revision its companion reported at boot.
+    vm_outbox_revision: Option<u32>,
 }
 impl VmGuestHost {
     pub(super) fn new(args: &ManagedArgs, shutdown: ManagedShutdown) -> Self {
@@ -48,7 +53,13 @@ impl VmGuestHost {
             hypnos_socket: args.hypnos_socket.clone(),
             artifact_socket: args.artifact_socket.clone(),
             shutdown,
+            vm_outbox_revision: super::vm_outbox::companion_revision(),
         }
+    }
+    /// The outbox carrier's revision, when the image's companion answered at
+    /// boot with its storage laid out and its carrier attached (FIX 5235).
+    pub(super) fn vm_outbox_revision(&self) -> Option<u32> {
+        self.vm_outbox_revision
     }
     pub(super) fn clear_secrets(&mut self) {
         self.inner.0.clear_secrets();
@@ -160,7 +171,9 @@ fn next_wake(entries: &[WakeEntry]) -> Option<SystemTime> {
 
 /// Answers the host's boot-channel requests for the life of the vault. Sleep
 /// reports the next wake and parks until resumed; RAM may reach disk only
-/// while no off-record stretch is open (OFFREC-SNAPSHOT = A). Stop drains the
+/// while no off-record stretch is open (OFFREC-SNAPSHOT = A). The outbox
+/// companion, when there is one, is parked before the report and resumed
+/// after, so no carrier commit is in flight at a snapshot. Stop drains the
 /// vault exactly as SIGTERM does on a node.
 pub(super) fn spawn_lifecycle(
     link: GuestLink,
@@ -184,8 +197,15 @@ pub(super) fn spawn_lifecycle(
                         }
                     };
                     let snapshot_ok = !server.vault().has_open_off_record_session();
+                    let companion = state.vm_outbox_revision().is_some();
+                    if companion {
+                        super::vm_outbox::park_companion().await;
+                    }
                     if let Err(error) = link.idle(wake, snapshot_ok).await {
                         tracing::warn!(%error, "vault VM idle report failed");
+                    }
+                    if companion {
+                        super::vm_outbox::resume_companion().await;
                     }
                 }
             }

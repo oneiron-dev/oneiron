@@ -76,6 +76,15 @@ impl ManagedHost {
             Self::Vm(_) => Ok(None),
         }
     }
+    /// The outbox carrier's revision a vault VM's companion reported at
+    /// boot (FIX 5235); a node's process vault has none.
+    pub(super) fn vm_outbox_revision(&self) -> Option<u32> {
+        match self {
+            Self::Process(_) => None,
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.adapter().vm_outbox_revision(),
+        }
+    }
     /// The boot channel a vault VM answers sleep and stop requests on.
     #[cfg(target_os = "linux")]
     pub(super) fn vm_link(&self) -> Option<oneiron_vault_contract::host_adapters::GuestLink> {

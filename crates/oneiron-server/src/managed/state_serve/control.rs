@@ -11,6 +11,20 @@ use super::ManagedState;
 use crate::managed::ManagedError;
 
 impl ManagedState {
+    /// This state with `revision`, the vault VM outbox carrier's its
+    /// companion reported at boot (FIX 5235), for every `Ping` to carry;
+    /// none until set.
+    #[must_use]
+    pub(in crate::managed) fn with_vm_outbox_revision(mut self, revision: Option<u32>) -> Self {
+        self.vm_outbox_revision = revision;
+        self
+    }
+
+    /// The vault VM outbox carrier's revision, when it has one.
+    pub(in crate::managed) fn vm_outbox_revision(&self) -> Option<u32> {
+        self.vm_outbox_revision
+    }
+
     /// Dispatches one parsed ctl request.
     ///
     /// [`CtlRequest::validate`] runs first on every request: deserialization
@@ -34,6 +48,7 @@ impl ManagedState {
                 settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
                 artifact_public_slug_revision: Some(ARTIFACT_PUBLIC_SLUG_REVISION),
                 slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
+                vm_outbox_revision: self.vm_outbox_revision,
             }),
             CtlRequest::Shed {
                 cause,
