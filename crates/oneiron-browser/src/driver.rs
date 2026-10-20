@@ -19,7 +19,12 @@
 //! (`handles`); a settle poll reads the outline without minting. An act
 //! resolves its target once and keeps that node from its checks to its
 //! effect.
+//!
+//! An act whose page shows no change at all within about a second of its
+//! input answers at once, unsettled, with a typed fact saying so (`change`,
+//! FIX 6680); one whose page moved settles as above.
 
+mod change;
 mod handles;
 pub(crate) mod pages;
 
@@ -29,12 +34,14 @@ use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
 use crate::outline::{self, Line};
 use crate::retention::HandleRetention;
 use crate::{
-    BrowserDriver, BrowserError, BrowserPersonInput, BrowserTab, ClickInput, CropInput,
-    ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation, ObservationPage,
-    ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput, SelectInput,
-    TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput, WaitForOutput, ZoomInput,
+    BrowserDriver, BrowserEngine, BrowserError, BrowserPersonInput, BrowserTab, ClickInput,
+    CropInput, ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation,
+    ObservationPage, ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput,
+    SelectInput, TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    ZoomInput,
 };
 use base64::Engine as _;
+use change::Watch;
 use handles::Handles;
 use pages::{Base, Observations, Read, find_cursor, session_token, wait_cursor};
 use serde_json::{Value, json};
@@ -67,6 +74,8 @@ const SHIFT: u32 = 8;
 
 pub(crate) struct CdpDriver {
     pipe: Pipe,
+    /// The engine the guest runs the page on.
+    engine: BrowserEngine,
     /// The tab in front: the one the agent's verbs and the person's screen
     /// and input drive.
     session: String,
@@ -157,12 +166,14 @@ impl Frame {
 }
 
 impl CdpDriver {
-    /// Opens one blank page in the guest and attaches to it. With the
-    /// host's proxy, every page the guest opens after it (a popup, a tab a
-    /// link opens) reaches the network only through the proxy, as it does.
-    /// The live-handle registry is charged through `retention`.
+    /// Opens one blank page in the guest, which runs it on `engine`, and
+    /// attaches to it. With the host's proxy, every page the guest opens
+    /// after it (a popup, a tab a link opens) reaches the network only
+    /// through the proxy, as it does. The live-handle registry is charged
+    /// through `retention`.
     pub(crate) fn attach(
         pipe: Pipe,
+        engine: BrowserEngine,
         wait_cap: Duration,
         retention: Box<dyn HandleRetention>,
     ) -> Result<Self, BrowserError> {
@@ -182,6 +193,7 @@ impl CdpDriver {
         let token = session_token();
         let driver = Self {
             pipe,
+            engine,
             session: session.clone(),
             target: target.clone(),
             tabs: vec![Tab {
@@ -428,6 +440,11 @@ impl CdpDriver {
         }
     }
 
+    /// The engine the guest runs the page on.
+    pub(crate) const fn engine(&self) -> BrowserEngine {
+        self.engine
+    }
+
     /// The page's URL as it is now.
     pub(crate) fn url(&self) -> Result<String, BrowserError> {
         Ok(self.page_info()?.0)
@@ -643,15 +660,17 @@ impl CdpDriver {
         Ok(())
     }
 
-    /// Clicks at viewport point (`x`, `y`), then returns the settled page,
-    /// as an edit of `base`.
+    /// Clicks at viewport point (`x`, `y`), where `row` is when one covers
+    /// it, then returns the settled page, as an edit of `base`.
     pub(crate) fn click_point(
         &mut self,
         x: f64,
         y: f64,
+        row: Option<&Row>,
         base: &Base,
     ) -> Result<Observation, BrowserError> {
-        self.act(base, |driver| driver.mouse_click(x, y))
+        let watch = Watch::Click(change::point_target(x, y, row));
+        self.act(base, &watch, |_| Ok(()), |driver| driver.mouse_click(x, y))
     }
 
     /// Clicks resolved `target`, then returns the settled page, as an edit
@@ -691,7 +710,9 @@ impl CdpDriver {
         if hit != Value::Bool(true) {
             return Err(covered());
         }
-        let mut observation = self.click_point(x, y, base)?;
+        let watch = Watch::Click(change::row_target(&target.row));
+        let mut observation =
+            self.act(base, &watch, |_| Ok(()), |driver| driver.mouse_click(x, y))?;
         observation.rebound.clone_from(&target.rebound);
         Ok(observation)
     }
@@ -706,18 +727,26 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
-        let mut observation = self.act(base, |driver| {
-            driver.page("DOM.focus", json!({"backendNodeId": node["backendNodeId"]}))?;
-            if clear {
-                driver.call_on(
-                    node,
-                    "function() { if (typeof this.select === 'function') this.select(); else getSelection().selectAllChildren(this); }",
-                    json!([]),
-                )?;
-            }
-            driver.page("Input.insertText", json!({"text": text}))?;
-            Ok(())
-        })?;
+        let watch = Watch::Entry(change::row_target(&target.row), node);
+        let mut observation = self.act(
+            base,
+            &watch,
+            |driver| {
+                driver.page("DOM.focus", json!({"backendNodeId": node["backendNodeId"]}))?;
+                if clear {
+                    driver.call_on(
+                        node,
+                        "function() { if (typeof this.select === 'function') this.select(); else getSelection().selectAllChildren(this); }",
+                        json!([]),
+                    )?;
+                }
+                Ok(())
+            },
+            |driver| {
+                driver.page("Input.insertText", json!({"text": text}))?;
+                Ok(())
+            },
+        )?;
         observation.rebound.clone_from(&target.rebound);
         Ok(observation)
     }
@@ -731,7 +760,8 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
-        let mut observation = self.act(base, |driver| {
+        let watch = Watch::Entry(change::row_target(&target.row), node);
+        let mut observation = self.act(base, &watch, |_| Ok(()), |driver| {
             let picked = driver.call_on(
                 node,
                 "function(want) {
@@ -791,23 +821,32 @@ impl CdpDriver {
             .unwrap_or(Value::Null))
     }
 
-    /// Runs `act` on the page, then returns the settled page as an edit of
-    /// `base`. A tab the act opened comes to the front and is read whole
-    /// once it loads, as is the tab a front tab the act closed gave way to;
-    /// the agent's next answer names the switch.
+    /// Runs `setup`, then `act`, the input, on the page, then returns the
+    /// settled page as an edit of `base`. A tab the act opened comes to the
+    /// front and is read whole once it loads, as is the tab a front tab the
+    /// act closed gave way to; the agent's next answer names the switch. A
+    /// page `watch` proves unchanged answers at once, with its fact.
     fn act(
         &mut self,
         base: &Base,
+        watch: &Watch<'_>,
+        setup: impl FnOnce(&Self) -> Result<(), BrowserError>,
         act: impl FnOnce(&Self) -> Result<(), BrowserError>,
     ) -> Result<Observation, BrowserError> {
         let before = self.fingerprint()?;
         let start = Instant::now();
         // An act that closed its own tab can fail or stop settling as the
         // tab goes; the tab it gave way to is then the act's result.
-        let acted = act(self);
+        let set = setup(self);
+        let mark = if set.is_ok() { self.mark(watch) } else { None };
+        let acted = set.and_then(|()| act(self));
+        let fact = match (&acted, mark) {
+            (Ok(()), Some(mark)) => self.no_effect(&mark, watch, Instant::now()),
+            _ => None,
+        };
         let settled = match &acted {
-            Ok(()) => self.settle(before, start),
-            Err(_) => Ok(()),
+            Ok(()) if fact.is_none() => self.settle(before, start),
+            _ => Ok(()),
         };
         // A look at the tabs that fails leaves the front where it was: the
         // act's effect stands either way, and its receipt with it.
@@ -828,7 +867,10 @@ impl CdpDriver {
                 let _ = self.settle(before, Instant::now());
             }
         }
-        self.observation(base)
+        let mut observation = self.observation(base)?;
+        // A tab the act opened or closed is an effect: no fact stands.
+        observation.fact = fact.filter(|_| moved.is_none());
+        Ok(observation)
     }
 
     /// Waits until the front tab's document has loaded, up to `deadline`:
@@ -1157,21 +1199,42 @@ fn attach_tab(pipe: &Pipe, target: &str) -> Result<String, BrowserError> {
     ] {
         pipe.call(Some(&session), method, params, Instant::now() + CALL)?;
     }
+    // The change check counts the tab's navigation events; a tab whose Page
+    // events never started is driven as before, and proves no act inert.
+    let by = Instant::now() + CALL;
+    let enabled = pipe.call(Some(&session), "Page.enable", json!({}), by);
+    if enabled.is_ok() {
+        pipe.watch_navigations(&session);
+    }
     Ok(session)
 }
 
 impl BrowserDriver for CdpDriver {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
+        let watch = Watch::Navigate(input.url.clone());
+        let mark = self.mark(&watch);
         let navigated = self.page("Page.navigate", json!({"url": input.url}))?;
         if let Some(error) = navigated.get("errorText").and_then(Value::as_str) {
             return Err(BrowserError::Navigation(error.to_owned()));
         }
-        if !self.loaded(Instant::now() + LOAD)? {
-            return Err(BrowserError::Timeout(format!("{} to load", input.url)));
+        // A navigate that started nothing answers at once, with its fact;
+        // one that started loads as it always did, however late.
+        let fact = match mark {
+            Some(mark) if !change::navigation_started(&navigated) => {
+                self.no_effect(&mark, &watch, Instant::now())
+            }
+            _ => None,
+        };
+        if fact.is_none() {
+            if !self.loaded(Instant::now() + LOAD)? {
+                return Err(BrowserError::Timeout(format!("{} to load", input.url)));
+            }
+            let before = self.fingerprint()?;
+            self.settle(before, Instant::now())?;
         }
-        let before = self.fingerprint()?;
-        self.settle(before, Instant::now())?;
-        self.observation(&Base::Whole)
+        let mut observation = self.observation(&Base::Whole)?;
+        observation.fact = fact;
+        Ok(observation)
     }
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
@@ -1221,7 +1284,7 @@ impl BrowserDriver for CdpDriver {
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
         let (x, y) = self.point(&input)?;
-        self.click_point(x, y, &Base::of(input.base))
+        self.click_point(x, y, None, &Base::of(input.base))
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {

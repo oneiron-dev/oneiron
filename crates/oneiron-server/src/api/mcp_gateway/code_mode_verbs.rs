@@ -587,10 +587,12 @@ impl RunBrowser {
         // the verb `browser_taken_over`; the first answer after they hand it
         // back carries the takeover's record as `takeover`. An answer after
         // the agent's verbs moved to another tab (one its act opened, or the
-        // one a closed tab gave way to) names the move as `switched`.
+        // one a closed tab gave way to) names the move as `switched`. Every
+        // answer names the engine that ran it (FIX 6680).
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
         self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut() {
+            object.insert("engine".into(), Value::from(driver.engine().as_str()));
             if let Some(record) = driver.take_returned() {
                 object.insert(
                     "takeover".into(),
