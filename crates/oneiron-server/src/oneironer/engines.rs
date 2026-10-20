@@ -330,11 +330,19 @@ fn build_id() -> String {
     )
 }
 
-/// `<data>/oneiron/oneironer/engines.json`, the data directory found the way
-/// the embedder's model root is: `XDG_DATA_HOME`, then the home share tree.
-/// `None` when neither names an absolute directory; rows are then measured
-/// and kept for this process only.
-fn rows_path() -> Option<PathBuf> {
+/// The rows file: `rows_location` when the caller names one, and then no
+/// environment is read; else `<data>/oneiron/oneironer/engines.json`, the
+/// data directory found the way the embedder's model root is:
+/// `XDG_DATA_HOME`, then the home share tree. `None` when nothing is named
+/// and neither names an absolute directory; rows are then measured and kept
+/// for this process only.
+///
+/// A managed vault names its own, under its data directory: it reads no HOME
+/// or XDG, and its rows never go under a shared model root or a bundle.
+fn rows_path(rows_location: Option<&Path>) -> Option<PathBuf> {
+    if let Some(rows_location) = rows_location {
+        return Some(rows_location.to_path_buf());
+    }
     let absolute = |key: &str| {
         let path = PathBuf::from(std::env::var_os(key)?);
         path.is_absolute().then_some(path)
@@ -480,7 +488,13 @@ pub(crate) struct Survey {
 /// does not clear, so it is not tried again until something moves. When no
 /// engine clears, the survey has no default and `auto` is refused: it would
 /// serve answers the reference disowns. A named device still serves.
-pub(crate) fn survey(config: &OneironerConfig) -> anyhow::Result<Survey> {
+///
+/// `rows_location` names the rows file; `None` keeps the XDG/HOME default
+/// ([`rows_path`]).
+pub(crate) fn survey(
+    config: &OneironerConfig,
+    rows_location: Option<&Path>,
+) -> anyhow::Result<Survey> {
     let dir = config
         .model_dir
         .as_deref()
@@ -506,7 +520,7 @@ pub(crate) fn survey(config: &OneironerConfig) -> anyhow::Result<Survey> {
             loaded: None,
         });
     };
-    let path = rows_path();
+    let path = rows_path(rows_location);
     let mut rows = path.as_deref().map(read_rows).unwrap_or_default();
     let build = build_id();
     let mut engines = Vec::with_capacity(here.len());
@@ -621,8 +635,12 @@ pub(crate) struct Serving {
 }
 
 /// Loads the local tagger on the engine the section picks: the named device
-/// when there is one, else the survey's default.
-pub(crate) fn load(config: &OneironerConfig) -> anyhow::Result<(LocalTagger, Serving)> {
+/// when there is one, else the survey's default, whose rows live in
+/// `rows_location` ([`survey`]).
+pub(crate) fn load(
+    config: &OneironerConfig,
+    rows_location: Option<&Path>,
+) -> anyhow::Result<(LocalTagger, Serving)> {
     if config.device != EmbedderDevice::Auto {
         let engine = Engine {
             runtime: config.runtime,
@@ -645,7 +663,7 @@ pub(crate) fn load(config: &OneironerConfig) -> anyhow::Result<(LocalTagger, Ser
             },
         ));
     }
-    let survey = survey(config)?;
+    let survey = survey(config, rows_location)?;
     let Some(engine) = survey.default else {
         anyhow::bail!(
             "no oneironer engine on this machine clears the bundle's parity bar; name one with oneironer.device"
