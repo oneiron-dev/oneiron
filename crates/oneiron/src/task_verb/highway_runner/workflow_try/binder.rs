@@ -42,11 +42,13 @@ pub(crate) enum WorkflowBinder<'a> {
     /// rechecked as a person and never as the owner. Their run is a root
     /// they pay for under `funding`, the terms they accepted. `lane` builds
     /// the key their credential reads through, only once no run an earlier
-    /// request started answers theirs (FIX 5415).
+    /// request started answers theirs (FIX 5415). `slip` is the id of the
+    /// slip their call presented, which the binding keeps (FIX 5419).
     Person {
         person: &'a AuthenticatedOwner,
         lane: &'a dyn Fn() -> MemoryResult<ScopedReadActorKey>,
         funding: &'a WorkflowFunding,
+        slip: Option<[u8; 32]>,
     },
 }
 
@@ -60,12 +62,16 @@ pub(crate) struct WorkflowFunding {
 
 /// One run's binding to the TASK it realizes, as its intent stores it: the
 /// TASK, its binder under that binder's class, and whether every step's
-/// model calls must read a payer, as a member's run's must (FIX 5316).
+/// model calls must read a payer, as a member's run's must (FIX 5316). A
+/// member's binding also keeps the slip their call presented, settlement
+/// metadata only (FIX 5419): it admits nothing and is no part of the
+/// request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct WorkflowTaskBind {
     pub(crate) task: EntityId,
     pub(crate) bound_by: WriteActor,
     pub(crate) payer_required: bool,
+    pub(crate) slip: Option<[u8; 32]>,
 }
 
 impl WorkflowTaskBind {
@@ -125,12 +131,17 @@ impl WorkflowBinder<'_> {
         }
     }
 
-    /// The binding `actor` makes of `task`: a member's requires a payer.
+    /// The binding `actor` makes of `task`: a member's requires a payer and
+    /// keeps the slip they presented.
     pub(super) fn bind(&self, task: EntityId, actor: WriteActor) -> WorkflowTaskBind {
         WorkflowTaskBind {
             task,
             bound_by: actor,
             payer_required: matches!(self, Self::Person { .. }),
+            slip: match self {
+                Self::Person { slip, .. } => *slip,
+                Self::Owner(_) | Self::Agent { .. } => None,
+            },
         }
     }
 

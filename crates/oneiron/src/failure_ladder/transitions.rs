@@ -108,16 +108,18 @@ pub(crate) fn verified_blocked_reports(
 /// input won it, so the loser routes NOTHING — no healer dispatch, no card, no
 /// surface — and returns the existing typed transition error. `turn` is the
 /// task-work turn the ladder took for the try's TASK report (Rule 5).
+///
+/// It commits through the grouped write door (FIX 6323), whose postcommit
+/// scope holds what the TASK report queued (`queue_settled_tasks`): a TASK
+/// this failure settles wakes its peer-result waiters once the commit is
+/// durable, and the door notifies the attempt observers. A wake that does
+/// not go out is left to the wake pass and never fails this write.
 pub(super) fn fail_once(
     vault: &Vault,
     input: &HandleAttemptFailure,
     turn: Option<&Arc<TaskWorkTurn>>,
 ) -> Result<AttemptRecord> {
-    let mut txn = vault.store.env.write_txn()?;
-    let failed = fail_once_in_txn(vault, &mut txn, input, turn)?;
-    txn.commit()?;
-    vault.store.notify_attempt_observers();
-    Ok(failed)
+    vault.with_write_txn_grouped(|txn| fail_once_in_txn(vault, txn, input, turn))
 }
 
 pub(super) fn fail_once_in_txn(
