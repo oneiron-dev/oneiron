@@ -225,6 +225,10 @@ fn ended_in(
     }
     let bindings = liveness::thread_task_bindings(turns, &selected)?;
     let tasks = crate::task_verb::room_thread_tasks(memory, &selected, &bindings, members, now)?;
+    let edits = {
+        let txn = memory.vault().store.env.read_txn().map_err(Error::from)?;
+        super::audience_events::audience_edit_turns_in(memory.vault(), &txn, turns)?
+    };
     let mut ended = BTreeSet::new();
     for thread in threads {
         let held: Vec<_> = tasks
@@ -232,7 +236,7 @@ fn ended_in(
             .filter(|task| task.thread == *thread)
             .cloned()
             .collect();
-        if liveness::thread_is_live(turns, &held, room, *thread, now)? == Some(false) {
+        if liveness::thread_is_live(turns, &edits, &held, room, *thread, now)? == Some(false) {
             ended.insert(*thread);
         }
     }

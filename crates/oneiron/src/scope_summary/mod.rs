@@ -28,7 +28,7 @@ pub(crate) use doors::{
 };
 pub(crate) use request::ComposedSummary;
 pub use request::{ScopeSummaryQueued, ScopeSummaryRequest, ScopeSummaryTarget};
-pub(crate) use word_sources::{WordSources, word_sources_in};
+pub(crate) use word_sources::{WordSources, word_sources_in, word_sources_through_in};
 
 #[cfg(test)]
 mod tests;

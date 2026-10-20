@@ -11235,6 +11235,7 @@
       "output": "crate::workspace_roster::ThreadJoinRequestView",
       "call": "memory.rooms_thread_join_deny(&input)?",
       "scope": "Write",
+      "lands_turn": true,
       "mcp_fields": {
         "spec": "$"
       },

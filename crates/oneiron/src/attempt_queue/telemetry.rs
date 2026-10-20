@@ -79,6 +79,7 @@ pub(super) fn emit_attempt_queue_cleanup_span(
 ) {
     let retry_lease_timeout = report.retry_reason_count(AttemptQueueRetryReason::LeaseTimeout);
     let retry_backoff = report.retry_reason_count(AttemptQueueRetryReason::RetryBackoff);
+    let retry_due_later = report.retry_reason_count(AttemptQueueRetryReason::DueLater);
     let span = tracing::info_span!(
         target: "oneiron::attempt_queue",
         "attempt_queue_cleanup",
@@ -92,6 +93,7 @@ pub(super) fn emit_attempt_queue_cleanup_span(
         abandoned = report.abandoned,
         retry_lease_timeout,
         retry_backoff,
+        retry_due_later,
     );
     let _entered = span.enter();
     tracing::info!(
@@ -105,6 +107,7 @@ pub(super) fn emit_attempt_queue_cleanup_span(
         abandoned = report.abandoned,
         retry_lease_timeout,
         retry_backoff,
+        retry_due_later,
         "attempt queue cleanup completed"
     );
 }

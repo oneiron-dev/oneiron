@@ -328,6 +328,43 @@ impl super::AgentDispatcher<'_> {
             .collect())
     }
 
+    /// `intent` as [`RECORD`] stores it (FIX 2314): read through the
+    /// side-row wall in `txn`, the vault's custody door holding it, so each
+    /// secret it carries reads as its custody handle, a value custody
+    /// already holds keeping its own. Every compare, wrapper payload, frozen
+    /// step and returned status is derived from this reading: equal requests
+    /// stay one intent, and two secrets stay two. No wrapper has an id yet,
+    /// so the wall's custody records name the nil attempt's place for it.
+    pub(super) fn admitted_workflow_intent_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        intent: WorkflowIntent,
+    ) -> Result<WorkflowIntent> {
+        let unplaced = AttemptId::from_bytes(&[0; 16])?;
+        let mut record = WorkflowRecord {
+            version: 1,
+            root: unplaced,
+            intent,
+            steps: Vec::new(),
+            active: unplaced,
+            results: Vec::new(),
+            launch: None,
+            task_settled: None,
+        };
+        RECORD.admit(self.vault, txn, &unplaced, &mut record)?;
+        Ok(record.intent)
+    }
+
+    /// [`Self::admitted_workflow_intent_in`] in a writer of its own that
+    /// commits nothing, for a replay read outside a writer.
+    pub(super) fn admitted_workflow_intent(
+        &self,
+        intent: WorkflowIntent,
+    ) -> Result<WorkflowIntent> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        self.admitted_workflow_intent_in(&mut txn, intent)
+    }
+
     pub(super) fn read_workflow(
         &self,
         txn: &heed::RoTxn<'_>,

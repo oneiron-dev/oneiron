@@ -840,8 +840,9 @@ impl Memory<'_> {
             &members,
             policy.now,
         )?;
+        let edits = self.audience_edits_among(turns)?;
         Ok(super::liveness::project_in_room(
-            turns, &tasks, policy, room,
+            turns, &edits, &tasks, policy, room,
         )?)
     }
 
@@ -1007,8 +1008,20 @@ impl Memory<'_> {
         )?;
         // A private thread's audience and walk-ins, for a reader in it
         // (FIX 6381).
-        let thread = super::liveness::project_target(turns, &tasks, handle, now)?;
+        let edits = self.audience_edits_among(turns)?;
+        let thread = super::liveness::project_target(turns, &edits, &tasks, handle, now)?;
         self.with_thread_audience(room, handle, thread)
+    }
+
+    /// The audience edits among `turns`, which a thread fold reads as no
+    /// thread's last message or last reply (FIX 6544).
+    fn audience_edits_among(&self, turns: &[RoomTurn]) -> MemoryResult<BTreeSet<EntityId>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        Ok(super::audience_events::audience_edit_turns_in(
+            self.vault(),
+            &txn,
+            turns,
+        )?)
     }
 }
 

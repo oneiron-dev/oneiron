@@ -431,6 +431,8 @@ pub(crate) fn invalidate_thread_meta_for_turn_put(
 /// when the room indexes no such turn, so the caller reads the DAG chain; an
 /// indexed handle with no live reply is an empty thread, never a sibling
 /// chain. Never cached: an ordinary room row does not dirty the DAG's meta.
+/// A private thread's audience edit (FIX 5637) is among its replies but no
+/// reply's activity (FIX 6544): neither `count` nor `last_at` holds it.
 fn room_thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result<Option<Thread>> {
     let conversation = conversation_of(&vault.store, txn, &trunk)?;
     let Some(indexed) =
@@ -439,9 +441,14 @@ fn room_thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result
         return Ok(None);
     };
     let mut rows = std::collections::BTreeMap::new();
+    let mut edits = HashSet::new();
     for turn in indexed.turns {
         let id = EntityId::from_hex(&turn.turn_id)?;
-        if live_entity_row_in_txn(&vault.store, txn, &id)?.is_live() {
+        let row = live_entity_row_in_txn(&vault.store, txn, &id)?;
+        if row.is_live() {
+            if crate::workspace_roster::is_audience_edit_row(&row) {
+                edits.insert(id);
+            }
             rows.insert(id, turn.at);
         }
     }
@@ -458,12 +465,13 @@ fn room_thread_in_txn(vault: &Vault, txn: &RoTxn<'_>, trunk: EntityId) -> Result
     }
     let mut rows: Vec<(u64, EntityId)> = rows.into_iter().map(|(id, at)| (at, id)).collect();
     rows.sort_unstable();
+    let spoken = || rows.iter().filter(|(_, id)| !edits.contains(id));
     Ok(Some(Thread {
         conversation,
         root: rows.first().map(|(_, id)| *id),
-        count: rows.len() as u64,
-        last_at: rows.last().map(|(at, _)| *at),
-        replies: rows.into_iter().map(|(_, id)| id).collect(),
+        count: spoken().count() as u64,
+        last_at: spoken().next_back().map(|(at, _)| *at),
+        replies: rows.iter().map(|(_, id)| *id).collect(),
     }))
 }
 

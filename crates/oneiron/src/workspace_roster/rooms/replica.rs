@@ -63,16 +63,21 @@ pub(crate) enum TurnMerge {
 /// keeps one for (FIX 2028), is refused. A quote is kept only against a
 /// message the row names. A row whose room this vault deleted, or holds no
 /// record of, is refused before anything is written, so no turn or history
-/// row dangles from a room that is gone (OF-522).
+/// row dangles from a room that is gone (OF-522). An actor erased on either
+/// side names no one in the merged row (FIX 6543): the carried copy's actor
+/// this vault erased reads as the erased form, and that form wins over a
+/// live actor for the same turn, as every carrier merge settles who it
+/// names ([`crate::deletion::ACTOR_ERASE_CARRIER_MERGE`]).
 pub(crate) fn merge_replicated_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    carried: RoomTurn,
+    mut carried: RoomTurn,
 ) -> Result<TurnMerge> {
+    const ERASED: &str = crate::receipt::ERASED_CALL_IDENTITY;
     let named = |hex: &str| EntityId::from_hex(hex).is_ok_and(|id| id.to_hex() == hex);
     if !named(&carried.turn_id)
         || !named(&carried.room_id)
-        || !named(&carried.actor)
+        || !(named(&carried.actor) || carried.actor == ERASED)
         || carried.reply_to.as_deref().is_some_and(|id| !named(id))
         || carried.thread_of.as_deref().is_some_and(|id| !named(id))
         || carried
@@ -89,12 +94,24 @@ pub(crate) fn merge_replicated_turn_in_txn(
     if crate::ports::EntityStoreRead::port_entity_record(&vault.store, txn, &room)?.is_none() {
         return Ok(TurnMerge::Refused(TurnMergeRefusal::RoomMissing));
     }
+    if let Ok(actor) = EntityId::from_hex(&carried.actor)
+        && vault.carrier_actor_erased_in_txn(txn, &actor)?
+    {
+        carried.actor = ERASED.to_owned();
+    }
     let id = EntityId::from_hex(&carried.turn_id)?;
     let merged = match TURNS.get(&vault.store, txn, &id)? {
         None => carried,
         Some(held) => {
+            let Some(actor) = crate::deletion::carrier_actor_merged(
+                held.actor.as_str(),
+                carried.actor.as_str(),
+                ERASED,
+            )
+            .map(str::to_owned) else {
+                return Ok(TurnMerge::Refused(TurnMergeRefusal::FixedFieldsConflict));
+            };
             if held.room_id != carried.room_id
-                || held.actor != carried.actor
                 || held.addressed_agents != carried.addressed_agents
                 || held.reply_to != carried.reply_to
                 || held.thread_of != carried.thread_of
@@ -106,6 +123,7 @@ pub(crate) fn merge_replicated_turn_in_txn(
                 return Ok(TurnMerge::Refused(TurnMergeRefusal::FixedFieldsConflict));
             }
             let mut merged = held.clone();
+            merged.actor = actor;
             for message in carried.message_ids {
                 if !merged.message_ids.contains(&message) {
                     merged.message_ids.push(message);

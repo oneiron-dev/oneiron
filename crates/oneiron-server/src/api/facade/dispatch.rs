@@ -22330,6 +22330,7 @@ async fn vault_rooms_thread_join_deny(
         value,
         &producers,
     )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_projects_propose(

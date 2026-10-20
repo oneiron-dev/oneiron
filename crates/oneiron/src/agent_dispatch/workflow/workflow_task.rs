@@ -86,10 +86,13 @@ impl AgentDispatcher<'_> {
     /// The run an identical bound request already started, read before its
     /// TASK is: the same workflow, intent key, request and binding. The same
     /// key with another TASK, no TASK or another request is refused with
-    /// `refusal`, given the key and the run it names.
+    /// `refusal`, given the key and the run it names. A first run whose
+    /// record the side-row wall masked answers the same request, read as
+    /// the wall stores it in `txn` (FIX 2314), which a caller outside its
+    /// own writer opens and commits nothing in.
     pub(crate) fn bound_workflow_existing_in(
         &self,
-        txn: &heed::RoTxn<'_>,
+        txn: &mut heed::RwTxn<'_>,
         input: &DispatchAgent,
         spawn: &AgentSpawnContext,
         bind: &WorkflowTaskBind,
@@ -111,7 +114,9 @@ impl AgentDispatcher<'_> {
         let mut binding = WorkflowTaskBinding::new(bind);
         binding.slip = record.intent.task.as_ref().and_then(|first| first.slip);
         expected.task = Some(binding);
-        if record.intent != expected {
+        if record.intent != expected
+            && record.intent != self.admitted_workflow_intent_in(txn, expected)?
+        {
             return Err(refusal(key, root));
         }
         Ok(Some(AgentDispatchOutcome::WorkflowExisting(Box::new(
@@ -332,7 +337,8 @@ impl AgentDispatcher<'_> {
             return Err(invalid("a TASK-less workflow settles no TASK"));
         }
         record.task_settled = Some(ended.to_owned());
-        RECORD.put(&self.vault.store, txn, &root, &record)
+        // FIX 2314: through the vault's custody door, as admission wrote it.
+        RECORD.put(self.vault, txn, &root, &record)
     }
 
     /// Marks an ended run's TASK settlement run in a writer of its own when

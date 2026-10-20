@@ -18,7 +18,8 @@ use super::attenuation::source_content_fingerprint;
 use super::codec::record_dispatch_input;
 use super::widen_record::{
     PROPOSAL_INDEX, SLICE, SliceOverride, WIDEN, WidenDecline, WidenIntent, WidenLanding,
-    WidenRecord, WidenRequest, WidenTarget, invalid, json, validate_proposal_id, widened_parent,
+    WidenRecord, WidenRequest, WidenTarget, admitted_intent_in, invalid, json,
+    validate_proposal_id, widened_parent,
 };
 use super::workflow_record::WorkflowTaskBinding;
 use super::{
@@ -155,9 +156,17 @@ impl AgentDispatcher<'_> {
         };
         let parent_spec = self.effective_context_spec(parent_id, &parent)?;
         let projection = self.resolve_attempt_context(parent_id)?;
+        // FIX 2314: the intent as the side-row wall stores it, before its
+        // key, its request's id or any compare is derived from it, so its
+        // proposal masks a secret rather than refusing it. Whether the
+        // spawn narrows is still judged on the request as asked.
+        let asked = intent.clone();
+        let intent = admitted_intent_in(self.vault, wtxn, intent)?;
         let key_hash = intent.key_hash()?;
         if let Some(record) = WIDEN.get(&self.vault.store, wtxn, &key_hash)? {
-            if record.version != 1 || record.request.intent != intent {
+            if record.version != 1
+                || (record.request.intent != intent && record.request.intent != asked)
+            {
                 return Err(invalid(
                     "existing widen dedupe key names a different dispatch",
                 ));
@@ -167,14 +176,14 @@ impl AgentDispatcher<'_> {
         }
         // All target leaves must be dispatchable even when only context widens.
         let target_fingerprint = self.widen_target_fingerprint(wtxn, &input.target)?;
-        if validate_spec_narrows(&parent_spec, &intent.spec).is_ok()
-            && validate_context_narrows(&projection, &intent.spec).is_ok()
+        if validate_spec_narrows(&parent_spec, &asked.spec).is_ok()
+            && validate_context_narrows(&projection, &asked.spec).is_ok()
         {
             return Ok(None);
         }
         // A request, not a grant: this transaction contains NO queue or slice write.
         let recorded_at = crate::ports::recorded_at_in_txn(&self.vault.store, wtxn)?;
-        let record = WidenRecord {
+        let mut record = WidenRecord {
             version: 1,
             request: WidenRequest {
                 intent,
@@ -190,8 +199,10 @@ impl AgentDispatcher<'_> {
             landed: None,
             declined: None,
         };
+        // The whole record as the wall stores it, before its proposal's id.
+        WIDEN.admit(self.vault, wtxn, &key_hash, &mut record)?;
         let proposal = record.request.proposal()?;
-        WIDEN.put(&self.vault.store, wtxn, &key_hash, &record)?;
+        WIDEN.put(self.vault, wtxn, &key_hash, &record)?;
         validate_proposal_id(&proposal.proposal_id)?;
         PROPOSAL_INDEX.put(
             &self.vault.store,
@@ -362,7 +373,7 @@ impl AgentDispatcher<'_> {
                 spec: record.request.widened_spec.clone(),
             },
         )?;
-        WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
+        WIDEN.put(self.vault, &mut wtxn, &key_hash, &record)?;
         wtxn.commit()?;
         if let Some(task) = record
             .request
@@ -419,7 +430,7 @@ impl AgentDispatcher<'_> {
         // pending row; a failed append declines nothing.
         self.vault
             .deny_consent_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
-        WIDEN.put(&self.vault.store, &mut wtxn, &key_hash, &record)?;
+        WIDEN.put(self.vault, &mut wtxn, &key_hash, &record)?;
         wtxn.commit()?;
         Ok(())
     }
