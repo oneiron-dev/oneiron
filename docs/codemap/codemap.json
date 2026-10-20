@@ -38971,13 +38971,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/office_body/pptx/doc.rs",
      "purpose": "The PPTX body inside its Loro document, schema 1 (ARCH-0077, \"One deck, one document\")",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/order.rs",
+     "purpose": "A movable list of identities (a body's paragraphs, a table's rows or columns): read in order, and made equal…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/doc/table.rs",
+     "purpose": "A table frame's table in the body's `tables` root, keyed by the frame's identity (ARCH-0077: \"Movable lists…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -38999,6 +39019,16 @@
      "purpose": "The deck log's entries as the body keeps them (FIX 4513): each operation with the commit peer it ran under…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/office_body/pptx/merge.rs",
+     "purpose": "A deck fork's merge candidate as the body would hold it once landed: the head's document with the fork's own…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -65554,7 +65584,7 @@
      "purpose": "Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732"
     },
     "office_body": {
-     "files": 16,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -66198,9 +66228,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 189,
+   "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4132,
+   "source_files": 4135,
    "test_files": 902
   },
   "oneiron-android": {
@@ -71741,6 +71771,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/deck_export/table.rs",
+     "purpose": "A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -71757,7 +71797,17 @@
      "path": "src/live/held.rs",
      "purpose": "What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/held/table.rs",
+     "purpose": "A retained table as the live model reads it (ARCH-0077: a table keeps its `a:tbl`, `a:tblGrid`, row heights…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -71977,14 +72027,55 @@
      "path": "src/live/pptx.rs",
      "purpose": "The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 9,
-      "fn": 32,
+      "fn": 29,
+      "re-export": 2,
       "struct": 24
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/pptx/merge.rs",
+     "purpose": "The three-way comparison of a fork's base, the head and its proposal, and the merge preflight over the…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MergeFault",
+      "TableBinding",
+      "TableBody",
+      "TableEdit",
+      "TableMerge"
+     ],
+     "path": "src/live/pptx/table.rs",
+     "purpose": "A live table (ARCH-0077, \"One deck, one document\": \"Movable lists of stable ids",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/pptx/table_ops.rs",
+     "purpose": "Table edits applied by identity; a whole table written over the table a node holds lowered to the edits that…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/live/reshape.rs",
@@ -71999,6 +72090,16 @@
      "notable": [],
      "path": "src/live/reshape/series.rs",
      "purpose": "A new series' format (OF-510, FIX 3493)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/table.rs",
+     "purpose": "A written table's grid rewritten at export by row and column identity (OF-510)",
      "surface": {
       "crate-vis": 1
      }
@@ -72471,7 +72572,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 27,
+     "files": 33,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72536,7 +72637,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 100,
+   "source_files": 106,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -93548,6 +93649,9 @@
       "SupportHolderClass",
       "TabSwitch",
       "TabSwitchCause",
+      "TableBody",
+      "TableEdit",
+      "TableMerge",
       "TaggedMentionView",
       "TaggingFailureView",
       "TaggingHistoryView",
@@ -93915,8 +94019,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 882,
-      "struct": 2789
+      "enum": 883,
+      "struct": 2791
      }
     },
     {
