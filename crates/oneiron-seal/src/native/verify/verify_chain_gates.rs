@@ -1,10 +1,10 @@
 //! Trust entry: VerifyCtx, the KeyUsage turnstile, chain validation, anchor loading, verify_document and profile classify.
 
-use lopdf::{Document, LoadOptions};
+use lopdf::Document;
 
 use crate::api::{
-    Counter, Modifications, STREAM_DECODE_BYTES, SealConfig, VerifyCheckKind, VerifyCheckStatus,
-    VerifyFindingCode, VerifyReport,
+    Counter, Modifications, SealConfig, VerifyCheckKind, VerifyCheckStatus, VerifyFindingCode,
+    VerifyReport,
 };
 use crate::error::{InputInvalidCode, SealError};
 
@@ -21,6 +21,10 @@ pub(crate) struct VerifyCtx<'a> {
     pub config: &'a SealConfig,
     pub clock_ms: u64,
 }
+
+/// What one DSS stream may decode to: no bound (Rule 5). Each is decoded
+/// whole, and the largest goes to the `seal_stream_decode_bytes` row.
+const DSS_STREAM_WHOLE: usize = usize::MAX;
 
 pub(super) fn malformed_input() -> SealError {
     SealError::InputInvalid {
@@ -214,13 +218,14 @@ fn classify_missing_material_root(
 
 /// Full document verification and profile classification (§7.7). On size
 /// it refuses only past the format bounds (lopdf's u32 offsets, the ISO
-/// object count) and one stream decoding past the per-stream codec bound;
-/// what it counts goes to the invocation's observations (Rule 5).
+/// object count); every stream decodes whole, and what it counts goes to
+/// the invocation's observations (Rule 5).
 pub(crate) fn verify_document(
     bytes: &[u8],
     ctx: &VerifyCtx<'_>,
 ) -> Result<VerifyReport, SealError> {
     let limits = &ctx.config.resource_limits;
+    let _analysis = limits.observed.enter();
     let artifact_sha256 = cms::sha256(bytes);
     if bytes.is_empty() {
         return Err(SealError::InputInvalid {
@@ -237,15 +242,10 @@ pub(crate) fn verify_document(
             code: InputInvalidCode::NotPdf,
         });
     }
-    let options = LoadOptions {
-        strict: true,
-        max_decompressed_size: Some(STREAM_DECODE_BYTES),
-        ..LoadOptions::default()
-    };
-    let doc = Document::load_mem_with_options(bytes, options).map_err(|_| malformed_input())?;
+    let doc = pdf::load_strict(bytes, &limits.observed).map_err(|_| malformed_input())?;
     limits.observed.note(Counter::PdfObjects, doc.objects.len());
-    // Byte/decompress limits ride the loader; the ISO object bound does
-    // not — enforce it here exactly as the seal side does.
+    // The loader decodes every stream whole; the ISO object bound, which it
+    // does not hold, is enforced here exactly as the seal side does.
     if doc.objects.len() > limits.max_pdf_objects {
         return Err(SealError::InputInvalid {
             code: InputInvalidCode::ObjectLimitExceeded,
@@ -260,7 +260,7 @@ pub(crate) fn verify_document(
         VerifyFindingCode::InvalidPdfRevision,
     );
     // The same structural xref/EOF analysis used by prepared admission
-    // accepts up to four final CR/LF bytes. Do not keep a competing
+    // accepts any final run of CR/LF bytes. Do not keep a competing
     // single-newline predicate on the verify side.
     let revision_ends = pdf::revision_ends(bytes, &doc, limits);
     checks.record(
@@ -309,7 +309,7 @@ pub(crate) fn verify_document(
         &anchor_certs,
         &covered,
         material_validation_time(&envelopes, dss_end, ctx.clock_ms / 1000),
-        STREAM_DECODE_BYTES,
+        DSS_STREAM_WHOLE,
         &mut checks,
     );
     limits.observed.note(Counter::DssDecodeBytes, decoded);
@@ -323,7 +323,7 @@ pub(crate) fn verify_document(
             &doc,
             &covered,
             provisional_material_time(&envelopes, dss_end, None, ctx.clock_ms / 1000),
-            STREAM_DECODE_BYTES,
+            DSS_STREAM_WHOLE,
             &mut checks,
         );
         checks
@@ -378,7 +378,7 @@ pub(crate) fn verify_document(
             archival
                 .as_ref()
                 .map_or(ctx.clock_ms / 1000, |proof| proof.at),
-            STREAM_DECODE_BYTES,
+            DSS_STREAM_WHOLE,
             &mut material_checks,
         );
         limits.observed.note(Counter::DssDecodeBytes, decoded);
@@ -396,7 +396,7 @@ pub(crate) fn verify_document(
                     Some(&envelopes[index]),
                     ctx.clock_ms / 1000,
                 ),
-                STREAM_DECODE_BYTES,
+                DSS_STREAM_WHOLE,
                 &mut material_checks,
             );
             material_checks
