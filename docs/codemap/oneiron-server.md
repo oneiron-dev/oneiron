@@ -568,6 +568,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/big_rung.rs` | src | m | 6 crate-vis | — | The big model on the decision ladder's Big rung (ARCH-0076, OF-495) |
 | `src/bin/oneiron-broker.rs` | src | s | — | — | `oneiron-broker serve`: the credential broker, run as its own OS user |
 | `src/bin/oneiron-vm-init.rs` | src | s | — | — | `oneiron-vm-init`: a vault VM's root bootstrap, run by the image's init before the engine… |
+| `src/bin/oneiron-vm-outbox.rs` | src | s | — | — | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… |
 | `src/bin/oneiron.rs` | src | s | — | — | — |
 | `src/broadcast.rs` | src | s | 8 crate-vis | — | Broadcast group for multi-device fan-out with echo suppression |
 | `src/builtin_host.rs` | src | s | 5 crate-vis | — | The served host's side of the built-in connector packs (OF-519): the connection checks only a served host… |
@@ -816,13 +817,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/attested_routes.rs` | src | m | 5 crate-vis | — | The routes managed ingress verifies a supervisor's owner attestation on, past the facade, owner and console… |
 | `src/managed/backup_facts.rs` | src | s | 1 crate-vis | — | What a managed vault reports of its backups on every `Ping` (Engine 10-20 row (b)): this install's… |
 | `src/managed/ctl_shed_tests.rs` | test | s | — | — | — |
-| `src/managed/host.rs` | src | s | 7 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
+| `src/managed/host.rs` | src | s | 8 crate-vis | — | Managed process entry behind the shared six-verb Host contract |
 | `src/managed/isolation.rs` | src | m | 14 crate-vis | — | Fail-closed Linux fscrypt and root-owned UID allocation probes |
 | `src/managed/key_sync.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 type · 1 const · 1 re-export | KeyInvalidation, KeyInvalidationKind | Managed-host wiring for the node account-key path (OF-448, the node half of CROSS-ARCH-0008 section 4, owner… |
 | `src/managed/ledger.rs` | src | m | 2 struct · 10 fn · 1 const · 5 crate-vis | LedgerSnapshot, WakeLedger | Managed wake ledger: entries, revision, and supervisor pushes |
 | `src/managed/listener.rs` | src | m | 1 struct · 2 enum · 10 fn · 1 const · 2 crate-vis | BoundServeListener, ManagedCtl, ServeListener | Managed sockets: listener resolution and binding, the ctl plane, and readiness |
 | `src/managed/listener/tests.rs` | test | s | — | — | — |
-| `src/managed/mod.rs` | src | s | 3 mod · 9 re-export · 3 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
+| `src/managed/mod.rs` | src | s | 3 mod · 10 re-export · 3 crate-vis | — | Managed serve mode: the vault engine as a supervised child process |
 | `src/managed/org_routing.rs` | src | s | 2 struct · 1 enum · 11 fn | OrgRoutingError, OrgVaultRoute, OrgVaultRouter | Read-only organization-to-vault routing over a host's registry projection |
 | `src/managed/owner_recovery.rs` | src | s | 1 crate-vis | — | Owner-signing recovery (FIX 5260): the vault's proof, on its supervisor's `recover_owner_signing` challenge… |
 | `src/managed/owner_stage.rs` | src | m | 2 crate-vis | — | Managed ingress's byte-exact staging of an owner-attested request whose body streams (FIX 5255, part 2 of… |
@@ -840,14 +841,23 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/managed/shed.rs` | src | s | 3 crate-vis | — | Mapping the engine's shed transaction, and the supervisor's SLIM status and unslim (FIX 5186), to the… |
 | `src/managed/state_serve.rs` | src | XL | 3 struct · 21 fn · 1 type · 1 const · 18 crate-vis | ManagedShutdown, ManagedState, ObservedAlarm | Managed runtime state, the reap freeze gate, and the supervised serve loop |
 | `src/managed/state_serve/boot_keys.rs` | src | s | 3 crate-vis | — | The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its… |
-| `src/managed/state_serve/control.rs` | src | s | 1 fn | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
+| `src/managed/state_serve/control.rs` | src | s | 1 fn · 2 crate-vis | — | The ctl dispatcher: every parsed ctl request a managed vault answers |
 | `src/managed/vault_gates.rs` | src | m | 3 fn · 3 const · 7 crate-vis | — | Managed vault open gates: credentials, the canary marker, and the DEK MAC |
-| `src/managed/vm_guest.rs` | src | s | 6 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
+| `src/managed/vm_guest.rs` | src | s | 7 crate-vis | — | Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer… |
 | `src/managed/vm_host.rs` | src | m | 3 struct · 1 enum · 15 fn | SleepOutcome, VaultVm, VaultVmConfig, VaultVmRun | The microVM adapter's host half: one Firecracker VM per vault |
 | `src/managed/vm_host/provision.rs` | src | s | 2 crate-vis | — | The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential… |
 | `src/managed/vm_init.rs` | src | m | 1 fn | — | A vault VM's root bootstrap, `oneiron-vm-init` (FIX 6308): the step between the image's shell init, which… |
 | `src/managed/vm_init/fscrypt.rs` | src | s | 8 crate-vis | — | The fscrypt v2 ioctls a vault VM's root bootstrap needs (`linux/fscrypt.h`): add the vault's key to its… |
 | `src/managed/vm_init/layout.rs` | src | m | 10 crate-vis | — | The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets… |
+| `src/managed/vm_init/outbox.rs` | src | s | 4 crate-vis | — | The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its… |
+| `src/managed/vm_outbox/endpoint.rs` | src | s | 8 crate-vis | — | The companion's local lifecycle endpoint, `/run/oneiron-outbox/ lifecycle.sock`: a root-owned socket only… |
+| `src/managed/vm_outbox/guest.rs` | src | m | 1 fn | — | `oneiron-vm-outbox`: the vault VM's root outbox companion (FIX 5235, FIX 5467) |
+| `src/managed/vm_outbox/host.rs` | src | s | 2 struct · 4 fn | VmOutboxAttachment, VmOutboxHostRoots | The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for… |
+| `src/managed/vm_outbox/local.rs` | src | m | 15 crate-vis | — | One end's own outbox tree, as the carrier reads and writes it: through held directories, each part opened… |
+| `src/managed/vm_outbox/mod.rs` | src | s | 2 re-export · 5 crate-vis | — | A vault VM's outbox carrier (FIX 5235, FIX 5467): both ends of the one persistent, bidirectional stream on… |
+| `src/managed/vm_outbox/scan.rs` | src | s | 3 crate-vis | — | What one end has to send, found by comparing its tree with its records |
+| `src/managed/vm_outbox/store.rs` | src | s | 10 crate-vis | — | One end's durable carrier state: a record per member and its next transfer id, in a directory only that… |
+| `src/managed/vm_outbox/transfer.rs` | src | m | 4 crate-vis | — | The carrier's session on one connection: the hello, then turns |
 | `src/managed/vm_schedule.rs` | src | s | 6 crate-vis | — | The standalone VM host's acknowledged wake ledger |
 | `src/mcp/actors.rs` | src | m | 5 struct · 3 enum · 18 fn · 8 crate-vis | McpBoardSnapshot, McpConnectorActorRecord, McpConnectorActorRegistrationError, McpConnectorActorResolutionError, McpConnectorActorRevokeStatus, McpConnectorScope, McpCredentialHashKey, McpResolvedActor | MCP connector actor types: credentials, scopes, records, and resolution |
 | `src/mcp/args.rs` | src | s | 3 struct · 1 enum | McpActorClass, McpActorMetadata, McpConsentMetadata, McpToolScope | MCP actor and consent metadata: the envelope every endpoint tool call carries |

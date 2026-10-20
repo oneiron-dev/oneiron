@@ -84146,6 +84146,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/bin/oneiron-vm-outbox.rs",
+     "purpose": "`oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/bin/oneiron.rs",
      "purpose": "—",
      "surface": {}
@@ -87019,7 +87027,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -87101,7 +87109,7 @@
      "surface": {
       "crate-vis": 3,
       "mod": 3,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -87307,6 +87315,7 @@
      "path": "src/managed/state_serve/control.rs",
      "purpose": "The ctl dispatcher: every parsed ctl request a managed vault answers",
      "surface": {
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -87329,7 +87338,7 @@
      "path": "src/managed/vm_guest.rs",
      "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -87387,6 +87396,101 @@
      "purpose": "The vault VM's disk layout, provision record, UID table and socket directories, as the root bootstrap sets…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_init/outbox.rs",
+     "purpose": "The outbox companion beside the engine (FIX 5235, FIX 5467): the bootstrap starts `oneiron-vm-outbox` as its…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/endpoint.rs",
+     "purpose": "The companion's local lifecycle endpoint, `/run/oneiron-outbox/ lifecycle.sock`: a root-owned socket only…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/guest.rs",
+     "purpose": "`oneiron-vm-outbox`: the vault VM's root outbox companion (FIX 5235, FIX 5467)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmOutboxAttachment",
+      "VmOutboxHostRoots"
+     ],
+     "path": "src/managed/vm_outbox/host.rs",
+     "purpose": "The host's end of a vault VM's outbox carrier: an attachment bound to one VM's guest-initiated socket for…",
+     "surface": {
+      "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/local.rs",
+     "purpose": "One end's own outbox tree, as the carrier reads and writes it: through held directories, each part opened…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/mod.rs",
+     "purpose": "A vault VM's outbox carrier (FIX 5235, FIX 5467): both ends of the one persistent, bidirectional stream on…",
+     "surface": {
+      "crate-vis": 5,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/scan.rs",
+     "purpose": "What one end has to send, found by comparing its tree with its records",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/store.rs",
+     "purpose": "One end's durable carrier state: a record per member and its next transfer id, in a directory only that…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/vm_outbox/transfer.rs",
+     "purpose": "The carrier's session on one connection: the hello, then turns",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -90651,7 +90755,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 38,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90807,7 +90911,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 919,
+   "source_files": 929,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -95134,7 +95238,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 17,
+      "mod": 18,
       "re-export": 9
      }
     },
@@ -95390,9 +95494,46 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 14,
+      "const": 15,
       "enum": 2,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VmOutboxAck",
+      "VmOutboxDeferral",
+      "VmOutboxDescriptor",
+      "VmOutboxFrame",
+      "VmOutboxKind",
+      "VmOutboxOperation",
+      "VmOutboxOutcome",
+      "VmOutboxRefusal",
+      "VmOutboxSide"
+     ],
+     "path": "src/lib/vm_outbox.rs",
+     "purpose": "A vault VM's outbox carrier (FIX 5235, FIX 5467): one persistent, bidirectional stream on vsock port…",
+     "surface": {
+      "const": 5,
+      "enum": 7,
+      "fn": 12,
+      "re-export": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VmOutboxMember"
+     ],
+     "path": "src/lib/vm_outbox/members.rs",
+     "purpose": "Each outbox kind's member names, as the carrier takes them: the owning protocol's own file names, relative…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -95434,7 +95575,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 36,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -95443,7 +95584,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 35,
+   "source_files": 37,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
