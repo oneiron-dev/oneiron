@@ -38,11 +38,12 @@ use super::{
 };
 use crate::store::custody_protocol::{
     AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodyNamespace, CustodyTarget,
-    CustodyVaultId, TargetId, TargetPending, TargetSpec,
+    CustodyVaultId, HostedKind, TargetId, TargetKind, TargetPending, TargetSpec,
 };
 use crate::store::{
     CUSTODY_HEAD_WRAP_CONTEXT, CustodyKind, CustodyRecipients, CustodyRoute, CustodySourceAt,
-    FileAnchor, FolderTarget, Publication, route_custody, standing_retirements_in_txn,
+    FileAnchor, FolderTarget, OutboxTarget, Publication, route_custody,
+    standing_retirements_in_txn,
 };
 use crate::{Result, Vault, VaultConfig};
 
@@ -100,6 +101,25 @@ impl<'a> CustodyRecovery<'a> {
     }
 }
 
+/// The Hypnos outbox a managed vault's hosted custody ships through (FIX
+/// 5899): `custody/` under the escrow outbox its supervisor names, and the
+/// vault's name as the supervisor gave it. A declared `outbox:` member is
+/// staged there, one exact batch at a time, and acknowledged by the control
+/// plane's ack Hypnos writes back; without one it stays `no_adapter`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CustodyOutbox {
+    root: PathBuf,
+    vault_name: String,
+}
+
+impl CustodyOutbox {
+    /// The outbox at `root`, which the engine makes when missing, for the
+    /// vault named `vault_name`.
+    pub fn at(root: PathBuf, vault_name: String) -> Self {
+        Self { root, vault_name }
+    }
+}
+
 impl Vault {
     /// Who this vault's custody heads are wrapped to: its pinned recovery
     /// root (the kit keeps only its seed), and its data key's custody
@@ -132,7 +152,8 @@ impl Vault {
         declared: &[TargetSpec],
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<CustodyStatus> {
-        self.publish_custody_claiming(FolderTarget::at(folder.to_path_buf()), declared, anchor)
+        let folder = FolderTarget::at(folder.to_path_buf());
+        self.publish_custody_claiming(folder, declared, None, anchor)
     }
 
     /// [`Vault::publish_custody`] with the folder's frames and head claimed
@@ -146,21 +167,58 @@ impl Vault {
         room: Box<dyn super::RecoveryWriteBudget>,
     ) -> Result<CustodyStatus> {
         let folder = FolderTarget::at(folder.to_path_buf()).claiming(room);
-        self.publish_custody_claiming(folder, declared, anchor)
+        self.publish_custody_claiming(folder, declared, None, anchor)
+    }
+
+    /// [`Vault::publish_custody_within`], every declared `outbox:` member
+    /// shipped through `outbox` (FIX 5899): its acknowledged batch taken in,
+    /// then, once none is outstanding, the batch staged there. Its bulk
+    /// writes belong in a background pass, never a backup's response.
+    pub fn publish_custody_shipping(
+        &self,
+        folder: &Path,
+        declared: &[TargetSpec],
+        outbox: &CustodyOutbox,
+        anchor: Option<&dyn AnchorStore>,
+        room: Box<dyn super::RecoveryWriteBudget>,
+    ) -> Result<CustodyStatus> {
+        let folder = FolderTarget::at(folder.to_path_buf()).claiming(room);
+        self.publish_custody_claiming(folder, declared, Some(outbox), anchor)
     }
 
     fn publish_custody_claiming(
         &self,
         folder: FolderTarget,
         declared: &[TargetSpec],
+        outbox: Option<&CustodyOutbox>,
         anchor: Option<&dyn AnchorStore>,
     ) -> Result<CustodyStatus> {
         let recipients = self.custody_recipients()?;
-        let declared: Vec<DeclaredTarget> =
-            declared.iter().cloned().map(DeclaredTarget::new).collect();
+        let shipped: Vec<OutboxTarget> = declared
+            .iter()
+            .filter(|spec| spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox))
+            .filter_map(|spec| {
+                let outbox = outbox?;
+                Some(OutboxTarget::new(
+                    outbox.root.clone(),
+                    outbox.vault_name.clone(),
+                    spec.clone(),
+                ))
+            })
+            .collect();
+        let declared: Vec<DeclaredTarget> = declared
+            .iter()
+            .filter(|spec| !shipped.iter().any(|target| target.id() == spec.id()))
+            .cloned()
+            .map(DeclaredTarget::new)
+            .collect();
         let mut targets: Vec<&dyn CustodyTarget> = vec![&folder];
+        targets.extend(shipped.iter().map(|target| target as &dyn CustodyTarget));
         targets.extend(declared.iter().map(|target| target as &dyn CustodyTarget));
-        let publication = self.store.publish_custody(&recipients, &targets, anchor)?;
+        let outboxes: Vec<&OutboxTarget> = shipped.iter().collect();
+        let publication = self
+            .store
+            .publish_custody(&recipients, &targets, &outboxes, anchor)?;
         self.custody_status_of(publication)
     }
 

@@ -19,6 +19,7 @@ mod head;
 mod home;
 mod identity;
 mod log;
+mod outbox;
 mod platform;
 pub mod protocol;
 mod publish;
@@ -44,6 +45,7 @@ pub(crate) use self::fork::{CustodyPlan, ForkedCustodyDir, Requirement};
 pub(crate) use self::head::{CUSTODY_HEAD_WRAP_CONTEXT, CustodyRecipients};
 pub(crate) use self::identity::{CustodyBinding, CustodyId, CustodyKind, CustodySubject};
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
+pub(crate) use self::outbox::OutboxTarget;
 pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, PublicationState};
 pub(crate) use self::recovery::{
     CustodyRequirement, CustodyRoute, CustodySourceAt, ROLLBACK_NOT_PROVEN, route_custody,
