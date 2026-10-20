@@ -87,7 +87,7 @@ export type FeedbackSubjectPreview = { issue_ref: string; subject_ref: string; p
 /** `oneiron::task_verb::sdk_feedback::FeedbackSendSubjectRequest` */
 export type FeedbackSendSubjectRequest = { issue_ref: string; category: FeedbackCategory; include_text?: boolean; digest: string; approval: string; previewed_at: number }
 /** `oneiron::task_verb::sdk_feedback::FeedbackSubjectSent` */
-export type FeedbackSubjectSent = { issue_ref: string; subject_ref: string; publisher_ref: string; digest: string; outcome: string; gate_reasons: string[]; approval_receipt_ref: string; logical_send_ref: string }
+export type FeedbackSubjectSent = { issue_ref: string; subject_ref: string; publisher_ref: string; digest: string; outcome: string; gate_reasons: string[]; approval_receipt_ref: string; logical_send_ref: string; approval_digest?: string | null }
 /** `oneiron::feedback::report::routing::ReportDisclosureChoice` */
 export type ReportDisclosureChoice = "approve_once" | "stop_asking_for_publisher" | "deny"
 /** `oneiron::task_verb::sdk_feedback::ReportDisclosureRequest` */
@@ -2599,7 +2599,7 @@ export type TrustedContactDeliverRequest = Record<string, never>
 /** `oneiron::counterparty_contact::trusted_contact_notice::TrustedContactNoticeAuthorization` */
 export type TrustedContactNoticeAuthorization = { origin: "ask"; ask_ref: string } | { origin: "policy"; row_ref: string; tier: TrustedContactTier }
 /** `oneiron::task_verb::sdk_trusted_contact::TrustedContactDeliveryReceipt` */
-export type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean }
+export type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean; approval_digest?: string | null }
 /** `oneiron::task_verb::sdk_guest_document::GuestDocumentShareRequest` */
 export type GuestDocumentShareRequest = { grant_ref: EntityId; world_ref: EntityId; window_key: string; facets?: EntityId[]; bands?: SelectorRange[] }
 /** `oneiron::task_verb::sdk_guest_document::GuestDocumentContext` */
@@ -5861,7 +5861,7 @@ export type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL"
 /** `oneiron::memory::outbound::invite::CalendarInviteSurfaceInput` */
 export type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null }
 /** `oneiron::memory::outbound::types::OutboundIntentReceipt` */
-export type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean }
+export type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; approval_digest?: string | null; deduped: boolean }
 /** `oneiron::calendar::ingest::poll::IcsFeedPollConfig` */
 export type IcsFeedPollConfig = { secret_ref: string; system: string; cadence_min_seconds: number; cadence_max_seconds: number }
 /** `oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest` */
@@ -6149,7 +6149,7 @@ export type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: 
 /** `oneiron::blob_artifact::esign::model::EsignEventRow` */
 export type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number }
 /** `oneiron_contracts::memory::error::MemoryGateDenial` */
-export type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null }
+export type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null; approval_digest?: string | null }
 /** `oneiron_contracts::memory::error::MemoryPolicyExceptionProposal` */
 export type MemoryPolicyExceptionProposal = { action: string; row_ref: string; required_role: string }
 /** `oneiron_contracts::memory::error::MemoryPolicyDenial` */
@@ -6173,7 +6173,7 @@ export type EsignLinksView = { document_ref: string; issued: EsignIssuedLink[]; 
 /** `oneiron::blob_artifact::esign::door::EsignDispatchRequest` */
 export type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null }
 /** `oneiron::blob_artifact::esign::door::EsignDispatchView` */
-export type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] }
+export type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[]; approval_digest?: string | null }
 /** `oneiron::blob_artifact::esign::notice_door::EsignNoticesDispatchRequest` */
 export type EsignNoticesDispatchRequest = { document_ref: string }
 /** `oneiron::blob_artifact::esign::notice_door::EsignNoticeOutcome` */

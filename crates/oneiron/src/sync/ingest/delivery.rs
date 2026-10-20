@@ -307,3 +307,58 @@ impl Vault {
         Ok(candidates.into_iter().collect())
     }
 }
+
+impl crate::store::Store {
+    /// The first consent epoch at which pact `pact_id` delivered `record`
+    /// here, as the ledger reads in `txn` (FIX 1322): retrieval holds a copy
+    /// to a retained courtesy ask's epoch cutoff by it. It walks the pact's
+    /// delivery epochs in order from its first and stops at an epoch the
+    /// pact delivered nothing at, so it reads one row per epoch walked, never
+    /// the pact's records. `None` when no epoch it walks delivered `record`:
+    /// the ledger names no delivery of it, or one only past such a gap.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and a delivery row whose key does not decode.
+    pub(crate) fn federation_first_delivery_epoch_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pact_id: &[u8; 32],
+        record: EntityId,
+    ) -> Result<Option<u64>> {
+        let pact = bytes_to_hex_lower(pact_id);
+        let Some((key, _)) = DELIVERED
+            .iter_raw_from(self, txn, format!("{pact}:").as_bytes())?
+            .next()
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        let mut epoch = std::str::from_utf8(&key)
+            .ok()
+            .and_then(|key| key.strip_prefix(&pact))
+            .and_then(|rest| rest.strip_prefix(':'))
+            .and_then(|rest| rest.split_once(':'))
+            .map(|(epoch, _)| epoch)
+            .filter(|epoch| epoch.len() == 16)
+            .and_then(|epoch| u64::from_str_radix(epoch, 16).ok())
+            .ok_or_else(corrupt)?;
+        loop {
+            if DELIVERED.contains(self, txn, &delivery_key(pact_id, epoch, record))? {
+                return Ok(Some(epoch));
+            }
+            let Some(next) = epoch.checked_add(1) else {
+                return Ok(None);
+            };
+            epoch = next;
+            let delivered_then = DELIVERED
+                .iter_raw_from(self, txn, format!("{pact}:{epoch:016x}:").as_bytes())?
+                .next()
+                .transpose()?
+                .is_some();
+            if !delivered_then {
+                return Ok(None);
+            }
+        }
+    }
+}

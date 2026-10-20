@@ -168,7 +168,10 @@ pub struct EsignDispatchRequest {
     /// `autonomous_in_envelope` for an agent's dispatch to land.
     #[serde(default)]
     pub on_behalf_of: Option<String>,
-    /// A retry under the same key answers the first dispatch's receipt.
+    /// A retry under the same key answers the first dispatch's receipt. A
+    /// call with none is its own send, keyed on the call's invocation id when
+    /// it names one, else a fresh key; its view's `intent_ref` ends in that
+    /// key, and a retry of a held call passes it here.
     #[serde(default)]
     pub idempotency_key: Option<String>,
 }
@@ -186,7 +189,10 @@ pub struct EsignVoidRequest {
     /// The signing principal an agent acts for.
     #[serde(default)]
     pub on_behalf_of: Option<String>,
-    /// A retry under the same key answers the first dispatch's receipt.
+    /// A retry under the same key answers the first dispatch's receipt. A
+    /// call with none is its own send, keyed on the call's invocation id when
+    /// it names one, else a fresh key; its view's `intent_ref` ends in that
+    /// key, and a retry of a held call passes it here.
     #[serde(default)]
     pub idempotency_key: Option<String>,
 }
@@ -352,7 +358,8 @@ pub struct EsignDispatchView {
     pub document_ref: String,
     /// `send_for_signature`, `remind` or `void`.
     pub verb: String,
-    /// The dispatch's intent ref; its retry key is the tail.
+    /// The dispatch's intent ref; its retry key is the tail, the key a
+    /// retry of a call that named none passes as `idempotency_key`.
     pub intent_ref: String,
     /// The pipeline outcome: `delivered_to_channel` when the act landed,
     /// `held`, `suppressed` or `failed` otherwise.
@@ -362,6 +369,12 @@ pub struct EsignDispatchView {
     /// The persisted gate decision, readable with `vault.receipts.get`.
     pub gate_decision_ref: Option<String>,
     pub gate_reason_codes: Vec<String>,
+    /// While the gate holds the act for the owner (`gate_outcome`
+    /// `pending`), the approve-once digest his one-time press must name to
+    /// release it, 64 lower-hex (FIX 6424): it pins this document, this
+    /// command and this act's send ref, so the retry that spends it carries
+    /// this view's retry key.
+    pub approval_digest: Option<String>,
 }
 
 impl Memory<'_> {
@@ -667,15 +680,18 @@ impl Memory<'_> {
         let vault = self.vault();
         let (actor, class) = (self.actor(), self.actor_class());
         crate::memory::verify_actor_binding(vault, actor, class)?;
-        let request = esign_dispatch_request(
+        // FIX 6424: a call with no key is keyed on its own invocation.
+        let key = super::dispatch_key::esign_dispatch_key(
             vault,
             verb,
             document,
             actor,
-            class,
             on_behalf_of,
             idempotency_key,
+            self.invocation(),
         )?;
+        let request =
+            esign_dispatch_request(vault, verb, document, actor, class, on_behalf_of, key);
         let intent_ref = request.intent_ref.clone();
         let command = EsignOutboundCommand {
             document: document.to_hex(),
@@ -702,13 +718,15 @@ impl Memory<'_> {
             gate_outcome: result.gate_outcome,
             gate_decision_ref: result.gate_decision_id,
             gate_reason_codes: result.gate_reason_codes,
+            approval_digest: result.approval_digest,
         })
     }
 }
 
 /// The OF-327 request for one e-sign act by the bound caller: channel
 /// `esign`, the act's verb, the document as target, sent now. Its intent ref
-/// carries the retry key, so a retry replays the first receipt.
+/// carries the retry key, so a retry replays the first receipt. A call with
+/// no key is keyed on its own call (FIX 6424).
 fn esign_dispatch_request(
     vault: &Vault,
     verb: EsignOutboundVerb,
@@ -716,16 +734,9 @@ fn esign_dispatch_request(
     actor: EntityId,
     class: crate::edge::EdgeActorClass,
     on_behalf_of: Option<&str>,
-    idempotency_key: Option<&str>,
-) -> MemoryResult<OutboundDispatchRequest> {
-    let key = match idempotency_key {
-        Some(key) if key.trim().is_empty() => {
-            return Err(MemoryError::bad_request("idempotency_key is empty"));
-        }
-        Some(key) => key.to_owned(),
-        None => vault.new_entity_id()?.to_hex(),
-    };
-    let intent_ref = format!("esign:{}:{}:{key}", verb.as_str(), document.to_hex());
+    key: String,
+) -> OutboundDispatchRequest {
+    let intent_ref = super::dispatch_key::esign_intent_ref(verb, document, &key);
     let mut draft =
         OutboundIntentDraft::new(actor.to_hex(), verb.as_str(), "esign", document.to_hex())
             .idempotency_key(key)
@@ -737,7 +748,7 @@ fn esign_dispatch_request(
         draft,
         OutboundIntentTrigger::agent_immediate(intent_ref.clone()),
     );
-    Ok(OutboundDispatchRequest::new(
+    OutboundDispatchRequest::new(
         format!("receipt:{intent_ref}"),
         intent_ref,
         intent,
@@ -749,5 +760,5 @@ fn esign_dispatch_request(
         OutboundDispatchGate::allow_when_policy_grants(),
         vault.now_recorded_at(),
         OutboundDeliveryWindowDecision::DeliverNow,
-    ))
+    )
 }
