@@ -273,6 +273,10 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
     }
     run.jobs_deferred += malformed_scope.len() as u64;
 
+    // ── 1c. Inventory the hc: owed window compactions (FIX 6387) ────────
+    #[cfg(feature = "sync")]
+    let owed = super::owed::owed_compactions(vault)?;
+
     // ── 2. Erased-id authority: dt: markers ∪ due-job scopes ────────────
     // The permanent `dt:` set covers §8c.2/§8c.3 ids with no local h: row.
     let mut erased: BTreeSet<EntityId> = BTreeSet::new();
@@ -313,6 +317,16 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
     } else {
         compact_all_windows(vault, &erased, &mut withdrawn, &mut run, now)?
     };
+    // A window an erase owes a compaction gets it on this pass (FIX 6387).
+    #[cfg(feature = "sync")]
+    super::owed::settle_owed_compactions(
+        vault,
+        &owed,
+        &window_state,
+        &erased,
+        &mut withdrawn,
+        &mut run,
+    )?;
 
     #[cfg(test)]
     {
