@@ -39,7 +39,10 @@ use axum::response::Json;
 use axum::routing::get;
 use oneiron::authority::{ConversationLearningView, ConversationTrainingView};
 use oneiron::error::RecordError;
-use oneiron::feedback::{PersonTrainingReceipts, PersonTrainingSubmission, TrainingReceiptsCursor};
+use oneiron::feedback::{
+    AnonymousReceiptView, PersonTrainingReceipts, PersonTrainingSubmission, TrainingPieceState,
+    TrainingReceiptsCursor,
+};
 use oneiron::world_keys::PolicyRevision;
 use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 use serde::{Deserialize, Serialize};
@@ -282,6 +285,10 @@ struct SubmissionReceipt {
     /// The intake's last receipt for it (`stored`, `excluded`,
     /// `removal_pending`, `removed` or `rejected`); null while none came.
     receipt: Option<TrainingReceiptStatusV2>,
+    /// Where its own signed receipts say it stands, for a piece that left
+    /// through the anonymous training window (TL-6); null for a hosted one.
+    /// It never names the piece's code or anyone else in it.
+    anonymous: Option<AnonymousReceipt>,
     /// The runs the intake says used it.
     used_runs: Vec<UsedRun>,
     /// What a withdrawal reaches, once it is withdrawn or its removal is
@@ -291,6 +298,22 @@ struct SubmissionReceipt {
     prepared_at: u64,
     /// When it was published, unix seconds; null while it never left.
     published_at: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnonymousReceipt {
+    /// What the last signed receipt says (`uploading`, `accepted`,
+    /// `rejected`, `conflict`, `invalid_submission`, `eligible`, `refused`,
+    /// `removal_pending`, `removed` or `unknown`); null while none came.
+    state: Option<&'static str>,
+    /// That receipt's revision; 0 before any.
+    revision: u64,
+    /// The reason it gave, for a rejection or the re-filter's refusal.
+    reason: Option<String>,
+    /// When the intake signed it, unix seconds.
+    at: Option<u64>,
+    /// The sealed bytes the intake holds so far, while it uploads.
+    progress: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -326,6 +349,7 @@ fn submission_receipt(submission: PersonTrainingSubmission) -> SubmissionReceipt
             .collect(),
         custody: submission.custody.as_str(),
         receipt: submission.receipt,
+        anonymous: submission.anonymous.map(anonymous_receipt),
         used_runs: submission
             .used_runs
             .into_iter()
@@ -338,6 +362,16 @@ fn submission_receipt(submission: PersonTrainingSubmission) -> SubmissionReceipt
         withdrawal_note: submission.withdrawal_note,
         prepared_at: submission.prepared_at,
         published_at: submission.published_at,
+    }
+}
+
+fn anonymous_receipt(view: AnonymousReceiptView) -> AnonymousReceipt {
+    AnonymousReceipt {
+        state: view.state.map(TrainingPieceState::as_str),
+        revision: view.revision,
+        reason: view.reason,
+        at: view.at,
+        progress: view.progress,
     }
 }
 
