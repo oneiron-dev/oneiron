@@ -22108,6 +22108,29 @@ async fn vault_rooms_thread_audience_add(
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_rooms_thread_audience_open_full_history(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.rooms.thread_audience.open_full_history",
+        value,
+        &producers,
+    )?;
+    server.ai.turn_landed_by(server.vault(), actor, class);
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_rooms_thread_audience_remove(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -34509,6 +34532,9 @@ pub(crate) async fn call_verb(
         "vault.rooms.speak" => vault_rooms_speak(server, call, input).await,
         "vault.rooms.thread_audience.add" => {
             vault_rooms_thread_audience_add(server, call, input).await
+        }
+        "vault.rooms.thread_audience.open_full_history" => {
+            vault_rooms_thread_audience_open_full_history(server, call, input).await
         }
         "vault.rooms.thread_audience.remove" => {
             vault_rooms_thread_audience_remove(server, call, input).await

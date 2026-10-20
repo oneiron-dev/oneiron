@@ -2208,6 +2208,8 @@ export class Oneiron {
       thread_audience: {
         /** Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it. */
         add: (input: Facade.ThreadAudienceAddRequest): Facade.ThreadAudienceReceipt => this.#call(() => this.#client.vaultRoomsThreadAudienceAdd(input) as Facade.ThreadAudienceReceipt),
+        /** Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it. */
+        open_full_history: (input: Facade.ThreadAudienceOpenFullHistoryRequest): Facade.ThreadAudienceReceipt => this.#call(() => this.#client.vaultRoomsThreadAudienceOpenFullHistory(input) as Facade.ThreadAudienceReceipt),
         /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. */
         remove: (input: Facade.ThreadAudienceRemoveRequest): Facade.ThreadAudienceReceipt => this.#call(() => this.#client.vaultRoomsThreadAudienceRemove(input) as Facade.ThreadAudienceReceipt),
       },

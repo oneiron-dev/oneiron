@@ -3869,6 +3869,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.rooms.thread_audience.open_full_history",
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::ThreadAudienceOpenFullHistoryRequest,
+                >(),
+            ),
+            (
                 "vault.rooms.thread_audience.remove",
                 crate::code_run::vault_read::request_schema::<
                     crate::workspace_roster::ThreadAudienceRemoveRequest,
@@ -13977,6 +13983,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.rooms.thread_audience.open_full_history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.rooms.thread_audience.remove" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18921,6 +18934,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.thread_audience.add" => {
             let _input: crate::workspace_roster::ThreadAudienceAddRequest = decode(value.clone())?;
         }
+        "vault.rooms.thread_audience.open_full_history" => {
+            let _input: crate::workspace_roster::ThreadAudienceOpenFullHistoryRequest =
+                decode(value.clone())?;
+        }
         "vault.rooms.thread_audience.remove" => {
             let _input: crate::workspace_roster::ThreadAudienceRemoveRequest =
                 decode(value.clone())?;
@@ -21657,6 +21674,9 @@ pub fn invoke(
         "vault.rooms.thread_audience.add" => {
             encode(vault_rooms_thread_audience_add(memory, decode(value)?)?)
         }
+        "vault.rooms.thread_audience.open_full_history" => encode(
+            vault_rooms_thread_audience_open_full_history(memory, decode(value)?)?,
+        ),
         "vault.rooms.thread_audience.remove" => {
             encode(vault_rooms_thread_audience_remove(memory, decode(value)?)?)
         }
@@ -28441,6 +28461,12 @@ pub fn vault_rooms_thread_audience_add(
     input: crate::workspace_roster::ThreadAudienceAddRequest,
 ) -> MemoryResult<crate::workspace_roster::ThreadAudienceReceipt> {
     memory.rooms_thread_audience_add(&input)
+}
+pub fn vault_rooms_thread_audience_open_full_history(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::ThreadAudienceOpenFullHistoryRequest,
+) -> MemoryResult<crate::workspace_roster::ThreadAudienceReceipt> {
+    memory.rooms_thread_audience_open_full_history(&input)
 }
 pub fn vault_rooms_thread_audience_remove(
     memory: &Memory<'_>,

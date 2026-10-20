@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1108 code-mode rows (1083 host rows, 25 run rows), 3732 declarations.
-// Replies: 990 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1109 code-mode rows (1084 host rows, 25 run rows), 3735 declarations.
+// Replies: 991 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2515,7 +2515,9 @@ declare namespace Sdk {
   type RoomTurnRequest = { room_ref: string; turn_ref: string };
   type RoomWaitKind = "Ask" | "Hold" | "HumanTask";
   type RoomThreadWait = { task: EntityId; kind: RoomWaitKind; who: EntityId; since: number; next_nudge?: number | null; until?: number | null };
-  type RoomThread = { handle: EntityId; trunk: EntityId; last_message_at: number; open_tasks: number; waits: RoomThreadWait[]; result_header?: EntityId | null; converted_project?: EntityId | null };
+  type RoomThreadAudienceOp = "walk_in" | "open_full_history";
+  type RoomThreadAudienceEvent = { event_ref: string; op: RoomThreadAudienceOp; person_ref?: string | null; at: number };
+  type RoomThread = { handle: EntityId; trunk: EntityId; last_message_at: number; open_tasks: number; waits: RoomThreadWait[]; result_header?: EntityId | null; converted_project?: EntityId | null; audience?: string[]; audience_events?: RoomThreadAudienceEvent[] };
   type RoomTrunkHeader = { thread: EntityId; task: EntityId; result_ref: EntityId };
   type RoomTrunk = { turn: RoomTurn; headers: RoomTrunkHeader[] };
   type ReplyStripsRequest = { room_ref: string; thread_ref: string; after?: string | null; limit?: number | null };
@@ -2528,7 +2530,8 @@ declare namespace Sdk {
   type RoomClaimOutcome = { Claimed: RoomClaimReceipt } | { HeldBy: RoomClaimReceipt } | "NotAddressed";
   type ThreadAudienceHistory = "full" | "from_now";
   type ThreadAudienceAddRequest = { thread_ref: string; person_ref: string; history: ThreadAudienceHistory };
-  type ThreadAudienceReceipt = { thread_ref: string; event_ref: string };
+  type ThreadAudienceReceipt = { thread_ref: string; event_ref: string; history?: ThreadAudienceHistory | null };
+  type ThreadAudienceOpenFullHistoryRequest = { thread_ref: string };
   type ThreadAudienceRemoveRequest = { thread_ref: string; person_ref: string };
   type ProjectGoalDraft = { goal: string; why: string; axes: string[] };
   type ProjectProposalPicks = { leader_agent_def_ref: string; board_human_refs: string[]; budget_share_bps: number; starting_skill_refs: string[] };
@@ -5975,6 +5978,8 @@ declare const vault: Sdk.VaultHost & {
     thread_audience: {
       /** Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it. */
       add(input: Sdk.ThreadAudienceAddRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
+      /** Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it. */
+      open_full_history(input: Sdk.ThreadAudienceOpenFullHistoryRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
       /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. */
       remove(input: Sdk.ThreadAudienceRemoveRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
     };

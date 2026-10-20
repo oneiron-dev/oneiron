@@ -40,6 +40,16 @@
 //! remove still meet. A live edit after it names them anew. A stand-in is no
 //! one's place: who is in the thread, who reads a turn, and which turns are
 //! cut all skip it.
+//!
+//! # Walk-ins and opened history
+//!
+//! Owner ruling 2026-10-20 (FIX 6381, 6383): a self-add is a walk-in. It
+//! enters its person from its own turn on, and leaves one already in the
+//! audience as they are, so a self re-add never moves a cut either way. The
+//! Owner's opened full history puts its person in the audience reading
+//! every turn, and keeps them there until a remove: a later add or walk-in
+//! does not cut them again. Each walk-in that entered and each opened
+//! history stays on the thread as its own edit, the log its members read.
 
 use super::audience::{ThreadBinding, thread_binding};
 use super::*;
@@ -150,18 +160,26 @@ pub enum ThreadAudienceHistory {
     FromNow,
 }
 
-/// Whether an edit adds its person or removes them.
+/// Whether an edit adds its person, removes them, walks them in or opens
+/// the thread's full history to them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AudienceOp {
     Add,
     Remove,
+    /// A self-add (FIX 6381): its person enters from this edit's turn on,
+    /// or stays as they are when already in.
+    WalkIn,
+    /// The Owner's explicit act (FIX 6383): its person reads every turn of
+    /// the thread until a remove.
+    OpenFullHistory,
 }
 
 /// One audience edit as its TURN carries it: the thread's root, the person
 /// added or removed (the root's stand-in for them once erased, FIX 5640),
 /// the actor whose door wrote it (no one once a privacy erase took it, FIX
-/// 5639) and, on an add alone, the history it shares.
+/// 5639) and, on an add alone, the history it shares: a walk-in and an
+/// opened history name none, their op is their history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AudienceEvent {
@@ -263,7 +281,7 @@ pub(super) fn live_edit_in(
 
 /// The audience edit a TURN's MessagePack `body` carries; `None` for a body
 /// that carries none, or is no map. An edit that does not decode, an add
-/// naming no history or a remove naming one is refused.
+/// naming no history or any other edit naming one is refused.
 pub(crate) fn audience_event(body: &[u8]) -> Result<Option<AudienceEvent>> {
     let mut bytes = body;
     let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
@@ -359,6 +377,9 @@ pub(crate) struct FoldedAudience {
     members: BTreeMap<AudiencePerson, Option<EntityId>>,
     /// The stand-ins the root's edits name: each person they forgot.
     forgotten: BTreeSet<AudiencePerson>,
+    /// Each walk-in that entered its person and each opened history, by
+    /// its edit's TURN, in order (FIX 6381, 6383).
+    entries: Vec<(EntityId, AudienceOp, AudiencePerson)>,
 }
 
 impl FoldedAudience {
@@ -390,6 +411,24 @@ impl FoldedAudience {
         self.members
             .iter()
             .any(|(person, from)| person.live().is_some() && from.is_some_and(|from| from > turn))
+    }
+
+    /// What `person` reads of the thread now: the whole of it, or its turns
+    /// from their add on; `None` while they are not in the audience.
+    pub(crate) fn history_of(&self, person: EntityId) -> Option<ThreadAudienceHistory> {
+        self.members
+            .get(&AudiencePerson::Live(person))
+            .map(|from| match from {
+                None => ThreadAudienceHistory::Full,
+                Some(_) => ThreadAudienceHistory::FromNow,
+            })
+    }
+
+    /// Each walk-in that entered its person and each opened history, by its
+    /// edit's TURN, in order (FIX 6381, 6383): a re-add that changed nothing
+    /// is not among them. A person since erased is named by their stand-in.
+    pub(crate) fn entries(&self) -> &[(EntityId, AudienceOp, AudiencePerson)] {
+        &self.entries
     }
 }
 
@@ -461,6 +500,10 @@ pub(crate) fn fold_audience_in(
             erased_until.insert(event.person, *turn);
         }
     }
+    // Whom the Owner opened the whole thread to, until a remove, and the
+    // walk-ins and opened histories that the thread's log shows.
+    let mut opened = BTreeSet::new();
+    let mut entries = Vec::new();
     // The seed's place for a forgotten person, and a live edit of theirs
     // before the last one naming their stand-in, fold under the stand-in.
     let key = |person: AudiencePerson, at: Option<EntityId>| {
@@ -482,9 +525,21 @@ pub(crate) fn fold_audience_in(
         match (event.op, event.history) {
             (AudienceOp::Remove, _) => {
                 members.remove(&person);
+                opened.remove(&person);
+            }
+            (AudienceOp::WalkIn, _) => {
+                if let std::collections::btree_map::Entry::Vacant(entry) = members.entry(person) {
+                    entry.insert(Some(turn));
+                    entries.push((turn, AudienceOp::WalkIn, person));
+                }
+            }
+            (AudienceOp::OpenFullHistory, _) => {
+                members.insert(person, None);
+                opened.insert(person);
+                entries.push((turn, AudienceOp::OpenFullHistory, person));
             }
             (AudienceOp::Add, Some(ThreadAudienceHistory::FromNow)) => {
-                members.insert(person, Some(turn));
+                members.insert(person, (!opened.contains(&person)).then_some(turn));
             }
             (AudienceOp::Add, _) => {
                 members.insert(person, None);
@@ -494,5 +549,6 @@ pub(crate) fn fold_audience_in(
     Ok(FoldedAudience {
         members,
         forgotten: erased_until.into_keys().collect(),
+        entries,
     })
 }

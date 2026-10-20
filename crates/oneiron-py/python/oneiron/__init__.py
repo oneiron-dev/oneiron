@@ -3963,6 +3963,9 @@ class Oneiron:
         def add(self, spec):
             """Adds a live PERSON or AGENT_DEF room member to a private thread's audience, sharing the whole thread (full) or its turns from now on (from_now); its audience, the vault's Owner or an Admin may call it."""
             return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_add(json.dumps(spec))))
+        def open_full_history(self, spec):
+            """Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_open_full_history(json.dumps(spec))))
         def remove(self, spec):
             """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
             return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_remove(json.dumps(spec))))

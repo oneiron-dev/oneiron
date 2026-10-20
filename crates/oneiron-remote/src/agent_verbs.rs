@@ -2189,6 +2189,11 @@ impl OneironClient {
                 "vault.rooms.thread_audience.add" => remote_agent_verb_output::<
                     oneiron::workspace_roster::ThreadAudienceReceipt,
                 >(client, verb, &input),
+                "vault.rooms.thread_audience.open_full_history" => {
+                    remote_agent_verb_output::<oneiron::workspace_roster::ThreadAudienceReceipt>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.rooms.thread_audience.remove" => remote_agent_verb_output::<
                     oneiron::workspace_roster::ThreadAudienceReceipt,
                 >(client, verb, &input),
@@ -11965,6 +11970,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.rooms.thread_audience.add", value)
+    }
+    pub fn vault_rooms_thread_audience_open_full_history(
+        &self,
+        input: &oneiron::workspace_roster::ThreadAudienceOpenFullHistoryRequest,
+    ) -> Result<oneiron::workspace_roster::ThreadAudienceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.rooms.thread_audience.open_full_history", value)
     }
     pub fn vault_rooms_thread_audience_remove(
         &self,

@@ -6248,6 +6248,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_rooms_thread_audience_open_full_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.rooms.thread_audience.open_full_history",
+                js_json(input),
+            )
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_rooms_thread_audience_remove(
         &self,
         input: serde_json::Value,
