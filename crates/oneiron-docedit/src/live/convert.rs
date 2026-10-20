@@ -674,7 +674,8 @@ pub(super) fn embed_workbook(
     if unlinked {
         done.push(Conversion::TitleLinkDropped);
     }
-    let labels = chart_labels::unlink_ranges(&bytes, &tree, &mut edits);
+    let budget = package.xml_replacement_budget(chart)?;
+    let labels = chart_labels::unlink_ranges(&bytes, &tree, &mut edits, budget)?;
     if labels > 0 {
         done.push(Conversion::LabelRangesUnlinked { labels });
     }

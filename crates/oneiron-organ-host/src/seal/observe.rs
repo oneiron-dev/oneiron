@@ -9,10 +9,13 @@ use oneiron::blob_artifact::esign::EsignSealerError;
 use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
 
-use super::HostedSealer;
+use oneiron_organ_protocol::{ASK_NET_FETCH, ByteBuf};
+
+use super::{ASK_IDENTITY, ASK_SIGN, HostedSealer};
 use crate::handlers::AskHandlers;
 use crate::host::{CallMeasure, CallSize};
 use crate::outcome::OrganOutcome;
+use crate::receipt::AskReceipt;
 use crate::spec::{LentInput, OrganCall};
 
 impl HostedSealer<'_> {
@@ -120,6 +123,28 @@ fn measure_frames(vault: &Vault, measure: &CallMeasure) {
         EngineLimit::SealReplyFrameBytes,
         measure.largest_received_frame,
     );
+}
+
+/// Asks the seal's ask rows what one seal call asked, by its receipt
+/// lines: the identity, signatures and fetches, all of them, and the
+/// answer bytes it was lent. None of them was refused for its count.
+pub(super) fn measure_asks(vault: &Vault, asked: &[AskReceipt]) {
+    let count = |verb: &str| asked.iter().filter(|line| line.verb == verb).count() as u64;
+    let lent = asked.iter().map(|line| line.answer_len).sum::<u64>();
+    for (row, measured) in [
+        (EngineLimit::SealIdentityAsks, count(ASK_IDENTITY)),
+        (EngineLimit::SealSignAsks, count(ASK_SIGN)),
+        (EngineLimit::SealFetchAsks, count(ASK_NET_FETCH)),
+        (EngineLimit::SealAsks, asked.len() as u64),
+        (EngineLimit::SealAnswerBytes, lent),
+    ] {
+        vault.measure_limit(row, measured);
+    }
+}
+
+/// Asks the report row what one verdict's report JSON holds: it came whole.
+pub(super) fn measure_report(vault: &Vault, report_json: &ByteBuf) {
+    vault.measure_limit(EngineLimit::SealReportJsonBytes, report_json.len() as u64);
 }
 
 /// Asks the input row what one lent PDF holds.

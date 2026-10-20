@@ -12,6 +12,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+// A socket's host entry ends with the guest's last hold on it (FIX 5978).
+mod lifetime;
+
 pub(crate) struct Supervisor {
     listener: UnixListener,
     directory: tempfile::TempDir,
@@ -25,6 +28,8 @@ struct Socket {
     target: Mutex<Option<SocketAddr>>,
     stream: Mutex<Option<UnixStream>>,
     datagram: Option<(UnixDatagram, UnixDatagram)>,
+    /// No guest task holds the socket any more: its writer stops.
+    closed: AtomicBool,
 }
 #[derive(Default)]
 struct Completion {
@@ -36,6 +41,7 @@ struct State {
     requests: Mutex<HashMap<u64, Arc<Completion>>>,
     relay: Arc<dyn EgressRelay>,
     alive: Arc<AtomicBool>,
+    inventory: Mutex<lifetime::Inventory>,
 }
 
 pub(crate) struct Guard {
@@ -140,6 +146,7 @@ impl Supervisor {
             requests: Mutex::new(HashMap::new()),
             relay,
             alive: Arc::clone(&alive),
+            inventory: Mutex::default(),
         });
         let directory = self.directory;
         let guard = Guard {
@@ -264,7 +271,13 @@ fn remove(runtime: &Path, name: &str) {
 fn serve(mut reader: UnixStream, listener: Arc<OwnedFd>, state: Arc<State>) -> io::Result<()> {
     let writer = Arc::new(Mutex::new(reader.try_clone()?));
     loop {
-        let request: wire::Request = wire::read(&mut reader)?;
+        let request = match wire::read::<wire::Frame>(&mut reader)? {
+            wire::Frame::Request(request) => request,
+            wire::Frame::Inventory(chunk) => {
+                lifetime::receive(&state, chunk)?;
+                continue;
+            }
+        };
         if !state.alive.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -360,6 +373,7 @@ fn operate(
                         target: Mutex::new(None),
                         stream: Mutex::new(Some(host)),
                         datagram: None,
+                        closed: AtomicBool::new(false),
                     }),
                     id,
                     guest.into(),
@@ -376,6 +390,7 @@ fn operate(
                         target: Mutex::new(None),
                         stream: Mutex::new(None),
                         datagram: Some((copy, host)),
+                        closed: AtomicBool::new(false),
                     }),
                     id,
                     guest.into(),
@@ -386,12 +401,22 @@ fn operate(
                 .lock()
                 .map_err(|_| io::Error::other("fence state poisoned"))?
                 .insert(id, Arc::clone(&socket));
-            reply.value = i64::from(linux::inject(
+            let injected = linux::inject(
                 listener.as_raw_fd(),
                 request.notification,
                 guest.as_raw_fd(),
                 kind & libc::SOCK_CLOEXEC != 0,
-            )?);
+            );
+            // A socket the guest never received has no entry (FIX 5978).
+            reply.value = i64::from(injected.inspect_err(|_| {
+                if let Ok(mut sockets) = state.sockets.lock()
+                    && sockets
+                        .get(&id)
+                        .is_some_and(|held| Arc::ptr_eq(held, &socket))
+                {
+                    sockets.remove(&id);
+                }
+            })?);
             if base == libc::SOCK_DGRAM {
                 datagram_writer(socket, Arc::clone(state));
             }
@@ -528,7 +553,7 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
         };
         let _ = host.set_read_timeout(Some(Duration::from_millis(250)));
         let mut bytes = [0; 65536];
-        while state.alive.load(Ordering::Acquire) {
+        while state.alive.load(Ordering::Acquire) && !socket.closed.load(Ordering::Acquire) {
             match host.recv(&mut bytes) {
                 Ok(n) => {
                     let target = socket.target.lock().ok().and_then(|a| *a);
@@ -690,6 +715,7 @@ pub fn serve_native(
         requests: Mutex::new(HashMap::new()),
         relay,
         alive: Arc::clone(&alive),
+        inventory: Mutex::default(),
     });
     std::thread::spawn(move || {
         let _ = serve(stream, Arc::new(notify), state);

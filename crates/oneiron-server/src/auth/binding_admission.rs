@@ -2,7 +2,7 @@
 //! and stop serving a shared vault its Owners deleted (OF-163). A request off
 //! a mesh stream may not prove, over HTTP, a machine other than the one its
 //! handshake proved.
-use super::managed_request::{caller_binding_refused, caller_binding_replayed};
+use super::managed_request::{AdmittedCaller, caller_binding_refused, caller_binding_replayed};
 use super::{BindingProof, CoreAuth, bearer_token};
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -115,20 +115,31 @@ pub(crate) async fn admit_http_binding(
     // MCP's credential header has the same precedence at admission and use.
     // It cannot sidestep nonce consumption with an unrelated Bearer header.
     let mut machine = PeerMachine::Unknown;
+    let mut admitted = None;
     if let Some(token) = mcp_credential.or_else(|| bearer_token(request.headers()).ok().flatten())
         && token.starts_with("v2.slip.")
     {
         let accepted = BindingProof::from_headers(request.headers()).and_then(|proof| {
-            CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref()).map(|_| proof)
+            CoreAuth::bind_transport_once(token, &proof, server.vault().as_ref())
+                .map(|auth| (auth, proof))
         });
         match accepted {
-            Ok(proof) => {
+            Ok((auth, proof)) => {
                 machine = super::machine_proof::peer_machine(
                     request.headers(),
                     token,
                     &proof,
                     server.vault(),
                 );
+                // A managed vault keeps the caller admitted here, with the
+                // machine proof it carries over this token and holder proof,
+                // for its renewal door (FIX 4559). A missing or malformed
+                // one refuses nothing here.
+                if server.managed_issuer.is_some() {
+                    let device =
+                        super::machine_proof::machine_proof_over(request.headers(), token, &proof);
+                    admitted = Some(AdmittedCaller::new(auth, device.ok()));
+                }
             }
             Err(error) => {
                 let error = if server.managed_issuer.is_some() {
@@ -162,5 +173,8 @@ pub(crate) async fn admit_http_binding(
     // Every admitted request carries the machine it proved, or Unknown.
     let mut request = request;
     request.extensions_mut().insert(machine);
+    if let Some(admitted) = admitted {
+        request.extensions_mut().insert(admitted);
+    }
     next.run(request).await
 }

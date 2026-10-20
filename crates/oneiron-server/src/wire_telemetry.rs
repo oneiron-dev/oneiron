@@ -24,6 +24,18 @@ pub struct WireWindowReceipt {
     pub ended_at: u64,
     pub by_verb: BTreeMap<String, u64>,
     pub by_actor: BTreeMap<String, u64>,
+    /// Each MCP caller's tool calls by tool (`mcp:tools/call:<name>`), under
+    /// the caller the gateway resolved: who burst on which tool. Each call
+    /// counts once in `by_verb` and `by_actor` too (FIX 1085).
+    #[serde(default)]
+    pub by_actor_tool: BTreeMap<String, BTreeMap<String, u64>>,
+    /// MCP envelopes carried, by matched route: transport, never a call.
+    #[serde(default)]
+    pub mcp_envelopes: BTreeMap<String, u64>,
+    /// MCP replies refused with no tool call's receipt over them, by fixed
+    /// category and under no caller.
+    #[serde(default)]
+    pub mcp_errors: BTreeMap<String, u64>,
 }
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -39,193 +51,8 @@ pub struct WireQuestion {
     pub evidence: WireWindowReceipt,
 }
 
-/// A `[limits]` row: a bound on work a remote caller can start, set far above
-/// fleet scale. Crossing one is a question, never a refusal (OF-520).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LimitRow {
-    /// Sockets open at once: the descriptor floor.
-    Connections,
-    /// `git http-backend` exchanges at once.
-    GitExchanges,
-    /// LFS transfer workers at once.
-    LfsTransfers,
-    /// Bytes LFS transfers hold in memory at once.
-    LfsMemoryBytes,
-    /// Bytes stored LFS objects and uploads in flight come to.
-    LfsQuota,
-    /// One LFS object's size.
-    LfsObjectSize,
-    /// `execute_code` runs at once.
-    CodeRuns,
-    /// Code-mode compaction passes at once.
-    CompactionPasses,
-    /// Requests the embedder endpoint holds at once.
-    EmbedderRequests,
-    /// Bytes the embedder endpoint's request bodies hold at once.
-    EmbedderBodyBytes,
-    /// Bytes the embedder endpoint's answers hold until they are delivered.
-    EmbedderAnswerBytes,
-    /// Windows and documents one sync socket keeps state for.
-    WindowsPerConnection,
-    /// Live-query sessions held at once, attached or kept for a reconnect.
-    LiveSessions,
-    /// Live-query subscriptions open at once.
-    LiveSubscriptions,
-    /// Message streams one vault holds open at once.
-    MessageStreams,
-    /// Text documents one vault keeps resident at once.
-    LiveDocuments,
-    /// Bytes app-tier state retained between frames holds: the presence hub,
-    /// live-query retention and residence index projections.
-    RetainedMemoryBytes,
-    /// Pages one residence index projection is read in.
-    ResidenceIndexPages,
-    /// Bytes one residence index projection holds.
-    ResidenceIndexBytes,
-    /// Decision reads the owner's probe route holds at once.
-    DecisionReads,
-    /// Task work (`can`, `ask`, `wait`, `tasks.answer`) one vault runs at
-    /// once; past it, each caller's work waits its fair turn.
-    TaskWork,
-    /// Booking requests per minute under the owner's slot-list, hold and book
-    /// rules: an authenticated caller past one waits for it to open.
-    BookingWindows,
-    /// An engine row on this server's vault (`oneiron::limit_ask`), measured
-    /// where the engine serves the work, which carries on past it.
-    Engine(EngineLimit),
-}
-impl LimitRow {
-    /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 22 + EngineLimit::ALL.len()] = [
-        Self::Connections,
-        Self::GitExchanges,
-        Self::LfsTransfers,
-        Self::LfsMemoryBytes,
-        Self::LfsQuota,
-        Self::LfsObjectSize,
-        Self::CodeRuns,
-        Self::CompactionPasses,
-        Self::EmbedderRequests,
-        Self::EmbedderBodyBytes,
-        Self::EmbedderAnswerBytes,
-        Self::WindowsPerConnection,
-        Self::LiveSessions,
-        Self::LiveSubscriptions,
-        Self::MessageStreams,
-        Self::LiveDocuments,
-        Self::RetainedMemoryBytes,
-        Self::ResidenceIndexPages,
-        Self::ResidenceIndexBytes,
-        Self::DecisionReads,
-        Self::TaskWork,
-        Self::BookingWindows,
-        Self::Engine(EngineLimit::KeyedFilterJsonBytes),
-        Self::Engine(EngineLimit::CodeResultInlineBytes),
-        Self::Engine(EngineLimit::CodeResultDiskFloorBytes),
-        Self::Engine(EngineLimit::CodeResultScanBytes),
-        Self::Engine(EngineLimit::CodeResultMemoryBytes),
-        Self::Engine(EngineLimit::CodeResultSessionMemoryBytes),
-        Self::Engine(EngineLimit::ImageRoomBytes),
-        Self::Engine(EngineLimit::CodeReaderBacklog),
-        Self::Engine(EngineLimit::AskOptions),
-        Self::Engine(EngineLimit::AskOptionTextBytes),
-        Self::Engine(EngineLimit::AskContextRefs),
-        Self::Engine(EngineLimit::AskRecipients),
-        Self::Engine(EngineLimit::AskSpecMsgpackBytes),
-        Self::Engine(EngineLimit::AskReminders),
-        Self::Engine(EngineLimit::AnswerProvenanceRefs),
-        Self::Engine(EngineLimit::AskWaitIdentities),
-        Self::Engine(EngineLimit::LinePushMonthly),
-        Self::Engine(EngineLimit::ImportFolderTextBytes),
-        Self::Engine(EngineLimit::ImportFolderNotes),
-        Self::Engine(EngineLimit::ImportDecodedMessages),
-        Self::Engine(EngineLimit::ImportDecodedBytes),
-        Self::Engine(EngineLimit::SignatureDecodeBytes),
-        Self::Engine(EngineLimit::PptxCommentPatches),
-        Self::Engine(EngineLimit::ImportXlsxLiveCells),
-        Self::Engine(EngineLimit::PackScriptOutputBytes),
-        Self::Engine(EngineLimit::PackScriptOutputRows),
-        Self::Engine(EngineLimit::AttemptManifestEntries),
-        Self::Engine(EngineLimit::AttemptCancelReceipts),
-        Self::Engine(EngineLimit::AttemptRetryTipRows),
-        Self::Engine(EngineLimit::WorkflowSteps),
-        Self::Engine(EngineLimit::WorkflowNameBytes),
-        Self::Engine(EngineLimit::JudgeRubricBytes),
-        Self::Engine(EngineLimit::MaintenanceRowItems),
-        Self::Engine(EngineLimit::MaintenanceTextBytes),
-        Self::Engine(EngineLimit::MaintenanceScanRows),
-        Self::Engine(EngineLimit::JudgeInstructionsBytes),
-        Self::Engine(EngineLimit::JudgeReplayTextBytes),
-        Self::Engine(EngineLimit::ContributionJudgeTaskBytes),
-        Self::Engine(EngineLimit::ContributionJudgeAnswerBytes),
-        Self::Engine(EngineLimit::CallableNestDepth),
-        Self::Engine(EngineLimit::ExecutorRunSteps),
-        Self::Engine(EngineLimit::VoiceReferenceBytes),
-        Self::Engine(EngineLimit::EsignPdfBytes),
-        Self::Engine(EngineLimit::StateVadTurns),
-        Self::Engine(EngineLimit::StateWindowSeconds),
-        Self::Engine(EngineLimit::DetectorObservations),
-        Self::Engine(EngineLimit::DetectorEvents),
-        Self::Engine(EngineLimit::DetectorReceiptRows),
-        Self::Engine(EngineLimit::DreamerFactsRows),
-        Self::Engine(EngineLimit::HealerProposals),
-        Self::Engine(EngineLimit::RepairDiagnosticRefs),
-        Self::Engine(EngineLimit::CentroidLabels),
-        Self::Engine(EngineLimit::DetectorConsecutive),
-        Self::Engine(EngineLimit::DetectorWindowRuns),
-        Self::Engine(EngineLimit::BlockedDetailBytes),
-        Self::Engine(EngineLimit::SealReferenceBytes),
-        Self::Engine(EngineLimit::TripwireThreshold),
-        Self::Engine(EngineLimit::EsignSweepDocuments),
-        Self::Engine(EngineLimit::EsignSigningPrincipals),
-        Self::Engine(EngineLimit::EsignSignatureInputBytes),
-        Self::Engine(EngineLimit::EsignSignaturePngBytes),
-        Self::Engine(EngineLimit::EsignSignatureDocumentBytes),
-        Self::Engine(EngineLimit::EsignSignatureRecipientImages),
-        Self::Engine(EngineLimit::EsignBodyBytes),
-        Self::Engine(EngineLimit::EsignGeometryBodyBytes),
-        Self::Engine(EngineLimit::SealOutputBytes),
-        Self::Engine(EngineLimit::SealGrowthBytes),
-        Self::Engine(EngineLimit::SealPdfObjects),
-        Self::Engine(EngineLimit::SealRawDefinitions),
-        Self::Engine(EngineLimit::SealCallFrameBytes),
-        Self::Engine(EngineLimit::SealReplyFrameBytes),
-        Self::Engine(EngineLimit::SealStructuralWork),
-        Self::Engine(EngineLimit::SealRevisions),
-        Self::Engine(EngineLimit::SealPrefixBytes),
-        Self::Engine(EngineLimit::SealDssDecodeBytes),
-    ];
-    /// The config key that sets the row, or, for the memory the embedder
-    /// endpoint sizes for its one model, the name it asks under.
-    pub const fn key(self) -> &'static str {
-        match self {
-            Self::Connections => "limits.max_connections",
-            Self::GitExchanges => "limits.git_exchanges",
-            Self::LfsTransfers => "limits.lfs_transfers",
-            Self::LfsMemoryBytes => "limits.lfs_memory_bytes",
-            Self::LfsQuota => "limits.lfs_quota_bytes",
-            Self::LfsObjectSize => "max_lfs_object_bytes",
-            Self::CodeRuns => "models.code_mode.max_runs",
-            // As many passes as runs: at most one per run is in flight.
-            Self::CompactionPasses => "models.code_mode.max_runs:compaction",
-            Self::EmbedderRequests => "limits.embedder_requests",
-            Self::EmbedderBodyBytes => "embedder.serve:body_bytes",
-            Self::EmbedderAnswerBytes => "limits.embedder_answer_bytes",
-            Self::WindowsPerConnection => "max_windows_per_connection",
-            Self::LiveSessions => "limits.live_sessions",
-            Self::LiveSubscriptions => "limits.live_subscriptions",
-            Self::MessageStreams => "limits.message_streams",
-            Self::LiveDocuments => "limits.live_documents",
-            Self::RetainedMemoryBytes => "limits.retained_memory_bytes",
-            Self::ResidenceIndexPages => "residence_operation_budgets.max_index_pages",
-            Self::ResidenceIndexBytes => "residence_operation_budgets.index_cache_bytes",
-            Self::DecisionReads => "limits.decision_reads",
-            Self::TaskWork => "limits.task_work",
-            Self::BookingWindows => "booking.anti_abuse:per_minute",
-            Self::Engine(row) => row.key(),
-        }
-    }
-}
+mod rows;
+pub use rows::LimitRow;
 /// The question a crossed row asks: what it is set to, the most it saw, and
 /// how many times it was crossed in its window.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -401,6 +228,28 @@ fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("wire observation"))
 }
+fn check_keys(verb: &str, actor: &str) -> Result<()> {
+    if verb.is_empty() || verb.len() > 256 || actor.is_empty() || actor.len() > 512 {
+        return Err(Error::InvalidConfig("invalid wire counter key".into()));
+    }
+    Ok(())
+}
+fn count_in(counts: &mut BTreeMap<String, u64>, key: &str) -> u64 {
+    let count = counts.entry(key.into()).or_default();
+    *count = count.saturating_add(1);
+    *count
+}
+/// Counts one call of `verb` by `actor`; whether either crossed its row.
+fn count_call(
+    window: &mut WireWindowReceipt,
+    thresholds: &WireThresholds,
+    verb: &str,
+    actor: &str,
+) -> bool {
+    let verb_crossed = count_in(&mut window.by_verb, verb) > thresholds.per_verb;
+    let actor_crossed = count_in(&mut window.by_actor, actor) > thresholds.per_actor;
+    verb_crossed || actor_crossed
+}
 impl WireTelemetry {
     pub fn new(vault: Arc<Vault>) -> Self {
         Self {
@@ -518,9 +367,44 @@ impl WireTelemetry {
     /// Records a host-authenticated actor and a route/method, never a raw URL or
     /// credential. A persistence error is telemetry loss, NOT a service denial.
     pub fn record(&self, verb: &str, actor: &str, now: u64) -> Result<()> {
-        if verb.is_empty() || verb.len() > 256 || actor.is_empty() || actor.len() > 512 {
-            return Err(Error::InvalidConfig("invalid wire counter key".into()));
-        }
+        check_keys(verb, actor)?;
+        self.observe(now, |window, thresholds| {
+            count_call(window, thresholds, verb, actor)
+        })
+    }
+    /// Records one MCP `tools/call` of a registered tool, under its logical
+    /// key and the caller the gateway resolved (FIX 1085): one call in the
+    /// totals the thresholds read, and in which tool that caller called.
+    pub(crate) fn record_mcp_call(&self, tool: &str, actor: &str, now: u64) -> Result<()> {
+        check_keys(tool, actor)?;
+        self.observe(now, |window, thresholds| {
+            count_in(window.by_actor_tool.entry(actor.into()).or_default(), tool);
+            count_call(window, thresholds, tool, actor)
+        })
+    }
+    /// Records one MCP envelope on its matched route: evidence beside the
+    /// calls, which no threshold counts.
+    pub(crate) fn record_mcp_envelope(&self, route: &str, now: u64) -> Result<()> {
+        self.observe(now, |window, _| {
+            count_in(&mut window.mcp_envelopes, route);
+            false
+        })
+    }
+    /// Records one MCP reply refused with no tool call's receipt over it,
+    /// under its fixed category and no caller: evidence no threshold counts.
+    pub(crate) fn record_mcp_error(&self, category: &str, now: u64) -> Result<()> {
+        self.observe(now, |window, _| {
+            count_in(&mut window.mcp_errors, category);
+            false
+        })
+    }
+    /// Counts in the window `now` falls in, kept and rolled over first;
+    /// `count` says whether a call crossed its row, which asks once a window.
+    fn observe(
+        &self,
+        now: u64,
+        count: impl FnOnce(&mut WireWindowReceipt, &WireThresholds) -> bool,
+    ) -> Result<()> {
         let mut active = self
             .active
             .lock()
@@ -546,12 +430,7 @@ impl WireTelemetry {
             }));
         }
         let window = active.window.as_mut().expect("installed above");
-        let verb_count = window.by_verb.entry(verb.into()).or_default();
-        *verb_count = verb_count.saturating_add(1);
-        let verb_crossed = *verb_count > thresholds.per_verb;
-        let actor_count = window.by_actor.entry(actor.into()).or_default();
-        *actor_count = actor_count.saturating_add(1);
-        let crossed = verb_crossed || *actor_count > thresholds.per_actor;
+        let crossed = count(window, &thresholds);
         active.persisted = false;
         if crossed && !active.asked {
             let question = WireQuestion {
@@ -692,105 +571,8 @@ impl Drop for WireTelemetry {
     }
 }
 
-pub(crate) async fn observe_http(
-    axum::extract::State(server): axum::extract::State<Arc<crate::server::SyncServer>>,
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let route = request
-        .extensions()
-        .get::<axum::extract::MatchedPath>()
-        .map_or("unmatched", axum::extract::MatchedPath::as_str);
-    let verb = format!("{} {route}", request.method());
-    // The request's one caller, as its door takes it: on a managed vault the
-    // owner his supervisor attested counts as himself.
-    let auth = crate::auth::CoreAuth::for_managed_request(
-        request.headers(),
-        request.extensions(),
-        request.uri().path(),
-        &server,
-    )
-    .unwrap_or_else(|| {
-        crate::auth::CoreAuth::from_headers(
-            request.headers(),
-            &server.config,
-            server.vault().as_ref(),
-        )
-    })
-    .ok();
-    // A call on the managed owner's held MCP socket that names no caller of
-    // its own counts under the owner whose socket it is (FIX 5539): a count,
-    // never his authentication, which the door judges again.
-    let socket_owner = request
-        .extensions()
-        .get::<crate::managed::ManagedOwnerSession>()
-        .filter(|_| server.managed_issuer.is_some())
-        .map(|session| session.holder().to_hex());
-    let unattributed = socket_owner.as_deref().unwrap_or("unauthenticated");
-    let actor = auth
-        .as_ref()
-        .map_or(unattributed, |a| match a.principal_ref() {
-            Some(principal) => principal,
-            // An owner-grade credential with no person behind it (the
-            // shared secret) speaks for the vault's owner, so its traffic
-            // counts as the owner's own (FIX 1087).
-            None if a.is_owner_grade() => embedded_owner().unwrap_or(a.principal()),
-            None => a.principal(),
-        });
-    start_window_receipts(&server);
-    let _ = server
-        .wire_telemetry
-        .record(&verb, actor, oneiron_vault_contract::now_ts());
-    next.run(request).await
-}
-
-/// The vault owner's actor id, as `Vault::ensure_embedded_owner_actor` makes
-/// it: the wire actor an owner-grade credential with no person counts under.
-fn embedded_owner() -> Option<&'static str> {
-    static OWNER: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    OWNER
-        .get_or_init(|| {
-            oneiron::EntityId::derive(
-                oneiron_contracts::entity_id::derived_domains::EMBEDDED_OWNER_ACTOR,
-                &[],
-            )
-            .ok()
-            .map(|owner| owner.to_hex())
-        })
-        .as_deref()
-}
+mod http;
+pub(crate) use self::http::{observe_http, start_window_receipts};
 
 #[cfg(test)]
 mod tests;
-
-pub(crate) fn start_window_receipts(server: &Arc<crate::server::SyncServer>) {
-    // Router construction may happen before its runtime exists. The first
-    // runtime-backed request retries this start without losing the flush latch.
-    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-        return;
-    };
-    if server
-        .wire_telemetry
-        .flusher_started
-        .swap(true, std::sync::atomic::Ordering::AcqRel)
-    {
-        return;
-    }
-    let weak = Arc::downgrade(server);
-    runtime.spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
-        loop {
-            tick.tick().await;
-            let Some(server) = weak.upgrade() else {
-                break;
-            };
-            // The tick writes pending limit questions, and the window once it
-            // has elapsed, off the runtime's workers: a write that waits for
-            // the vault's writer holds back only the tick.
-            let now = oneiron_vault_contract::now_ts();
-            let _ =
-                tokio::task::spawn_blocking(move || server.wire_telemetry.flush_if_expired(now))
-                    .await;
-        }
-    });
-}
