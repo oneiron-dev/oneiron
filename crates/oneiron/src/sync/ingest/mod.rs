@@ -36,4 +36,6 @@ pub(in crate::sync) use self::promotion::{
     first_promotion_open, with_first_promotion_open, with_promotion,
 };
 pub(in crate::sync) use self::task_pairs::{TaskComponents, ingest_rows_in_savepoint};
-pub(in crate::sync) use self::tombstone::{TombstoneStep, classify_tombstone};
+pub(in crate::sync) use self::tombstone::{
+    TombstoneStep, classify_tombstone, classify_tombstone_in_txn,
+};
