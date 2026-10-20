@@ -16,7 +16,9 @@
 
 use heed::{RoTxn, RwTxn};
 
-use super::store::{self, HandoffHead, HandoffRole, HandoffRoute, HeadFloor, MoveRequest};
+use super::store::{
+    self, HandoffHead, HandoffRole, HandoffRoute, HeadFloor, MoveRequest, StagedHandoff,
+};
 use super::table::check_registry;
 use super::transfer::{ack_in_txn, freeze_in_txn};
 use super::{
@@ -432,11 +434,84 @@ pub(crate) fn staged_position(vault: &Vault, id: &HandoffId) -> Result<u32> {
 }
 
 /// Stages part `index` of handoff `id` here as its target; returns the
-/// staged position after it ([`store::stage_part_in_txn`]).
-pub(crate) fn stage_part(vault: &Vault, id: &HandoffId, index: u32, bytes: &[u8]) -> Result<u32> {
+/// staged position after it ([`store::stage_part_in_txn`]). The head keeps
+/// what the parts name (FIX 5661 C2b): the digest of the sealed bytes, how
+/// many parts hold them, and `source`, the machine its socket proved, so the
+/// new home finds a completely staged handoff before its first free-time
+/// pass. A part that names another digest, count or source than the ones
+/// staged for this id is refused, as is a part of a handoff its source
+/// cancelled here (FIX 5931).
+pub(crate) fn stage_part(
+    vault: &Vault,
+    id: &HandoffId,
+    digest: &[u8; 32],
+    count: u32,
+    source: EntityId,
+    index: u32,
+    bytes: &[u8],
+) -> Result<u32> {
+    let staged = StagedHandoff {
+        id: *id,
+        digest: *digest,
+        count,
+        source,
+    };
+    vault.with_write_txn(|txn| {
+        not_source_in_txn(vault, txn, &staged.id)?;
+        let mut head = store::head_in_txn(vault, txn)?;
+        if head.fenced(&staged.id) {
+            return Err(refused("the source cancelled this handoff here"));
+        }
+        if head
+            .staged
+            .is_some_and(|held| held.id == staged.id && held != staged)
+        {
+            return Err(refused("a part names other bytes than the ones staged"));
+        }
+        let position = store::stage_part_in_txn(vault, txn, &staged.id, index, bytes)?;
+        if head.staged != Some(staged) {
+            head.staged = Some(staged);
+            store::put_head_in_txn(vault, txn, &head)?;
+        }
+        Ok(position)
+    })
+}
+
+/// FIX 5931: the target's answer when the source cancels handoff `id`,
+/// sealed to the bytes `digest` names, in one writer, so it serializes with
+/// the writer that adopts. Adopted here first, it stays adopted and the
+/// saved ack is the answer. Otherwise the id is fenced here for good: its
+/// staged parts go, and no adopting writer lands it after (`None`). The
+/// source takes its state back only after that. `source` is the machine
+/// the caller's socket proved; parts staged from another are refused.
+pub(crate) fn fence_handoff(
+    vault: &Vault,
+    id: &HandoffId,
+    digest: &[u8; 32],
+    source: EntityId,
+) -> Result<Option<HomeAck>> {
     vault.with_write_txn(|txn| {
         not_source_in_txn(vault, txn, id)?;
-        store::stage_part_in_txn(vault, txn, id, index, bytes)
+        if let Some(ack) = store::receipt_in_txn(vault, txn, id)? {
+            if ack.digest != *digest {
+                return Err(refused("the handoff adopted here has other bytes"));
+            }
+            return Ok(Some(ack));
+        }
+        let mut head = store::head_in_txn(vault, txn)?;
+        let staged = head.staged.filter(|staged| staged.id == *id);
+        if staged.is_some_and(|staged| staged.source != source) {
+            return Err(refused("another machine staged this handoff"));
+        }
+        if staged.is_some() {
+            head.staged = None;
+        }
+        if !head.fenced(id) {
+            head.fenced.push(*id);
+        }
+        store::put_head_in_txn(vault, txn, &head)?;
+        store::drop_staged_in_txn(vault, txn, id)?;
+        Ok(None)
     })
 }
 

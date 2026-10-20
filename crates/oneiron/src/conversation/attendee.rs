@@ -160,7 +160,7 @@ pub(super) fn initial_member_enters_in(
         return Ok(false);
     }
     Ok(!matches!(
-        crate::disclosure::room_party_in(vault, txn, fold, person)?,
+        crate::disclosure::bound_room_party_in(vault, txn, fold, person)?,
         RoomParty::VaultOwner | RoomParty::VaultAgent
     ))
 }
@@ -392,7 +392,7 @@ impl Vault {
         let contact = match &fact.attendee {
             ContainerAttendee::Person(person) => {
                 let fold = self.authority_view_readonly_in_txn(txn)?;
-                match crate::disclosure::room_party_in(self, txn, &fold, *person)? {
+                match crate::disclosure::bound_room_party_in(self, txn, &fold, *person)? {
                     RoomParty::Contact(contact) => Some(contact),
                     _ => None,
                 }

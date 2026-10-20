@@ -10,9 +10,18 @@
 //! registered table in one transaction, answering the saved ack; nothing
 //! partial lands. Sealed bytes and signed acks only: the carrier's tables
 //! and keys stay behind these doors.
+//!
+//! FIX 5661 C2b: `.cancel` fences a handoff its source takes back (FIX
+//! 5931), and the host's driver readies a new home before its first
+//! free-time pass ([`prepare_home_handoff`]) and arms the free-time tries
+//! this node admits, the old home's drain among them
+//! ([`free_time_arming`]).
+
+use std::collections::HashSet;
 
 use super::bundle::denied;
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::authority::PeerMachine;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -25,6 +34,30 @@ pub enum HomeHandoffStanding {
     /// first.
     Staged { parts: u32 },
     /// Adopted here: the ack this node signed, as named MessagePack.
+    Adopted { ack: Vec<u8> },
+}
+
+/// The free-time tries the host timer arms on this node (FIX 5661 C2b, FIX
+/// 6212), each by the claim's own readiness, placement and the operator's
+/// pauses, never by MACRO consolidation's bucket rule.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FreeTimeArming {
+    /// Every free-time try this node's admission takes now; one that never
+    /// started only while this node takes new free-time work.
+    pub tries: HashSet<AttemptId>,
+    /// The started ones this node drains as the home its election left,
+    /// armed without the home gate so each runs to its own end here before
+    /// the node freezes its state for the move.
+    pub drain: HashSet<AttemptId>,
+}
+
+/// What this node answers its source's cancel of a home handoff (FIX 5931).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HomeHandoffCancel {
+    /// Never adopted here, and fenced now: no commit lands it after.
+    Fenced,
+    /// Adopted here first, and it stays adopted: the ack this node signed,
+    /// as named MessagePack.
     Adopted { ack: Vec<u8> },
 }
 
@@ -89,7 +122,7 @@ pub fn home_handoff_part(
     count: u32,
     part: &[u8],
 ) -> Result<u32> {
-    owner_machine(vault, peer)?;
+    let source = owner_machine(vault, peer)?;
     if part.is_empty() || part.len() > HOME_HANDOFF_PART_BYTES || index >= count {
         return Err(denied());
     }
@@ -97,7 +130,7 @@ pub fn home_handoff_part(
         saved_ack(&ack, &digest)?;
         return Ok(count);
     }
-    home_handoff::stage_part(vault, &id, index, part)
+    home_handoff::stage_part(vault, &id, &digest, count, source, index, part)
 }
 
 /// Commits handoff `id`: its staged parts, joined, must be the bytes
@@ -141,4 +174,59 @@ pub fn home_handoff_commit(
         tracing::debug!(kind = ?error.kind(), "an adopted home handoff kept its staged parts");
     }
     home_handoff::encode_ack(&ack)
+}
+
+/// FIX 5931: cancels handoff `id`, sealed to the bytes `digest` names, at
+/// its source's word, in the writer that adopts. Never adopted here, it is
+/// fenced for good: its staged parts go and no commit lands it after.
+/// Adopted here first, it stays adopted and the answer is the saved ack.
+/// The source takes its state back only on [`HomeHandoffCancel::Fenced`].
+///
+/// # Errors
+///
+/// A refused peer; a handoff adopted here with other bytes, staged here by
+/// another machine, or one this node froze; storage errors.
+pub fn home_handoff_cancel(
+    vault: &Vault,
+    peer: PeerMachine,
+    id: [u8; 32],
+    digest: [u8; 32],
+) -> Result<HomeHandoffCancel> {
+    let source = owner_machine(vault, peer)?;
+    Ok(
+        match home_handoff::fence_handoff(vault, &id, &digest, source)? {
+            Some(ack) => HomeHandoffCancel::Adopted {
+                ack: home_handoff::encode_ack(&ack)?,
+            },
+            None => HomeHandoffCancel::Fenced,
+        },
+    )
+}
+
+/// FIX 5661 C2b (FIX 6211): readies this node as the vault's new MACRO home,
+/// called by the host before its deadline read arms any free-time cadence
+/// and before each wake pass. While this node's own election names it home,
+/// a handoff staged here in full adopts, with the commit door's checks; with
+/// none that adopts, a move that came here records Incomplete, so its local
+/// opening never travels as the lineage's state. Nothing waits or refuses:
+/// today's opening goes on. Elsewhere, and once done, it writes nothing.
+///
+/// # Errors
+///
+/// Storage errors reading the carrier's head or recording the outcome.
+pub fn prepare_home_handoff(vault: &Vault) -> Result<()> {
+    home_handoff::prepare_arrival(vault)
+}
+
+/// FIX 5661 C2b (FIX 6212): the free-time tries the host timer arms on this
+/// node ([`FreeTimeArming`]): every one its admission takes now, and the
+/// started ones it drains as the home its election left, which run here to
+/// their own end before it freezes its state for the move.
+///
+/// # Errors
+///
+/// Storage errors; a retry chain past its bound.
+pub fn free_time_arming(vault: &Vault) -> Result<FreeTimeArming> {
+    let (tries, drain) = home_handoff::free_time_arming(vault)?;
+    Ok(FreeTimeArming { tries, drain })
 }
