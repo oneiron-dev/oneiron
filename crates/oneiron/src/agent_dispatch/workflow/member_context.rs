@@ -5,16 +5,51 @@
 //! out. The lane is the member's grant key, rebuilt from the binding their
 //! run's wrapper stores wherever context resolves; no credential is kept.
 //! Owner- and agent-bound runs never reach it: theirs meets each private
-//! thread's cut alone, their binder's own (FIX 6412).
+//! thread's cut, their binder's own (FIX 6412), and a run an agent or the
+//! system bound meets that binder's own admission too (FIX 6715).
 
 use crate::agent_dispatch::AgentDispatcher;
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 use crate::context_projection::ResolvedContextProjection;
+use crate::conversation::AudienceCache;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::write_envelope::WriteActor;
+
+/// How the rows an agent's or the system's own admission leaves out of the
+/// run it bound are told (CALLS "FIX 6715 own-entry selector notice"): in
+/// the binder's count-only `workflow_context_narrowed` notice, beside its
+/// private-thread cut, never naming a row or another member's join.
+const OWN_ENTRY_SELECTOR_NOTICE: OwnEntryNotice = OwnEntryNotice::CountOnlyBinderNarrowed;
+
+/// The notice [`OWN_ENTRY_SELECTOR_NOTICE`] picks.
+enum OwnEntryNotice {
+    /// [`ResolvedContextProjection::binder_narrowed`]'s count-only notice.
+    CountOnlyBinderNarrowed,
+}
+
+/// Whether a binder's cut refills what it left out with more rows (CALLS
+/// "FIX 6715 no refill after own-entry filtering"): it does not. A
+/// descriptor's limit stays a maximum, as after a member's lane or a
+/// private-thread cut, and a wholly filtered context is empty, never an
+/// error.
+const SELECTOR_REFILL_AFTER_BINDER_FILTER: bool = false;
+const _: () = assert!(!SELECTOR_REFILL_AFTER_BINDER_FILTER);
+
+/// Whether a binder's cut keeps the sections it leaves in as they resolved
+/// (CALLS "FIX 6715 selector order kept"): it does, a stable filter, so the
+/// projection stays Layers, Memory, Chat, Briefing, newest-learned first.
+const SELECTOR_ORDER_KEPT: bool = true;
+const _: () = assert!(SELECTOR_ORDER_KEPT);
+
+/// Whether a row a binder's admission check cannot judge (a store or
+/// room-walk failure that check meets) stays in the run it bound (CALLS
+/// "FIX 6715 unjudged own-entry row"): it does not. It is left out and
+/// counted, as a row the private-thread cut cannot judge is, and the run
+/// still resolves; the failure never fails a run that resolves today.
+const OWN_ENTRY_UNJUDGED_ROW_KEPT: bool = false;
 
 impl AgentDispatcher<'_> {
     /// The member whose bound run `row` wraps: a registered wrapper whose
@@ -94,11 +129,19 @@ impl AgentDispatcher<'_> {
             .map(|bind| bind.bound_by))
     }
 
-    /// `projection` less every memory and chat section whose row sits in a
-    /// private thread one of `binders` does not read (FIX 6412): an owner's
-    /// or agent's bound run meets each thread's cut under its binder's own
-    /// CONTENT rule, and no grant, facet or floor beside it. A section whose
-    /// row cannot be named or judged is left out too; nothing here refuses.
+    /// `projection` less every memory and chat section whose row one of
+    /// `binders` does not read: an owner's or agent's bound run meets each
+    /// private thread's cut under its binder's own CONTENT rule (FIX 6412),
+    /// and each agent or system binder's own admission as well, by the one
+    /// check its own transcript and digest reads meet (`own_entry_admits_in`,
+    /// FIX 5861, 6715). The owner's or a person's binding adds no admission
+    /// check, and no grant, facet or floor stands beside these. A section
+    /// whose row cannot be named or judged against a thread is left out too,
+    /// as is one its admission check cannot judge. The rest keep their order
+    /// and nothing refills them (`SELECTOR_ORDER_KEPT`,
+    /// `SELECTOR_REFILL_AFTER_BINDER_FILTER`). Nothing here refuses: a store
+    /// or room-walk failure the admission check meets leaves its row out
+    /// (`OWN_ENTRY_UNJUDGED_ROW_KEPT`).
     pub(in crate::agent_dispatch) fn binder_context(
         &self,
         projection: ResolvedContextProjection,
@@ -122,24 +165,71 @@ impl AgentDispatcher<'_> {
                 ))
             })
             .collect::<Result<Vec<_>>>()?;
+        // The agents and the system among them read by their own admission
+        // (FIX 6715); the owner's and a person's binding add no such check.
+        let own_entry: Vec<EntityId> = binders
+            .iter()
+            .filter(|binder| {
+                matches!(
+                    binder.actor_class(),
+                    EdgeActorClass::Agent | EdgeActorClass::System
+                )
+            })
+            .map(|binder| binder.entity_ref())
+            .collect();
         let txn = self.vault.store.env.read_txn()?;
+        let dbs = self.vault.store.read();
+        let entry = AudienceCache::default();
         let kept = |sections: &[String]| -> Vec<String> {
-            sections
-                .iter()
-                .filter(|section| {
-                    section_row(section).is_ok_and(|row| {
-                        reads
-                            .iter()
-                            .all(|read| read.private_threads_admit_in(&txn, &row).unwrap_or(false))
-                    })
-                })
-                .cloned()
-                .collect()
+            let mut kept = Vec::with_capacity(sections.len());
+            for section in sections {
+                let Ok(row) = section_row(section) else {
+                    continue;
+                };
+                if reads
+                    .iter()
+                    .all(|read| read.private_threads_admit_in(&txn, &row).unwrap_or(false))
+                    && own_entry_admits_in(self.vault, &entry, &dbs, &txn, row, &own_entry)
+                        .unwrap_or(OWN_ENTRY_UNJUDGED_ROW_KEPT)
+                {
+                    kept.push(section.clone());
+                }
+            }
+            kept
         };
         let memory = kept(&projection.memory_sections);
         let chat = kept(&projection.chat_sections);
-        Ok(projection.binder_narrowed(memory, chat))
+        Ok(match OWN_ENTRY_SELECTOR_NOTICE {
+            OwnEntryNotice::CountOnlyBinderNarrowed => projection.binder_narrowed(memory, chat),
+        })
     }
+}
+
+/// Whether each of `readers`, an agent or the system who bound the run,
+/// reads `row` as it stands in `txn` by its own admission (FIX 5861, 6715):
+/// the one check an unbound agent's transcript and digest reads meet
+/// (`AudienceCache::own_entry_readable_raw`), its errors theirs. No reader,
+/// or a row that is gone, adds nothing here.
+fn own_entry_admits_in(
+    vault: &crate::Vault,
+    entry: &AudienceCache,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    row: EntityId,
+    readers: &[EntityId],
+) -> Result<bool> {
+    if readers.is_empty() {
+        return Ok(true);
+    }
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &row)? else {
+        return Ok(true);
+    };
+    for reader in readers {
+        if !entry.own_entry_readable_raw(vault, dbs, txn, row, &raw, *reader)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Of `sections`, the ones whose row `read` reads in `txn`, body included,
