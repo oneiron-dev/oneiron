@@ -65,12 +65,16 @@ pub(super) struct Measured {
     /// The reply's text parts, joined; scored and digested, never stored.
     pub(super) text: String,
     pub(super) usage: LlmUsage,
+    /// `t0`, the instant every ms field counts from.
+    pub(super) started: Instant,
 }
 
 /// A call that failed, and when.
 pub(super) struct Failed {
     pub(super) error: String,
     pub(super) wall_ms: f64,
+    /// `t0`, or the refusal's instant for a call that never started.
+    pub(super) started: Instant,
 }
 
 fn ms(since: Instant) -> f64 {
@@ -122,6 +126,7 @@ pub(super) async fn drive(
     let failed = |error: String, t0: Instant| Failed {
         error,
         wall_ms: ms(t0),
+        started: t0,
     };
     let t0 = Instant::now();
     let mut stream = backend
@@ -158,6 +163,7 @@ pub(super) async fn drive(
                     .collect();
                 return Ok(finished(
                     Instants {
+                        started: t0,
                         first_any,
                         first_text,
                         last,
@@ -177,6 +183,7 @@ pub(super) async fn drive(
 
 /// The call's timestamps, in ms after `t0`.
 struct Instants {
+    started: Instant,
     first_any: Option<f64>,
     first_text: Option<f64>,
     last: Option<f64>,
@@ -232,5 +239,6 @@ fn finished(
         timing,
         text,
         usage,
+        started: at.started,
     }
 }

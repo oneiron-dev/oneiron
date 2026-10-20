@@ -8,6 +8,7 @@ pub(super) const USAGE: &str = "usage: oneiron-bench infer run --arm-id ID --tra
   --models-toml FILE --model PROVIDER:MODEL --cases /ABS/cases.jsonl --out /ABS/rows.jsonl\n\
   [--reps 1] [--only CASE_ID]... [--warmup 1] [--sampling shipped|greedy|card]\n\
   [--schema on|off] [--cache-bust on|off] [--keep-outputs /ABS/DIR]\n\
+  [--concurrency 1] [--stagger-ms 0] [--draft-depth N]\n\
   [--engine-cmd PATH [--engine-env KEY=VALUE]... --engine-health URL [--engine-ready-timeout 900]]\n\
   [--gpu-index 0] [--vram-poll-ms 100] [--server oneiron-server]   (--server: own-server only)\n\
        oneiron-bench infer summarize --out ROWS.jsonl [--out ROWS.jsonl]...";
@@ -80,6 +81,15 @@ pub(super) struct RunArgs {
     pub(super) gpu_index: u32,
     pub(super) vram_poll_ms: u64,
     pub(super) server: Option<PathBuf>,
+    /// Calls in flight at once from this client: worker tasks sharing one
+    /// arm, backend and meter.
+    pub(super) concurrency: u32,
+    /// Worker k makes its first call k times this many ms after its
+    /// cohort's start.
+    pub(super) stagger_ms: u64,
+    /// The engine's draft depth as the operator declares it, a label only:
+    /// identity is compared within one depth.
+    pub(super) draft_depth: Option<u32>,
 }
 
 fn number<T: FromStr>(flag: &str, value: &str) -> Result<T, String> {
@@ -134,6 +144,9 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
     let mut gpu_index = 0;
     let mut vram_poll_ms = 100;
     let mut server = None;
+    let mut concurrency = 1;
+    let mut stagger_ms = 0;
+    let mut draft_depth = None;
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         let value = it
@@ -187,6 +200,9 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
             "--gpu-index" => gpu_index = number(flag, value)?,
             "--vram-poll-ms" => vram_poll_ms = positive(flag, value)?,
             "--server" => server = Some(PathBuf::from(value)),
+            "--concurrency" => concurrency = positive(flag, value)?,
+            "--stagger-ms" => stagger_ms = number(flag, value)?,
+            "--draft-depth" => draft_depth = Some(number(flag, value)?),
             other => return Err(format!("unknown `infer run` flag `{other}`\n{USAGE}")),
         }
     }
@@ -236,6 +252,9 @@ pub(super) fn parse_run(args: &[String]) -> Result<RunArgs, String> {
         gpu_index,
         vram_poll_ms,
         server,
+        concurrency,
+        stagger_ms,
+        draft_depth,
     })
 }
 
