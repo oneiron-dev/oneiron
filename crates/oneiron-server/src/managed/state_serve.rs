@@ -31,10 +31,13 @@ use super::args::{ManagedArgs, ManagedError};
 use super::ledger::{SYNC_UPGRADE_SETTLE_SECS, WakeLedger};
 use super::listener::{BoundServeListener, ManagedCtl, ServeListener};
 use super::vault_gates::{open_managed_vault, provision_host_authority};
+use admission::WriteKind;
 use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
 use read_only::is_read_only;
 
+/// The reap freeze's write admission, held until a write's last write.
+mod admission;
 /// The vault data key's boot steps: its page seal, escrow wraps and spool.
 mod boot_keys;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
@@ -152,9 +155,9 @@ pub fn spawn_sigterm_shutdown(shutdown: ManagedShutdown) -> Result<(), ManagedEr
 pub struct ManagedState {
     vault_name: String,
     server: Arc<SyncServer>,
-    frozen: AtomicBool,
-    /// Shared with a backup before an idle reap, which counts among them.
-    http_mutating_in_flight: Arc<AtomicU64>,
+    /// The reap freeze and the admitted writes in flight, by kind; a backup
+    /// before an idle reap counts among them.
+    admission: Arc<admission::Admission>,
     /// Unix seconds of the most recent sync upgrade the freeze gate admitted,
     /// or 0 if none. The handshake is the last thing that gate ever sees of a
     /// sync session, so this stamp is the only record that one exists.
@@ -227,7 +230,7 @@ impl ManagedCarrierContext {
     /// `action` does not await. While the vault is frozen for reap nothing
     /// runs, and the pause a served write gets is returned instead.
     pub(crate) fn admit_receipt<T>(&self, action: impl FnOnce() -> T) -> Result<T, CarrierPaused> {
-        let _admission = self.0.admit_http_mutation().map_err(CarrierPaused)?;
+        let _admission = self.0.admit(WriteKind::OwnerWrite).map_err(CarrierPaused)?;
         Ok(action())
     }
 
@@ -387,16 +390,6 @@ fn action_or_frame_attestable(method: &Method, path: &str) -> bool {
     }
 }
 
-struct HttpMutation(Arc<ManagedState>);
-
-impl Drop for HttpMutation {
-    fn drop(&mut self) {
-        self.0
-            .http_mutating_in_flight
-            .fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
 impl std::fmt::Debug for ManagedState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ManagedState")
@@ -412,8 +405,7 @@ impl ManagedState {
         Self {
             vault_name,
             server,
-            frozen: AtomicBool::new(false),
-            http_mutating_in_flight: Arc::default(),
+            admission: Arc::default(),
             last_sync_upgrade: AtomicU64::new(0),
             alarms: Mutex::new(Vec::new()),
             ledger,
@@ -491,42 +483,6 @@ impl ManagedState {
             .insert(action.mac.clone(), issued_at.saturating_add(skew))
             .is_none()
             .then_some(holder)
-    }
-
-    fn admit_http_mutation(self: &Arc<Self>) -> Result<HttpMutation, ManagedError> {
-        // Increment BEFORE checking freeze. A concurrent freeze must either see
-        // this writer or make this admission fail; check-then-increment races.
-        self.http_mutating_in_flight.fetch_add(1, Ordering::SeqCst);
-        let admission = HttpMutation(Arc::clone(self));
-        self.guard_write()?;
-        Ok(admission)
-    }
-
-    /// A background pass's admission, taken as a served write's and held on
-    /// the pass's own thread until its last write. A refused pass logs the
-    /// pause's typed reason, once per freeze, and asks again later.
-    fn admit_background(self: &Arc<Self>) -> Option<Box<dyn Send>> {
-        match self.admit_http_mutation() {
-            Ok(admission) => Some(Box::new(admission)),
-            Err(_) => {
-                if !self.background_waiting.swap(true, Ordering::SeqCst) {
-                    tracing::info!(
-                        reason = WRITES_FROZEN_TAG,
-                        bound_kind = REAP_PAUSE_REFUSAL.bound.kind.as_str(),
-                        bound_resource = REAP_PAUSE_REFUSAL.bound.resource.as_str(),
-                        bound_phase = REAP_PAUSE_REFUSAL.bound.phase.as_str(),
-                        "background passes wait: the vault is paused for reap preparation until the reap is aborted or the vault wakes again"
-                    );
-                }
-                None
-            }
-        }
-    }
-
-    /// [`Self::admit_background`] as the admission a background worker takes.
-    fn background_admission(self: &Arc<Self>) -> crate::server::HousekeepingAdmission {
-        let state = Arc::clone(self);
-        Arc::new(move || state.admit_background())
     }
 
     pub fn vault_name(&self) -> &str {
@@ -763,7 +719,7 @@ async fn freeze_gate(
     if is_read_only(&request) {
         return run_admitted_request(state, request, next).await;
     }
-    let admission = match state.admit_http_mutation() {
+    let admission = match state.admit(WriteKind::OwnerWrite) {
         Ok(admission) => admission,
         Err(error) => return writes_frozen_response(&error),
     };
@@ -1074,7 +1030,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
     ai.bind_pass_admission({
         let gate = Arc::clone(&reap_gate);
-        Arc::new(move || gate.get()?.admit_background())
+        Arc::new(move || gate.get()?.admit_background(WriteKind::Dreamer))
     });
     let sync_server = Arc::new(sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -1130,7 +1086,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // it. Bound before anything serves.
     sync_server
         .live_voice
-        .admit_with(state.background_admission());
+        .admit_with(state.background_admission(WriteKind::OwnerWrite));
 
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
@@ -1140,7 +1096,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let oversight = sync_server
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, {
             let state = Arc::clone(&state);
-            move || state.admit_background()
+            move || state.admit_background(WriteKind::BackgroundOther)
         })
         .await?;
     // Fact hooks (ARCH-0080) and the settled verb-ask drain on their runner,
@@ -1149,8 +1105,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let (hooks_stop, hooks_stopped) = watch::channel(false);
     #[cfg(feature = "code-sandbox-wasmtime")]
     let fact_hooks = if config.hooks {
-        crate::commands::spawn_fact_hooks(&sync_server, state.background_admission(), hooks_stopped)
-            .await
+        crate::commands::spawn_fact_hooks(
+            &sync_server,
+            state.background_admission(WriteKind::BackgroundOther),
+            hooks_stopped,
+        )
+        .await
     } else {
         None
     };
@@ -1169,7 +1129,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // start here, before ctl serves or the supervisor hears ready.
     let linear = crate::linear_host::spawn_configured(
         Arc::clone(&sync_server),
-        state.background_admission(),
+        state.background_admission(WriteKind::BackgroundOther),
     )
     .await?;
     // Every fallible step is done: a cold restore's receipt and `verified`
@@ -1219,14 +1179,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
 
     // Housekeeping passes are admitted like a served write: a vault frozen
     // for reap sweeps nothing, and a pass in flight keeps it from reading
-    // quiescent.
-    let background = sync_server.spawn_serve_background(state.background_admission());
+    // quiescent. These and the workers below count as other background
+    // passes, unless named (FIX 6902).
+    let admitted = || state.background_admission(WriteKind::BackgroundOther);
+    let background = sync_server.spawn_serve_background(admitted());
     // Surface events drain under the same admission (OF-218).
-    let connector_events = sync_server.spawn_connector_event_worker(state.background_admission());
+    let connector_events = sync_server.spawn_connector_event_worker(admitted());
     // Approved sends leave under the same admission (OF-187).
-    let connector_sends = sync_server.spawn_connector_send_worker(state.background_admission());
+    let connector_sends = sync_server.spawn_connector_send_worker(admitted());
     // Checked built-in channels, under the same admission (OF-519).
-    let builtin_host = crate::builtin_host::spawn(&sync_server, state.background_admission());
+    let builtin_host = crate::builtin_host::spawn(&sync_server, admitted());
     // Failure signals reach our collector under the same admission (OF-380).
     // Managed mode reads no environment, so the send carries no bearer.
     let failure_signals = crate::ai_host::failure_signals::spawn(
@@ -1236,11 +1198,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             true,
             None,
         ),
-        state.background_admission(),
+        admitted(),
     );
     // The ladder's workers plain serve runs. Wire health and the standing
     // pump pass under the same admission.
-    let admitted = || state.background_admission();
     // The nightly Coach jobs that need the host's model or rules (OF-420).
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
@@ -1254,12 +1215,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ));
     // Pending vectors are filled while the vault admits writes (FIX 777).
     ladder_workers.extend(sync_server.spawn_embedding_worker_admitted(admitted()));
-    // Witnessed turns' tagging markers drain under the same admission.
-    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(admitted()));
+    // Witnessed turns' tagging markers drain under the same admission,
+    // counted as tagging, with the reap freeze as their pause.
+    let tagging = state.pass_control(WriteKind::BackgroundTagging);
+    ladder_workers.extend(sync_server.spawn_tagging_worker_admitted(tagging.admission()));
     // Stored media is embedded under the same admission (OF-370).
     ladder_workers.extend(sync_server.spawn_media_embedding_worker_admitted(admitted()));
-    // Queued and resumed agent runs, each admitted with its permit (OF-533).
-    ladder_workers.extend(sync_server.spawn_resident_pump_admitted(admitted()));
+    // Queued and resumed agent runs, each admitted with its permit (OF-533):
+    // a run as the owner's foreground work, its discovery pass as background.
+    let admit_run = state.background_admission(WriteKind::OwnerWrite);
+    ladder_workers.extend(sync_server.spawn_resident_pump_admitted(admitted(), admit_run));
     // Held and answered connector calls settle (ONE-2510).
     ladder_workers.push(sync_server.spawn_connector_settler_admitted(admitted()));
     // The backup schedule, the owner's setting over `[backup]` (FIX 5621),
@@ -1347,7 +1312,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                 },
             )
         }),
-        admitted(),
+        state.background_admission(WriteKind::OwnerWrite),
     );
     // The supervisor reaches the loop on the vault VM's voice port.
     #[cfg(unix)]
@@ -1385,7 +1350,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         &sync_server,
         &config,
         mesh.as_ref(),
-        &admitted(),
+        &state.background_admission(WriteKind::OwnerWrite),
     )
     .await;
     let artifact_task = artifacts.map(|listener| {

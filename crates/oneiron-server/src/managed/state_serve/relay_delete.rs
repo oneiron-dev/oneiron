@@ -5,14 +5,12 @@
 //! Each names this vault twice, by its registry name and by its engine
 //! vault id, and is answered for another vault without touching anything.
 //! A delete also names this boot. It is admitted like a served write: it
-//! counts among the writes in flight from before the freeze check until its
+//! counts among the owner writes in flight from its freeze check until its
 //! job ends, so a reap never reads quiescent over it, and a vault frozen for
 //! reap or stopping answers it `unknown` (`not_ready`), never the typed reap
 //! pause, and starts nothing.
 
 use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use oneiron_vault_contract::relay_delete::{
@@ -23,19 +21,10 @@ use oneiron_vault_contract::relay_delete::{
 use oneiron_vault_contract::{CtlResponse, from_hex, hex};
 
 use super::ManagedState;
+use super::admission::{Admitted, WriteKind};
 use crate::managed::ManagedError;
 use crate::managed::RelayDeleteTarget;
 use crate::managed::relay_delete::RelayDeleteJob;
-
-/// A relay delete's place among the writes in flight, held until its job
-/// ends.
-struct InFlight(Arc<AtomicU64>);
-
-impl Drop for InFlight {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
-    }
-}
 
 impl ManagedState {
     /// Answers `relay_delete_execute`: what became of the delete, with the
@@ -90,14 +79,11 @@ impl ManagedState {
             .await
     }
 
-    /// A served write's admission, taken for a relay delete's job: counted
-    /// BEFORE the freeze check, so a concurrent freeze either sees it or
-    /// refuses it.
-    fn relay_delete_admission(&self) -> Result<InFlight, ManagedError> {
-        self.http_mutating_in_flight.fetch_add(1, Ordering::SeqCst);
-        let admission = InFlight(Arc::clone(&self.http_mutating_in_flight));
-        self.guard_write()?;
-        Ok(admission)
+    /// An owner write's admission, taken for a relay delete's job: counted
+    /// in the hold that reads the freeze, so a concurrent freeze either sees
+    /// it or refuses it.
+    fn relay_delete_admission(&self) -> Result<Admitted, ManagedError> {
+        self.admit(WriteKind::OwnerWrite)
     }
 
     /// Whether `vault` and `engine_vault_id` are this vault's registry name
