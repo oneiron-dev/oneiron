@@ -193,6 +193,7 @@ impl Shape {
     /// schema, never solo, so a warmup round warms the batched path.
     pub(super) fn warmup(&self) -> LlmRequest {
         let messages = vec![text(LlmMessageRole::User, WARMUP_PROMPT.to_owned())];
-        self.request(messages, WARMUP_MAX_TOKENS, false, None, false).0
+        self.request(messages, WARMUP_MAX_TOKENS, false, None, false)
+            .0
     }
 }
