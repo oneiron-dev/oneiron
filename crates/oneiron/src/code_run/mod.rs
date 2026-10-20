@@ -108,6 +108,11 @@ pub(crate) use self::result_read::{
 };
 pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::{
+    CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
+    erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
+    response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
+};
+pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, ResultSpeech,
     executor_compaction_session_id, executor_speech_message_id_in_run,
     executor_speech_turn_id_for_run,
@@ -124,10 +129,6 @@ pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
     ProgramResumeWait, load_program_checkpoint_tail, program_resume_call,
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
-};
-pub(crate) use self::storage::{
-    RESPONSE_ERASED, WaitReply, erase_settled_reply_of_erased_run_in_txn, replay_carriage,
-    replay_owners, response_erased_error, retire_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
