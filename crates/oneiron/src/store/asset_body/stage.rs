@@ -357,10 +357,12 @@ impl crate::Vault {
     /// Puts `staged` as ASSET `id` in the caller's transaction, through the
     /// batch door every ASSET put takes (its checks, staging, indexes and
     /// short id): a published file as its manifest, any other body as its
-    /// bytes, which the door may still move to a file. A file the secret
-    /// mask has marked since goes in its row, and so does one whose stream
-    /// carried a value custody holds, marked here first as the batch door
-    /// marks a file's (FIX 5395).
+    /// bytes, which the door may still move to a file. A file whose stream
+    /// carried a value custody holds is marked here first, as the batch door
+    /// marks a file's (FIX 5395), and stays a file, as does one the secret
+    /// mask marked before (FIX 5507): its bytes and digest stay as streamed,
+    /// the batch door bands the record by the file's digest, and a serving
+    /// door masks the file's bytes by that mark.
     ///
     /// # Errors
     ///
@@ -381,10 +383,7 @@ impl crate::Vault {
                     file.read_range(at, len)
                 })?;
         }
-        if matches!(staged.body, Staged::File(_))
-            && crate::secret_custody::masked_file_in_txn(&self.store, txn, &staged.facts.blake3)?
-                .is_none()
-        {
+        if matches!(staged.body, Staged::File(_)) {
             // A sealed file's key row commits with the row naming it; a
             // digest with a committed pair keeps it (FIX 5348).
             if let Some(key) = &staged.key {
@@ -410,7 +409,8 @@ impl crate::Vault {
     }
 
     /// [`Self::put_asset_body_in_txn`] for a body a peer sent by reference
-    /// (FIX 5489): the same marking, mask fallback and sealed-key binding,
+    /// (FIX 5489): the same marking, marked files kept as files (FIX 5507)
+    /// and sealed-key binding,
     /// through the replicated door at `tier` on both branches, so the row
     /// lands as replay lands it. `birth`, the row's carried Rule A birth, is
     /// stamped in this transaction once the row is live; a malformed or
@@ -444,10 +444,7 @@ impl crate::Vault {
                     file.read_range(at, len)
                 })?;
         }
-        let put = if matches!(staged.body, Staged::File(_))
-            && crate::secret_custody::masked_file_in_txn(&self.store, txn, &staged.facts.blake3)?
-                .is_none()
-        {
+        let put = if matches!(staged.body, Staged::File(_)) {
             // A sealed file's key row commits with the row naming it; a
             // digest with a committed pair keeps it (FIX 5348).
             if let Some(key) = &staged.key {

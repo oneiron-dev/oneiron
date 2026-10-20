@@ -42,9 +42,11 @@
 //!
 //! A pin request whose pickup committed a wait for a root the target did
 //! not store yet owns that wait (FIX 5582): once the target folds the
-//! request cancelled or superseded, its store gate stops taking that root's
-//! row and its anchor's marks as its own, and the next pickup clears the
-//! wait byte-free ([`Vault::settle_root_request_waits`]). The pin stays, a
+//! request cancelled or superseded, or answered refused, its final state
+//! (FIX 5696), its store gate stops taking that root's row and its anchor's
+//! marks as its own, and the next pickup clears the wait byte-free
+//! ([`Vault::settle_root_request_waits`]). A request still pending, its
+//! root not stored yet among them, signs no result and keeps its wait. The pin stays, a
 //! wait the owner made at the pin door stays, and an activation's kit
 //! issued under a request that ended stays listed, its request's state
 //! beside it, for the target's own kit door to confirm.
@@ -409,10 +411,11 @@ impl Vault {
     /// Clears the wait a root request's pickup committed once this install's
     /// fold holds that request cancelled by the owner or superseded by a
     /// newer request on this install (FIX 5582; CALLS ROOT_WORK_CANCEL,
-    /// ROOT_WORK_SUPERSESSION). Byte-free: no secret is read, no result is
-    /// signed, and nothing the request did is undone. The store gate already
-    /// read no wait for it in the snapshot that folded the cancel or the
-    /// newer request; this clears what the pin singleton keeps. The pin, the
+    /// ROOT_WORK_SUPERSESSION), or answered refused (FIX 5696). Byte-free: no
+    /// secret is read, no result is signed, and nothing the request did is
+    /// undone. The store gate already read no wait for it in the snapshot
+    /// that folded the cancel, the newer request or the refusal; this clears
+    /// what the pin singleton keeps. The pin, the
     /// earlier admitter, the owner's own wait and a wait another request owns
     /// all stay. The pickup runs it first, before it lists any work.
     pub(crate) fn settle_root_request_waits(&self) -> Result<()> {
@@ -444,7 +447,9 @@ impl Vault {
     /// The first recheck a root request fails in this transaction: its owner
     /// is no longer a live vault owner, or the roots' and the target's
     /// revision here differs from the act's `seen` (CALLS ROOT_WORK_REVISION,
-    /// [`ROOT_REVISION_REFUSAL`]).
+    /// [`ROOT_REVISION_REFUSAL`]). Each is final: the refused result it signs
+    /// closes the request, and with it a wait its pickup committed (FIX
+    /// 5696). Work that may still run here signs no refusal.
     fn root_work_refusal(
         &self,
         txn: &heed::RoTxn<'_>,

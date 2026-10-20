@@ -47,15 +47,7 @@ impl SessionBinding<'_> {
     ) -> Result<CodeRunRawOutput> {
         let finished = finish_output(path, sink, complete, self.session.limit_watch())?;
         self.mark_secret(&finished.output, owner, finished.secret)?;
-        self.put_body_key(&finished)?;
-        self.answered(|| {
-            self.session.side_table_put_routed(
-                &self.route,
-                &RAW_OUTPUTS,
-                &finished.output.handle,
-                &finished.body,
-            )
-        })?;
+        self.put_output_row(&finished, &finished.output)?;
         Ok(finished.output)
     }
 
@@ -98,41 +90,42 @@ impl SessionBinding<'_> {
             ));
         }
         self.mark_secret(output, owner, finished.secret)?;
-        self.put_body_key(&finished)?;
-        self.answered(|| {
-            self.session.side_table_put_routed(
-                &self.route,
-                &RAW_OUTPUTS,
-                &output.handle,
-                &finished.body,
-            )
-        })
+        self.put_output_row(&finished, output)
     }
 
-    /// The instance row of the file `finished` wrote, on the run's route,
-    /// before the row naming it (FIX 5348, KS-2A): a vault instance's row
-    /// pins the custody binding in the same transaction. A row the route's
-    /// scope holds for the digest already stays: its file serves the body.
-    pub(super) fn put_body_key(
+    /// The row of the body `finished` holds, as `output`, and the
+    /// instance row of the file it wrote, both on the run's route in ONE
+    /// transaction (FIX 5348, KS-2A; FIX 5475): no stop between them leaves
+    /// a key row whose file no row names. A vault instance's row pins the
+    /// custody binding in that transaction. A key row the route's scope
+    /// holds for the digest already stays, its file serving the body, and
+    /// the body's row is written all the same.
+    pub(super) fn put_output_row(
         &self,
         finished: &super::super::records::FinishedOutput,
+        output: &CodeRunRawOutput,
     ) -> Result<()> {
-        let Some(key) = finished.key.as_ref() else {
-            return Ok(());
-        };
         self.answered(|| {
-            let dir = self.session.body_dir(self.route.target())?;
+            let dir = finished
+                .key
+                .as_ref()
+                .map(|_| self.session.body_dir(self.route.target()))
+                .transpose()?;
             self.session
                 .routed_side_txn(&self.route, |txn, read, write| {
-                    if let Some(held) = BODY_KEYS.get(&read, txn, key.digest())?
-                        && key.keeps(&held, &dir)?
-                    {
-                        return Ok(());
+                    if let (Some(key), Some(dir)) = (finished.key.as_ref(), dir.as_ref()) {
+                        let kept = match BODY_KEYS.get(&read, txn, key.digest())? {
+                            Some(held) => key.keeps(&held, dir)?,
+                            None => false,
+                        };
+                        if !kept {
+                            if let crate::side_table::RoutedDbs::Base(vault) = &write {
+                                crate::store::pin_body_custody_in_txn(&vault.store, txn)?;
+                            }
+                            BODY_KEYS.put(&write, txn, key.digest(), key.row())?;
+                        }
                     }
-                    if let crate::side_table::RoutedDbs::Base(vault) = &write {
-                        crate::store::pin_body_custody_in_txn(&vault.store, txn)?;
-                    }
-                    BODY_KEYS.put(&write, txn, key.digest(), key.row())
+                    RAW_OUTPUTS.put(&write, txn, &output.handle, &finished.body)
                 })
         })
     }
