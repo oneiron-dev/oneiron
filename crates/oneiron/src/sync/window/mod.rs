@@ -31,6 +31,7 @@ mod project_history;
 mod rebootstrap;
 mod replacement;
 mod reverse;
+mod sealed_membership;
 mod shallow;
 #[cfg(any(test, feature = "test-hooks"))]
 #[doc(hidden)]

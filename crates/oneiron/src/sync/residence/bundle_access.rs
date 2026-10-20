@@ -363,10 +363,10 @@ impl Vault {
     /// keeps generations itself, the home, takes it at once. Idempotent; a
     /// failure leaves the machine's own sweep to ask.
     ///
-    /// A vault that never queued one cannot tell an old reader from a machine
-    /// just admitted: it notes every machine standing now as asked, and asks
-    /// for none, so no old reader waits on a grant it does not need. Each of
-    /// those that lacks a key asks for itself when it sweeps.
+    /// The first run asks too (FIX 4566): for the machine admitted in that
+    /// call and for every one standing before, as no row here tells an old
+    /// reader from a machine just admitted. An old reader whose capsule opens
+    /// a generation still issues its grants while its own request waits.
     pub(crate) fn queue_sealed_bundle_pad_admissions(&self) -> Result<()> {
         match SEALED_PAD_GRANT_STORAGE {
             GrantStorage::HomeCustodyWithLocalAdmissionOutbox => {}
@@ -374,10 +374,6 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| {
             let fold = self.authority_view_readonly_in_txn(wtxn)?;
             let kept = kept_in(self, wtxn)?;
-            let first = ACCESS
-                .iter_raw_from(&self.store, wtxn, b"q:")?
-                .next()
-                .is_none();
             let machines: Vec<EntityId> = fold.machines.keys().copied().collect();
             for machine in machines {
                 let Some(target) = PadAdmissionTarget::admitted(&fold, machine) else {
@@ -387,9 +383,7 @@ impl Vault {
                 if ACCESS.get_bytes(&self.store, wtxn, &key)?.is_some() {
                     continue;
                 }
-                let state = if first {
-                    ASKED
-                } else if kept.is_empty() {
+                let state = if kept.is_empty() {
                     QUEUED
                 } else {
                     ensure_in(self, wtxn, &kept, &target, None, &[])?;
