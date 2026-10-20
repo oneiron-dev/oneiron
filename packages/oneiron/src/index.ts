@@ -2187,8 +2187,8 @@ export class Oneiron {
     rooms: {
       /** The caller's rooms its own grants admit; inside a room turn, only that room. */
       list: (): Facade.RoomEntry[] => this.#call(() => this.#client.vaultRoomsList({}) as Facade.RoomEntry[]),
-      /** One page of the turns in a room this reader may read. */
-      messages: (roomRef: string, after?: string, limit?: number): Facade.RoomPage => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit}) as Facade.RoomPage),
+      /** One page of the turns in a room this reader may read; with thread_ref, of that one thread alone. */
+      messages: (roomRef: string, after?: string, limit?: number, threadRef?: string): Facade.RoomPage => this.#call(() => this.#client.vaultRoomsMessages({room_ref: roomRef, after, limit, thread_ref: threadRef}) as Facade.RoomPage),
       /** One page of who took part in a room or one of its threads, each with its causes and whether it may take part now. */
       participants: (input: Facade.ParticipantsRequest): Facade.ParticipantsPage => this.#call(() => this.#client.vaultRoomsParticipants(input) as Facade.ParticipantsPage),
       /** The standalone rendered view of a room's threads. */

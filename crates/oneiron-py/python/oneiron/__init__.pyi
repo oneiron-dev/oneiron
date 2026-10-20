@@ -2509,8 +2509,8 @@ class Oneiron:
     class _VaultRoomsVerbs:
         def list(self) -> list[Facade.RoomEntry]:
             """The caller's rooms its own grants admit; inside a room turn, only that room."""
-        def messages(self, room_ref: str, after: str | None = None, limit: int | None = None) -> Facade.RoomPage:
-            """One page of the turns in a room this reader may read."""
+        def messages(self, room_ref: str, after: str | None = None, limit: int | None = None, thread_ref: str | None = None) -> Facade.RoomPage:
+            """One page of the turns in a room this reader may read; with thread_ref, of that one thread alone."""
         def participants(self, spec: Facade.ParticipantsRequest) -> Facade.ParticipantsPage:
             """One page of who took part in a room or one of its threads, each with its causes and whether it may take part now."""
         def render(self, room_ref: str) -> list[str]:

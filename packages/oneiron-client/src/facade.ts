@@ -699,7 +699,7 @@ export interface FacadeInputs {
   "tasks.answer": Facade.TaskAnswerRequest;
   "tasks.outcomes": Facade.TaskAskHandle;
   "vault.rooms.list": Facade.EmptyRequest;
-  "vault.rooms.messages": Facade.RoomRequest;
+  "vault.rooms.messages": Facade.RoomMessagesRequest;
   "vault.rooms.participants": Facade.ParticipantsRequest;
   "vault.rooms.render": Facade.RoomRefRequest;
   "vault.rooms.find": Facade.RoomRequest;
@@ -2867,7 +2867,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "tasks.answer": { description: "Admits one person's word on an ask; the word is evidence, never approval.", scope: "Write", proposes: false, hostDoor: false, section: true },
   "tasks.outcomes": { description: "Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to.", scope: "Read", proposes: false, hostDoor: false, section: true },
   "vault.rooms.list": { description: "The caller's rooms its own grants admit; inside a room turn, only that room.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.rooms.messages": { description: "One page of the turns in a room this reader may read.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.rooms.messages": { description: "One page of the turns in a room this reader may read; with thread_ref, of that one thread alone.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.rooms.participants": { description: "One page of who took part in a room or one of its threads, each with its causes and whether it may take part now.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.rooms.render": { description: "The standalone rendered view of a room's threads.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.rooms.find": { description: "One page of a room's threads.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -5115,8 +5115,8 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       rooms: {
         /** The caller's rooms its own grants admit; inside a room turn, only that room. */
         list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.rooms.list">[K] => invoke("vault.rooms.list", input, options, newInvocation()),
-        /** One page of the turns in a room this reader may read. */
-        messages: (input: Facade.RoomRequest, options?: O): FacadeReturns<"vault.rooms.messages">[K] => invoke("vault.rooms.messages", input, options, newInvocation()),
+        /** One page of the turns in a room this reader may read; with thread_ref, of that one thread alone. */
+        messages: (input: Facade.RoomMessagesRequest, options?: O): FacadeReturns<"vault.rooms.messages">[K] => invoke("vault.rooms.messages", input, options, newInvocation()),
         /** One page of who took part in a room or one of its threads, each with its causes and whether it may take part now. */
         participants: (input: Facade.ParticipantsRequest, options?: O): FacadeReturns<"vault.rooms.participants">[K] => invoke("vault.rooms.participants", input, options, newInvocation()),
         /** The standalone rendered view of a room's threads. */

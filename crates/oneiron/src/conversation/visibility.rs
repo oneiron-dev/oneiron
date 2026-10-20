@@ -5,8 +5,8 @@ use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::{
     EdgeKind,
     registry::{
-        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_RELATIONSHIP, ENTITY_TYPE_TASK,
-        ENTITY_TYPE_TURN,
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_RELATIONSHIP,
+        ENTITY_TYPE_TASK, ENTITY_TYPE_TURN,
     },
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -142,6 +142,9 @@ impl AudienceCache {
         if depth == 0 && !private_threads_readable_raw_in(vault, txn, id, raw, audience, current)? {
             return Ok(false);
         }
+        // FIX 5638: the row itself, never a cover, may read to an Owner or
+        // Admin off the room through its own private thread.
+        let record = (depth == 0).then_some((id, raw));
         let mut rooms = BTreeSet::new();
         for revision in revisions {
             match room_for_revision_in(vault, txn, id, revision) {
@@ -165,7 +168,14 @@ impl AudienceCache {
                 Err(error) => return Err(error),
             }
             if crate::workspace_roster::project_room_audience_in(vault, txn, room, &[])?.is_some() {
-                if !project_audience_readable_in(vault, txn, room, audience, h.occurred_start)? {
+                if !project_audience_readable_in(
+                    vault,
+                    txn,
+                    room,
+                    audience,
+                    h.occurred_start,
+                    record,
+                )? {
                     return Ok(false);
                 }
             } else {
@@ -206,7 +216,8 @@ impl AudienceCache {
                     // cut its entry fact froze (ILDF2 P5): never dropped,
                     // never wider than from its entry into this room. A live
                     // Ready receipt for the room is current standing too
-                    // (OF-417); it is re-proved here, never cached.
+                    // (OF-417); it is re-proved here, never cached, and so
+                    // is a private thread's Owner or Admin (FIX 5638).
                     if !membership::windows_rows(rows, *person)?
                         .iter()
                         .any(|w| w.contains(h.occurred_start))
@@ -220,6 +231,7 @@ impl AudienceCache {
                         && !crate::workspace_roster::room_join_audience_in(
                             vault, txn, room, *person,
                         )?
+                        && !privileged_thread_reader_in(vault, txn, room, record, *person)?
                     {
                         return Ok(false);
                     }
@@ -291,13 +303,16 @@ impl AudienceCache {
 /// at `at`. A speaker's entry fact there (FIX 1388/1389) is held to its cut
 /// ([`attendee::speaker_entry_covers_in`]), as in an ordinary room: it is no
 /// actor, and its entry is never project participation. Every other id
-/// stands in the PROJECT roster as an actor.
+/// stands in the PROJECT roster as an actor, or reads `record`, the row
+/// itself, as its private thread's Owner or Admin
+/// ([`privileged_thread_reader_in`], FIX 5638).
 fn project_audience_readable_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     audience: &[EntityId],
     at: u64,
+    record: Option<(EntityId, &[u8])>,
 ) -> Result<bool> {
     let mut actors = Vec::with_capacity(audience.len());
     for id in audience {
@@ -312,7 +327,93 @@ fn project_audience_readable_in(
         }
     }
     let readable = crate::workspace_roster::project_room_audience_in(vault, txn, room, &actors)?;
-    Ok(readable == Some(true))
+    if readable == Some(true) || record.is_none() {
+        return Ok(readable == Some(true));
+    }
+    for actor in actors {
+        if crate::workspace_roster::project_room_audience_in(vault, txn, room, &[actor])?
+            != Some(true)
+            && !privileged_thread_reader_in(vault, txn, room, record, actor)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Whether `viewer` reads `record`, a row of `room` and the revision of it
+/// served, as the vault's Owner or an Admin in the audience of the private
+/// thread it sits in, with no standing in the room (FIX 5638): that
+/// revision and the row as it stands are each a TURN of one private thread
+/// of `room`, or a MESSAGE part of one, by their own place alone, never a
+/// cover's, a quote's or the room's, and the viewer reads that thread
+/// ([`crate::workspace_roster::privileged_private_thread_reader_in`]). It
+/// stands in for the room's windows alone: the private thread check before
+/// them still holds the viewer to the rule its read names. `false` with no
+/// `record`.
+fn privileged_thread_reader_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    record: Option<(EntityId, &[u8])>,
+    viewer: EntityId,
+) -> Result<bool> {
+    let Some((id, raw)) = record else {
+        return Ok(false);
+    };
+    let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? else {
+        return Ok(false);
+    };
+    let (Some(root), Some(now)) = (
+        thread_placed_in(vault, txn, id, raw)?,
+        thread_placed_in(vault, txn, id, &live)?,
+    ) else {
+        return Ok(false);
+    };
+    Ok(root == now
+        && crate::workspace_roster::privileged_private_thread_reader_in(
+            vault, txn, room, root, viewer,
+        )?)
+}
+
+/// The root of the thread the revision `raw` of `id` is placed in by its
+/// own place: a TURN's own binding, or for a MESSAGE, the binding of the
+/// one live TURN it is part of. `None` for any other record, a trunk TURN,
+/// and a MESSAGE part of no one TURN.
+fn thread_placed_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+) -> Result<Option<EntityId>> {
+    let h = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("audience header"))?;
+    let root_of = |body: &[u8]| -> Result<Option<EntityId>> {
+        Ok(crate::workspace_roster::thread_binding(body)?.map(|binding| binding.root))
+    };
+    match h.entity_type {
+        ENTITY_TYPE_TURN => root_of(raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default()),
+        ENTITY_TYPE_MESSAGE => {
+            let turns = edge_ids(
+                &vault.store,
+                txn,
+                &id,
+                EdgeKind::PartOf,
+                false,
+                MAX_ANCESTOR_DEPTH,
+            )?;
+            let [turn] = turns[..] else {
+                return Ok(None);
+            };
+            match crate::vault::live_entity_row_in_txn(&vault.store, txn, &turn)? {
+                crate::vault::LiveEntityRow::Live {
+                    entity_type: ENTITY_TYPE_TURN,
+                    body,
+                } => root_of(body.as_slice()),
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
 }
 
 /// A reaction (or its echo binding) is readable only together with the record

@@ -293,7 +293,10 @@ impl Memory<'_> {
     /// does not is no longer live: an erased target reads as redacted, never
     /// as a hidden live row. A turn the reader does not read is kept as its
     /// place alone when it is held back from the reader (FIX 5545), and a
-    /// turn answering such a place reads on its own gate.
+    /// turn answering such a place reads on its own gate. So is a room turn
+    /// that one reading the thread off the room, as an Owner or Admin in its
+    /// audience (FIX 5638), does not read: the trunk turn the thread hangs
+    /// from and that turn's own chain, never served.
     fn admitted_turn_group_at(
         &self,
         mut turns: Vec<RoomTurn>,
@@ -307,12 +310,16 @@ impl Memory<'_> {
             return Err(invalid().into());
         }
         let unread;
+        let off_room;
         {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            match thread {
-                None => require_reader(self.vault(), &txn, room, self.actor())?,
+            off_room = match thread {
+                None => {
+                    require_reader(self.vault(), &txn, room, self.actor())?;
+                    false
+                }
                 Some(thread) => {
-                    require_thread_reader(self.vault(), &txn, room, thread, self.actor())?
+                    require_thread_standing(self.vault(), &txn, room, thread, self.actor())?.1
                 }
             };
             for turn in &mut turns {
@@ -383,7 +390,18 @@ impl Memory<'_> {
         }
         let readable = |id: &String| EntityId::from_hex(id).is_ok_and(|id| admitted.contains(&id));
         let content = |id: &String| readable(id) && !unread.contains(id);
-        let held = self.held_back_among(room, &unread_places(&turns, &content))?;
+        let mut held = self.held_back_among(room, &unread_places(&turns, &content))?;
+        if off_room {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            for turn in &turns {
+                let id = EntityId::from_hex(&turn.turn_id)?;
+                if !content(&turn.turn_id)
+                    && self.thread_reach_in(&txn, room, id)? == ThreadPlace::Room
+                {
+                    held.insert(turn.turn_id.clone());
+                }
+            }
+        }
         let placed = |id: &String| content(id) || held.contains(id);
         let mut reach = RoomReach::default();
         for mut turn in turns {

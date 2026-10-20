@@ -854,8 +854,10 @@ pub(in crate::workspace_roster) fn require_reader(
 /// Ready receipt for that thread or for the room. A thread's receipt opens
 /// that thread's read alone, never the room's or another thread's. The
 /// room's host reads each of its threads, as it reads the room, except a
-/// private one (FIX 2951), which only its audience reads. Returns the room
-/// as its project vouches for it.
+/// private one (FIX 2951), which only its audience reads. Last, the vault's
+/// Owner or an Admin in a private thread's audience reads that thread with
+/// no standing in the room (FIX 5638). Returns the room as its project
+/// vouches for it.
 pub(super) fn require_thread_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -863,6 +865,19 @@ pub(super) fn require_thread_reader(
     thread: EntityId,
     actor: EntityId,
 ) -> Result<ProjectRoom> {
+    Ok(require_thread_standing(vault, txn, room, thread, actor)?.0)
+}
+
+/// [`require_thread_reader`], with whether `actor` reads `thread` off the
+/// room: as the vault's Owner or an Admin in its private audience alone
+/// ([`super::audience::privileged_private_thread_reader_in`]).
+pub(super) fn require_thread_standing(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    thread: EntityId,
+    actor: EntityId,
+) -> Result<(ProjectRoom, bool)> {
     let record = room_in(vault, txn, room)?;
     require_thread_audience_in(vault, txn, room, Some(thread), actor)?;
     let subject = participant_in_txn(vault, txn, actor, vault.store.clock.now_recorded_at())?;
@@ -872,10 +887,13 @@ pub(super) fn require_thread_reader(
         }
         subject => reads_room_in_txn(vault, txn, room, &record, actor, subject)?,
     };
-    if !reads && !hosts_room_in_txn(vault, txn, room, actor)? {
-        return Err(invalid());
+    if reads || hosts_room_in_txn(vault, txn, room, actor)? {
+        return Ok((record, false));
     }
-    Ok(record)
+    if super::audience::privileged_private_thread_reader_in(vault, txn, room, thread, actor)? {
+        return Ok((record, true));
+    }
+    Err(invalid())
 }
 
 /// Whether `actor` is an agent with no standing in `room` itself: no seat

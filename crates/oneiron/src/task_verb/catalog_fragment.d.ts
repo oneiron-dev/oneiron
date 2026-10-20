@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1108 code-mode rows (1083 host rows, 25 run rows), 3726 declarations.
+// Census: 1108 code-mode rows (1083 host rows, 25 run rows), 3727 declarations.
 // Replies: 990 fully typed, 114 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 109; unread shapes: BoardVerbOutput.
@@ -2496,7 +2496,7 @@ declare namespace Sdk {
   type RoomOriginCard = { room: string; thread: string; message: string; at: number };
   type ProjectRoom = { schema_version: number; kind: string; project_id: string; memberIds: string[]; claims_scope_ref: string; origin?: RoomOriginCard | null };
   type RoomEntry = { id: string; room: ProjectRoom };
-  type RoomRequest = { room_ref: string; after?: string | null; limit?: number | null };
+  type RoomMessagesRequest = { room_ref: string; after?: string | null; limit?: number | null; thread_ref?: string | null };
   type QuoteAnchor = { anchor: "document"; message: EntityId; citation: EntityId } | { anchor: "body"; message: EntityId; body_hash: string; start: number; end: number; quote_hash: string };
   type RoomQuote = { target_turn: EntityId; anchor: QuoteAnchor };
   type RoomTurn = { turn_id: string; room_id: string; actor: string; addressed_agents: string[]; message_ids: string[]; reply_to?: string | null; thread_of?: string | null; at: number; task_ids?: string[]; converted_project?: string | null; quotes?: Record<string, RoomQuote> };
@@ -2507,6 +2507,7 @@ declare namespace Sdk {
   type ParticipantView = { subject: JoinSubject; causes: JoinCause[]; since: number; currently_eligible: boolean; receipt_ref?: string | null };
   type ParticipantsPage = { rows: ParticipantView[]; next_after?: string | null };
   type RoomRefRequest = { room_ref: string };
+  type RoomRequest = { room_ref: string; after?: string | null; limit?: number | null };
   type RoomThreadPage = { rows: EntityId[]; next_after?: EntityId | null };
   type RoomTurnRequest = { room_ref: string; turn_ref: string };
   type RoomWaitKind = "Ask" | "Hold" | "HumanTask";
@@ -5943,8 +5944,8 @@ declare const vault: Sdk.VaultHost & {
     join(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** The caller's rooms its own grants admit; inside a room turn, only that room. */
     list(input: Sdk.EmptyRequest): Promise<Sdk.RoomEntry[] | StoredResult>;
-    /** One page of the turns in a room this reader may read. */
-    messages(input: Sdk.RoomRequest): Promise<Sdk.RoomPage | StoredResult>;
+    /** One page of the turns in a room this reader may read; with thread_ref, of that one thread alone. */
+    messages(input: Sdk.RoomMessagesRequest): Promise<Sdk.RoomPage | StoredResult>;
     /** Publishes an agent's offer card to join a room or one of its threads, with an optional fixed deadline for a room-wide card. */
     offer: ((input: Sdk.OfferDraft) => Promise<Sdk.OfferCard | StoredResult>) & {
       /** The room's host answers an offer card: join, or not now. */
