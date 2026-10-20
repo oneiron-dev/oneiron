@@ -162,8 +162,10 @@ impl std::fmt::Display for TargetId {
     }
 }
 
-/// A hosted holder kind (KS-C4 builds its adapter; until then its member
-/// stays pending as [`PendingCode::NoAdapter`], never acknowledged).
+/// A hosted holder kind. A Hypnos outbox member ships through the outbox
+/// its managed host names (FIX 5899); every other kind, and an outbox member
+/// with no outbox named, stays pending as [`PendingCode::NoAdapter`] until
+/// its adapter lands (KS-C4), never acknowledged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HostedKind {
@@ -368,12 +370,48 @@ impl CustodyBatch {
     /// The ack a target that did all of [`CustodyTarget::publish`] returns
     /// for this batch.
     pub fn ack(&self, target: &TargetId, evidence: DeletionEvidence, attester: &str) -> AckRecord {
+        self.facts().ack(target, evidence, attester)
+    }
+
+    /// What an ack of this batch is checked against, without its head.
+    pub(super) fn facts(&self) -> BatchFacts {
+        BatchFacts {
+            position: self.position,
+            head_object_id: self.head_object_id(),
+            set_revision: self.set_revision,
+            data_key: self.data_key,
+        }
+    }
+}
+
+/// A batch's keyless facts: what its ack must name, kept once its
+/// key-bearing bytes are gone (a Hypnos outbox's retained batch, FIX 5899).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct BatchFacts {
+    pub(super) position: CustodyPosition,
+    pub(super) head_object_id: [u8; 32],
+    pub(super) set_revision: u64,
+    pub(super) data_key: bool,
+}
+
+impl BatchFacts {
+    pub(super) fn operation_id(&self) -> [u8; 32] {
+        operation_id(&self.position, &self.head_object_id)
+    }
+
+    /// The ack of this batch by `target`.
+    pub(super) fn ack(
+        &self,
+        target: &TargetId,
+        evidence: DeletionEvidence,
+        attester: &str,
+    ) -> AckRecord {
         AckRecord {
             version: ACK_VERSION,
             target_id: target.as_str().to_owned(),
             set_revision: self.set_revision,
             position: AckPosition::of(&self.position),
-            head_object_id: hex(&self.head_object_id()),
+            head_object_id: hex(&self.head_object_id),
             operation: AckOperation::PublishAndDeleteSuperseded,
             operation_id: hex(&self.operation_id()),
             evidence,
