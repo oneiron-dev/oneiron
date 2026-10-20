@@ -80,7 +80,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/context.rs` | src | s | 3 crate-vis | — | Spawn-context resolution, sibling-lineage admission, ancestor projection fold |
 | `src/agent_dispatch/continuation.rs` | src | m | 2 struct · 5 crate-vis | ConcernPromptInjectOutcome, ConcernPromptInjectRequest | The owner's prompt continuation of a failed agent run (FIX 3694, OF-568): the successor attempt an approved… |
 | `src/agent_dispatch/dispatch.rs` | src | m | 1 struct · 6 fn · 8 crate-vis | AgentDispatcher | Core dispatch admission: dispatchability, depth bound, enqueue, dedupe |
-| `src/agent_dispatch/fanout_statement.rs` | src | s | 4 struct · 2 enum · 3 fn · 1 crate-vis | ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass | The fan-out statement (OF-393, ARCH-0079 #width): before every fan-out, the total count, the per-peer… |
+| `src/agent_dispatch/fanout_statement.rs` | src | m | 4 struct · 2 enum · 4 fn · 1 crate-vis | ExceptionalWidthCheck, FanoutCaller, FanoutStatement, FanoutWork, PeerCount, WidthCheckClass | The fan-out statement (OF-393, ARCH-0079 #width): before every fan-out, the total count, the per-peer… |
 | `src/agent_dispatch/healer_context.rs` | src | s | 1 crate-vis | — | Reference-only healer context validation, shared by dispatch and decoding |
 | `src/agent_dispatch/healer_repair.rs` | src | s | 1 fn | — | Lease-fenced, case-bound fix-agent proposals from dispatched healers |
 | `src/agent_dispatch/kill.rs` | src | s | 2 fn | — | Spawner-only killSpawn intervention and healer-slot dispatch arm |
