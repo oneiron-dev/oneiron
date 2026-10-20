@@ -50,9 +50,6 @@ const NOT_IN_PROJECT: &str =
 
 /// What one admitted repo act stands on, as the caller's snapshot read it.
 #[derive(Debug, Clone)]
-// The run repo doors (L11 G1 PR2) and the manual publish doors (FIX 6866)
-// read these; PR1 lands the seam alone.
-#[allow(dead_code)]
 pub(crate) struct RepoMembership {
     /// The real actor admitted.
     pub(crate) actor: EntityId,
@@ -67,12 +64,10 @@ pub(crate) struct RepoMembership {
 }
 
 /// An admission: the membership, or the typed reason it was refused.
-#[allow(dead_code)] // Named by the PR2 and FIX 6866 callers.
 pub(crate) type RepoAdmission = std::result::Result<RepoMembership, RepoAccessRefusal>;
 
-// The run repo doors (L11 G1 PR2) and the manual publish doors (FIX 6866)
-// call these three seams; PR1 lands them alone.
-#[allow(dead_code)]
+// The run repo doors (L11 G1 PR2) call these three seams, as the manual
+// publish doors (FIX 6866) will.
 impl Vault {
     /// Admits `actor`, of `class`, to the repo handle `repo` (a CODE anchor)
     /// in the caller's snapshot `txn`. `actor` and `class` are the ones the
@@ -81,6 +76,10 @@ impl Vault {
     ///
     /// # Errors
     /// A store, fold or clock failure; never "no membership".
+    #[allow(
+        dead_code,
+        reason = "the run doors admit a target; the manual publish doors (FIX 6866) call this"
+    )]
     pub(crate) fn admit_repo_member_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

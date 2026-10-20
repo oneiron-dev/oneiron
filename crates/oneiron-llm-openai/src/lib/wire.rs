@@ -4,7 +4,7 @@ use super::{
     OpenAiCompatConfig, OpenAiCompatHttpRequest, OpenAiProviderOptions,
     backend::validate_capabilities,
 };
-use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, limit};
+use oneiron::llm::{REASONING_BUDGET_PARAM, ReasoningEffort, is_solo, limit};
 use oneiron::{
     ContentPart, FatalLlmError, FinishReason, ImageContent, LlmError, LlmInputUsage, LlmMessage,
     LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmToolSpec, LlmUsage,
@@ -12,6 +12,10 @@ use oneiron::{
 };
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 use std::collections::BTreeMap;
+
+/// The top-level body field an own server that admits a call alone reads
+/// (the house EXL3 server, INF 1).
+const SOLO_FIELD: &str = "oneiron_solo";
 
 pub fn build_openai_chat_request(
     config: &OpenAiCompatConfig,
@@ -33,6 +37,12 @@ pub fn build_openai_chat_request(
     }
     for (key, value) in provider_options.to_wire_fields() {
         body.insert(key, value);
+    }
+    // A call the host marked solo runs alone on an own server that admits
+    // calls so. Only such a provider's config sends the field; any other
+    // provider never sees it.
+    if config.solo_admission() && is_solo(request) {
+        body.insert(SOLO_FIELD.to_owned(), JsonValue::Bool(true));
     }
     if let Some(effort) = request.envelope.seat_effort {
         // The seat pin wins after both generic params and provider fields. Keep

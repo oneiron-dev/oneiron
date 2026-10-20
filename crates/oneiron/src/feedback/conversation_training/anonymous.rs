@@ -34,11 +34,19 @@
 //! the piece is withheld with its withdrawal intent and its refresh asked
 //! (CALLS TL6_ANON_REFRESH), and its source is offered anew at the next
 //! offer pass as a new submission under a new C.
+//!
+//! A released piece whose outbox files are missing or not what its manifest
+//! says ships nothing; the shipper records that on its row as a typed local
+//! problem for the owner's view, and clears it once a window ships (FIX
+//! 6916, `files`). It is never a signed field's, and nothing re-offers it.
 
 mod apply;
+mod files;
 mod pages;
 
 pub use self::apply::{AnonymousApplied, AnonymousRefusal};
+pub(super) use self::files::files_problem;
+pub use self::files::{AnonymousFilesSeen, PieceFilesProblem};
 pub use self::pages::{
     ANONYMOUS_PAGE, AnonymousStatusWork, AnonymousUploadWork, AnonymousWithdrawalWork,
 };
@@ -46,6 +54,7 @@ pub use self::pages::{
 use oneiron_vault_contract::conversation_training::{PieceCursorV1, PieceStateV1};
 use serde::{Deserialize, Serialize};
 
+use self::files::PieceFilesMark;
 use super::custody::{SubmissionCustody, SubmissionState};
 
 /// How a submission's offer leaves the vault (TL-6), set at its first
@@ -154,6 +163,10 @@ pub(super) struct AnonymousPiece {
     pub(super) reason: Option<String>,
     /// When the intake signed the last receipt applied, unix seconds.
     pub(super) at: Option<u64>,
+    /// A local problem with its outbox files the shipper found (FIX 6916):
+    /// never signed, and no signed field's. Recorded and cleared through
+    /// [`Vault::anonymous_piece_files`](crate::Vault::anonymous_piece_files).
+    pub(super) files_problem: Option<PieceFilesMark>,
 }
 
 impl AnonymousPiece {

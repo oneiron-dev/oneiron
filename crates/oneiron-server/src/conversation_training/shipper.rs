@@ -17,14 +17,18 @@
 //! the outbox's lock is held, and each request's results are applied in the
 //! vault's one writer before the next request. Only a signed receipt moves
 //! a piece's cursor, so a request cut off moves nothing, and the next pass
-//! sends the same window again.
+//! sends the same window again. Serve's shutdown cuts a request in flight
+//! rather than wait out its time (FIX 6918, `http`): the pass stops at once.
 //!
 //! - Withdrawals: batches of codes, with no piece beside them, each sent
 //!   until the intake signs it `removal_pending` (or `removed`); the
 //!   receipts walk then polls it until it reads `removed`.
 //! - Uploads: a window per piece (`window`), from the cursor the intake last
 //!   signed, read from its released files (`stream`), packed into batches
-//!   within the intake's bounds.
+//!   within the intake's bounds. A piece whose files are missing or not what
+//!   its manifest says ships nothing and is read again every pass; that
+//!   rides its row for the owner's view until a window from it ships (FIX
+//!   6916, `Vault::anonymous_piece_files`).
 //! - Receipts: the codes whose next signed state is owed, each past the
 //!   revision applied; an entry with `more` is asked again on the next
 //!   receipts walk.
@@ -57,7 +61,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron::Vault;
-use oneiron::feedback::{AnonymousApplied, IntakeReceiptKey, TrainingSubmissionId};
+use oneiron::feedback::{
+    AnonymousApplied, IntakeReceiptKey, PieceFilesProblem, TrainingSubmissionId,
+};
 use oneiron_vault_contract::conversation_training::{
     OFFERS_DIR, PIECE_ERROR_RECIPIENT_REFRESH_REQUIRED, PIECE_RECEIPTS_PATH, PieceBatchResultV1,
     PieceCursorV1,
@@ -119,8 +125,9 @@ pub(super) fn spawn(
     })
 }
 
-/// Tells a pass in flight to stop at its next request once the shipper's
-/// task ends, aborted at shutdown or not.
+/// Tells a pass in flight to stop once the shipper's task ends, aborted at
+/// shutdown or not: at its next request, or at once with a request in
+/// flight, which is cut (FIX 6918).
 struct StopOnDrop(Arc<AtomicBool>);
 
 impl Drop for StopOnDrop {
@@ -195,12 +202,17 @@ impl State {
 
 /// One piece to send a window of.
 struct Shipment {
+    /// Its submission.
+    id: TrainingSubmissionId,
     /// Its C, 64 hex: its only handle at the intake. Never logged.
     code: String,
     /// Its facts and files, from its manifest.
     piece: Piece,
     /// Where the intake's last signed receipt says it resumes.
     cursor: PieceCursorV1,
+    /// The files problem its row holds (FIX 6916), so a pass records only a
+    /// change, and clears one once a window ships.
+    files_problem: Option<PieceFilesProblem>,
 }
 
 impl Shipper {
@@ -210,7 +222,7 @@ impl Shipper {
         &self,
         server: &SyncServer,
         admit: &HousekeepingAdmission,
-        stop: &AtomicBool,
+        stop: &Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let now = Instant::now();
@@ -255,8 +267,8 @@ struct Pass<'a> {
     vault: &'a Vault,
     /// The housekeeping admission vault and file work is done under.
     admit: &'a HousekeepingAdmission,
-    /// Set once the shipper is stopping.
-    stop: &'a AtomicBool,
+    /// Set once the shipper is stopping; a request in flight reads it too.
+    stop: &'a Arc<AtomicBool>,
     /// The intake's receipt key ring, read once a pass.
     ring: IntakeReceiptKey,
     /// What passes keep.
@@ -312,7 +324,10 @@ impl Pass<'_> {
             return Sent::Stop;
         }
         let timeout = window::post_timeout(body.len());
-        let posted = self.shipper.intake.post(route, content_type, body, timeout);
+        let posted = self
+            .shipper
+            .intake
+            .post(route, content_type, body, timeout, self.stop);
         let failure = match posted {
             Ok(Posted::Body(answer)) => match decode(answer.as_slice()) {
                 Some(decoded) => {
@@ -338,6 +353,9 @@ impl Pass<'_> {
                 self.at_floor(receipts);
                 return Sent::Stop;
             }
+            // FIX 6918: shutdown cut it in flight. No failure: nothing moved,
+            // and the next start sends it again.
+            Ok(Posted::Stopped) => return Sent::Stop,
             Err(failure) => failure,
         };
         let endpoint = self.endpoint(receipts);

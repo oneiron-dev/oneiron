@@ -1195,7 +1195,10 @@ as your minutes buy.
 it. Each delivered ask spends the calibration policy's minutes (one by default), and nothing
 refills the balance. The asks reach only your own digest: `POST
 /v1/owner/proactivity/digest/assemble` assembles it for you, carrying the asks once a cadence
-period, by id in `judge_ask_ids`. `POST /v1/owner/coach/judge-asks/pick` with `{"ask", "choice":
+period, by id in `judge_ask_ids`. Every digest read is your own view of it: an item drawn from a
+private thread you are not in, or from its words before you joined, is left out of your copy and
+its text, and an owner who can read nothing in a digest gets no notice of it. A digest's `id`
+names where it is stored, not a hash of the text you see. `POST /v1/owner/coach/judge-asks/pick` with `{"ask", "choice":
 "a" | "b"}` picks one option. The pick is a final label in the judged skill's anchor: the next
 shadow pass sides with it, and a pick against a judge that already took over re-pins the old
 one, with a notice.
