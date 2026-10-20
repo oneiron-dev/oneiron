@@ -11,7 +11,7 @@ use crate::code_run::types::{
     SelfMemorySupersedeClaimCall, SelfMemoryWriteFixtureCall, SelfMemoryWriteResult,
 };
 use crate::error::{Error, Result};
-use crate::{ClaimSubject, EdgeKind};
+use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vault};
 
 use super::HostSelfDispatcher;
 use super::envelope::edge_operation_gate_id;
@@ -137,9 +137,11 @@ impl HostSelfDispatcher<'_> {
 
     /// A search its door admitted with a key reads on that key's lane: in a
     /// room, the room's view on that lane (WILL L11-01). One with no key
-    /// reads as it always has. In a room the verb hooks bound to it run
-    /// around it, keyed or not, and what each did joins its answer as they
-    /// leave (`verb_hooks::session`).
+    /// reads the whole text index, and an agent's or the system's keeps only
+    /// the hits its actor reads by its own entry, as a keyed one does
+    /// (`own_entry_kept`). In a room the verb hooks bound to it run around
+    /// it, keyed or not, and what each did joins its answer as they leave
+    /// (`verb_hooks::session`).
     pub(super) fn dispatch_memory_search(
         &self,
         call: SelfMemorySearchCall,
@@ -157,13 +159,44 @@ impl HostSelfDispatcher<'_> {
                 self.storage
                     .search_text_as(&call.query, limit, reader, claims)?
             }
-            None => self.storage.search_text(&call.query, limit)?,
+            None => self.own_entry_hits(self.storage.search_text(&call.query, limit)?)?,
         };
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
             query: call.query,
             results,
             hooks: Vec::new(),
         }))
+    }
+
+    /// The no-key search's hits an agent or the system reads by its own
+    /// entry, as a person's own read does (FIX 6488, the owner's
+    /// ROOM-HISTORY ruling of FIX 5861): a room row from before it joined
+    /// drops out. Any other actor keeps every hit.
+    fn own_entry_hits(&self, hits: Vec<ScoredEntity>) -> Result<Vec<ScoredEntity>> {
+        if hits.is_empty()
+            || !matches!(
+                self.actor.actor_class(),
+                EdgeActorClass::Agent | EdgeActorClass::System
+            )
+        {
+            return Ok(hits);
+        }
+        let reader = self.actor.entity_ref();
+        match &self.storage {
+            ExecutorStorage::Canonical(vault) => {
+                let txn = vault.store.env.read_txn()?;
+                own_entry_kept(vault, &txn, hits, reader, |id| {
+                    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, id)
+                })
+            }
+            ExecutorStorage::Session(binding) => {
+                binding.session.read_composed_in_vault(|vault, view, txn| {
+                    own_entry_kept(vault, txn, hits, reader, |id| {
+                        crate::ports::EntityStoreRead::port_entity_raw(view, txn, id)
+                    })
+                })
+            }
+        }
     }
 
     pub(super) fn dispatch_memory_write_fixture(
@@ -510,4 +543,29 @@ fn ensure_public_memory_edge_kind(kind: EdgeKind) -> Result<()> {
             "vault.edges.put rejects structural edge kinds",
         )),
     }
+}
+
+/// The hits `reader` reads by its own entry, each checked on the revision
+/// the search read (`raw_of`) with the same predicate a keyed read applies
+/// (`AudienceCache::own_entry_readable_raw`). A hit whose row is gone stays:
+/// that is the other gates' to refuse.
+fn own_entry_kept(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    hits: Vec<ScoredEntity>,
+    reader: EntityId,
+    raw_of: impl Fn(&EntityId) -> Result<Option<Vec<u8>>>,
+) -> Result<Vec<ScoredEntity>> {
+    let entry = crate::conversation::AudienceCache::default();
+    let mut kept = Vec::with_capacity(hits.len());
+    for hit in hits {
+        let readable = match raw_of(&hit.id)? {
+            Some(raw) => entry.own_entry_readable_raw(vault, txn, hit.id, &raw, reader)?,
+            None => true,
+        };
+        if readable {
+            kept.push(hit);
+        }
+    }
+    Ok(kept)
 }
