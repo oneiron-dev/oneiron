@@ -127,6 +127,10 @@ pub enum McpVerbFamily {
     /// The bare verbs over any handle (ARCH-0067 §4), such as `describe` and
     /// `cancel`: their row names carry no root.
     Handle,
+    /// Any other root the manifest exports, such as `feedback.`, `reveal.`,
+    /// `host.`, `graph_fs.` and `calendar.`: an exported row is a tool
+    /// whatever its root (FIX 6626).
+    Other,
 }
 
 impl McpVerbFamily {
@@ -140,6 +144,7 @@ impl McpVerbFamily {
             Self::Tasks => "tasks",
             Self::Memory => "memory",
             Self::Handle => "handle",
+            Self::Other => "other",
         }
     }
 
@@ -173,6 +178,16 @@ pub enum McpSurfaceConstructionError {
     DuplicateVerbRow { row: &'static str },
     #[error("verb row {row} does not project onto exactly one executable tool")]
     UnprojectableVerbRow { row: &'static str },
+}
+
+impl McpSurfaceConstructionError {
+    /// The verb row the tool-first surface could not register.
+    #[must_use]
+    pub const fn row(self) -> &'static str {
+        match self {
+            Self::DuplicateVerbRow { row } | Self::UnprojectableVerbRow { row } => row,
+        }
+    }
 }
 
 /// The ONE source of tool-first names: the manifest and native read table.
@@ -229,10 +244,11 @@ fn project_verb_row(
 ) -> Result<McpGeneratedVerbTool, McpSurfaceConstructionError> {
     let unprojectable = McpSurfaceConstructionError::UnprojectableVerbRow { row };
     let (family, verb) = match row.split_once('.') {
-        Some((prefix, verb)) => match McpVerbFamily::from_prefix(prefix) {
-            Some(family) => (family, verb),
-            None => return Err(unprojectable),
-        },
+        Some(("", _)) => return Err(unprojectable),
+        Some((prefix, verb)) => (
+            McpVerbFamily::from_prefix(prefix).unwrap_or(McpVerbFamily::Other),
+            verb,
+        ),
         None => (McpVerbFamily::Handle, row),
     };
     if verb.split('.').any(str::is_empty) {
@@ -482,19 +498,39 @@ impl McpRegisteredSurface {
     }
 }
 
-/// The process's registered endpoints, one immutable surface per mode.
-#[must_use]
-pub fn registered_surface(mode: McpSurfaceMode) -> &'static McpRegisteredSurface {
-    static PRIMARY: OnceLock<McpRegisteredSurface> = OnceLock::new();
-    static TOOL_FIRST: OnceLock<McpRegisteredSurface> = OnceLock::new();
+/// The process's registered endpoints, one immutable surface per mode, or
+/// the row that keeps `mode` from registering. Request paths take this and
+/// answer that row as a typed error, never a panic (FIX 6626).
+///
+/// # Errors
+///
+/// See [`generated_verb_tools`].
+pub fn try_registered_surface(
+    mode: McpSurfaceMode,
+) -> Result<&'static McpRegisteredSurface, McpSurfaceConstructionError> {
+    static PRIMARY: OnceLock<Result<McpRegisteredSurface, McpSurfaceConstructionError>> =
+        OnceLock::new();
+    static TOOL_FIRST: OnceLock<Result<McpRegisteredSurface, McpSurfaceConstructionError>> =
+        OnceLock::new();
     let cell = match mode {
         McpSurfaceMode::Primary => &PRIMARY,
         McpSurfaceMode::ToolFirst => &TOOL_FIRST,
     };
-    cell.get_or_init(|| {
-        McpRegisteredSurface::register(mode)
-            .expect("every exported verb row projects onto exactly one executable tool")
-    })
+    cell.get_or_init(|| McpRegisteredSurface::register(mode))
+        .as_ref()
+        .map_err(|error| *error)
+}
+
+/// [`try_registered_surface`] for tests and tools that hold a broken table
+/// to be a bug. No request path calls it.
+///
+/// # Panics
+///
+/// When `mode` does not register.
+#[must_use]
+pub fn registered_surface(mode: McpSurfaceMode) -> &'static McpRegisteredSurface {
+    try_registered_surface(mode)
+        .expect("every exported verb row projects onto exactly one executable tool")
 }
 
 /// Instructions for the vault-owned runtime binding.

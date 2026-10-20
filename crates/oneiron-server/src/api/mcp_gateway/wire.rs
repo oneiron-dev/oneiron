@@ -44,7 +44,11 @@ pub(super) fn observe_tool_call(
     let telemetry = &server.wire_telemetry;
     let now = oneiron_vault_contract::now_ts();
     let caller = actor.actor_ref.to_hex();
-    let _ = match server.mcp_surface(mode).resolve(name) {
+    let resolved = server
+        .mcp_surface(mode)
+        .ok()
+        .and_then(|surface| surface.resolve(name));
+    let _ = match resolved {
         None => telemetry.record_mcp_error(UNKNOWN_TOOL, now),
         Some(_) if anonymous => telemetry.record(TOOL_CALL, &caller, now),
         Some(tool) => {

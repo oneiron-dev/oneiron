@@ -7,6 +7,7 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::store::GateDecisionRecord;
 
+use super::delete::PendingConfirmedErase;
 use super::gate::GatedDeletion;
 // Publication-time authority re-verification only exists where there is a
 // publication; the no-feature arm publishes nothing.
@@ -47,6 +48,9 @@ struct TombstonePersistence<'a> {
     tombstone: &'a TombstoneValueV2,
     delete_update: Option<&'a crate::sync::window::DeleteBearingUpdate>,
     scrubbed_update_keys: &'a [String],
+    /// A history-free cut that failed its proof (FIX 6520): stored as
+    /// before, and this txn owes the erasure sweep the window.
+    owes_compaction: bool,
 }
 
 /// What a write does when the pad tombstones it staged fail to publish after
@@ -63,7 +67,8 @@ const PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY: PadTombstonePublishFailure =
     PadTombstonePublishFailure::KeepPendingAndWarn;
 
 impl Vault {
-    #[cfg(feature = "sync")]
+    /// [`Self::write_crdt_tombstone_due`] for a delete that is no due
+    /// owner-confirmed erase.
     pub(super) fn write_crdt_tombstone(
         &self,
         id: &EntityId,
@@ -73,6 +78,32 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
     ) -> Result<bool> {
+        self.write_crdt_tombstone_due(
+            id,
+            window_ts,
+            window_label,
+            value,
+            gate_decision,
+            gate,
+            None,
+        )
+    }
+
+    /// Publishes the tombstone of a delete; a due owner-confirmed erase
+    /// (`due`) re-proves in the publish transaction that it still waits
+    /// (FIX 6337).
+    #[cfg(feature = "sync")]
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn write_crdt_tombstone_due(
+        &self,
+        id: &EntityId,
+        window_ts: u64,
+        window_label: &str,
+        value: &TombstoneValueV2,
+        gate_decision: Option<&GateDecisionRecord>,
+        gate: Option<&GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
+    ) -> Result<bool> {
         let mut doc_mutated = false;
         let outcome = self.write_crdt_tombstone_impl(
             id,
@@ -81,6 +112,7 @@ impl Vault {
             value,
             gate_decision,
             gate,
+            due,
             &mut doc_mutated,
         );
         if outcome.is_err() && !doc_mutated {
@@ -158,6 +190,7 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
         doc_mutated: &mut bool,
     ) -> Result<bool> {
         use crate::sync::bridge::{
@@ -235,9 +268,10 @@ impl Vault {
                     value,
                     gate_decision,
                     gate,
+                    due,
                 )?;
                 let vv_before = window.doc.oplog_vv();
-                let (delete_update, snapshot, vv) =
+                let (delete_update, (snapshot, owes_compaction), vv) =
                     with_deletion_tombstone_observer_a_suppressed(|| -> Result<_> {
                         *doc_mutated = true;
                         apply_tombstone_to_window_doc(&window.doc, id, &value.encode())?;
@@ -263,6 +297,7 @@ impl Vault {
                         tombstone: value,
                         delete_update: delete_update.as_ref(),
                         scrubbed_update_keys: &merged_update_keys,
+                        owes_compaction,
                     },
                 )?;
                 wtxn.commit()?;
@@ -315,13 +350,14 @@ impl Vault {
             value,
             gate_decision,
             gate,
+            due,
         )?;
         let vv_before = doc.oplog_vv();
         apply_tombstone_to_window_doc(&doc, id, &value.encode())?;
         doc.commit();
         let delete_update = export_tombstone_commit_delta(&doc, &vv_before)?;
 
-        let snapshot = Self::export_window_snapshot_in_mode(&doc, history_free)?;
+        let (snapshot, owes_compaction) = Self::export_window_snapshot_in_mode(&doc, history_free)?;
         let vv = doc_version_vector(&doc);
         self.finish_crdt_tombstone_persist_in_txn(
             &mut wtxn,
@@ -332,6 +368,7 @@ impl Vault {
                 tombstone: value,
                 delete_update: delete_update.as_ref(),
                 scrubbed_update_keys: &merged_update_keys,
+                owes_compaction,
             },
         )?;
         wtxn.commit()?;
@@ -464,7 +501,12 @@ impl Vault {
     /// commits one in its shell-scrub txn, and it carries the verbatim tombstone
     /// wire value a sync-enabled boot would replay into exactly the publication
     /// this refusal denied). Nothing replayable survives a refusal.
+    ///
+    /// A due owner-confirmed erase (`due`) re-proves here that it still
+    /// waits, and a hold's refusal names the owner its row records. None
+    /// waiting cancels it, withdrawn as a refusal is (FIX 6337).
     #[cfg(feature = "sync")]
+    #[allow(clippy::too_many_arguments)]
     fn begin_tombstone_publish_txn(
         &self,
         id: &EntityId,
@@ -473,10 +515,12 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
+        due: Option<&PendingConfirmedErase>,
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
+                .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
                 .and_then(|()| {
                     crate::workspace_roster::precheck_goal_delete(
@@ -493,7 +537,8 @@ impl Vault {
                 })
                 .and_then(|()| {
                     if value.reason.is_hard() {
-                        self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
+                        let requester = due.map(PendingConfirmedErase::requester);
+                        self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
                         crate::world_keys::reject_held_pad_world_in_txn(
                             &self.store,
                             &wtxn,
@@ -603,36 +648,47 @@ impl Vault {
     }
 
     /// Decides history-free versus ordinary snapshot bytes for this window
-    /// BEFORE the publish transaction opens.
+    /// BEFORE the publish transaction opens, and for history-free bytes
+    /// commits there the barrier their strict cut needs (FIX 6520).
     ///
     /// Hoisted out of the publish txn because the pin it reads
     /// (`require_history_free_window`) is written through its own write
     /// transaction, and LMDB has a single process-wide writer — a nested
     /// writer deadlocks. Resolving first leaves the in-txn export a pure
     /// document operation, which is what lets the owner re-fold span the
-    /// live-doc mutation.
+    /// live-doc mutation. The barrier is a bridge commit outside that txn:
+    /// the tombstone commit lands on the one head it leaves, and the in-txn
+    /// cut commits nothing. An import landing in between leaves that cut
+    /// unproved: stored as before, with the window owed to the sweep.
     #[cfg(feature = "sync")]
     fn resolve_window_snapshot_mode(
         &self,
         window_key: &crate::sync::WindowKey,
         doc: &loro::LoroDoc,
     ) -> Result<bool> {
-        Ok(
-            crate::sync::window::history_free_window_required(self, window_key)?
-                || doc.is_shallow()
-                || crate::sync::note::is_native(doc),
-        )
+        let history_free = crate::sync::window::history_free_window_required(self, window_key)?
+            || doc.is_shallow()
+            || crate::sync::note::is_native(doc);
+        if history_free {
+            crate::sync::window::merge_window_heads(doc)?;
+        }
+        Ok(history_free)
     }
 
     /// Exports the window snapshot under a mode already resolved by
     /// [`Self::resolve_window_snapshot_mode`] — a pure document operation,
-    /// safe to run inside the publish transaction.
+    /// safe to run inside the publish transaction — and whether it is a
+    /// history-free cut that failed its proof (FIX 6520).
     #[cfg(feature = "sync")]
-    fn export_window_snapshot_in_mode(doc: &loro::LoroDoc, history_free: bool) -> Result<Vec<u8>> {
+    fn export_window_snapshot_in_mode(
+        doc: &loro::LoroDoc,
+        history_free: bool,
+    ) -> Result<(Vec<u8>, bool)> {
         if history_free {
-            crate::sync::window::export_history_free_window_snapshot(doc)
+            let cut = crate::sync::window::tip_window_cut(doc)?;
+            Ok((cut.bytes, !cut.proved))
         } else {
-            crate::sync::loro_support::export_snapshot(doc)
+            crate::sync::loro_support::export_snapshot(doc).map(|bytes| (bytes, false))
         }
     }
 
@@ -748,6 +804,9 @@ impl Vault {
             persistence.snapshot,
             persistence.version_vector,
         )?;
+        if persistence.owes_compaction {
+            crate::sweep::owed::owe_window_compaction_in_txn(self, wtxn, window_key)?;
+        }
         if is_hard {
             // ARCH-0038 carrier 15: pending `q:` rows for this window
             // may carry the deleted payload — drop them all (fail-closed
@@ -799,8 +858,8 @@ impl Vault {
     }
 
     #[cfg(not(feature = "sync"))]
-    #[allow(clippy::unnecessary_wraps)]
-    pub(super) fn write_crdt_tombstone(
+    #[allow(clippy::unnecessary_wraps, clippy::too_many_arguments)]
+    pub(super) fn write_crdt_tombstone_due(
         &self,
         _id: &EntityId,
         _window_ts: u64,
@@ -808,6 +867,7 @@ impl Vault {
         _value: &TombstoneValueV2,
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
+        _due: Option<&PendingConfirmedErase>,
     ) -> Result<bool> {
         // No CRDT in this build — nothing is published, so there is no publish
         // commit and therefore NO linearization point here. `false` is the
