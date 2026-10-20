@@ -3,11 +3,15 @@
 //! every row before the cut.
 //!
 //! On start the file is read back. A last line without its newline is a cut
-//! write: it is ignored, and the next row starts on a fresh line. A row is
-//! done when it says `ok` under the same `config_digest`; error rows run
-//! again.
+//! write: it is ignored, and the next row starts on a fresh line. A
+//! sequential run's row is done when it says `ok` under the same
+//! `config_digest`; error rows run again. A concurrent run's rows come in
+//! cohorts, one whole packet per rep: a rep is done only when one cohort holds
+//! an `ok` row for every case of the packet, and any other cohort of it runs
+//! again whole, under a new `cohort_id`. Rows land in completion order, one
+//! writer appending them.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
 use std::path::Path;
@@ -56,6 +60,13 @@ pub(super) struct RunIdentity {
     pub(super) vram_idle_mib: Option<u64>,
     /// Sampled once the engine was healthy, before the warmup.
     pub(super) vram_loaded_mib: Option<u64>,
+    /// This `infer run` invocation.
+    pub(super) session_id: String,
+    /// `--concurrency` and `--stagger-ms`.
+    pub(super) concurrency: u32,
+    pub(super) stagger_ms: u64,
+    /// `--draft-depth`, as declared; the engine's own report is in `native`.
+    pub(super) draft_depth: Option<u32>,
 }
 
 /// One case's row.
@@ -71,6 +82,18 @@ pub(super) struct Row<'a> {
     pub(super) case_prompt_tokens: Option<u64>,
     pub(super) case_approx_input_tokens: Option<u64>,
     pub(super) rep: u32,
+    /// The worker task that made the call.
+    pub(super) worker_id: usize,
+    /// The case's place in the selected packet order.
+    pub(super) queue_index: usize,
+    /// The cohort the call ran in, and how many calls it has: one per case of
+    /// the packet when concurrent, one when sequential.
+    pub(super) cohort_id: &'a str,
+    pub(super) cohort_size: usize,
+    /// The call's `t0` and its end, in ms after the session's post-warmup
+    /// epoch.
+    pub(super) start_offset_ms: f64,
+    pub(super) end_offset_ms: f64,
     pub(super) started_at: String,
     pub(super) status: &'static str,
     pub(super) error: Option<String>,
@@ -78,7 +101,8 @@ pub(super) struct Row<'a> {
     pub(super) sent: &'a Sent,
     #[serde(flatten)]
     pub(super) timing: Timing,
-    /// The highest sampled reading during this case's call.
+    /// The whole card's highest sampled reading during this case's call,
+    /// whatever else was in flight.
     pub(super) vram_case_peak_mib: Option<u64>,
     pub(super) quality: Option<Quality>,
 }
@@ -124,6 +148,54 @@ pub(super) fn done(rows: &[JsonValue], config_digest: &str) -> BTreeSet<(String,
             ))
         })
         .collect()
+}
+
+/// The reps of `arm_id` under `config_digest` that one cohort finished
+/// clean: an `ok` row for each `(queue_index, case_id, case_digest)` of
+/// `packet` and no other.
+pub(super) fn clean_cohort_reps(
+    rows: &[JsonValue],
+    config_digest: &str,
+    arm_id: &str,
+    packet: &[(usize, &str, &str)],
+) -> BTreeSet<u32> {
+    let mut cohorts: BTreeMap<&str, Vec<&JsonValue>> = BTreeMap::new();
+    for row in rows
+        .iter()
+        .filter(|row| row["config_digest"] == config_digest && row["arm_id"] == arm_id)
+    {
+        if let Some(cohort) = row["cohort_id"].as_str() {
+            cohorts.entry(cohort).or_default().push(row);
+        }
+    }
+    let want: BTreeSet<(usize, &str, &str)> = packet.iter().copied().collect();
+    let mut reps = BTreeSet::new();
+    for members in cohorts.values() {
+        let Some(rep) = members.first().and_then(|row| row["rep"].as_u64()) else {
+            continue;
+        };
+        let clean = members
+            .iter()
+            .all(|row| row["status"] == "ok" && row["rep"].as_u64() == Some(rep));
+        let got: BTreeSet<(usize, &str, &str)> = members
+            .iter()
+            .filter_map(|row| {
+                Some((
+                    usize::try_from(row["queue_index"].as_u64()?).ok()?,
+                    row["case_id"].as_str()?,
+                    row["case_digest"].as_str()?,
+                ))
+            })
+            .collect();
+        if clean
+            && members.len() == packet.len()
+            && got == want
+            && let Ok(rep) = u32::try_from(rep)
+        {
+            reps.insert(rep);
+        }
+    }
+    reps
 }
 
 /// The append-only result file.

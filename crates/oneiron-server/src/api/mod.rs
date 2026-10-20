@@ -611,15 +611,17 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
     responses(
         (
             status = 200,
-            description = "Server is reachable and returns supported capabilities, formats, and rate-limit settings.",
+            description = "Server is reachable and returns its modes, a summary of its capabilities (counts per family and the digest of the full set authenticated discovery lists), formats, and rate-limit settings.",
             body = HealthResponse,
             content_type = "application/json",
             example = json!({
                 "status": "ok",
                 "service": "oneiron-server",
+                "modes": ["flash", "thinking", "pro", "ultra"],
                 "capabilities": {
-                    "capabilities": ["core.discover", "skills_pack.fetch", "search.vector", "search.semantic", "search.text"],
-                    "modes": ["flash", "thinking", "pro", "ultra"]
+                    "total": 2228,
+                    "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
+                    "counts": {"booking": 5, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
                 },
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {
@@ -651,7 +653,8 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
         service: "oneiron-server",
-        capabilities: feature_flags(&server),
+        modes: CAPABILITY_MODES.to_vec(),
+        capabilities: feature_flags(&server).summary(),
         formats: supported_formats(),
         rate_limit: rate_limit_status(&server.config),
         runtime: runtime_health_status_for_config(&server.config),
@@ -671,8 +674,12 @@ struct HealthResponse {
     /// Service identifier for this daemon.
     #[schema(value_type = String, example = "oneiron-server")]
     service: &'static str,
-    /// Currently advertised API capabilities and execution modes.
-    capabilities: FeatureFlags,
+    /// Model or runtime effort modes advertised by the API.
+    #[schema(value_type = Vec<String>, example = json!(["flash", "thinking", "pro", "ultra"]))]
+    modes: Vec<&'static str>,
+    /// How many capabilities each family holds and the digest of the full
+    /// set, which authenticated `/api/core/discover` lists by family.
+    capabilities: CapabilitySummary,
     /// Payload formats this API can produce or consume.
     #[schema(value_type = Vec<String>, example = json!(["json", "yaml", "toon", "markdown", "plaintext"]))]
     formats: Vec<&'static str>,
