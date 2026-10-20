@@ -4,9 +4,12 @@
 //! Every hop's origin (scheme, host, port) must be on the allowlist. DNS is
 //! resolved once per hop; an address that is not global is dropped unless a
 //! granted CIDR names it, and the connection goes only to the addresses
-//! checked, so a name cannot rebind between the check and the connect. At
-//! most three redirects, each checked afresh. No proxy, no cookies, no
-//! credentials, no compression. The body is capped, and the whole fetch,
+//! checked, so a name cannot rebind between the check and the connect. Each
+//! redirect is checked afresh, as many as the fetch's time allows. No proxy,
+//! no cookies, no credentials, no compression. The body is read to its end,
+//! the call's room grown for each piece before it is kept (Rule 5, FIX
+//! 5284): its size, its hops, its purpose and its Content-Type are
+//! `[limits]` rows the host measures, never refusals. The whole fetch,
 //! every hop's send and its whole body, runs inside the call's time left.
 //! These are the rules the seal crate's own guarded fetcher keeps
 //! (ARCH-0064a, SGN-00). A POST redirected by 301, 302 or 303 goes on as a
@@ -24,13 +27,10 @@ use oneiron_organ_protocol::{
 };
 use reqwest::Url;
 
+use crate::budget::{CallRoom, Stop};
 use crate::handlers::{Answered, AskHandler, AskRequest};
-use crate::receipt::{FetchTarget, bound_text};
+use crate::receipt::FetchTarget;
 use crate::spec::FetchGrant;
-
-const MAX_REDIRECTS: u8 = 3;
-const MAX_PURPOSE_BYTES: usize = 32;
-const MAX_CONTENT_TYPE_BYTES: usize = 256;
 
 /// The host's guarded HTTP fetch, the handler for `net.fetch`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -51,9 +51,6 @@ fn parse(value: &rmpv::Value) -> Result<(FetchAsk, Url), AskRefusal> {
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, value).map_err(|err| not_a_fetch(&err))?;
     let ask: FetchAsk = rmp_serde::from_slice(&bytes).map_err(|err| not_a_fetch(&err))?;
-    if ask.purpose.len() > MAX_PURPOSE_BYTES {
-        return Err(refused(AskCode::BadRequest, "the purpose is over 32 bytes"));
-    }
     let url = Url::parse(&ask.url)
         .map_err(|err| refused(AskCode::BadRequest, format!("the url: {err}")))?;
     Ok((ask, url))
@@ -66,6 +63,19 @@ fn origin(url: &Url) -> String {
         url.host_str().unwrap_or_default(),
         url.port_or_known_default().unwrap_or(0)
     )
+}
+
+/// A wire value read as `T`, as the wire names its fields.
+pub(crate) fn decode<T: serde::de::DeserializeOwned>(value: &rmpv::Value) -> Option<T> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value).ok()?;
+    rmp_serde::from_slice(&bytes).ok()
+}
+
+/// The bytes of a fetch ask's purpose, kept whole: 0 for a value that is
+/// not a fetch.
+pub(crate) fn purpose_bytes(value: &rmpv::Value) -> u64 {
+    decode::<FetchAsk>(value).map_or(0, |ask| ask.purpose.len() as u64)
 }
 
 /// Whether `url` may be fetched under `grant`: an exact origin on the
@@ -105,9 +115,10 @@ pub(crate) fn first_hop(
         Err(refusal) => return (None, Err(refusal)),
     };
     let target = FetchTarget {
-        origin: bound_text(&origin(&url), MAX_CONTENT_TYPE_BYTES),
+        origin: origin(&url),
         url_digest: Hash32::of(url.as_str().as_bytes()),
         status: 0,
+        redirects: 0,
     };
     (Some(target), allowed(&url, grant))
 }
@@ -160,7 +171,10 @@ fn resolve(
 impl AskHandler for GuardedFetch {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
         let (request, first) = parse(ask.value)?;
-        let cap = ask.fetch.max_bytes.min(ask.max_bytes);
+        let room = Held {
+            room: ask.room,
+            revoked: ask.revoked,
+        };
         let deadline = ask.deadline;
         // One deadline over the whole fetch, every hop's send and all of its
         // body: at the deadline the fetch is dropped, and its connection
@@ -173,11 +187,31 @@ impl AskHandler for GuardedFetch {
         runtime.block_on(async {
             tokio::time::timeout_at(
                 tokio::time::Instant::from_std(deadline),
-                fetch(&request, first, ask.fetch, cap, deadline),
+                fetch(&request, first, ask.fetch, room, deadline),
             )
             .await
             .unwrap_or_else(|_| Err(failed("out of time")))
         })
+    }
+}
+
+/// The call's room a fetch holds its body in as it reads, if the call has
+/// one here (a mesh call's room is its host's), and what ends a wait for it.
+#[derive(Clone, Copy)]
+struct Held<'a> {
+    room: Option<&'a CallRoom>,
+    revoked: Stop<'a>,
+}
+
+impl Held<'_> {
+    /// Room for `bytes` more of the body, before they are kept.
+    fn hold(self, bytes: u64) -> Result<(), AskRefusal> {
+        match self.room {
+            Some(room) if !room.hold(bytes, self.revoked.0) => {
+                Err(refused(AskCode::Cancelled, "the call's grant was revoked"))
+            }
+            _ => Ok(()),
+        }
     }
 }
 
@@ -187,17 +221,17 @@ async fn fetch(
     request: &FetchAsk,
     first: Url,
     grant: &FetchGrant,
-    cap: u64,
+    room: Held<'_>,
     deadline: Instant,
 ) -> Result<Answered, AskRefusal> {
     let mut target = FetchTarget {
-        origin: bound_text(&origin(&first), MAX_CONTENT_TYPE_BYTES),
+        origin: origin(&first),
         url_digest: Hash32::of(first.as_str().as_bytes()),
         status: 0,
+        redirects: 0,
     };
     let mut url = first;
     let mut method = request.method;
-    let mut hops = 0u8;
     loop {
         allowed(&url, grant)?;
         let addrs = resolve(&url, grant, deadline)?;
@@ -240,9 +274,6 @@ async fn fetch(
         let status = response.status();
         target.status = status.as_u16();
         if status.is_redirection() {
-            if hops >= MAX_REDIRECTS {
-                return Err(refused(AskCode::Failed, "more than 3 redirects"));
-            }
             url = response
                 .headers()
                 .get(reqwest::header::LOCATION)
@@ -252,27 +283,22 @@ async fn fetch(
             if matches!(status.as_u16(), 301..=303) {
                 method = FetchMethod::Get;
             }
-            hops += 1;
+            target.redirects = target.redirects.saturating_add(1);
             continue;
         }
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
-            .map(|value| bound_text(value, MAX_CONTENT_TYPE_BYTES));
+            .map(str::to_owned);
         let mut body = Vec::new();
         while let Some(chunk) = response
             .chunk()
             .await
             .map_err(|err| failed(format!("body: {err}")))?
         {
+            room.hold(chunk.len() as u64)?;
             body.extend_from_slice(&chunk);
-            if body.len() as u64 > cap {
-                return Err(refused(
-                    AskCode::TooLarge,
-                    format!("the body is over {cap} bytes"),
-                ));
-            }
         }
         let answer = FetchAnswer {
             status: status.as_u16(),

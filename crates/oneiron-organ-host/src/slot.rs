@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::OrganIdentity;
 
+use crate::budget::Room;
 use crate::error::{HostError, Unavailable};
 use crate::process::OrganProcess;
 use crate::spec::{HostConfig, OrganSpec, OrganTier};
@@ -90,6 +91,7 @@ impl Slot {
     pub(crate) fn process(
         self: &Arc<Self>,
         config: &HostConfig,
+        room: &Room,
         deadline: Option<Instant>,
     ) -> Result<Arc<OrganProcess>, HostError> {
         let mut state = self.lock();
@@ -109,7 +111,7 @@ impl Slot {
                 return Err(self.unavailable(reason.clone()));
             }
         }
-        let process = self.start(&mut state, &self.spec, config, deadline)?;
+        let process = self.start(&mut state, &self.spec, config, room, deadline)?;
         state.process = Some(Arc::clone(&process));
         Ok(process)
     }
@@ -120,6 +122,7 @@ impl Slot {
     pub(crate) fn fresh_process(
         self: &Arc<Self>,
         config: &HostConfig,
+        room: &Room,
         deadline: Option<Instant>,
         memory_bytes: Option<u64>,
     ) -> Result<Arc<OrganProcess>, HostError> {
@@ -134,7 +137,7 @@ impl Slot {
             ..self.spec.clone()
         });
         let spec = sized.as_ref().unwrap_or(&self.spec);
-        let process = self.start(&mut state, spec, config, deadline)?;
+        let process = self.start(&mut state, spec, config, room, deadline)?;
         state.one_call.push(Arc::clone(&process));
         Ok(process)
     }
@@ -146,6 +149,7 @@ impl Slot {
         state: &mut SlotState,
         spec: &OrganSpec,
         config: &HostConfig,
+        room: &Room,
         deadline: Option<Instant>,
     ) -> Result<Arc<OrganProcess>, HostError> {
         if let Some(not_before) = state.not_before {
@@ -166,7 +170,7 @@ impl Slot {
                 slot.prune();
             }
         };
-        match OrganProcess::spawn(spec, config, deadline, forget) {
+        match OrganProcess::spawn(spec, config, room.clone(), deadline, forget) {
             Ok(process) => {
                 state.generations.retain(|old| !old.has_ended());
                 state.generations.push(Arc::clone(&process));

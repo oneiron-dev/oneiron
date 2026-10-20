@@ -88,9 +88,10 @@ pub fn room_upkeep_input(read: &ScopedRead<'_>, room: EntityId) -> Result<RoomUp
         crate::scan_check::EngineScan::RoomHistoryRows,
         room.as_bytes(),
     )?;
-    let held = |id: &str| -> Result<bool> {
+    let mut folds = super::thread_reads::RootFolds::new();
+    let mut held = |id: &str| -> Result<bool> {
         match EntityId::from_hex(id) {
-            Ok(id) => super::thread_reads::turn_held_back_for_in(read, &txn, id),
+            Ok(id) => super::thread_reads::turn_held_back_folded_for_in(read, &txn, id, &mut folds),
             Err(_) => Ok(false),
         }
     };

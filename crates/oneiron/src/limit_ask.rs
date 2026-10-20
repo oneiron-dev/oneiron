@@ -30,6 +30,17 @@ impl Vault {
         })
     }
 
+    /// Work a host serves on this vault measured `measured` against `row`,
+    /// standing at `bound` for this work: a bound the host computes where
+    /// it serves, such as an install grant's own count. Past it the
+    /// installed port is asked, and the bound is returned. It never refuses.
+    pub fn measure_limit_at(&self, row: EngineLimit, bound: u64, measured: u64) -> Option<u64> {
+        (measured > bound).then(|| {
+            self.limit_watch().crossed(row, bound, measured);
+            bound
+        })
+    }
+
     /// This vault's engine rows.
     pub(crate) fn limit_watch(&self) -> &LimitWatch {
         &self.store.limit_watch
