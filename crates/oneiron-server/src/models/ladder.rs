@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod live_fork;
+mod shadow_capture;
 mod step_attempt;
 
 use futures_util::StreamExt;
@@ -97,6 +98,7 @@ impl LadderRung {
             self.offer.binding.locality,
             self.prompt.as_deref(),
         );
+        shadow_capture::note_answered(self, request);
     }
 }
 
