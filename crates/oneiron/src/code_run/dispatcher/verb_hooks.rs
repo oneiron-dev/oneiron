@@ -88,8 +88,13 @@ impl HostSelfDispatcher<'_> {
         };
         match self.dispatch_effect(call, site, read_as) {
             Ok(outcome) => self.leave_verb_hooks(hooked, outcome),
-            Err(Error::VerbHook(stop)) => Ok(stopped(effect, *stop)),
-            Err(error) => Err(error),
+            Err(error) => {
+                self.keep_room_verb_hooks(hooked);
+                match error {
+                    Error::VerbHook(stop) => Ok(stopped(effect, *stop)),
+                    error => Err(error),
+                }
+            }
         }
     }
 
