@@ -75,8 +75,16 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// the cursor's) carries a build floor too, at the engine revision it
 /// merged in: a supervisor confirms a source's family only on an installed
 /// engine at or after it, and a v3 vault built before it answers a confirm
-/// `cursor_invalid`, which confirms nothing. Supervisor and vault move to
-/// v3 together; no v2 reader is kept.
+/// `cursor_invalid`, which confirms nothing. The shared model root
+/// ([`SharedModelRoot`](crate::settings_paths::SharedModelRoot), FIX 6828:
+/// `--shared-model-root` and the model directories it admits) carries a
+/// build floor too, at the engine revision it merged in, proven by
+/// `settings_paths_revision` 2 on `Ping`. An engine before it refuses the
+/// flag before it touches anything, and a model directory in the root as
+/// outside the vault, so a supervisor passes the flag, and publishes a
+/// model directory in the root, only with installed engines at or after
+/// the floor. Supervisor and vault move to v3 together; no v2 reader is
+/// kept.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

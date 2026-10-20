@@ -10,8 +10,10 @@
 //! contract's tables in
 //! [`oneiron_vault_contract::settings_policy`], which the supervisor reads
 //! too) and a key the schema does not have are refused by presence alone,
-//! and every owner path must lie in this vault's own storage, by the rule
-//! the supervisor checks at intake too
+//! and every owner path must lie in this vault's own storage, or be a
+//! model bundle's own directory in the node's read-only shared model root
+//! the supervisor declared (`--shared-model-root`), by the rule the
+//! supervisor checks at intake too
 //! ([`oneiron_vault_contract::settings_paths`]). The rest is
 //! settled over the configuration argv built, through the config file's own
 //! apply and validators ([`crate::config::merge::settle_managed_settings`]).
@@ -21,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use oneiron_vault_contract::settings_paths::{
+    OwnerPathOrigin, OwnerRoots, SHARED_MODEL_ROOT_IGNORED, SHARED_MODEL_STACK, SharedModelRoot,
     check_owner_path, is_owner_path, owner_roots, queue_reads_default_root,
 };
 use oneiron_vault_contract::settings_policy::{ENVIRONMENT_KEYS, SUPERVISOR_OWNED, matches_any};
@@ -60,21 +63,40 @@ pub(super) struct Settled {
 }
 
 /// The configuration a managed start serves on: the one argv builds
-/// ([`ManagedArgs::serve_config`]), with the owner's settings file read and
-/// refused ([`prepare`]) and settled over it ([`settle`]), tracing started
-/// between the two.
+/// ([`ManagedArgs::serve_config`]), with the node's shared model root
+/// checked, and the owner's settings file read and refused ([`prepare`]) and
+/// settled over it ([`settle`]), tracing started between the two.
 pub(super) fn configure(
     args: &ServeArgs,
     managed: &ManagedArgs,
 ) -> anyhow::Result<(ServeConfig, Settled)> {
     let mut config = managed.serve_config(args);
+    // The shared model root the supervisor declared, checked before the
+    // settings file names a model directory in it. One that fails is
+    // ignored, and logged once tracing starts, never a refused start.
+    let shared_model = managed
+        .shared_model_root
+        .as_deref()
+        .map(|declared| (declared, SharedModelRoot::validate(declared)));
+    config.shared_model_root = shared_model
+        .as_ref()
+        .and_then(|(_, checked)| checked.as_ref().ok().cloned());
     // The owner's settings file, refused leaf by leaf and settled once,
     // before anything reads the configuration: its `[oneironer]` arms the
-    // write-time marker in `vault_config` below. Tracing starts between its
-    // refusal and its settling, at the level the settled configuration runs
-    // at (argv over the file), so what settling decides is logged.
+    // write-time marker in `ServeConfig::base_vault_config`. Tracing starts
+    // between its refusal and its settling, at the level the settled
+    // configuration runs at (argv over the file), so what settling decides
+    // is logged.
     let settings = prepare(managed, args, &mut config)?;
     init_managed_tracing(log_level(settings.as_ref(), &config));
+    if let Some((declared, Err(cause))) = shared_model {
+        tracing::warn!(
+            reason = SHARED_MODEL_ROOT_IGNORED,
+            cause = cause.as_str(),
+            root = %declared.display(),
+            "the shared model root the supervisor declared failed its check and is ignored: the vault starts without it, and a model directory only it would admit is refused"
+        );
+    }
     let settled = settle(settings, &mut config)?;
     Ok((config, settled))
 }
@@ -130,12 +152,14 @@ pub(super) fn prepare(
     })?;
     refuse_unknown(&table)?;
     refuse_default_import_roots(&table)?;
-    let roots = owner_roots(&managed.data_dir, path.parent());
+    let roots = owner_roots(
+        &managed.data_dir,
+        path.parent(),
+        config.shared_model_root.clone(),
+    );
     visit(&table, &mut Vec::new(), &mut |field, value| match value {
-        toml::Value::String(text)
-            if is_owner_path(field) && check_owner_path(Path::new(text), &roots).is_err() =>
-        {
-            Err(refused(field, SettingsRefusal::OutsideVault))
+        toml::Value::String(text) if is_owner_path(field) => {
+            admit_owner_path(&table, field, Path::new(text), &roots)
         }
         _ => Ok(()),
     })?;
@@ -325,6 +349,41 @@ fn refuse_default_import_roots(table: &toml::Table) -> Result<(), ManagedError> 
         return Err(refused(&["import", "queue"], SettingsRefusal::OutsideVault));
     }
     Ok(())
+}
+
+/// Admits one owner path the settings file names at `field`, by the rule
+/// the supervisor checks too ([`check_owner_path`]). A model directory the
+/// shared model root admits must also hold the bundle its name says: the
+/// stack its manifest states, read here before any model loads; the loader
+/// still checks every file it reads.
+fn admit_owner_path(
+    table: &toml::Table,
+    field: &[String],
+    path: &Path,
+    roots: &OwnerRoots,
+) -> Result<(), ManagedError> {
+    let stack = declared_stack(table, field);
+    let admitted = check_owner_path(field, path, stack, roots)
+        .map_err(|_| refused(field, SettingsRefusal::OutsideVault))?;
+    if admitted.origin == OwnerPathOrigin::SharedModel {
+        let manifest = crate::oneironer::engines::bundle_identity(&admitted.path)
+            .map(|identity| identity.stack_sha16);
+        if manifest.ok().as_deref() != stack {
+            return Err(refused(field, SettingsRefusal::OutsideVault));
+        }
+    }
+    Ok(())
+}
+
+/// The stack the settings pin beside the leaf at `field`: the
+/// [`SHARED_MODEL_STACK`] key of the same table, if it holds text.
+fn declared_stack<'a>(table: &'a toml::Table, field: &[String]) -> Option<&'a str> {
+    let (_, sections) = field.split_last()?;
+    let mut section = table;
+    for key in sections {
+        section = section.get(key)?.as_table()?;
+    }
+    section.get(SHARED_MODEL_STACK)?.as_str()
 }
 
 /// Calls `check` on every key of `table`, depth first, with its dotted field.
