@@ -42,7 +42,9 @@ pub(crate) async fn resolve_mcp_caller(
 ) -> Result<McpCallContext, McpGatewayError> {
     let attested = crate::auth::attested_owner(connection, server);
     let Some(owner) = attested.or_else(|| session_owner(connection, server)) else {
-        return resolve_mcp_gateway_actor(mode, request_id, headers, locality, server).await;
+        return resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
+            .await
+            .map(|context| with_admitted_proof(context, connection));
     };
     if !headers.contains_key(MCP_CREDENTIAL_HEADER) && !headers.contains_key(AUTHORIZATION) {
         // This request's own caller, or for a call on his held socket the
@@ -59,7 +61,9 @@ pub(crate) async fn resolve_mcp_caller(
         };
         return managed_owner_context(mode, request_id, headers, owner, auth, server);
     }
-    let context = resolve_mcp_gateway_actor(mode, request_id, headers, locality, server).await?;
+    let context = resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
+        .await
+        .map(|context| with_admitted_proof(context, connection))?;
     let principal = context
         .actor
         .auth
@@ -74,6 +78,25 @@ pub(crate) async fn resolve_mcp_caller(
         ));
     }
     Ok(context)
+}
+
+/// `context`, a call [`resolve_mcp_gateway_actor`] resolved, holding the
+/// holder proof the binding door admitted its caller's slip on (FIX 6160),
+/// for the home an opened device asks, in place of the one read from the
+/// headers again. A caller that forwards none (owner grade, or no
+/// holder-bound slip) still forwards none, and a request the door kept no
+/// caller for keeps its headers' proof.
+fn with_admitted_proof(mut context: McpCallContext, connection: &Extensions) -> McpCallContext {
+    if context.forwarded.is_some()
+        && let Some(admitted) = context
+            .actor
+            .auth
+            .as_ref()
+            .and_then(|auth| auth.admitted_forwarded_proof(connection))
+    {
+        context.forwarded = Some(admitted);
+    }
+    context
 }
 
 /// A managed vault's attested owner's own `/mcp` call: the person, as a
