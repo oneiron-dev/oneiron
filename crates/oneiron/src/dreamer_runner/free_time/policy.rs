@@ -96,6 +96,44 @@ pub struct FreeTimePolicy {
     pub prior: [u8; 32],
 }
 
+/// One agent's policy row as the engine keeps it (FIX 5661): the policy in
+/// force, `None` once the owner cleared it, and the witness of every set and
+/// clear that led here. A clear keeps the row as its witness, so a home move
+/// can prove which of two rows follows the other; what the owner reads is
+/// unchanged (a cleared policy reads as none: revision 0, and
+/// [`FREE_TIME_WHEN_UNSET`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FreeTimePolicyRecord {
+    pub(super) policy: Option<FreeTimePolicy>,
+    /// One digest per set or clear, oldest first. Each hashes the one before
+    /// it with its act, so a record's list is a prefix of the list of every
+    /// record that follows it.
+    pub(super) acts: Vec<[u8; 32]>,
+}
+
+impl FreeTimePolicyRecord {
+    /// `previous` with one more act: `by` left `policy` in force for `agent`
+    /// at `at` (`None` for a clear).
+    fn after(
+        previous: Option<Self>,
+        agent: EntityId,
+        policy: Option<FreeTimePolicy>,
+        by: EntityId,
+        at: u64,
+    ) -> Result<Self> {
+        let mut acts = previous.map_or_else(Vec::new, |record| record.acts);
+        let act = serde_json::to_vec(&(agent, policy.as_ref(), by, at))
+            .map_err(|_| Error::InvariantViolation("free-time policy act encoding"))?;
+        let mut witness = blake3::Hasher::new();
+        witness.update(b"oneiron:free_time:policy_act:v1");
+        witness.update(acts.last().unwrap_or(&[0; 32]));
+        witness.update(&act);
+        acts.push(*witness.finalize().as_bytes());
+        Ok(Self { policy, acts })
+    }
+}
+
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("free-time policy: {reason}"))
 }
@@ -150,7 +188,11 @@ pub(crate) fn free_time_owns_reflection_in_txn(
     resident: EntityId,
     now: u64,
 ) -> Result<bool> {
-    let Some(policy) = effective_policy(POLICY.get_lenient(&vault.store, txn, &resident)?) else {
+    let Some(policy) = effective_policy(
+        POLICY
+            .get_lenient(&vault.store, txn, &resident)?
+            .and_then(|record| record.policy),
+    ) else {
         return Ok(false);
     };
     let boundary = match super::cycle::boundary_at_or_before(&policy.schedule, now) {
@@ -175,21 +217,25 @@ fn prior_digest(prior: Option<&FreeTimePolicy>) -> Result<[u8; 32]> {
     Ok(*blake3::hash(&bytes).as_bytes())
 }
 
-/// The revision `agent`'s policy stands at in `txn`, refused unless it is
-/// the one the owner's surface showed.
+/// `agent`'s policy row in `txn`, refused unless the revision its policy
+/// stands at (0 with none in force) is the one the owner's surface showed.
 fn current_revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     agent: EntityId,
     expected_revision: u64,
-) -> Result<Option<FreeTimePolicy>> {
-    let prior = POLICY.get(&vault.store, txn, &agent)?;
-    if prior.as_ref().map_or(0, |policy| policy.revision) != expected_revision {
+) -> Result<Option<FreeTimePolicyRecord>> {
+    let record = POLICY.get(&vault.store, txn, &agent)?;
+    let revision = record
+        .as_ref()
+        .and_then(|record| record.policy.as_ref())
+        .map_or(0, |policy| policy.revision);
+    if revision != expected_revision {
         return Err(Error::ConcurrentWrite(
             "the free-time policy changed; read it again",
         ));
     }
-    Ok(prior)
+    Ok(record)
 }
 
 impl Vault {
@@ -200,7 +246,9 @@ impl Vault {
     /// A store read that fails or a row that does not decode.
     pub fn free_time_policy(&self, agent: EntityId) -> Result<Option<FreeTimePolicy>> {
         let txn = self.store.env.read_txn()?;
-        POLICY.get(&self.store, &txn, &agent)
+        Ok(POLICY
+            .get(&self.store, &txn, &agent)?
+            .and_then(|record| record.policy))
     }
 
     /// Sets `agent`'s free-time policy as the owner (FIX 4453), replacing
@@ -225,7 +273,8 @@ impl Vault {
             let actor =
                 crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
             self.read_agent_definition_in_txn(txn, &agent)?;
-            let prior = current_revision_in_txn(self, txn, agent, expected_revision)?;
+            let record = current_revision_in_txn(self, txn, agent, expected_revision)?;
+            let prior = record.as_ref().and_then(|record| record.policy.as_ref());
             let set_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let policy = FreeTimePolicy {
                 agent,
@@ -239,9 +288,11 @@ impl Vault {
                 set_by: actor,
                 set_at,
                 surface,
-                prior: prior_digest(prior.as_ref())?,
+                prior: prior_digest(prior)?,
             };
-            POLICY.put(&self.store, txn, &agent, &policy)?;
+            let record =
+                FreeTimePolicyRecord::after(record, agent, Some(policy.clone()), actor, set_at)?;
+            POLICY.put(&self.store, txn, &agent, &record)?;
             Ok(policy)
         })?;
         // The home's timer arms on the policy's next boundary.
@@ -265,12 +316,17 @@ impl Vault {
         expected_revision: u64,
     ) -> Result<()> {
         let cleared = self.with_write_txn_grouped(|txn| {
-            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            if current_revision_in_txn(self, txn, agent, expected_revision)?.is_none() {
-                return Ok(false);
-            }
-            POLICY.delete(&self.store, txn, &agent)?;
+            let actor =
+                crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
+            let record = match current_revision_in_txn(self, txn, agent, expected_revision)? {
+                Some(record) if record.policy.is_some() => record,
+                _ => return Ok(false),
+            };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            // The row stays as the witness of this clear (FIX 5661), with no
+            // policy in force.
+            let record = FreeTimePolicyRecord::after(Some(record), agent, None, actor, now)?;
+            POLICY.put(&self.store, txn, &agent, &record)?;
             super::cycle::close_open_cycle_in_txn(self, txn, agent, now)?;
             // The clock goes with the policy: a later policy starts at its
             // own first boundary, and until then the agent dreams nightly.

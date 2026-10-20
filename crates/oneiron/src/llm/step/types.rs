@@ -78,12 +78,16 @@ pub const DREAMER_STEP_RETRY_BACKOFF_MS: [u64; 3] = [250, 1_000, 4_000];
 
 pub(super) const DREAMER_STEP_STATE_SCHEMA_VERSION: u64 = 1;
 
-pub(super) const DREAMER_STEP_STATE_KEYS: [&str; 5] = [
+pub(super) const DREAMER_STEP_STATE_KEYS: [&str; 9] = [
     "schema_version",
     "progression",
     "started_at",
     "updated_at",
     "response",
+    "actor",
+    "subject",
+    "claim",
+    "erased",
 ];
 
 pub(super) const DREAMER_TRAP_BINDING_SCHEMA_VERSION: u64 = 1;
@@ -138,6 +142,17 @@ pub(super) const KEY_TRAP_CLAIM_ID: &str = "trap_claim_id";
 pub(super) const KEY_STARTED_AT: &str = "started_at";
 
 pub(super) const KEY_UPDATED_AT: &str = "updated_at";
+
+/// A step-state row's write-time owners (KS-2B1): its actor, its subject and
+/// the terminal claim that logged it.
+pub(super) const KEY_STATE_ACTOR: &str = "actor";
+
+pub(super) const KEY_STATE_SUBJECT: &str = "subject";
+
+pub(super) const KEY_STATE_CLAIM: &str = "claim";
+
+/// A step-state row whose response its owner's erase took (KS-2B1).
+pub(super) const KEY_STATE_ERASED: &str = "erased";
 
 // Runtime write-envelope provenance keys stamped by `dreamer_runtime_envelope`
 // onto every step/trap record. The memo-index admission gate (ONE-1344) reads

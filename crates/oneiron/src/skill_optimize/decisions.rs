@@ -17,10 +17,14 @@ use super::{
     PreferredResponse,
 };
 
+mod replay_pairs;
+
+pub use self::replay_pairs::{SkillReplayResponse, SkillReplayResponses};
+
 /// The Coach uses the host's existing provider slots, policy and one clock.
 /// Wording keys are score, structural, contrastive, preference, task_success,
-/// honesty, tradeoff, live_axis, and axis.<name>. No prompt or model is
-/// selected by the engine.
+/// honesty, tradeoff, live_axis, response_score, and axis.<name>. No prompt
+/// or model is selected by the engine.
 pub struct SkillOptimizeDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -33,19 +37,12 @@ pub struct SkillOptimizeDecisions<'a> {
 /// Most blind preference pairs one contrastive audit judges.
 const MAX_BLIND_PAIRS: usize = 32;
 
-/// A response-only pair sampled without the instructions, scores or labels.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SkillReplayPair {
-    pub pair_ref: String,
-    pub state: Value,
-}
-
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.into())
 }
 
 /// Every wording key but `axis.<name>`, which names its axis in the state.
-const JUDGMENT_KINDS: [&str; 8] = [
+const JUDGMENT_KINDS: [&str; 9] = [
     "score",
     "structural",
     "contrastive",
@@ -54,6 +51,7 @@ const JUDGMENT_KINDS: [&str; 8] = [
     "honesty",
     "tradeoff",
     "live_axis",
+    "response_score",
 ];
 
 /// The wording key a kept judgment was asked under: the one whose question,
@@ -133,6 +131,22 @@ fn ask<S: HeldOutReplayNotes + ?Sized>(
     Ok(decision)
 }
 
+/// A decided score: answered at the band's high mark with no person asked.
+/// `None` for an abstained or escalated one.
+fn decided_score(decision: &TypedDecision) -> Option<f32> {
+    match decision.answer {
+        DecisionAnswer::Score(value)
+            if decision.human_ask.is_none()
+                && decision
+                    .probability
+                    .is_some_and(|p| p >= decision.receipt.band.high) =>
+        {
+            Some(value as f32)
+        }
+        _ => None,
+    }
+}
+
 fn score<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     kind: &str,
@@ -146,17 +160,8 @@ fn score<S: HeldOutReplayNotes + ?Sized>(
         state,
         AnswerContract::Score { min: 0.0, max: 1.0 },
     )?;
-    match decision.answer {
-        DecisionAnswer::Score(value)
-            if decision.human_ask.is_none()
-                && decision
-                    .probability
-                    .is_some_and(|p| p >= decision.receipt.band.high) =>
-        {
-            Ok(value as f32)
-        }
-        _ => Err(invalid("skill judgment abstained or requested escalation")),
-    }
+    decided_score(&decision)
+        .ok_or_else(|| invalid("skill judgment abstained or requested escalation"))
 }
 
 fn case_state<S: HeldOutReplayNotes + ?Sized>(
@@ -229,11 +234,11 @@ impl dyn HeldOutReplayNotes + '_ {
         task: &str,
         receipts: &[String],
     ) -> Result<Vec<BlindPreference>> {
-        // The sample is the first 32 pairs, same-task pairs first as
-        // `blind_pairs` orders them: a size that selects, never one that
-        // refuses. No pair at all abstains.
-        let mut pairs = self.blind_pairs(task, receipts)?;
-        pairs.truncate(MAX_BLIND_PAIRS);
+        // Each response is scored on its own task by the common rubric, and
+        // the closest scores pair, same-task pairs first. The sample is the
+        // first 32 pairs: a size that selects, never one that refuses. No
+        // pair at all abstains. The preference reads responses only.
+        let pairs = replay_pairs::blind_pairs(self, task, receipts, MAX_BLIND_PAIRS)?;
         if pairs.is_empty() {
             return Err(invalid("contrastive audit has no response pair to judge"));
         }
@@ -243,9 +248,7 @@ impl dyn HeldOutReplayNotes + '_ {
                 self,
                 "preference",
                 &[],
-                &json!({
-                    "task": task, "pair_ref": pair.pair_ref, "responses": pair.state,
-                }),
+                &pair.state,
                 AnswerContract::Choice {
                     options: vec!["first".into(), "second".into()],
                 },

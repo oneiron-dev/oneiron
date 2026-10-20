@@ -126,6 +126,7 @@ mod body_store;
 mod channel_identity_receipts;
 pub(crate) mod checkpoint_payload;
 mod commitment_due;
+mod deadline_jobs;
 mod diagnostics;
 mod gate_decision;
 mod group_commit;
@@ -180,6 +181,13 @@ pub(crate) use body_envelope::{
     prune_retired_bodies_in_rows, release_body_in_txn, require_body_instances,
     retire_body_key_in_txn, sealed_body_file_name,
 };
+// KS-2B1: row-held responses under body custody.
+#[cfg(unix)]
+pub(crate) use body_envelope::{
+    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
+    bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
+    response_binding_in_txn, response_carrier,
+};
 #[cfg(unix)]
 pub(crate) use body_store::{
     BodyDir, BodyFacts, BodyMeter, BodySink, LINE_INDEX_BLOCK_BYTES, LINE_INDEX_SUFFIX, SunkBody,
@@ -188,6 +196,8 @@ pub(crate) use body_store::{
 pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
+pub(crate) use deadline_jobs::DeadlineJobs;
+pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;

@@ -28,6 +28,7 @@
 
 mod envelope;
 mod lineage;
+mod registry;
 mod store;
 mod table;
 mod transfer;
@@ -39,6 +40,9 @@ use crate::error::Error;
 
 pub(crate) use envelope::{
     HomeAck, SealedHandoff, VerifiedHandoff, VerifiedHomeAck, open_handoff, verify_ack,
+};
+pub(crate) use registry::{
+    froze_home_state_in_txn, home_tables, pending_move_in_txn, takes_home_write_in_txn,
 };
 pub(crate) use store::{handoff_status_in_txn, incomplete_in_txn, record_incomplete_in_txn};
 pub(crate) use table::{HomeTable, HomeTableRegistration, TableAdopt};

@@ -19,6 +19,9 @@ use super::ledger_fold::{IdentityTopologyAction, fold_identity_topology_log};
 use super::op_apply::{IdentityOpOutcome, IdentityOpWrite};
 use super::op_vocabulary::{IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp};
 use super::reassignment_map::{ReassignmentEntry, ReassignmentTarget};
+use super::store_entity_helpers::{
+    identity_topology_entity_type_for_store_in_txn, identity_topology_event_for_store_in_txn,
+};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 use super::transition_table::{
     IdentityTopologyRejection, ProposalOutcome, ProposalRuling, ProposalScope,
@@ -124,6 +127,84 @@ fn proposal_scope_of(record: &StoredIdentityOpEvent, target_class: &str) -> Prop
             |actor| actor.entity_ref().to_hex(),
         ),
     }
+}
+
+/// The cells of [`Vault::validate_identity_proposal_resolution_in_txn`] that
+/// read no fold, and the amendment-scope pin, judged on `store` for the
+/// effective projection (SCAN C040). Replicated admission checks nothing for
+/// a resolution that arrives before its proposal, so the projection checks it
+/// once the proposal `record` resolves is here: the ruling's own axis is
+/// effective, the proposal is a parked op, the stamped scope is the tuple its
+/// row derives, and an amendment stays inside review. Whether the park is
+/// still open is the fold's own first-ruling-wins rule. `false` when a cell
+/// fails, and while the op's target has not arrived; a target a hard delete
+/// took leaves its class unread, as signed history survives deletion.
+pub(super) fn resolution_rule_holds_for_store_in_txn(
+    store: &crate::store::Store,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+    record: &StoredIdentityOpEvent,
+) -> Result<bool> {
+    let StoredIdentityOpAction::ProposalResolution {
+        scope,
+        amended_body,
+        ..
+    } = &record.action
+    else {
+        return Ok(false);
+    };
+    if !matches!(
+        record.approval,
+        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+    ) {
+        return Ok(false);
+    }
+    let Some(proposal_record) = identity_topology_event_for_store_in_txn(store, rtxn, proposal)?
+    else {
+        return Ok(false);
+    };
+    if proposal_record.approval != ClaimApprovalStatus::Proposed {
+        return Ok(false);
+    }
+    let IdentityTopologyAction::Apply(proposed_op) = proposal_record.action.to_fold_action() else {
+        return Ok(false);
+    };
+    let Ok(target) = proposal_scope_target(&proposed_op) else {
+        return Ok(false);
+    };
+    match identity_topology_entity_type_for_store_in_txn(store, rtxn, &target)? {
+        Some(kind) => {
+            let Some(entry) = entity_type_registry_entry(kind) else {
+                return Ok(false);
+            };
+            let derived = proposal_scope_of(&proposal_record, entry.kind);
+            if scope.op_kind != derived.op_kind
+                || scope.target_class != derived.target_class
+                || scope.actor != derived.actor
+            {
+                return Ok(false);
+            }
+        }
+        None => {
+            if !crate::ports::TombstoneStoreRead::port_deletion_marked(
+                store,
+                rtxn,
+                crate::ports::DeletionMarker::HardDelete,
+                &target,
+            )? {
+                return Ok(false);
+            }
+        }
+    }
+    if let Some(amended_body) = amended_body {
+        let Ok(amended_op) = decode_identity_op_amendment(amended_body) else {
+            return Ok(false);
+        };
+        if assert_amendment_in_scope(&proposed_op, &amended_op).is_err() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Stateless wire-legality of a resolution row's stamped ramp scope: the
