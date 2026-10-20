@@ -70202,7 +70202,7 @@
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "mod": 15,
       "re-export": 5,
       "struct": 1
@@ -79841,7 +79841,7 @@
      "path": "src/api/mcp_gateway/booking_call.rs",
      "purpose": "A managed vault's attested holder the vault no longer records as its live owner, calling a booking tool on…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
