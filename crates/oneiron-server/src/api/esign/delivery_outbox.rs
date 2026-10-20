@@ -22,8 +22,17 @@
 //!   `lease_owner`, `attempt_count` and `payload_sha256`, a `status` of
 //!   "ok" or "failed", and a `reason` (null for ok, a nonempty code for
 //!   failed).
+//! - Once an ok completes an intent, the vault answers with
+//!   `esign-delivery-<key>.done.json`, its completion receipt
+//!   ([`oneiron_vault_contract::esign_delivery`], FIX 5306): `schema_version`
+//!   1, `kind`, `state` ("completed"), and the completed lease's
+//!   `dedupe_key`, `attempt_id`, `lease_owner`, `attempt_count` and
+//!   `payload_sha256`.
 //!
-//! An ok completes the intent. A failed one is tried again a minute later,
+//! An ok completes the intent: its envelope goes, its receipt is written,
+//! and its ack goes last. The sender removes the receipt once it has retired
+//! its record of the send; until then no newer envelope is written under
+//! that key, and that lease waits. A failed one is tried again a minute later,
 //! with its reason kept. With no ack the lease stands until it expires; then
 //! the intent is queued again, and its next claim replaces the envelope. An
 //! ack that does not echo the current lease settles nothing. Nothing here
@@ -44,16 +53,19 @@ use std::time::Duration;
 use anyhow::Context as _;
 use oneiron::Vault;
 use oneiron::attempt_queue::{
-    AttemptId, AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome,
-    CleanupAttemptLeases, CompleteAttempt, RetryAttempt,
+    AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CleanupAttemptLeases,
+    CompleteAttempt, RetryAttempt,
 };
-use oneiron::blob_artifact::esign::EsignNotice;
 use rand_core::{OsRng, RngCore as _};
-use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
-use sha2::{Digest as _, Sha256};
 
+use self::wire::{
+    Ack, AckStatus, FileRole, ack_binds, envelope_bytes, export, hex, parse_ack, parse_fence,
+    parse_name,
+};
 use crate::server::{HousekeepingAdmission, SyncServer};
+
+mod completion;
+mod wire;
 
 /// The queue kind the vault keeps authorized e-sign mail under.
 const DELIVERY_KIND: &str = "esign.delivery";
@@ -124,82 +136,27 @@ pub(crate) fn spawn(
     })
 }
 
-/// The envelope the vault writes for one lease.
-#[derive(Serialize)]
-struct Envelope<'a> {
-    schema_version: u32,
-    kind: &'a str,
-    channel: &'a str,
-    dedupe_key: &'a str,
-    attempt_id: String,
-    lease_owner: &'a str,
-    attempt_count: u32,
-    leased_at: u64,
-    lease_expires_at: u64,
-    payload_sha256: &'a str,
-    payload: &'a RawValue,
-}
-
-/// The lease an envelope on disk names.
-#[derive(Deserialize)]
-struct Fence {
-    attempt_id: String,
-    attempt_count: u32,
-}
-
-/// The sender's answer to one envelope.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Ack {
-    schema_version: u32,
-    dedupe_key: String,
-    attempt_id: String,
-    lease_owner: String,
-    attempt_count: u32,
-    payload_sha256: String,
-    status: AckStatus,
-    #[serde(default)]
-    reason: Option<String>,
-}
-
-#[derive(Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum AckStatus {
-    Ok,
-    Failed,
-}
-
-impl AckStatus {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::Failed => "failed",
-        }
-    }
-}
-
-/// What one queued intent exports: its key, its file stem and its frozen
-/// payload.
-struct Export<'a> {
-    dedupe_key: &'a str,
-    stem: String,
-    payload: &'a RawValue,
-    payload_sha256: String,
-}
-
-enum FileRole {
-    Envelope,
-    Ack,
-}
-
 struct Outbox {
     dir: PathBuf,
 }
 
+/// What writing one lease's envelope came to, least pressing first.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Published {
+    /// Written, already written, or left unexported (not an e-sign notice).
+    Done,
+    /// Its slot still holds a completion the sender has not taken: the lease
+    /// stays leased and unwritten until it has.
+    Held,
+    /// The write failed.
+    Failed,
+}
+
 impl Outbox {
     /// One tick: acks, reclaim, then envelopes. `Ok(true)` when an envelope
-    /// could not be written, so the next tick writes the leases it holds
-    /// before it claims more.
+    /// could not be written or waits on its slot, so the next tick writes the
+    /// leases it holds first; after a failed write it claims no more until
+    /// those are written.
     fn tick(&self, vault: &Vault, recover: bool) -> anyhow::Result<bool> {
         let Some(_lock) = self.lock()? else {
             return Ok(recover);
@@ -223,10 +180,14 @@ impl Outbox {
                 "esign deliveries no ack answered are queued again"
             );
         }
-        if recover && !self.publish_leased(&queue)? {
-            return Ok(true);
+        let mut pending = Published::Done;
+        if recover {
+            pending = self.publish_leased(&queue)?;
+            if pending == Published::Failed {
+                return Ok(true);
+            }
         }
-        Ok(!self.claim_ready(&queue)?)
+        Ok(pending.max(self.claim_ready(&queue)?) != Published::Done)
     }
 
     /// The directory's lock, or `None` while another publisher holds it.
@@ -344,6 +305,12 @@ impl Outbox {
             // Queued again or paused: its next claim retires this ack.
             return Ok(false);
         }
+        // An ok that completed this try, now or before a stop that left its
+        // ack, hands the slot to the sender through its completion receipt.
+        let completed = matches!(row.state, AttemptState::Leased | AttemptState::Completed);
+        if bound && ack.status == AckStatus::Ok && completed {
+            return self.hand_off(stem, &row, &path, &bytes);
+        }
         // Settled, now or before a stop that left its files: they go only
         // after the commit, the envelope first, and only the ones naming
         // this try. An ack naming a settled try can never settle anything.
@@ -391,24 +358,26 @@ impl Outbox {
         Ok(())
     }
 
-    /// Writes the envelope of every lease this outbox holds, after a stop or
-    /// a failed write. `Ok(false)` when one could not be written.
-    fn publish_leased(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<bool> {
-        let mut whole = true;
+    /// Writes the envelope of every lease this outbox holds, after a stop, a
+    /// failed write or a held slot: the most pressing outcome of them all.
+    fn publish_leased(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
+        let mut outcome = Published::Done;
         for row in queue.list()? {
             if row.kind == DELIVERY_KIND
                 && row.state == AttemptState::Leased
                 && row.lease_owner.as_deref() == Some(LEASE_OWNER)
             {
-                whole &= self.publish_logged(&row);
+                outcome = outcome.max(self.publish_logged(queue, &row));
             }
         }
-        Ok(whole)
+        Ok(outcome)
     }
 
-    /// Claims every ready intent and writes its envelope. `Ok(false)` when
-    /// one could not be written: it stays leased, and claiming stops.
-    fn claim_ready(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<bool> {
+    /// Claims every ready intent and writes its envelope. One that could not
+    /// be written stays leased, and claiming stops; one whose slot is held
+    /// stays leased and unwritten, and claiming goes on.
+    fn claim_ready(&self, queue: &AttemptQueue<'_>) -> oneiron::Result<Published> {
+        let mut outcome = Published::Done;
         loop {
             let claimed = queue.claim_kind(
                 DELIVERY_KIND,
@@ -418,43 +387,53 @@ impl Outbox {
                 },
             )?;
             let ClaimOutcome::Claimed(row) = claimed else {
-                return Ok(true);
+                return Ok(outcome);
             };
-            if !self.publish_logged(&row) {
-                return Ok(false);
+            outcome = outcome.max(self.publish_logged(queue, &row));
+            if outcome == Published::Failed {
+                return Ok(outcome);
             }
         }
     }
 
-    fn publish_logged(&self, row: &AttemptRecord) -> bool {
-        match self.publish(row) {
-            Ok(()) => true,
+    fn publish_logged(&self, queue: &AttemptQueue<'_>, row: &AttemptRecord) -> Published {
+        match self.publish(queue, row) {
+            Ok(published) => published,
             Err(error) => {
                 tracing::warn!(
                     error = %format!("{error:#}"),
                     attempt = %hex(row.id.as_bytes()),
                     "esign delivery envelope not written; the next tick writes it"
                 );
-                false
+                Published::Failed
             }
         }
     }
 
     /// Writes `row`'s envelope for its current lease, unless the file
-    /// already holds it. A row that is not an e-sign notice with a dedupe key
-    /// is left leased and unexported, never dropped.
-    fn publish(&self, row: &AttemptRecord) -> anyhow::Result<()> {
+    /// already holds it or its slot still holds a completion the sender has
+    /// not taken. A row that is not an e-sign notice with a dedupe key is
+    /// left leased and unexported, never dropped.
+    fn publish(&self, queue: &AttemptQueue<'_>, row: &AttemptRecord) -> anyhow::Result<Published> {
         let Some(export) = export(row) else {
             tracing::warn!(
                 attempt = %hex(row.id.as_bytes()),
                 "esign delivery is not an e-sign notice with a dedupe key; it stays queued, unexported"
             );
-            return Ok(());
+            return Ok(Published::Done);
         };
         let bytes = envelope_bytes(row, &export)?;
         let path = self.envelope_path(&export.stem);
         if read_if_present(&path)?.as_deref() == Some(bytes.as_slice()) {
-            return Ok(());
+            return Ok(Published::Done);
+        }
+        if self.holds_slot(queue, &export.stem)? {
+            tracing::debug!(
+                attempt = %hex(row.id.as_bytes()),
+                stem = %export.stem,
+                "esign delivery waits: its slot holds a completion the sender has not taken"
+            );
+            return Ok(Published::Held);
         }
         // The sender has not seen this lease, so an ack beside it answers an
         // older one.
@@ -466,7 +445,7 @@ impl Outbox {
             stem = %export.stem,
             "esign delivery written to its outbox"
         );
-        Ok(())
+        Ok(Published::Done)
     }
 
     fn envelope_path(&self, stem: &str) -> PathBuf {
@@ -504,115 +483,6 @@ fn settle(queue: &AttemptQueue<'_>, row: &AttemptRecord, ack: &Ack) -> oneiron::
         }
     }
     Ok(())
-}
-
-/// The intent `row` exports, or `None` for a row that is not an e-sign
-/// notice with a dedupe key.
-fn export(row: &AttemptRecord) -> Option<Export<'_>> {
-    let dedupe_key = row.dedupe_key.as_deref()?;
-    let text = std::str::from_utf8(&row.payload).ok()?;
-    if serde_json::from_str::<EsignNotice>(text).is_err() {
-        return None;
-    }
-    let payload: &RawValue = serde_json::from_str(text).ok()?;
-    Some(Export {
-        dedupe_key,
-        stem: stem_of(dedupe_key),
-        payload,
-        payload_sha256: hex(&Sha256::digest(payload.get().as_bytes())),
-    })
-}
-
-fn envelope_bytes(row: &AttemptRecord, export: &Export<'_>) -> serde_json::Result<Vec<u8>> {
-    serde_json::to_vec(&Envelope {
-        schema_version: SCHEMA_VERSION,
-        kind: DELIVERY_KIND,
-        channel: CHANNEL,
-        dedupe_key: export.dedupe_key,
-        attempt_id: hex(row.id.as_bytes()),
-        lease_owner: LEASE_OWNER,
-        attempt_count: row.attempt_count,
-        leased_at: row.updated_at,
-        lease_expires_at: row.updated_at.saturating_add(LEASE_SECS),
-        payload_sha256: &export.payload_sha256,
-        payload: export.payload,
-    })
-}
-
-/// Whether `ack` echoes `row`'s lease whole: this outbox's owner, the lease
-/// generation, the dedupe key its file is named by, and the payload's hash.
-fn ack_binds(ack: &Ack, row: &AttemptRecord, stem: &str) -> bool {
-    let Some(export) = export(row) else {
-        return false;
-    };
-    ack.lease_owner == LEASE_OWNER
-        && ack.attempt_count == row.attempt_count
-        && ack.dedupe_key == export.dedupe_key
-        && export.stem == stem
-        && ack.payload_sha256 == export.payload_sha256
-}
-
-/// A well-formed ack and the try it names.
-fn parse_ack(bytes: &[u8]) -> Option<(Ack, AttemptId)> {
-    let ack: Ack = serde_json::from_slice(bytes).ok()?;
-    let id = parse_attempt_id(&ack.attempt_id)?;
-    let shaped = ack.schema_version == SCHEMA_VERSION
-        && match ack.status {
-            AckStatus::Ok => ack.reason.is_none(),
-            AckStatus::Failed => ack
-                .reason
-                .as_deref()
-                .is_some_and(|reason| !reason.is_empty()),
-        };
-    shaped.then_some((ack, id))
-}
-
-/// The lease an envelope on disk names.
-fn parse_fence(bytes: &[u8]) -> Option<(Fence, AttemptId)> {
-    let fence: Fence = serde_json::from_slice(bytes).ok()?;
-    let id = parse_attempt_id(&fence.attempt_id)?;
-    Some((fence, id))
-}
-
-/// The file stem of an intent: the prefix and the lower-hex BLAKE3 of
-/// `esign.delivery\0` and its dedupe key.
-fn stem_of(dedupe_key: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(DELIVERY_KIND.as_bytes());
-    hasher.update(&[0]);
-    hasher.update(dedupe_key.as_bytes());
-    format!("{FILE_PREFIX}{}", hasher.finalize().to_hex())
-}
-
-/// The stem and role of an outbox file's name; `None` for any other file
-/// (the lock, a temporary, the sender's own).
-fn parse_name(name: &str) -> Option<(String, FileRole)> {
-    let rest = name.strip_prefix(FILE_PREFIX)?;
-    let (key, role) = match rest.strip_suffix(ACK_SUFFIX) {
-        Some(key) => (key, FileRole::Ack),
-        None => (rest.strip_suffix(ENVELOPE_SUFFIX)?, FileRole::Envelope),
-    };
-    (key.len() == 64 && is_lower_hex(key)).then(|| (format!("{FILE_PREFIX}{key}"), role))
-}
-
-fn parse_attempt_id(text: &str) -> Option<AttemptId> {
-    if text.len() != 32 || !is_lower_hex(text) {
-        return None;
-    }
-    let bytes = (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect::<Option<Vec<u8>>>()?;
-    AttemptId::from_bytes(&bytes).ok()
-}
-
-fn is_lower_hex(text: &str) -> bool {
-    text.bytes()
-        .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn read_if_present(path: &Path) -> io::Result<Option<Vec<u8>>> {

@@ -17,12 +17,15 @@ pub mod conversation_training;
 mod ctl;
 /// The vault's data-key escrow capsules on their way to the registry.
 pub mod escrow;
+/// The e-sign delivery outbox's completion receipt.
+pub mod esign_delivery;
 /// Shared lifecycle and host-specific adapters.
 pub mod host;
 pub mod host_adapters;
 mod ledger;
 mod limits;
 mod managed_holder;
+mod owner_signing_recovery;
 /// Private, lease-bound live process ports.
 pub mod preview;
 mod secrets;
@@ -71,6 +74,10 @@ pub use self::managed_holder::{
     MANAGED_VOICE_METHOD, MANAGED_VOICE_NONCE_BYTES, MANAGED_VOICE_PATH, ManagedOwnerAction,
     ManagedOwnerHead, ManagedOwnerRequest, ManagedOwnerTranscript, ManagedVoiceBody,
     ManagedWidenAction, embedded_owner_holder_hex, managed_voice_body, managed_voice_nonce,
+};
+pub use self::owner_signing_recovery::{
+    OWNER_SIGNING_CHALLENGE_LEN, OWNER_SIGNING_RECOVERY_OP, OwnerSigningRecovery,
+    OwnerSigningRecoveryAck, valid_owner_signing_challenge,
 };
 pub use self::secrets::{
     Credentials, TokenHex, from_hex, hex, read_credentials, write_credentials,

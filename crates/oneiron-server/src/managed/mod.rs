@@ -44,6 +44,7 @@ pub mod key_sync;
 mod ledger;
 mod listener;
 pub mod org_routing;
+mod owner_recovery;
 mod owner_stage;
 mod owner_storage;
 mod peer;
