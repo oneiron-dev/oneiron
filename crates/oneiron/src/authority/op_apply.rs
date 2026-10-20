@@ -18,11 +18,20 @@ pub(super) fn apply_op(
     match op {
         AuthorityOp::Genesis { .. } => {}
         // An owner key enrollment's judge in `fold_entry_state` admitted its
-        // primary signer as the predecessor root that admits the key (FIX
-        // 4920).
+        // primary signer as the predecessor root that authorizes the key
+        // (FIX 4920); the key starts its own custody line, with no admitter
+        // edge from that root (FIX 5896).
         AuthorityOp::EnrollDevice { device }
         | AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll { device, .. }) => {
-            upsert_device(state, device, Some(signer));
+            let admitter = match op {
+                AuthorityOp::OwnerKeyEnroll(_)
+                    if super::owner_key_enrollment::ENROLLED_OWNER_KEY_STARTS_OWN_CUSTODY =>
+                {
+                    None
+                }
+                _ => Some(signer),
+            };
+            upsert_device(state, device, admitter);
             if state
                 .roster
                 .values()
@@ -609,10 +618,11 @@ pub(super) fn merge_pact_states(
 }
 
 /// `admitted_by` is the roster key that signed the device in; `None` for a
-/// genesis root. Custody is sticky: a key the host attests as its root and a
-/// key marked for the cloud are the host's, and so is every key such a key
-/// admitted, directly or through others (`key_admitters`), whatever the
-/// successor's own labels say.
+/// genesis root and for an owner's enrolled device key, which starts its own
+/// custody line (FIX 5896). Custody is sticky: a key the host attests as its
+/// root and a key marked for the cloud are the host's, and so is every key
+/// such a key admitted, directly or through others (`key_admitters`),
+/// whatever the successor's own labels say.
 pub(super) fn upsert_device(
     state: &mut FoldState,
     device: &DeviceAuthority,

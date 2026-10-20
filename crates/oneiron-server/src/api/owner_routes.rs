@@ -71,6 +71,7 @@ mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
 mod model_setting_routes;
+mod owner_key_enrollment_routes;
 mod owner_work_routes;
 mod pack_preview_routes;
 mod pack_routes;
@@ -189,6 +190,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(conversation_learning_routes::routes())
         .merge(world_privacy_routes::routes())
         .merge(world_privacy_work_routes::routes())
+        .merge(owner_key_enrollment_routes::routes())
         .merge(owner_work_routes::routes())
         .merge(root_routes::routes())
         .merge(recovery_kit_target_routes::routes())

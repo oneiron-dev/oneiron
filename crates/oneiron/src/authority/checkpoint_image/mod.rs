@@ -52,7 +52,8 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// work fold keeps the owner's cancels of root requests (FIX 4739). 9: the
 /// fold admits the owner's device key enrollments and an image carries
 /// their bodies, and the retired multi-device entry quorum is gone (FIX 4920).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 9;
+/// 10: an enrolled owner key starts its own custody line (FIX 5896).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 10;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
