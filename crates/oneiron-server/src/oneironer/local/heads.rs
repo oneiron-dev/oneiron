@@ -1,13 +1,16 @@
-//! The trained coreference ranker and turn-affect MLP. Neither owns an
-//! encoder: both consume the one backbone pass made for the window.
+//! The trained coreference ranker, turn-affect MLP and character edge head.
+//! None owns an encoder: each consumes the one backbone pass made for the
+//! window.
 
 use candle_core::{Module, Tensor};
-use candle_nn::{Linear, VarBuilder, linear};
+use candle_nn::{
+    Conv1d, Conv1dConfig, Embedding, Linear, VarBuilder, conv1d, embedding, linear, linear_no_bias,
+};
 use oneiron::memory::extraction::{
     ContextLink, CorefLink, EncoderOutput, SpeakerLink, SpeakerRole, SpeakerTarget,
 };
 
-use super::window::{Span, Window, best_probability};
+use super::window::{CharacterFeatures, Span, Window, best_probability};
 
 struct Mlp {
     first: Linear,
@@ -84,6 +87,99 @@ fn sigmoid(value: f32) -> f32 {
     } else {
         let exp = value.exp();
         exp / (1.0 + exp)
+    }
+}
+
+/// The edge logit of a character no token covers, as the reference fills it.
+const MASKED_LOGIT: f32 = -30.0;
+
+/// The character edge head: each character's probability of starting a span
+/// and of ending one. Two convolutions with exact GELU over projected token
+/// states, character embeddings and in-token positions; no norm, residual or
+/// softmax, as the reference module.
+pub(super) struct CharacterBoundary {
+    projection: Linear,
+    characters: Embedding,
+    position: Linear,
+    conv1: Conv1d,
+    conv2: Conv1d,
+    edges: Linear,
+}
+
+impl CharacterBoundary {
+    /// `rows` counts the vocabulary with its padding and unknown ids; a
+    /// tensor of any other shape fails the load.
+    pub(super) fn load(
+        vb: VarBuilder<'_>,
+        hidden: usize,
+        dim: usize,
+        rows: usize,
+    ) -> candle_core::Result<Self> {
+        let conv = Conv1dConfig {
+            padding: 1,
+            ..Conv1dConfig::default()
+        };
+        Ok(Self {
+            projection: linear(hidden, dim, vb.pp("projection"))?,
+            characters: embedding(rows, dim, vb.pp("characters"))?,
+            position: linear_no_bias(2, dim, vb.pp("position"))?,
+            conv1: conv1d(dim, dim, 3, conv, vb.pp("conv1"))?,
+            conv2: conv1d(dim, dim, 3, conv, vb.pp("conv2"))?,
+            edges: linear(dim, 2, vb.pp("edges"))?,
+        })
+    }
+
+    /// Start and end probabilities for each character the features cover,
+    /// the logits taken to F32 before the sigmoid.
+    pub(super) fn probabilities(
+        &self,
+        hidden: &Tensor,
+        features: &CharacterFeatures,
+    ) -> candle_core::Result<Vec<[f32; 2]>> {
+        let length = features.ids.len();
+        if length == 0 {
+            return Ok(Vec::new());
+        }
+        let device = hidden.device();
+        let tokens: Vec<u32> = features
+            .tokens
+            .iter()
+            .map(|token| token.unwrap_or(0))
+            .collect();
+        let mask: Vec<f32> = features
+            .tokens
+            .iter()
+            .map(|token| if token.is_some() { 1.0 } else { 0.0 })
+            .collect();
+        let positions: Vec<f32> = features.positions.iter().flatten().copied().collect();
+        let tokens = Tensor::new(tokens.as_slice(), device)?;
+        let ids = Tensor::new(features.ids.as_slice(), device)?;
+        let positions = Tensor::from_vec(positions, (length, 2), device)?;
+        let mask = Tensor::new(mask.as_slice(), device)?;
+        // Uncovered characters gather token 0's state; the mask zeroes them.
+        let projected = self.projection.forward(hidden)?.index_select(&tokens, 0)?;
+        let characters = self.characters.forward(&ids)?;
+        let positions = self.position.forward(&positions)?;
+        let states = projected
+            .add(&characters)?
+            .add(&positions)?
+            .broadcast_mul(&mask.unsqueeze(1)?)?;
+        let mask = mask.reshape((1, 1, length))?;
+        let channels = states.t()?.unsqueeze(0)?.contiguous()?;
+        let channels = self.conv1.forward(&channels)?;
+        let channels = channels.gelu_erf()?.broadcast_mul(&mask)?;
+        let channels = self.conv2.forward(&channels)?;
+        let channels = channels.gelu_erf()?.broadcast_mul(&mask)?;
+        let channels = channels.squeeze(0)?.t()?.contiguous()?;
+        let logits = self.edges.forward(&channels)?.to_vec2::<f32>()?;
+        Ok(logits
+            .iter()
+            .zip(&features.tokens)
+            .map(|(edge, token)| match token {
+                Some(_) => [sigmoid(edge[0]), sigmoid(edge[1])],
+                None => [sigmoid(MASKED_LOGIT); 2],
+            })
+            .collect())
     }
 }
 
