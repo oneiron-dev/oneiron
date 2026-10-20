@@ -27206,6 +27206,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/grant/repo_bounds.rs",
+     "purpose": "The `repo_bounds` key of the FEDERATION_GRANT body (FIX 6867): the repo bounds an owner gave his agent, in…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -27289,7 +27299,7 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "mod": 2,
       "re-export": 18
      }
@@ -27463,6 +27473,16 @@
       "enum": 2,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/repo_access.rs",
+     "purpose": "The repo admission seams on an owner's agent Grant (FIX 6867): the L02 seams the Engine approved for L11 G1",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -65861,7 +65881,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 41,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -66766,7 +66786,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4182,
+   "source_files": 4184,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67393,8 +67413,8 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction…",
      "surface": {
-      "mod": 5,
-      "re-export": 2
+      "mod": 6,
+      "re-export": 3
      }
     },
     {
@@ -67413,6 +67433,24 @@
       "fn": 17,
       "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoAccessBounds",
+      "RepoAccessIntent",
+      "RepoAccessRefusal",
+      "RepoTarget"
+     ],
+     "path": "src/federation/repo_scope.rs",
+     "purpose": "Repo access bounds on an owner's agent Grant, and the pure admission of a repo target under them (FIX 6867…",
+     "surface": {
+      "const": 2,
+      "enum": 2,
+      "fn": 10,
+      "struct": 2
      }
     },
     {
@@ -67510,7 +67548,7 @@
      "purpose": "Credential-door bounds the authority log's slip checks share with the door itself"
     },
     "federation": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67526,7 +67564,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 43,
+   "source_files": 44,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -87725,9 +87763,29 @@
      "purpose": "A relay room has no engine, vault key, Loro document or inference worker",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/ctl_client.rs",
+     "purpose": "The relay's client for its supervisor's hold-guard broker (FIX 6826)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/ctl_hold_guard.rs",
+     "purpose": "The relay's hold guard when its vault's engine runs as another process (FIX 6826, Engine 10-21)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -87748,6 +87806,26 @@
      "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/installer.rs",
+     "purpose": "The `host relay` installer (FIX 6826, Engine 10-21)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay_delete.rs",
+     "purpose": "The relay locker delete this engine executes (FIX 6826, Engine 10-21)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -87883,6 +87961,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/state_serve/read_only.rs",
+     "purpose": "The reap freeze's whitelist of requests a frozen vault still answers",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/state_serve/reap.rs",
      "purpose": "The reap freeze: the write gate a frozen vault refuses at, and the freeze, drain and export `prepare_reap`…",
      "surface": {
@@ -87898,6 +87986,16 @@
      "purpose": "The source half of the host-order legal holds a cold restore carries (FIX 1485): `host_order_holds`, its…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/relay_delete.rs",
+     "purpose": "The relay delete ctl requests a managed vault answers (FIX 6826): `relay_delete_execute`…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -89114,7 +89212,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -91366,7 +91464,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 53,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91522,7 +91620,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 946,
+   "source_files": 952,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94296,6 +94394,7 @@
       "ReplyRouteRule",
       "ReplyStripsPage",
       "ReplyStripsRequest",
+      "RepoAccessBounds",
       "RepoProposalDecision",
       "RepoProposalSettlement",
       "RepoProposalStatus",
@@ -95429,7 +95528,7 @@
      "purpose": "—",
      "surface": {
       "enum": 897,
-      "struct": 2808
+      "struct": 2809
      }
     },
     {
@@ -95716,12 +95815,8 @@
       "CtlRequest",
       "CtlResponse",
       "CtlResumeOn",
-      "FacilityNotice",
-      "FacilityReason",
       "LegalHoldsNotProven",
       "LegalHoldsWire",
-      "ManagedFacility",
-      "ManagedReadiness",
       "ShedBlockerWire",
       "ShedCause",
       "ShedStatus",
@@ -95732,9 +95827,27 @@
      "purpose": "Supervisor ctl request/response wire types and shed/slim validation",
      "surface": {
       "const": 4,
-      "enum": 15,
-      "fn": 9,
-      "struct": 5
+      "enum": 12,
+      "fn": 6,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FacilityNotice",
+      "FacilityReason",
+      "ManagedFacility",
+      "ManagedReadiness"
+     ],
+     "path": "src/lib/ctl/readiness.rs",
+     "purpose": "How a managed vault came up (contract v3): the readiness every `Ping` reports, and the facilities it names…",
+     "surface": {
+      "enum": 3,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -95955,7 +96068,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 18,
+      "mod": 19,
       "re-export": 9
      }
     },
@@ -95989,6 +96102,32 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RelayDeleteExecuteWire",
+      "RelayDeleteIoKind",
+      "RelayDeleteRechecksRequest",
+      "RelayDeleteRechecksWire",
+      "RelayDeleteRequest",
+      "RelayDeleteStage",
+      "RelayDeleteState",
+      "RelayDeleteUnknown",
+      "RelayLockerBindRequest",
+      "RelayLockerBindWire",
+      "RelayLockerRefusal"
+     ],
+     "path": "src/lib/relay_delete.rs",
+     "purpose": "The relay locker delete the engine executes (FIX 6826, Engine 10-21)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 1,
+      "enum": 7,
+      "fn": 17,
+      "struct": 4
      }
     },
     {
@@ -96318,7 +96457,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 43,
+     "files": 45,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -96327,7 +96466,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 42,
+   "source_files": 44,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {

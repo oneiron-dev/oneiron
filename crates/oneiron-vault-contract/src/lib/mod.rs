@@ -37,6 +37,9 @@ mod managed_holder;
 mod owner_signing_recovery;
 /// Private, lease-bound live process ports.
 pub mod preview;
+/// The relay locker delete the engine executes, its locker binding and its
+/// rechecks (FIX 6826).
+pub mod relay_delete;
 /// The cold managed restore start mode: its plan, result frames, receipt,
 /// status and commit marker (LC FIX 5384/5385).
 pub mod restore;
