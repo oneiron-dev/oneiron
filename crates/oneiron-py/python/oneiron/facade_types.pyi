@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1076 facade rows, 3685 declarations.
-Inputs: 1011 of 1076 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 965 of 1076 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1082 facade rows, 3694 declarations.
+Inputs: 1017 of 1082 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 971 of 1082 fully typed, 111 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -12442,6 +12442,35 @@ class ThreadAudienceOpenFullHistoryRequest(TypedDict):
 class ThreadAudienceRemoveRequest(TypedDict):
     thread_ref: str
     person_ref: str
+class RoomPrivateThreadsRequest(TypedDict):
+    room_ref: str
+class PrivateThreadMetadata(TypedDict):
+    id: str
+    creator: NotRequired[str | None]
+    created_at: int
+    last_active_at: int
+    member_count: int
+class PrivateThreadDeleteRequest(TypedDict):
+    thread_ref: str
+class PrivateThreadDeleteReceipt(TypedDict):
+    thread_ref: str
+    existed: bool
+    receipt_ref: NotRequired[str | None]
+class ThreadJoinRequest(TypedDict):
+    thread_ref: str
+ThreadJoinRequestState = Literal["pending", "approved", "denied"]
+class ThreadJoinRequestView(TypedDict):
+    thread_ref: str
+    request_ref: str
+    requester_ref: str
+    at: int
+    state: ThreadJoinRequestState
+    decision_ref: NotRequired[str | None]
+class ThreadJoinRequestsRequest(TypedDict):
+    thread_ref: str
+class ThreadJoinDecisionRequest(TypedDict):
+    thread_ref: str
+    request_ref: str
 class ProjectGoalDraft(TypedDict):
     goal: str
     why: str
