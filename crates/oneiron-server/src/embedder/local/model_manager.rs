@@ -15,11 +15,13 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime};
 
+use reqwest::header::{AUTHORIZATION, CONTENT_RANGE, HeaderValue, LOCATION, RANGE};
+use reqwest::{StatusCode, Url};
 use sha2::{Digest, Sha256};
 
 use crate::config::LocalEmbedderConfig;
@@ -325,7 +327,7 @@ pub(crate) fn models_root(config: &LocalEmbedderConfig) -> oneiron::Result<PathB
 /// directory the process happened to start in — and then download it again
 /// from the next one. So the resolution fails and says which three settings
 /// would fix it.
-pub(super) fn resolve_models_root(
+pub(crate) fn resolve_models_root(
     configured: Option<&Path>,
     xdg_data_home: Option<PathBuf>,
     home: Option<PathBuf>,
@@ -355,7 +357,7 @@ pub(super) fn resolve_models_root(
 ///
 /// Unset, empty and relative are the same answer here: none of them names a
 /// place a gigabyte of model may be written to.
-fn absolute_env_dir(key: &str) -> Option<PathBuf> {
+pub(crate) fn absolute_env_dir(key: &str) -> Option<PathBuf> {
     let path = PathBuf::from(std::env::var_os(key)?);
     path.is_absolute().then_some(path)
 }
@@ -923,6 +925,176 @@ fn missing_file(path: &Path) -> oneiron::Error {
         "embedder model_dir is missing {}; the directory must hold every model file",
         path.display()
     ))
+}
+
+/// Redirect hops a resumable fetch follows before it gives up.
+const MAX_REDIRECTS: usize = 10;
+
+/// What a resumable fetch of one file answered ([`fetch_resumable`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResumableFetch {
+    /// The body went into the partial file: `kept` bytes were there before
+    /// and stayed, `fetched` came over the network on this call.
+    Written { kept: u64, fetched: u64 },
+    /// The source has no such file (`404`). Nothing was written.
+    NotFound,
+    /// The source asked for credentials or refused the ones sent (`401`,
+    /// `403`). Nothing was written.
+    Unauthorized,
+    /// The source's file is not the pinned size: its body would run past it
+    /// (`offered` bytes in all), or it holds nothing past the partial's bytes
+    /// (`416`, `offered` unknown). Nothing was written; the partial is the
+    /// caller's to drop.
+    WrongSize { offered: Option<u64> },
+}
+
+/// The Hugging Face `resolve` URL of one file at one revision: the grammar
+/// the pinned artifacts are fetched by.
+pub(crate) fn hub_url(repo: &str, revision: &str, file: &str) -> String {
+    format!("{HUGGINGFACE_BASE_URL}/{repo}/resolve/{revision}/{file}")
+}
+
+/// Fetches `url` into `partial`, resuming from the bytes already in it.
+///
+/// A partial with bytes in it asks for the rest (`Range: bytes=<len>-`): a
+/// `206` for exactly that range appends, any other success restarts the file
+/// from zero. A partial already the pinned size asks nothing. At most one
+/// byte past the pinned size is written, so a body that runs over shows as a
+/// size the caller refuses. Nothing here checks the bytes: the caller checks
+/// the whole file's size and digest. What arrived before a transfer failed
+/// stays in the partial, so the next call resumes after it. The caller holds
+/// whatever lock keeps a second writer off `partial`.
+///
+/// `authorization` is sent to the Hugging Face origin and nowhere else.
+/// Redirects are followed here, hop by hop, not by the client: its follower
+/// sends the first request's headers again on every hop and drops
+/// credentials only when a hop's host differs from the one before, so a
+/// second redirect inside the CDN would carry them. A hop here carries the
+/// header only when its own origin is Hugging Face's, and only `https`
+/// locations are followed.
+pub(crate) fn fetch_resumable(
+    url: &str,
+    partial: &Path,
+    artifact: &PinnedArtifact,
+    authorization: Option<&HeaderValue>,
+    tool: &'static str,
+) -> oneiron::Result<ResumableFetch> {
+    let failed = |reason: &str| oneiron::Error::UpstreamToolFailure {
+        tool,
+        code: format!("{}: {reason}", artifact.file),
+    };
+    let cap = artifact.bytes.min(MAX_ARTIFACT_BYTES);
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(partial)
+        .map_err(oneiron::Error::Io)?;
+    let kept = file.metadata().map_err(oneiron::Error::Io)?.len();
+    if kept >= cap {
+        return Ok(ResumableFetch::Written { kept, fetched: 0 });
+    }
+    let response = match send_following(url, kept, authorization) {
+        Ok(response) => response,
+        Err(reason) => return Err(failed(&reason)),
+    };
+    let status = response.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(ResumableFetch::NotFound);
+    }
+    if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
+        return Ok(ResumableFetch::Unauthorized);
+    }
+    if status == StatusCode::RANGE_NOT_SATISFIABLE {
+        return Ok(ResumableFetch::WrongSize { offered: None });
+    }
+    if !status.is_success() {
+        return Err(failed(&format!("HTTP {status}")));
+    }
+    let start = if status == StatusCode::PARTIAL_CONTENT {
+        let range = format!("bytes {kept}-");
+        let answered = response
+            .headers()
+            .get(CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with(&range));
+        if !answered {
+            return Err(failed("partial answer for another range"));
+        }
+        kept
+    } else {
+        0
+    };
+    if let Some(length) = response.content_length()
+        && start + length > cap
+    {
+        return Ok(ResumableFetch::WrongSize {
+            offered: Some(start + length),
+        });
+    }
+    file.set_len(start).map_err(oneiron::Error::Io)?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(oneiron::Error::Io)?;
+    let copied = std::io::copy(&mut response.take(cap + 1 - start), &mut file);
+    let synced = file.sync_all();
+    match copied {
+        Ok(fetched) => {
+            synced.map_err(oneiron::Error::Io)?;
+            Ok(ResumableFetch::Written {
+                kept: start,
+                fetched,
+            })
+        }
+        Err(_) => {
+            let held = file.stream_position().unwrap_or(start);
+            Err(failed(&format!(
+                "interrupted with {held} bytes kept for the next run"
+            )))
+        }
+    }
+}
+
+/// Sends the GET and follows its redirects by hand ([`fetch_resumable`]):
+/// the range on every hop, `authorization` only on a hop whose origin is
+/// Hugging Face's. The error is a reason alone, never a header or a URL.
+fn send_following(
+    url: &str,
+    offset: u64,
+    authorization: Option<&HeaderValue>,
+) -> Result<reqwest::blocking::Response, String> {
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(DOWNLOAD_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "client could not be built".to_owned())?;
+    let (Ok(hub), Ok(mut next)) = (Url::parse(HUGGINGFACE_BASE_URL), Url::parse(url)) else {
+        return Err("not a URL".to_owned());
+    };
+    for _ in 0..=MAX_REDIRECTS {
+        let mut request = client.get(next.clone());
+        if offset > 0 {
+            request = request.header(RANGE, format!("bytes={offset}-"));
+        }
+        if let Some(value) = authorization
+            && next.origin() == hub.origin()
+        {
+            request = request.header(AUTHORIZATION, value.clone());
+        }
+        let response = request.send().map_err(|error| transport_class(&error))?;
+        if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+            return Ok(response);
+        }
+        next = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|location| location.to_str().ok())
+            .and_then(|location| next.join(location).ok())
+            .filter(|location| location.scheme() == "https")
+            .ok_or_else(|| "redirect to no https location".to_owned())?;
+    }
+    Err("too many redirects".to_owned())
 }
 
 #[cfg(test)]
