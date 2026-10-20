@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::federation::derivation::DerivationOwner;
+use oneiron_vault_contract::artifact_origin::valid_app_label;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
 use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
@@ -42,6 +43,9 @@ pub enum ManagedError {
 
     #[error("--vault-name {name:?} is not a DNS label")]
     InvalidVaultName { name: String },
+
+    #[error("--artifact-public-slug {slug:?} is not a DNS label free of `--`")]
+    InvalidArtifactPublicSlug { slug: String },
 
     #[error("--derivation-owner must be a 32-byte account or organization id in hexadecimal")]
     InvalidDerivationOwner,
@@ -212,8 +216,13 @@ pub struct ManagedArgs {
     /// supervisor gave the vault one.
     pub artifact_socket: Option<PathBuf>,
     /// The domains the artifact origin answers under, as the cloud named
-    /// them: `<vault>.<domain>` and `<app>--<vault>.<domain>`.
+    /// them: `<slug>.<domain>` and `<app>--<slug>.<domain>`.
     pub artifact_domains: Vec<String>,
+    /// The vault's public slug (`--artifact-public-slug`), the one label its
+    /// artifact origin answers to under those domains (FIX 5389). Never the
+    /// vault name, which is its local id: without a slug no vault host
+    /// answers, and `/a/` still serves.
+    pub artifact_public_slug: Option<String>,
     /// The owner's settings file (`--settings-file`), in the server's own
     /// config schema (`managed::settings`).
     pub settings_file: Option<PathBuf>,
@@ -355,6 +364,7 @@ impl ManagedArgs {
                 })
                 .filter(|domain| !domain.is_empty())
                 .collect(),
+            artifact_public_slug: args.artifact_public_slug.clone(),
             settings_file: args.settings_file.clone(),
             voice_socket: args.voice_socket.clone(),
             seal_key: args.seal_key_file.clone(),
@@ -382,6 +392,11 @@ impl ManagedArgs {
         }
         if managed.artifact_socket.is_none() && !managed.artifact_domains.is_empty() {
             return Err(ManagedError::ArtifactDomainsWithoutSocket);
+        }
+        if let Some(slug) = &managed.artifact_public_slug
+            && !valid_app_label(slug)
+        {
+            return Err(ManagedError::InvalidArtifactPublicSlug { slug: slug.clone() });
         }
         if managed
             .keystore_dir
@@ -541,11 +556,13 @@ impl ManagedArgs {
         if let Some(log_level) = args.log_level.clone() {
             config.log_level = log_level;
         }
-        // The artifact origin serves this vault at its own name under each
-        // domain the supervisor gave.
+        // The artifact origin serves this vault at its public slug under each
+        // domain the supervisor gave, and never at its vault name, the local
+        // id (FIX 5389): without a slug it answers no vault host, and `/a/`
+        // still serves.
         if self.artifact_socket.is_some() {
             config.artifact_domains = self.artifact_domains.clone();
-            config.artifact_vault_name = Some(self.vault_name.clone());
+            config.artifact_vault_name = self.artifact_public_slug.clone();
         }
         config
     }

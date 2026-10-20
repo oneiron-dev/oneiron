@@ -234,6 +234,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "artifact-public-slug",
+        |args| args.artifact_public_slug.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "artifact-vault-name",
         |args| args.artifact_vault_name.is_some(),
         ArgvUse::Refused(NO_HOST_PORT_REASON),

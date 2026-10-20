@@ -39,6 +39,16 @@ pub const VM_ARTIFACT_PORT: u32 = 1028;
 pub const VM_VOICE_PORT: u32 = 1029;
 /// The owner-only directory a vault VM's `[models.voice]` socket lies in.
 pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
+/// Where the guest mounts the vault's read-only config drive: its settings
+/// file, and the files the settings' owner paths name beside it. A
+/// supervisor maps a guest owner path below it onto the vault's own config
+/// directory (`crate::settings_paths`).
+pub const VM_GUEST_CONFIG_DIR: &str = "/config";
+/// The guest engine's data directory (`--data-dir`), on the vault's own
+/// disk; `deploy/firecracker/oneiron-vault-init` passes this path. A
+/// supervisor maps a guest owner path below it onto the vault disk's data
+/// view (`crate::settings_paths`).
+pub const VM_GUEST_DATA_DIR: &str = "/vault/data";
 /// One boot-channel frame, newline included.
 pub const MAX_VM_FRAME: usize = 1024;
 
