@@ -8,6 +8,10 @@ use std::os::unix::net::UnixStream;
 
 const MAX_FRAME: usize = 2 * 1024 * 1024;
 
+/// The inodes one inventory frame carries: a `u64` encodes in at most 21
+/// bytes of JSON, so a full chunk stays well inside [`MAX_FRAME`].
+pub(crate) const INVENTORY_CHUNK: usize = MAX_FRAME / 32;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct Hello {
     pub generation: String,
@@ -19,6 +23,25 @@ pub(crate) struct Hello {
     pub routes: Vec<String>,
     pub no_new_privs: bool,
     pub capabilities: String,
+}
+
+/// What the launcher sends the supervisor: a system call it brokers, or one
+/// chunk of its guest's socket inventory (FIX 5978), which is no system call:
+/// it is never replayed and has no notification to check.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) enum Frame {
+    Request(Request),
+    Inventory(SocketInventory),
+}
+
+/// One chunk of one complete scan of the socket inodes the guest's
+/// processes hold. A scan's chunks share its generation and the last one
+/// closes it; a scan that did not complete is never sent.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct SocketInventory {
+    pub generation: u64,
+    pub inodes: Vec<u64>,
+    pub last: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

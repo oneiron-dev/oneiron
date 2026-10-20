@@ -2011,7 +2011,7 @@
      "path": "src/attempt_queue/encoding.rs",
      "purpose": "Storage key derivation and LMDB row encode/decode for the attempt queue",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 19
      }
     },
     {
@@ -7183,20 +7183,34 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BlobArtifactVersion",
-      "BlobBytes",
       "CalcEngineStamp"
      ],
      "path": "src/blob_artifact/versions.rs",
      "purpose": "Blob version chain: version record codec and the Vault version-chain API",
      "surface": {
       "const": 1,
-      "crate-vis": 27,
-      "fn": 16,
-      "struct": 3
+      "crate-vis": 24,
+      "fn": 8,
+      "re-export": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BlobBytes"
+     ],
+     "path": "src/blob_artifact/versions/reads.rs",
+     "purpose": "The version chain's reads: the head, the version tree, one version's metadata and its bytes",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -12007,7 +12021,7 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 10,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -12024,13 +12038,27 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/changes/draft.rs",
+     "purpose": "The Coach's model drafts each owner's digest settings step (FIX 5609; ARCH-0026, DEC-0005 policy residence)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveDigestSettingsDrafter"
+     ],
      "path": "src/claim/scoped_read/weave_digest/coach.rs",
      "purpose": "The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7,
+      "trait": 1
      }
     },
     {
@@ -15776,7 +15804,7 @@
      "purpose": "The agent as its own compaction writer (FIX 4465, owner 10-19: \"the toggle sets WHO writes, not which model\")",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 3,
       "fn": 4,
       "struct": 6
@@ -21112,7 +21140,7 @@
      "path": "src/dreamer_consolidation/turn_text/compaction_span.rs",
      "purpose": "`conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -21889,7 +21917,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 30,
+      "const": 31,
       "crate-vis": 9,
       "fn": 14,
       "trait": 1
@@ -32080,7 +32108,7 @@
      "path": "src/linear_sync/mirror_event.rs",
      "purpose": "The mirror's durable event rows and each TASK's mirror control (OF-427)",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "struct": 2
      }
     },
@@ -32161,7 +32189,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LinearExternalActor",
@@ -38053,7 +38081,7 @@
      "path": "src/off_record/lifecycle/overlay_writes.rs",
      "purpose": "Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -63575,7 +63603,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -63687,7 +63715,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65010,9 +65038,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 192,
+   "over_bar": 191,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4034,
+   "source_files": 4036,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68032,6 +68060,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/socket_lifetime.rs",
+     "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -68043,6 +68081,16 @@
       "crate-vis": 6,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/lifetime.rs",
+     "purpose": "A guest socket's host entry lives as long as the guest holds the socket (FIX 5978)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -68067,7 +68115,7 @@
      "path": "src/wire.rs",
      "purpose": "Private, bounded launcher/supervisor protocol",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     }
    ],
@@ -68100,11 +68148,18 @@
      "layout": "file",
      "purpose": "Bounded host/guest network transport over the no-NIC VM's private vsock"
     },
-    "supervisor": {
+    "socket_lifetime": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "s",
      "layout": "file",
+     "purpose": "The launcher's inventory of the socket inodes its guest still holds (FIX 5978)"
+    },
+    "supervisor": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "Host custody of the seccomp listener and all network transports"
     },
     "transport": {
@@ -68124,7 +68179,7 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 9,
+   "source_files": 11,
    "test_files": 0
   },
   "oneiron-contracts": {
@@ -76673,6 +76728,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/weave_digest_settings.rs",
+     "purpose": "The host's digest settings drafter (FIX 5609, ARCH-0026): the Coach's model, on its own seat or else the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -80134,6 +80199,16 @@
      "purpose": "The authenticated host handoff",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/wire.rs",
+     "purpose": "What an MCP request counts as on the wire (FIX 1085)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -87458,11 +87533,21 @@
      "purpose": "RC42 observation-only wire counters",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 11,
       "enum": 2,
       "fn": 12,
       "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire_telemetry/http.rs",
+     "purpose": "The HTTP observer every routed request passes, and the tick that keeps the observed window",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -87776,14 +87861,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 470,
+     "files": 471,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -88224,7 +88309,7 @@
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -88233,7 +88318,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 875,
+   "source_files": 878,
    "test_files": 182
   },
   "oneiron-spawn": {

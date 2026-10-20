@@ -329,6 +329,8 @@ fn mcp_connection_stamp(
         ),
     );
     if let Err(error) = answered {
+        // FIX 1085: it counts on the wire on its own, under no caller.
+        super::wire::observe_envelope_error(server, method, error.kind);
         error.call_receipt = Some(Box::new(stamp.clone()));
     }
     stamp
@@ -705,6 +707,9 @@ pub(crate) async fn handle_mcp_request(
             );
             let anonymous =
                 crate::api::call_receipt::in_anonymous_session(server, headers, principal);
+            // FIX 1085: the call counts once on the wire, under the caller
+            // resolved above and the tool it names, before it is judged.
+            super::wire::observe_tool_call(server, mode, &actor, &tool, anonymous);
             let called: Result<Value, McpGatewayError> = async {
                 let params: McpToolCallParams = mcp_params(request.params, "params")?;
                 let actor = McpCallContext {

@@ -294,15 +294,8 @@ impl CompactionBackend for SelfCompactionBackend {
             None => self.serve_retained(&frozen, request, retry)?,
         };
         let usage = &served.response.usage;
-        // The paid call, for its host to file in the model-step family on
-        // the run's captured route (FIX 4465 B).
-        let calls = served
-            .sent
-            .zip(serde_json::to_vec(&served.response).ok())
-            .map(|(request, response)| CompactionCall { request, response })
-            .into_iter()
-            .collect();
-        let execution = CompactionExecution {
+        let sent = served.sent.zip(serde_json::to_vec(&served.response).ok());
+        let mut execution = CompactionExecution {
             writer: self.host.actor().entity_ref(),
             source: frozen.row.source,
             admitted_model: served.model.to_string(),
@@ -324,8 +317,26 @@ impl CompactionBackend for SelfCompactionBackend {
             rejected_steps: Vec::new(),
             step_unfiled: None,
             evidence: None,
-            calls,
+            calls: Vec::new(),
         };
+        // The paid call, for its host to file in the model-step family on
+        // the run's captured route (FIX 4465 B), with the summary's own
+        // lineage: the request's sources, then each home part the call wore
+        // that they do not name (FIX 5977).
+        let mut sources = request.sources.clone();
+        for row in execution.home_dependencies() {
+            if !sources.contains(&row) {
+                sources.push(row);
+            }
+        }
+        execution.calls = sent
+            .map(|(request, response)| CompactionCall {
+                request,
+                response,
+                sources,
+            })
+            .into_iter()
+            .collect();
         Ok((
             product_of(&served.response, served.latency),
             Some(execution),
