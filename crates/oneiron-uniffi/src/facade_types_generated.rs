@@ -4930,6 +4930,14 @@ pub struct FanoutStatement {
     pub per_peer: Vec<PeerCount>,
     #[serde(rename = "expected")]
     pub expected: ExpectedSpend,
+    #[serde(
+        rename = "priced_subtotal_usd_micros",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub priced_subtotal_usd_micros: Option<u64>,
+    #[serde(rename = "unpriced_parts")]
+    pub unpriced_parts: Vec<String>,
     #[serde(rename = "unit")]
     pub unit: String,
     #[serde(rename = "cap", default, skip_serializing_if = "Option::is_none")]
@@ -49793,6 +49801,12 @@ pub struct OracleReceipt {
     pub steps: Vec<StepOutcome>,
     #[serde(rename = "clean")]
     pub clean: bool,
+    #[serde(rename = "projector")]
+    pub projector: String,
+    #[serde(rename = "source_sha")]
+    pub source_sha: String,
+    #[serde(rename = "case_manifest_sha256")]
+    pub case_manifest_sha256: String,
 }
 
 /// `oneiron::office_body::pptx::verbs::DeckGateView`.

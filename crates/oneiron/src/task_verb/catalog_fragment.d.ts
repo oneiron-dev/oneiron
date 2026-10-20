@@ -349,7 +349,7 @@ declare namespace Sdk {
   type SpendCapView = { scope?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; available_units: number; hard: boolean };
   type WidthCheckClass = { kind: "auto_clear"; policy_ref?: string | null } | { kind: "asked"; row_ref: string };
   type ExceptionalWidthCheck = { count: number; threshold: number; classification: WidthCheckClass };
-  type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
+  type FanoutStatement = { agent_count: number; consult_count: number; task_count: number; per_peer: PeerCount[]; expected: ExpectedSpend; priced_subtotal_usd_micros?: number | null; unpriced_parts: string[]; unit: LeaseUnit; cap?: SpendCapView | null; over_available: boolean; more_would_buy?: string | null; width_check?: ExceptionalWidthCheck | null; stated_at: number };
   type FanoutLaunchHold = { surface_ref: string; denied: boolean };
   type FanoutLaunchView = { launch_ref: EntityId; plan_digest: string; statement: FanoutStatement; held?: FanoutLaunchHold | null; check_row_ref?: string | null; choice_receipt_ref?: string | null; task_refs: EntityId[] };
   type FanoutSlotState = "held" | "pending" | "completed" | "error";
@@ -3275,7 +3275,7 @@ declare namespace Sdk {
   type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null; reconciliation?: VersionReconciliation | null };
   type DeckGateRequest = { profile?: string | null };
   type StepOutcome = "passed" | { failed: string } | { inconclusive: string } | "not_run";
-  type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
+  type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean; projector: string; source_sha: string; case_manifest_sha256: string };
   type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
   type DeckOracleRequest = { receipt: OracleReceipt };
   type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[] };

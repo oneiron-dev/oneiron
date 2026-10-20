@@ -34,7 +34,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/design_plan/tests.rs` | test | L | 8 crate-vis | — | ONE-2533 acceptance: the brief schema refuses design choices; content, boundaries, units and pins are… |
 | `src/docx_body.rs` | src | m | 5 struct · 5 enum · 7 fn · 1 const | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxMark, DocxParagraph +2 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
-| `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's or connector's preset geometry, and a connector's glue |
+| `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
 | `src/edit/media.rs` | src | s | 6 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
 | `src/edit/mod.rs` | src | m | 6 struct · 3 enum · 1 fn · 2 mod · 2 re-export · 4 crate-vis | EditRefusal, EditReport, Effect, FitUnverified, Picture, RunProps, Target, ValueEdit +1 | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
 | `src/edit/structure/arrange.rs` | src | m | 4 crate-vis | — | The live-deck projector's shape verbs: a sibling reorder (z-order), an empty group framed over slide space… |
@@ -92,7 +92,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/points.rs` | src | m | 2 struct · 3 enum · 4 crate-vis | Coord, GeomPath, PathCommand, PathFill, PathPoint | A shape's points (OF-510, Edit Points): the paths of its custom geometry (`a:custGeom`), read and written as… |
 | `src/live/pptx.rs` | src | XL | 24 struct · 9 enum · 32 fn · 6 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict, ConnectorEnd +25 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
 | `src/live/reshape.rs` | src | L | 8 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
-| `src/live/svg_fallback.rs` | src | s | 2 crate-vis | — | A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster… |
+| `src/live/svg_fallback.rs` | src | s | 4 crate-vis | — | A held SVG picture written as Office writes one (OF-510, FIX 5672): PowerPoint shows an SVG through a raster… |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |
 | `src/native_patch/mod.rs` | src | s | 5 struct · 4 enum · 1 fn · 1 re-export · 3 crate-vis | CellWrite, ChartFamily, Frame, Merge, NativeEdit, NativeRefusal, NativeReport, Target +1 | Native tables and bounded classic charts (ARCH-0077 "Creation operation", "Chart and table edits") |
 | `src/native_patch/table.rs` | src | m | 6 crate-vis | — | Native `a:tbl` tables: creation with merge rectangles, and merge-aware cell text writes that refuse a… |
