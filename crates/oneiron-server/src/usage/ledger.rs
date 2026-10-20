@@ -1,5 +1,5 @@
 //! Durable idempotent provider-list meters, aggregated only per owner and vault.
-use super::{codec::*, keys::*, model::*, rollup::merge_stored_event};
+use super::{codec::*, keys::*, model::*, rollup::mark_rollup_behind_in_txn};
 use oneiron::EntityId;
 use oneiron::agent_dispatch::budget_doors::{RunRungSettlement, UsageEventOrigin};
 use serde::{Deserialize, Serialize};
@@ -28,86 +28,71 @@ impl UsageLedger {
     /// the call's facts were read from as its admission froze them: its
     /// input's and its list price's (FIX 5760). `None` is unknown. A replay
     /// keeps the first write's rows.
+    ///
+    /// The event commits in a write of its own, which only marks the derived
+    /// rollup behind it; the rollup is brought up to date after, and no
+    /// failure of it undoes or refuses the call (FIX 6407).
     pub(crate) fn record_event_sourced(
         &self,
-        event: UsageEvent,
+        mut event: UsageEvent,
         source: UsageMode,
         origin: UsageEventOrigin,
         source_rows: Option<Vec<EntityId>>,
     ) -> Result<UsageRecordResult, UsageError> {
         event.validate()?;
         // A meter records facts for every payer. A source never turns a
-        // quantity into a wallet debit, and an unknown price is not zero.
-        let cost = event
-            .cost_input()
-            .map(|input| input.calculate())
-            .transpose()?;
+        // quantity into a wallet debit, and an unknown price is not zero. A
+        // price past what an amount holds is that call's alone and never
+        // drops it: the call keeps its counts and frozen rates, unpriced for
+        // that reason (FIX 6407). Every other error stands.
+        let cost = match event.cost_input().map(|input| input.calculate()) {
+            None => None,
+            Some(Ok(cost)) => Some(cost),
+            Some(Err(UsageError::Overflow)) => {
+                event.unpriced = Some(UnpricedReason::PriceOverflow);
+                None
+            }
+            Some(Err(error)) => return Err(error),
+        };
         let key = usage_event_key(&event.owner, &event.vault_id, &event.idempotency_key);
         let rollup_key = vault_rollup_key(&event.owner, &event.vault_id);
-        self.vault
-            .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
-                let mut rollup = self
-                    .vault
-                    .sync_state_get_in_write_txn(txn, &rollup_key)?
-                    .map(|raw| decode_rollup(&raw))
-                    .transpose()?;
-                if rollup.is_none() {
-                    self.vault.sync_state_visit_prefix_in_write_txn(
-                        txn,
-                        &usage_event_prefix(&event.owner, &event.vault_id),
-                        |key, raw| {
-                            merge_stored_event(&mut rollup, &event.owner, &event.vault_id, key, raw)
-                        },
-                    )?;
-                    if let Some(rollup) = &rollup {
-                        self.vault.sync_state_put_in_write_txn(
-                            txn,
-                            &rollup_key,
-                            &encode_rollup(rollup)?,
-                        )?;
+        let (owner, vault_id) = (event.owner.clone(), event.vault_id.clone());
+        let (recorded, source, cost, unpriced) =
+            self.vault
+                .try_with_write_txn_grouped(|txn| -> Result<_, UsageError> {
+                    if let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? {
+                        let stored = decode_entry(&raw)?;
+                        // The first write's origin stands: a replay never
+                        // relabels it, and origin never makes one conflict.
+                        if stored.event != event || stored.source != source {
+                            return Err(UsageError::IdempotencyConflict);
+                        }
+                        return Ok((false, stored.source, stored.cost, stored.event.unpriced));
                     }
-                }
-                if let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? {
-                    let stored = decode_entry(&raw)?;
-                    // The first write's origin stands: a replay never
-                    // relabels it, and origin never makes one conflict.
-                    if stored.event != event || stored.source != source {
-                        return Err(UsageError::IdempotencyConflict);
-                    }
-                    return Ok(UsageRecordResult {
-                        recorded: false,
-                        replayed: true,
-                        source: stored.source,
-                        cost: stored.cost,
-                        vault_rollup: rollup,
-                    });
-                }
-                let mut rollup =
-                    rollup.unwrap_or_else(|| UsageRollup::vault(&event.owner, &event.vault_id));
-                rollup.add_event(&event, cost.as_ref())?;
-                let stored = StoredUsageEvent {
-                    event,
-                    source,
-                    origin,
-                    cost: cost.clone(),
-                    recorded_at: now_secs(),
-                    source_rows,
-                };
-                self.vault
-                    .sync_state_put_in_write_txn(txn, &key, &encode_entry(&stored)?)?;
-                self.vault.sync_state_put_in_write_txn(
-                    txn,
-                    &rollup_key,
-                    &encode_rollup(&rollup)?,
-                )?;
-                Ok(UsageRecordResult {
-                    recorded: true,
-                    replayed: false,
-                    source,
-                    cost,
-                    vault_rollup: Some(rollup),
-                })
-            })
+                    let unpriced = event.unpriced.clone();
+                    let stored = StoredUsageEvent {
+                        event,
+                        source,
+                        origin,
+                        cost: cost.clone(),
+                        recorded_at: now_secs(),
+                        source_rows,
+                    };
+                    self.vault
+                        .sync_state_put_in_write_txn(txn, &key, &encode_entry(&stored)?)?;
+                    mark_rollup_behind_in_txn(&self.vault, txn, &rollup_key, &key)?;
+                    Ok((true, source, cost, unpriced))
+                })?;
+        let (vault_rollup, rollup_status) = self.rollup_after_write(&owner, &vault_id);
+        Ok(UsageRecordResult {
+            recorded,
+            replayed: !recorded,
+            source,
+            cost,
+            unpriced,
+            vault_rollup,
+            rollup_status,
+        })
     }
     /// Settled physical calls of one run, from their stamped durable events.
     pub fn run_settlements(
@@ -299,8 +284,9 @@ pub struct SeatUsage {
     /// The calls priced in a currency other than `currency`, the first
     /// priced call's; left out of `cost_amount`.
     pub mixed_currency: u64,
-    /// The calls whose price would carry `cost_amount` past what it holds;
-    /// left out of it.
+    /// The calls whose own price does not fit in an amount, recorded with
+    /// their counts and rates and unpriced for that reason, and those whose
+    /// price would carry `cost_amount` past what it holds; left out of it.
     pub sum_overflow: u64,
     /// The unpriced calls whose record names no reason: an older record, a
     /// posted one that gave none, or one that does not decode.
@@ -463,6 +449,9 @@ impl UsageLedger {
                             }
                             (None, Some(UnpricedReason::UnquotedCache { dimensions })) => {
                                 usage.unpriced_cache.add(dimensions);
+                            }
+                            (None, Some(UnpricedReason::PriceOverflow)) => {
+                                usage.sum_overflow += 1;
                             }
                             (None, None) => usage.unclassified += 1,
                         }
