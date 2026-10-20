@@ -244,9 +244,12 @@ impl Vault {
             }
         };
         if result.outcome != ChannelIdentityState::PendingFulfillment.as_str() {
+            // FIX 6424 part 3: a hold names the press that releases exactly
+            // this request, after the words it had.
             return Err(invalid(format!(
-                "the provision did not take: {}{rests}",
-                result.owner_visible_state
+                "the provision did not take: {}{rests}{}",
+                result.owner_visible_state,
+                result.held_approval_note()
             )));
         }
         Ok(result.receipt_id)

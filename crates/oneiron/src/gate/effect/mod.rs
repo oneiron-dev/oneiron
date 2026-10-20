@@ -6,7 +6,8 @@ mod effect_grants;
 mod effect_pair;
 
 pub(crate) use self::approval_target::{
-    ApprovalTarget, CampaignLegFacts, LinearMirrorFacts, OutboundSendFacts,
+    ApprovalTarget, CampaignLegFacts, ChannelIdentityLifecycleFacts, LinearMirrorFacts,
+    OutboundSendFacts, ScopedMcpCallFacts,
 };
 pub(super) use self::effect_consent::{
     external_effect_action_requirement, external_effect_composed_effect,

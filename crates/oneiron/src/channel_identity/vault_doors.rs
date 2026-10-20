@@ -292,6 +292,13 @@ impl Vault {
         // The row's facts move as claim heads in this same transaction (OF-272).
         let identity = decode_channel_identity_body(&data)?;
         self.supersede_channel_identity_claim_heads_in_txn(wtxn, id, &identity, learned_at)?;
+        // FIX 6424 part 3: a retired identity's kept lifecycle receipts go.
+        crate::channel_identity_lifecycle::retire_lifecycle_requests_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            &identity,
+        )?;
         apply_ops(
             &self.store,
             &self.config,

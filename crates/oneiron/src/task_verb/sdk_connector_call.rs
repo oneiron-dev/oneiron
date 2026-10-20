@@ -60,12 +60,18 @@ pub enum ConnectorCallReply {
         reasons: Vec<String>,
     },
     /// Held for consent or governance; nothing was sent. A code-mode run
-    /// parks on `call_ref` until the hold settles.
+    /// parks on `call_ref` until the hold settles. `approval_digest` (FIX
+    /// 6424 part 3), when present, is the approve-once digest (64 lower-hex)
+    /// the owner presses to release exactly this call as it was prepared;
+    /// absent for a hold no press clears (no grant, key or approved
+    /// manifest yet, or a code consent wait's own answer).
     Held {
         call_ref: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         decision_ref: Option<String>,
         reasons: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        approval_digest: Option<String>,
     },
     /// Not sent, and never sent under this request.
     Refused {
@@ -228,10 +234,12 @@ impl ConnectorCallReply {
                 call_ref,
                 decision_ref,
                 reasons,
+                approval_digest,
             } => Self::Held {
                 call_ref: call_ref.to_hex(),
                 decision_ref,
                 reasons,
+                approval_digest,
             },
             ConnectorCallOutcome::Refused {
                 decision_ref,
@@ -407,6 +415,11 @@ pub enum ConnectorCallStatus {
         held_at_ms: u64,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reasons: Vec<String>,
+        /// FIX 6424 part 3: the approve-once digest the call's approvable
+        /// hold named, kept with it: the owner's press on it releases
+        /// exactly the call as it was prepared.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        approval_digest: Option<String>,
     },
     /// Settled: the reply its wait settled with, as `connector.call` would
     /// have answered.
@@ -489,6 +502,7 @@ pub fn connector_call_status_read(
             tool,
             held_at_ms,
             reasons: state.reasons,
+            approval_digest: state.approval_digest,
         }),
         (None, None) => Err(MemoryError::new(
             MEMORY_CODE_INTERNAL,

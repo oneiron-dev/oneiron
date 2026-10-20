@@ -42662,6 +42662,12 @@ pub enum ConnectorCallReply {
         decision_ref: Option<String>,
         #[serde(rename = "reasons")]
         reasons: Vec<String>,
+        #[serde(
+            rename = "approval_digest",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        approval_digest: Option<String>,
     },
     #[serde(rename = "refused")]
     Refused {
@@ -44930,6 +44936,12 @@ pub enum ConnectorCallStatus {
         held_at_ms: u64,
         #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
         reasons: Option<Vec<String>>,
+        #[serde(
+            rename = "approval_digest",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        approval_digest: Option<String>,
     },
     #[serde(rename = "settled")]
     Settled {
@@ -53207,6 +53219,12 @@ pub struct ChannelIdentityProvisionRequest {
     pub binding: ChannelIdentityBinding,
     #[serde(rename = "fulfillment_mode")]
     pub fulfillment_mode: ChannelIdentityFulfillment,
+    #[serde(
+        rename = "request_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub request_ref: Option<String>,
 }
 
 /// `oneiron::channel_identity::shape::ChannelIdentityShape`.
@@ -53312,6 +53330,18 @@ pub struct ChannelIdentityLifecycleReceipt {
     pub outbound_closed: bool,
     #[serde(rename = "identity_retiring")]
     pub identity_retiring: bool,
+    #[serde(
+        rename = "approval_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_digest: Option<String>,
+    #[serde(
+        rename = "request_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub request_ref: Option<String>,
 }
 
 /// `oneiron::channel_identity::custody::DelegatedGrantScope`.
@@ -53346,6 +53376,12 @@ pub enum ChannelIdentityBindRequest {
         identity_ref: String,
         #[serde(rename = "fulfillment_mode")]
         fulfillment_mode: ChannelIdentityFulfillment,
+        #[serde(
+            rename = "request_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        request_ref: Option<String>,
     },
     #[serde(rename = "delegated")]
     Delegated {
@@ -53359,6 +53395,12 @@ pub enum ChannelIdentityBindRequest {
         grant: DelegatedGrant,
         #[serde(rename = "fulfillment_mode")]
         fulfillment_mode: ChannelIdentityFulfillment,
+        #[serde(
+            rename = "request_ref",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        request_ref: Option<String>,
     },
 }
 
@@ -53368,6 +53410,12 @@ pub enum ChannelIdentityBindRequest {
 pub struct ChannelIdentityRequest {
     #[serde(rename = "identity_ref")]
     pub identity_ref: String,
+    #[serde(
+        rename = "request_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub request_ref: Option<String>,
 }
 
 /// `oneiron::memory::channel_doors::lifecycle::ChannelIdentityReleaseRequest`.
@@ -53378,6 +53426,12 @@ pub struct ChannelIdentityReleaseRequest {
     pub identity_ref: String,
     #[serde(rename = "quarantine_until")]
     pub quarantine_until: u64,
+    #[serde(
+        rename = "request_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub request_ref: Option<String>,
 }
 
 /// `oneiron::channel_identity_selection::selection_vocabulary::RelationshipContext`.

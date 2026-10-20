@@ -336,6 +336,13 @@ side_tables! {
     CHANNEL_IDENTITY_AUTONOMY: VaultMeta b"channel_identity_autonomy:v1:" Raw;
     /// Channel-identity lifecycle receipt ledger. Key: id16.
     CHANNEL_IDENTITY_LIFECYCLE_RECEIPT: VaultMeta b"channel_identity_lifecycle:v0:" Named;
+    /// One channel-identity lifecycle request, kept by its ref before its ask (FIX 6424 part 3):
+    /// the actor, the verb, its input's or request's digest, the identity it was given and when
+    /// that was requested and, once applied, the receipt it answered, the identity's body and
+    /// facts (an address among them) as that apply committed them. Dropped with the identity's
+    /// erase or retirement and by its actor's erase. Key: id16 (request ref).
+    CHANNEL_IDENTITY_LIFECYCLE_REQUEST: VaultMeta b"channel_identity_lifecycle_request:v1:" Named
+        => crate::channel_identity_lifecycle::erase_lifecycle_request_actor_in_txn;
     /// Channel-identity selection rule set. Key: ().
     CHANNEL_IDENTITY_SELECTION_RULES: VaultMeta b"channel_identity_selection:v1:rules" Raw
         => crate::channel_identity_selection::erase_rule_actor_in_txn;

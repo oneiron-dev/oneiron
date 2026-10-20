@@ -188,10 +188,16 @@ pub enum ConnectorCallOutcome {
     },
     /// Held for consent or governance. Nothing was sent. Once the hold may
     /// have cleared, [`Vault::resume_connector_call`] re-enters it.
+    /// `approval_digest` (FIX 6424 part 3) is the approve-once digest, 64
+    /// lower-hex, the Gate decision that held this prepared call names: the
+    /// owner's press on it releases exactly this call. `None` for a hold no
+    /// press clears here (before the call was prepared, or a code consent
+    /// wait's own answer).
     Held {
         call_ref: EntityId,
         decision_ref: Option<String>,
         reasons: Vec<String>,
+        approval_digest: Option<String>,
     },
     /// Not sent, and never will be under this request.
     Refused {
@@ -317,6 +323,14 @@ pub(super) struct PendingConnectorCall {
     /// are not known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) source_rows: Option<Vec<EntityId>>,
+    /// The approvable asks the call's holds named (FIX 6424 part 3,
+    /// `approval`): digests only, read tolerantly (undecodable is absent).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "super::approval::tolerant_approval"
+    )]
+    pub(super) approval: Option<super::approval::ConnectorCallApproval>,
     /// This pass's code consent context (`connector_call_code`); never
     /// stored.
     #[serde(skip)]
@@ -429,6 +443,8 @@ pub(super) enum Step {
     Held {
         decision_ref: Option<String>,
         reasons: Vec<String>,
+        /// The prepared request the Gate's hold named its press for.
+        ask: Option<super::approval::HeldConnectorAsk>,
     },
     Refused {
         decision_ref: Option<String>,
@@ -453,6 +469,7 @@ fn held(reason: &str) -> Step {
     Step::Held {
         decision_ref: None,
         reasons: vec![reason.to_owned()],
+        ask: None,
     }
 }
 
@@ -599,6 +616,7 @@ impl Vault {
             grant,
             code_consent_wait: None,
             source_rows: Some(Vec::new()),
+            approval: None,
             code: None,
         };
         let Some(named) = named else {
@@ -884,11 +902,16 @@ impl Vault {
             Step::Held {
                 decision_ref,
                 reasons,
+                ask,
             } => {
+                // FIX 6424 part 3: the row keeps this hold's ask as its
+                // current one (none for an administrative hold).
+                let mut row = pending.clone();
+                super::approval::retain_held_ask(&mut row, ask.as_ref());
                 // A hold for consent alone binds a code consent wait in the
                 // same writer, when the call came from a code run.
                 let (call_ref, code_owned) =
-                    self.keep_held_connector_call(call_ref.or(new_ref), &pending, &reasons)?;
+                    self.keep_held_connector_call(call_ref.or(new_ref), &row, &reasons)?;
                 // The hold is durable: ask the owner about it, once. The
                 // settler's pass repairs an ask that did not queue here. A
                 // code consent wait asks its own question instead.
@@ -905,6 +928,7 @@ impl Vault {
                     call_ref,
                     decision_ref,
                     reasons,
+                    approval_digest: ask.map(|ask| ask.approval_digest),
                 }
             }
             Step::Retryable { intent, reasons } => ConnectorCallOutcome::PendingDelivery {
@@ -1245,6 +1269,7 @@ pub(super) fn step_from_dispatch(
             Step::Held {
                 decision_ref,
                 reasons,
+                ask: dispatch.held_ask().cloned(),
             }
         }
     };
@@ -1399,6 +1424,11 @@ pub struct ConnectorCallState {
     /// `None` when they are not known, and once acknowledged, when they ride
     /// the wait's reply instead.
     pub source_rows: Option<Vec<EntityId>>,
+    /// FIX 6424 part 3: the approve-once digest the call's approvable hold
+    /// named, kept on its row while it is held: the owner's press on it
+    /// releases exactly the call as it was prepared. `None` once settled,
+    /// and for a call no approvable hold asked about.
+    pub approval_digest: Option<String>,
 }
 
 impl Vault {
@@ -1418,6 +1448,11 @@ impl Vault {
         if let Some(pending) = PENDING_CALLS.get(&self.store, &txn, call_ref)? {
             return Ok(Some(ConnectorCallState {
                 settled: pending.settled.as_ref().map(SettledConnectorCall::outcome),
+                approval_digest: super::approval::ConnectorCallApproval::current_digest(
+                    pending.approval.as_ref(),
+                )
+                .filter(|_| pending.settled.is_none())
+                .map(str::to_owned),
                 principal_ref: pending.principal_ref,
                 name: pending.name,
                 tool: pending.tool,
@@ -1438,6 +1473,7 @@ impl Vault {
                 settled: None,
                 acknowledged: true,
                 source_rows: None,
+                approval_digest: None,
             }))
     }
 

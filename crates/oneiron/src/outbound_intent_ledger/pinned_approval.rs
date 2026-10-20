@@ -1,6 +1,8 @@
 //! FIX 6424 part 2a (Engine 10-20 21:0x ruling 8, CALLS `FIX 6424 pinned
 //! Pending proof retention`): the owner's one-send press a Linear dispatch's
 //! or a campaign leg's first admission spent, kept beside its ledger row.
+//! Part 3 (2b) files a scoped-MCP call's the same way: its row binds an
+//! endpoint and a capability, which that row field's check refuses.
 //!
 //! The row's own `admitted_approval` field keeps native mail's, e-sign's and
 //! a failure-signal batch's proof, validated by recomposing its digest from
@@ -77,6 +79,8 @@ pub(crate) enum PinnedApprovalFamily {
     LinearDispatch,
     /// A campaign enrollment's outbound leg.
     CampaignLeg,
+    /// A scoped-MCP tool call on a catalogued connector (FIX 6424 part 3).
+    ScopedMcp,
 }
 
 impl PinnedApprovalFamily {
@@ -84,6 +88,7 @@ impl PinnedApprovalFamily {
         match self {
             Self::LinearDispatch => 1,
             Self::CampaignLeg => 2,
+            Self::ScopedMcp => 3,
         }
     }
 }

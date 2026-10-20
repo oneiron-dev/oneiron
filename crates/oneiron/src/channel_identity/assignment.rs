@@ -519,6 +519,8 @@ pub(crate) fn clear_assignment_for_delete(
     if entity_type != ENTITY_TYPE_CHANNEL_IDENTITY {
         return Ok(());
     }
+    // FIX 6424 part 3: the erased identity's kept lifecycle receipts go.
+    crate::channel_identity_lifecycle::drop_lifecycle_requests_of_identity_in_txn(store, txn, id)?;
     let holds_address = match store.port_entity_record(txn, id)? {
         Some(row) => match decode_channel_identity_body(&row.body) {
             Ok(row) => !row.is_delegated(),

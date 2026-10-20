@@ -390,10 +390,12 @@ impl Vault {
         };
         if let Some((true, authority_holds, row)) = row {
             if !answered {
+                // Its owner's answer is the press here: no generic digest.
                 let held = ConnectorCallOutcome::Held {
                     call_ref: *call_ref,
                     decision_ref: None,
                     reasons: vec![CODE_WAIT_SETTLING.to_owned()],
+                    approval_digest: None,
                 };
                 return Ok((held, pending.source_rows));
             }

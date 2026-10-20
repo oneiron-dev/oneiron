@@ -6,6 +6,7 @@
 //! inherited-FD, and filesystem allowlists; network transports verify TLS; and
 //! the resolved endpoint checked here is the endpoint shown at grant time.
 
+mod approval;
 mod authority;
 mod connector_call;
 mod connector_call_asks;
@@ -23,6 +24,7 @@ mod tool_schema;
 #[cfg(test)]
 mod tests;
 
+pub use self::approval::scoped_mcp_approve_once_digest;
 pub(crate) use self::authority::FrozenCallValidation;
 pub use self::authority::{
     FrozenMcpPayload, OutboundBindingAuthority, OutboundBindingValidation, ScopedMcpAuthorization,

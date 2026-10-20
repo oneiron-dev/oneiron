@@ -10,7 +10,10 @@
 //! is kept on the call's row, so the call asks once. An ask that failed to
 //! queue keeps the reasons on the row, and the settler's repair pass queues
 //! it again. A crash between the hold and that write leaves neither, and the
-//! call's next resume meets its hold again and asks then.
+//! call's next resume meets its hold again and asks then. A hold the Gate
+//! named an approve-once digest for (FIX 6424 part 3) also names that digest:
+//! the owner's press on it, at the consent door, releases exactly the call
+//! as it was prepared. The answer to the ask still grants nothing.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -21,6 +24,7 @@ use crate::llm::decision::{
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 
+use super::approval::ConnectorCallApproval;
 use super::connector_call::{PENDING_CALLS, PendingConnectorCall};
 use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
 
@@ -31,6 +35,11 @@ const CONNECTOR_CALL_ASK_QUEUE_VERSION: &str = "v1";
 /// The version of the ask's question; bump it with its wording.
 const CONNECTOR_CALL_ASK_VERSION: u32 = 1;
 
+/// The version of the question that also names the approve-once digest to
+/// press (FIX 6424 part 3): its wording adds that one sentence. A call's
+/// later approvable asks put it again at the next versions.
+const CONNECTOR_CALL_ASK_DIGEST_VERSION: u32 = 2;
+
 /// The most characters of a connector or tool name the ask quotes.
 const ASK_NAME_MAX_CHARS: usize = 120;
 
@@ -39,12 +48,14 @@ const ASK_MAX_REASONS: usize = 16;
 
 /// The wording of a held call's owner ask: the one place it lives. It names
 /// the connector, the tool, the call ref and the hold's reason codes, says
-/// that answering grants nothing, and where the call is allowed instead.
+/// that answering grants nothing, and where the call is allowed instead,
+/// with the approve-once digest the Gate's hold named when it named one.
 fn connector_call_ask_text(
     call_ref: &EntityId,
     name: &str,
     tool: &str,
     reasons: &[String],
+    approval_digest: Option<&str>,
 ) -> String {
     let days = CONNECTOR_CALL_PENDING_TTL_MS / (24 * 60 * 60 * 1000);
     let reasons = if reasons.is_empty() {
@@ -57,12 +68,18 @@ fn connector_call_ask_text(
             .collect::<Vec<_>>()
             .join(", ")
     };
+    let press = approval_digest.map_or_else(String::new, |digest| {
+        format!(
+            " Or approve once, for exactly this call as it was prepared, by pressing approve-once \
+             digest {digest}."
+        )
+    });
     format!(
         "A connector call waits for you: tool \"{tool}\" on connector \"{name}\" (held call {call}) \
          is held because: {reasons}. Answering this ask allows nothing. To let it run, grant the \
          tool through the connector's consent for this held call, or approve the connector's key \
-         or manifest. A call nobody allows expires {days} days after it was first held. Will you \
-         review it?",
+         or manifest.{press} A call nobody allows expires {days} days after it was first held. \
+         Will you review it?",
         tool = clip(tool),
         name = clip(name),
         call = call_ref.to_hex(),
@@ -81,12 +98,26 @@ fn connector_call_ask(
     pending: &PendingConnectorCall,
     reasons: &[String],
 ) -> HumanDecisionRequest {
+    // FIX 6424 part 3: the call's current ask only; each new one is the
+    // next version of the question.
+    let approval = pending.approval.as_ref();
+    let approval_digest = ConnectorCallApproval::current_digest(approval);
     HumanDecisionRequest {
         question: DecisionQuestion {
             // One question per held call: its own ref names it.
             id: *call_ref,
-            version: CONNECTOR_CALL_ASK_VERSION,
-            text: connector_call_ask_text(call_ref, &pending.name, &pending.tool, reasons),
+            version: match approval.filter(|_| approval_digest.is_some()) {
+                Some(approval) => CONNECTOR_CALL_ASK_DIGEST_VERSION
+                    .saturating_add(approval.revision.saturating_sub(1)),
+                None => CONNECTOR_CALL_ASK_VERSION,
+            },
+            text: connector_call_ask_text(
+                call_ref,
+                &pending.name,
+                &pending.tool,
+                reasons,
+                approval_digest,
+            ),
             class: DecisionClass::Judgment,
             contract: AnswerContract::Noul,
             accept_type: false,
