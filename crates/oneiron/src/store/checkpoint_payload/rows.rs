@@ -8,8 +8,13 @@
 //! ([`DispatchRow`]) and the rows it cannot place ([`Unclassified`]).
 //! `bytes_for_owner` frames an owner's rows for its compartment, and
 //! `restore_in_txn` checks an opened compartment's rows with the same codecs
-//! and writes their exact bytes through [`restore_row_in_txn`]. These types
-//! sit below recovery, so no store imports it.
+//! and writes them through [`restore_row_in_txn`]: an exact row as its
+//! stored bytes, and a no-one-form row as its family's join gives it back.
+//! That join spells the stored bytes back, unless the family's
+//! [`RoundTripPolicy`] is history-equivalent (FIX 6072, Engine R1): a Loro
+//! family may write another encoding of the same history, once its capture
+//! proved the all-open join gives that history back ([`admit_round_trip`]).
+//! These types sit below recovery, so no store imports it.
 //!
 //! An owner's content never names an actor: an actor field is split out as an
 //! [`ActorPart`] sealed under the actor's own entity tree, and the content
@@ -28,8 +33,8 @@ pub(crate) use self::restore::{
     OpenedOwnerRows, Restored, no_join, restore_parts, restore_row_in_txn,
 };
 pub(crate) use self::typed::{
-    ACTOR_KEYED_ROW, NOT_SPELLED_BACK, TypedRow, actor_keyed, check_row, join_actors, spells_back,
-    split_actors, typed_rows,
+    ACTOR_KEYED_ROW, NOT_SPELLED_BACK, RoundTripPolicy, TypedRow, actor_keyed, admit_round_trip,
+    check_row, join_actors, spells_back, split_actors, typed_rows,
 };
 use super::{OWNER_LEN, Subtype, corrupt};
 use crate::entity_id::EntityId;

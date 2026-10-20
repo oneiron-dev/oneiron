@@ -1,8 +1,10 @@
 //! The common actor-stamped Loro document primitive.
 
+use super::doc_actor::DocActor;
 use super::invalid;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::write_envelope::WriteActor;
 use loro::{
     CommitOptions, ExportMode, Frontiers, LoroDoc, LoroMap, LoroText, LoroValue, ValueOrContainer,
@@ -10,7 +12,11 @@ use loro::{
 use serde::{Deserialize, Serialize};
 
 pub(super) const BODY: &str = "body";
-const BIRTH: &str = "entity_doc_birth";
+/// The root map a document keeps its birth and metadata in.
+pub(super) const META: &str = "meta";
+pub(super) const BIRTH: &str = "entity_doc_birth";
+/// The engine stamp every local commit message opens with.
+const STAMP: &str = "oneiron.entity_doc.v1";
 
 /// Immutable provenance copied from the original record at document birth.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -18,10 +24,26 @@ const BIRTH: &str = "entity_doc_birth";
 pub struct Birth {
     /// Entity owning the text.
     pub entity: String,
-    /// Actor who wrote the original text, not the actor migrating it.
-    pub actor: String,
+    /// Actor who wrote the original text, not the actor migrating it; no one
+    /// once that actor was erased (FIX 6072, Engine R2), which a reader shows
+    /// as unknown and never fills from a peer binding.
+    pub actor: DocActor,
     /// Original timestamp in seconds.
     pub at: u64,
+}
+
+impl Birth {
+    /// The bytes a document stores its birth as.
+    pub(super) fn encode(&self) -> Result<Vec<u8>> {
+        rmp_serde::to_vec_named(self).map_err(|_| invalid("document birth encoding"))
+    }
+
+    /// A stored birth: its entity an id, and its actor one or no one.
+    pub(super) fn decode(bytes: &[u8]) -> Result<Self> {
+        let birth: Self = super::storage::decode(bytes)?;
+        EntityId::from_hex(&birth.entity)?;
+        Ok(birth)
+    }
 }
 
 /// One document, with stable cursor identity and an actor on every local commit.
@@ -70,12 +92,10 @@ impl EntityDoc {
         doc.set_record_timestamp(true);
         let birth = Birth {
             entity: entity.to_hex(),
-            actor: actor.entity_ref().to_hex(),
+            actor: DocActor::Actor(actor.entity_ref()),
             at,
         };
-        let bytes =
-            rmp_serde::to_vec_named(&birth).map_err(|_| invalid("document birth encoding"))?;
-        map_insert_bytes(&doc.get_map("meta"), BIRTH, &bytes)?;
+        map_insert_bytes(&doc.get_map(META), BIRTH, &birth.encode()?)?;
         doc.get_text(BODY)
             .insert(0, initial)
             .map_err(|_| invalid("document birth text"))?;
@@ -94,23 +114,22 @@ impl EntityDoc {
         Ok(Self { doc, birth })
     }
 
-    /// Fresh value document for canonical recovery. Old frontiers are not imported.
+    /// Fresh value document for canonical recovery. Old frontiers are not
+    /// imported; an erased birth actor stays no one.
     pub(crate) fn rebuild_value(
         entity: EntityId,
         text: &str,
-        actor: EntityId,
+        actor: DocActor,
         at: u64,
     ) -> Result<Self> {
         let doc = LoroDoc::new();
         doc.set_record_timestamp(true);
         let birth = Birth {
             entity: entity.to_hex(),
-            actor: actor.to_hex(),
+            actor,
             at,
         };
-        let bytes =
-            rmp_serde::to_vec_named(&birth).map_err(|_| invalid("document birth encoding"))?;
-        map_insert_bytes(&doc.get_map("meta"), BIRTH, &bytes)?;
+        map_insert_bytes(&doc.get_map(META), BIRTH, &birth.encode()?)?;
         if !text.is_empty() {
             doc.get_text(BODY)
                 .insert(0, text)
@@ -125,13 +144,13 @@ impl EntityDoc {
         Self::from_loro(doc_from_snapshot(bytes)?)
     }
 
+    /// A stored document: its birth names its entity, and its actor or, once
+    /// erased, no one; a document is never refused for an erased birth.
     pub(crate) fn from_loro(doc: LoroDoc) -> Result<Self> {
         doc.set_record_timestamp(true);
-        let bytes = map_get_bytes(&doc.get_map("meta"), BIRTH)
+        let bytes = map_get_bytes(&doc.get_map(META), BIRTH)
             .ok_or(Error::CorruptedIndex("document birth metadata"))?;
-        let birth: Birth = super::storage::decode(&bytes)?;
-        EntityId::from_hex(&birth.entity)?;
-        EntityId::from_hex(&birth.actor)?;
+        let birth = Birth::decode(&bytes)?;
         Ok(Self { doc, birth })
     }
 
@@ -252,7 +271,7 @@ pub(super) fn stamp(doc: &LoroDoc, actor: WriteActor, at: u64, verb: &str) -> Re
     // Sequence-bearing messages prevent Loro from folding two calls by the same
     // actor into one change. Peer bindings remain the authority for remote stamps.
     let message = format!(
-        "oneiron.entity_doc.v1 {verb} actor={}.{} op={:?}",
+        "{STAMP} {verb} actor={}.{} op={:?}",
         actor.entity_ref().to_hex(),
         crate::edit_distance::actor_class_token(actor.actor_class()),
         doc.oplog_vv()
@@ -288,20 +307,25 @@ impl crate::Vault {
             .map(|meta| {
                 let at =
                     u64::try_from(meta.timestamp).map_err(|_| invalid("document timestamp"))?;
-                let stamped = parse_actor(meta.message.as_deref());
-                let actor = if let Some(actor) = stamped {
-                    if crate::edit_distance::peer_actor_stamp_is_honored(
-                        self,
-                        meta.id.peer,
-                        at,
-                        &actor,
-                    )? {
-                        Some(actor)
-                    } else {
+                let actor = match parse_stamp(meta.message.as_deref()) {
+                    Stamped::Live(actor) => {
+                        if crate::edit_distance::peer_actor_stamp_is_honored(
+                            self,
+                            meta.id.peer,
+                            at,
+                            &actor,
+                        )? {
+                            Some(actor)
+                        } else {
+                            crate::edit_distance::peer_actor_at(self, meta.id.peer, at)?
+                        }
+                    }
+                    // An erased stamp names no one, and no binding of its
+                    // peer speaks for it.
+                    Stamped::Erased => None,
+                    Stamped::NotStamped => {
                         crate::edit_distance::peer_actor_at(self, meta.id.peer, at)?
                     }
-                } else {
-                    crate::edit_distance::peer_actor_at(self, meta.id.peer, at)?
                 };
                 Ok(TextChange {
                     actor,
@@ -313,15 +337,60 @@ impl crate::Vault {
     }
 }
 
-fn parse_actor(message: Option<&str>) -> Option<WriteActor> {
-    let mut tokens = message?.split_whitespace();
-    if tokens.next()? != "oneiron.entity_doc.v1" {
+/// What one commit message says of its actor (FIX 6072, Engine R2).
+enum Stamped {
+    /// A live actor's engine stamp.
+    Live(WriteActor),
+    /// An engine stamp whose actor was erased: no one.
+    Erased,
+    /// No engine stamp: the peer binding may name the actor.
+    NotStamped,
+}
+
+fn parse_stamp(message: Option<&str>) -> Stamped {
+    let Some((id, class)) = message.and_then(stamp_token) else {
+        return Stamped::NotStamped;
+    };
+    if id == ERASED_CALL_IDENTITY {
+        return Stamped::Erased;
+    }
+    let class = crate::edit_distance::actor_class_from_token(class);
+    match (EntityId::from_hex(id), class) {
+        (Ok(id), Some(class)) => Stamped::Live(WriteActor::new(id, class)),
+        _ => Stamped::NotStamped,
+    }
+}
+
+/// The id and class an engine stamp's actor token names.
+fn stamp_token(message: &str) -> Option<(&str, &str)> {
+    let mut tokens = message.split_whitespace();
+    if tokens.next()? != STAMP {
         return None;
     }
     let _verb = tokens.next()?;
-    let (id, class) = tokens.next()?.strip_prefix("actor=")?.split_once('.')?;
-    Some(WriteActor::new(
-        EntityId::from_hex(id).ok()?,
-        crate::edit_distance::actor_class_from_token(class)?,
-    ))
+    tokens.next()?.strip_prefix("actor=")?.split_once('.')
+}
+
+/// An engine stamp cut around its actor id, spelled exactly as [`stamp`]
+/// writes it: the message before the id, the id (an actor's, or
+/// [`ERASED_CALL_IDENTITY`]), and the rest from the class on.
+pub(super) struct StampCut<'m> {
+    pub(super) head: &'m str,
+    pub(super) id: &'m str,
+    pub(super) tail: &'m str,
+}
+
+/// `message` cut around its actor id, when it is an engine stamp:
+/// `oneiron.entity_doc.v1 <verb> actor=<id>.<class> op=...`, single spaced.
+pub(super) fn cut_stamp(message: &str) -> Option<StampCut<'_>> {
+    let rest = message.strip_prefix(STAMP)?.strip_prefix(' ')?;
+    let (verb, rest) = rest.split_once(' ')?;
+    if verb.is_empty() {
+        return None;
+    }
+    let id_on = rest.strip_prefix("actor=")?;
+    let (id, _) = id_on.split_once('.')?;
+    let head = message.get(..message.len() - id_on.len())?;
+    let tail = id_on.get(id.len()..)?;
+    Some(StampCut { head, id, tail })
 }
