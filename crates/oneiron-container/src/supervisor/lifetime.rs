@@ -6,7 +6,9 @@
 //! once the last work that holds it ends: a writer finishing the datagram it
 //! is relaying, or a relay answer on its way back. One miss reclaims
 //! nothing, so a socket that moved between tasks while one scan ran keeps
-//! its entry.
+//! its entry. A removed entry's virtual loopback ends with it: its bound
+//! address, and a listener's queue and waiting accepts
+//! ([`super::loopback::release`]).
 
 use super::State;
 use crate::wire;
@@ -54,6 +56,7 @@ pub(super) fn receive(state: &State, chunk: wire::SocketInventory) -> io::Result
     for id in dead.intersection(&inventory.missed) {
         if let Some(socket) = sockets.remove(id) {
             socket.closed.store(true, Ordering::Release);
+            super::loopback::release(state, *id);
         }
     }
     inventory.missed = dead.difference(&inventory.missed).copied().collect();

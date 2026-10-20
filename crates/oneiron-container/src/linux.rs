@@ -82,8 +82,10 @@ pub(crate) fn respond(
     Ok(())
 }
 pub(crate) fn inject(listener: RawFd, id: u64, fd: RawFd, cloexec: bool) -> io::Result<i32> {
-    // SEND atomically adds the fd and completes the socket syscall. SETFD
-    // cannot replace an occupied connect fd; injection happens at socket().
+    // SEND atomically adds the fd and completes the call with it as the
+    // result: socket(), and accept() of a virtual loopback connection. The
+    // fence never swaps an occupied fd (SETFD could, but dup aliases and
+    // epoll registrations would keep the old socket).
     let add = AddFd {
         id,
         flags: 2,
@@ -282,6 +284,11 @@ fn filter(parent: u32, bootstrap_fd: i32) -> Vec<libc::sock_filter> {
         libc::SYS_getsockname,
         libc::SYS_setsockopt,
         libc::SYS_getsockopt,
+        // Guest-loopback listeners; a native socket's call continues.
+        libc::SYS_bind,
+        libc::SYS_listen,
+        libc::SYS_accept,
+        libc::SYS_accept4,
     ] {
         out.extend([jump(nr as u32, 0, 1), stmt(0x06, 0x7fc0_0000)]);
     }

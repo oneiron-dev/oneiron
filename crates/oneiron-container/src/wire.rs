@@ -83,6 +83,40 @@ pub(crate) enum Operation {
     Describe {
         socket: u64,
     },
+    /// A bind to the launcher's copy of the guest's address: the fence acts
+    /// on that copy, and the call never continues to the kernel.
+    Bind {
+        socket: u64,
+        address: SocketAddr,
+    },
+    /// A listen. Its frame is followed by the listener's guest end, which
+    /// the supervisor keeps for the listener's readiness
+    /// ([`Operation::carries_fd`]).
+    Listen {
+        socket: u64,
+        backlog: i32,
+    },
+    /// Takes the next connection queued on a listener, reserved under a
+    /// ticket (the reply's value), with its peer address: the launcher
+    /// writes that address before [`Operation::AcceptFinish`] installs it.
+    Accept {
+        socket: u64,
+    },
+    /// Installs a reserved connection as the result of the guest's accept
+    /// (ADDFD completes the call), or puts it back on its queue.
+    AcceptFinish {
+        socket: u64,
+        ticket: u64,
+        commit: bool,
+        flags: i32,
+    },
+}
+
+impl Operation {
+    /// Whether one descriptor follows this request's frame (SCM_RIGHTS).
+    pub(crate) fn carries_fd(&self) -> bool {
+        matches!(self, Self::Listen { .. })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
@@ -95,6 +129,8 @@ pub(crate) struct Reply {
     /// The host floor that back-pressured the call, when one did: `errno`
     /// is then `EAGAIN` (FIX 5979).
     pub floor: Option<String>,
+    /// The loopback refusal the call was answered with, when it was one.
+    pub refusal: Option<crate::LoopbackRefusal>,
 }
 
 pub(crate) fn write<T: Serialize>(stream: &mut impl Write, value: &T) -> io::Result<()> {

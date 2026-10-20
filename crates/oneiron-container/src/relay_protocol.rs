@@ -5,12 +5,15 @@ use std::{
     net::SocketAddr,
 };
 
+/// One request on the VM's egress channel. `Refusal` carries a loopback call
+/// the VM's fence refused to the host's receipt: it opens nothing.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RelayRequest {
     Connect { target: SocketAddr },
     Datagram { target: SocketAddr, bytes: Vec<u8> },
     AuthorizeDatagram { target: SocketAddr },
+    Refusal(crate::LoopbackRefusal),
 }
 #[derive(Serialize, Deserialize)]
 pub struct RelayReply {

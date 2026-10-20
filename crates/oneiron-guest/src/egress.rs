@@ -59,6 +59,12 @@ impl EgressRelay for VsockRelay {
         Ok(())
     }
     fn transferred(&self, _: SocketAddr, _: [u8; 32], _: u64) {}
+    /// The host keeps the receipt: the refusal goes on the existing egress
+    /// channel (port 54), and opens nothing there.
+    fn record_refusal(&self, refusal: &oneiron_container::LoopbackRefusal) -> io::Result<()> {
+        self.request(&RelayRequest::Refusal(refusal.clone()))
+            .map(|_| ())
+    }
     /// The VM's own threads and descriptors are the VM's. The host charges
     /// each vsock request to its own floor before it starts it and answers
     /// a full floor with `EAGAIN` naming it (FIX 5979).
