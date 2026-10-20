@@ -698,10 +698,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/control_keys/http.rs` | src | s | 1 fn | — | Optional private control-plane router; tenant bearer auth remains separate |
 | `src/control_keys/tests.rs` | test | s | — | — | — |
 | `src/conversation_training/descriptor.rs` | src | s | 4 crate-vis | — | The intake's public descriptor on a self-hosted vault (TL-6): the intake's sealing key and receipt keys… |
-| `src/conversation_training/http.rs` | src | s | 3 crate-vis | — | The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per… |
+| `src/conversation_training/http.rs` | src | s | 6 crate-vis | — | The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per… |
 | `src/conversation_training/mod.rs` | src | s | 6 crate-vis | — | The publisher training outbox (OF-420 A1, "Learn from my conversations"): the worker that writes this… |
 | `src/conversation_training/outbox.rs` | src | m | 3 crate-vis | — | The outbox directory as the engine's training transport: three protocol subdirectories and the vault's… |
 | `src/conversation_training/retry.rs` | src | s | 10 crate-vis | — | The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted… |
+| `src/conversation_training/shipper.rs` | src | m | 1 crate-vis | — | The self-host training shipper (TL-6, FIX 5813): the loop that carries a self-hosted vault's released offers… |
+| `src/conversation_training/shipper/stream.rs` | src | s | 5 crate-vis | — | A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come… |
+| `src/conversation_training/shipper/tally.rs` | src | s | 5 crate-vis | — | The self-host shipper's counts (TL-6): what a pass did, logged once at its end in counts and classes only… |
+| `src/conversation_training/shipper/walks.rs` | src | s | 3 crate-vis | — | The self-host shipper's three walks over the vault's anonymous custody (TL-6): the withdrawals, the uploads… |
+| `src/conversation_training/shipper/window.rs` | src | m | 18 crate-vis | — | The self-host shipper's requests, planned to the intake's bounds (TL-6): a window per piece packed into… |
 | `src/conversation_training/worker.rs` | src | s | 1 crate-vis | — | The outbox's periodic tick |
 | `src/credential_resume.rs` | src | s | 4 crate-vis | — | The server's check for a credential caller's call a verb hook's ask stopped (ARCH-0080 §3 Ask, OF-580) |
 | `src/decision_artifact.rs` | src | s | 4 crate-vis | — | Typed judgments over artifact units (ARCH-0076, OF-506): the host's decide() for a sheet row, a paragraph, a… |

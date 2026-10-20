@@ -86393,7 +86393,7 @@
      "path": "src/conversation_training/http.rs",
      "purpose": "The anonymous training window's HTTP client (TL-6, CALLS TL6_HTTP_CLIENT): one private blocking client per…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -86424,6 +86424,56 @@
      "purpose": "The anonymous training window's retry pace (TL-6, CALLS TL6_RETRY_PACE), one per endpoint a self-hosted…",
      "surface": {
       "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper.rs",
+     "purpose": "The self-host training shipper (TL-6, FIX 5813): the loop that carries a self-hosted vault's released offers…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/stream.rs",
+     "purpose": "A released offer's files, as the self-host shipper reads them (TL-6): the manifest a piece's facts come…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/tally.rs",
+     "purpose": "The self-host shipper's counts (TL-6): what a pass did, logged once at its end in counts and classes only…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/walks.rs",
+     "purpose": "The self-host shipper's three walks over the vault's anonymous custody (TL-6): the withdrawals, the uploads…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_training/shipper/window.rs",
+     "purpose": "The self-host shipper's requests, planned to the intake's bounds (TL-6): a window per piece packed into…",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -91417,7 +91467,7 @@
      "purpose": "Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every…"
     },
     "conversation_training": {
-     "files": 6,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91748,7 +91798,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 954,
+   "source_files": 959,
    "test_files": 182
   },
   "oneiron-spawn": {
