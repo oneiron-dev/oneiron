@@ -125,9 +125,11 @@ fn target_from_wire(machine: &str, key: &str) -> Result<PadAdmissionTarget, Tran
 /// One upkeep's admissions ([`SEALED_PAD_GRANT_FULFIL`]): the admissions
 /// queued here go to the home, then each pending grant this machine can issue
 /// is sealed and offered. A generation whose grant this machine waits on
-/// itself is not fetched; one it finds it cannot open, it asks access to, so
-/// the next tick does not fetch it either. Returns how many grants the home
-/// took.
+/// itself is fetched too (FIX 4566): the home's request for it is no proof
+/// its capsule does not open the object. A failure on such a generation
+/// leaves its grants for a later tick, and what this machine lacks there is
+/// its sweep's to ask. Any other generation it finds it cannot open, it asks
+/// access to. Returns how many grants the home took.
 pub(super) async fn serve_admissions(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
@@ -159,19 +161,25 @@ pub(super) async fn serve_admissions(
     let mut by_generation: BTreeMap<SealedBundleGeneration, Vec<_>> = BTreeMap::new();
     for row in &reply.pending {
         let generation = sealed_generation_from_hex(&row.generation).ok_or_else(refused)?;
-        if waiting.contains(&generation) {
-            continue;
-        }
-        let target = target_from_wire(&row.machine, &row.key)?;
-        let root = row
-            .root
-            .as_deref()
-            .map(|root| {
-                sealed_digest_from_hex(root)
-                    .map(RecoveryRootId)
-                    .ok_or_else(refused)
-            })
-            .transpose()?;
+        let parsed = target_from_wire(&row.machine, &row.key).and_then(|target| {
+            let root = row
+                .root
+                .as_deref()
+                .map(|root| {
+                    sealed_digest_from_hex(root)
+                        .map(RecoveryRootId)
+                        .ok_or_else(refused)
+                })
+                .transpose()?;
+            Ok((target, root))
+        });
+        let (target, root) = match parsed {
+            Ok(parsed) => parsed,
+            // A generation this machine waits on itself went unread before:
+            // a row of it that does not parse is passed over.
+            Err(_) if waiting.contains(&generation) => continue,
+            Err(error) => return Err(error),
+        };
         by_generation
             .entry(generation)
             .or_default()
@@ -180,45 +188,73 @@ pub(super) async fn serve_admissions(
     let mut offered = 0;
     let mut asks = OwnAsks::default();
     for (generation, targets) in by_generation {
-        let Some((_, bytes)) = read_object(
-            &mut PartSource::Machine(rpc),
-            Some(generation),
-            SealedBundleObject::Pads,
-        )
-        .await?
-        else {
+        if !waiting.contains(&generation) {
+            offered += serve_generation(vault, rpc, generation, &targets, &mut asks).await?;
             continue;
-        };
-        let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
-        if pads.generation() != generation {
-            return Err(refused());
         }
-        // The current object, opened here: with this machine's capsule, or
-        // a grant it holds itself.
-        let mut grants = Vec::new();
-        if vault.open_key_pads(&pads).is_err() {
-            grants.extend(own_grant(vault, rpc, &pads, &mut asks).await?);
-        }
-        let sealed: Vec<SealedPadAdmissionGrant> = {
-            let Ok(opened) = vault.open_key_pads_to_erase(&pads, None, &grants) else {
-                continue;
-            };
-            // A target this machine does not stand as the owner's under that
-            // key stays pending.
-            targets
-                .iter()
-                .filter_map(|(target, root)| {
-                    vault.seal_pad_admission_grant(&opened, *target, *root).ok()
-                })
-                .collect()
-        };
-        for grant in &sealed {
-            if offer(rpc, grant).await? {
-                offered += 1;
-            }
+        let mut lacks = OwnAsks::default();
+        match serve_generation(vault, rpc, generation, &targets, &mut lacks).await {
+            Ok(taken) => offered += taken,
+            Err(error) => tracing::warn!(
+                %error,
+                generation = %sealed_generation_hex(&generation),
+                "pad admission grants left for a later tick"
+            ),
         }
     }
     ask_own(vault, rpc, &asks).await?;
+    Ok(offered)
+}
+
+/// Seals each of `targets` a grant of `generation`'s current pad object and
+/// offers it. The object opens here with this machine's capsule, else a grant
+/// it holds itself, noted on `asks` when it has none. Returns how many grants
+/// the home took.
+async fn serve_generation(
+    vault: &Vault,
+    rpc: &mut ResidenceRpc,
+    generation: SealedBundleGeneration,
+    targets: &[(PadAdmissionTarget, Option<RecoveryRootId>)],
+    asks: &mut OwnAsks,
+) -> Result<usize, TransportError> {
+    let Some((_, bytes)) = read_object(
+        &mut PartSource::Machine(rpc),
+        Some(generation),
+        SealedBundleObject::Pads,
+    )
+    .await?
+    else {
+        return Ok(0);
+    };
+    let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
+    if pads.generation() != generation {
+        return Err(refused());
+    }
+    // The current object, opened here: with this machine's capsule, or
+    // a grant it holds itself.
+    let mut grants = Vec::new();
+    if vault.open_key_pads(&pads).is_err() {
+        grants.extend(own_grant(vault, rpc, &pads, asks).await?);
+    }
+    let sealed: Vec<SealedPadAdmissionGrant> = {
+        let Ok(opened) = vault.open_key_pads_to_erase(&pads, None, &grants) else {
+            return Ok(0);
+        };
+        // A target this machine does not stand as the owner's under that
+        // key stays pending.
+        targets
+            .iter()
+            .filter_map(|(target, root)| {
+                vault.seal_pad_admission_grant(&opened, *target, *root).ok()
+            })
+            .collect()
+    };
+    let mut offered = 0;
+    for grant in &sealed {
+        if offer(rpc, grant).await? {
+            offered += 1;
+        }
+    }
     Ok(offered)
 }
 

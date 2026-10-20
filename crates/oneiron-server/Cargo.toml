@@ -35,6 +35,14 @@ name = "oneiron-vm-init"
 path = "src/bin/oneiron-vm-init.rs"
 doc = false
 
+# A vault VM's root outbox companion (FIX 5235): oneiron-vm-init starts it
+# beside the server; it lays out the vault disk's outbox and carries every
+# outbox kind to and from the host over vsock port 1030.
+[[bin]]
+name = "oneiron-vm-outbox"
+path = "src/bin/oneiron-vm-outbox.rs"
+doc = false
+
 [lib]
 # No doc-comment code fences in this crate (audited 2026-08-19); skip the
 # doctest compile pass entirely.

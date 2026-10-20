@@ -504,6 +504,7 @@ impl<'v> DocumentWriter<'v> {
                 manifest,
                 diary_reads: tail.diary_reads,
                 sources: tail.sources,
+                thread_roots: Default::default(),
             },
         ))
     }

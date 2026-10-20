@@ -54,6 +54,8 @@ pub mod vault_uids;
 mod version;
 /// The vault-VM wire shared by the guest adapter and the host's VMM driver.
 pub mod vm;
+/// A vault VM's outbox carrier: its frames, transfers, acks and members.
+pub mod vm_outbox;
 /// A vault VM's provision connection: its binding, key frame and reply.
 pub mod vm_provision;
 mod wake;

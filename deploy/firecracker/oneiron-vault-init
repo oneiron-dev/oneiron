@@ -11,7 +11,13 @@
 # (/vault/storage, with the data directory /vault/storage/data, and the key
 # directory /vault/keys, both the vault UID's), rebuilds /etc/oneiron/vault-uids
 # from the binding, makes /run/oneiron and its voice directory (FIX 2391) the
-# vault UID's, and runs the engine as that UID with the flags below.
+# vault UID's, and runs the engine as that UID with the flags below. Before
+# the engine it starts /usr/bin/oneiron-vm-outbox, the root outbox companion
+# (FIX 5235): it lays out /vault/outbox and carries every outbox kind to and
+# from the host over vsock port 1030, and once it is ready oneiron-vm-init
+# adds the engine's escrow, e-sign and training outbox flags and the escrow
+# recipients the host sent. It stops the companion when the engine exits,
+# before it removes the key.
 set -eu
 mount -t proc proc /proc
 mount -t sysfs sys /sys
