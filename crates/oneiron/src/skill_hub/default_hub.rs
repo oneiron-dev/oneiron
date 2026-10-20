@@ -15,7 +15,7 @@ use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, tempora
 /// Released oneiron-hub revision for library skills, and the model catalog
 /// ref's pin until the owner sets that ref's own policy. A floating branch or
 /// network lookup never changes an opened vault's skill source.
-const HUB_COMMIT: &str = "e1040cbcc1ca2a1eb8404c8fc80956b0e75ae3e5";
+const HUB_COMMIT: &str = "7947f21265d41ae5457c7aaf31e510348a46e7f0";
 const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
 /// Library data, deliberately not a fifth build-embedded bootstrap skill.
 pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";

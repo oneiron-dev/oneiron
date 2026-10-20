@@ -30,7 +30,7 @@ use oneiron::dreamer_runner::maintenance::coach::{
     COACH_PERSON_THRESHOLD_FACET, COACH_RESEARCH_RUN_FACET, COACH_SEAL_CHECKS_FACET,
     COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET,
     COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET,
-    PersonThresholdPolicy,
+    COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -49,6 +49,7 @@ mod fork_promote;
 mod judge_label_rechecks;
 mod seal_checks;
 mod type_tree_upkeep;
+mod weave_digest_settings;
 
 /// The jobs are nightly, so a minute's wait costs nothing.
 const TICK: Duration = Duration::from_secs(60);
@@ -94,6 +95,9 @@ pub(crate) fn spawn(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> tokio::task::JoinHandle<()> {
+    // The Coach's model drafts the digest settings steps from here on, so
+    // the digest timer only queues their job (FIX 5609).
+    server.vault().register_coach_weave_digest_host();
     let weak = Arc::downgrade(server);
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(TICK);
@@ -169,6 +173,7 @@ fn run_one(
         COACH_JUDGE_LABEL_RECHECKS_FACET => judge_label_rechecks::run(server, admitted, now),
         COACH_TYPE_TREE_UPKEEP_FACET => type_tree_upkeep::run(server, admitted, now),
         COACH_FORK_PROMOTE_FACET => fork_promote::run(server, admitted, now),
+        COACH_WEAVE_DIGEST_SETTINGS_FACET => weave_digest_settings::run(server, admitted, now),
         COACH_RESEARCH_RUN_FACET => vault.run_coach_research(admitted, now),
         COACH_TRADEOFF_ROUTE_FACET => {
             let report = vault.run_coach_tradeoff_route(admitted, now)?;
