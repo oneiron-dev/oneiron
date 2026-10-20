@@ -14215,7 +14215,7 @@
      "path": "src/code_run/storage/records/bodies.rs",
      "purpose": "The code-run result bodies (OF-597): the sinks a body streams through, the rows and descriptors that publish…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 3
      }
     },
@@ -14230,7 +14230,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/replay_capsule.rs",
@@ -34766,7 +34766,7 @@
      "path": "src/llm/step/step_state.rs",
      "purpose": "Device-local step progression rows (Started/ResponseReceived/Logged) in the typed `DREAMER_STEP_STATE` side…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -48027,7 +48027,7 @@
      "path": "src/self_heal/blocked_reports/source.rs",
      "purpose": "A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
