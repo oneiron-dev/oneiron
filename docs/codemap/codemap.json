@@ -2223,7 +2223,7 @@
      "purpose": "Generic LMDB-backed background attempt queue",
      "surface": {
       "crate-vis": 16,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -2244,6 +2244,20 @@
      "path": "src/attempt_queue/ports.rs",
      "purpose": "JobQueue adapter over the existing lease state machine",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AttemptReadSet"
+     ],
+     "path": "src/attempt_queue/read_set.rs",
+     "purpose": "FIX 6934: the rows an attempt's inputs were read from, recorded by the host code that read them while the…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
     },
     {
      "bucket": "s",
@@ -44955,8 +44969,8 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 1,
-      "fn": 20,
+      "crate-vis": 2,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -65767,7 +65781,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -67232,7 +67246,7 @@
    },
    "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4217,
+   "source_files": 4218,
    "test_files": 902
   },
   "oneiron-android": {
