@@ -14,6 +14,7 @@ mod admitted;
 mod brokered;
 mod endpoint;
 mod remote;
+pub(crate) use local::model_manager;
 pub(crate) use local::prepare as prepare_local;
 pub(crate) use remote::build_remote_rung;
 mod local;
