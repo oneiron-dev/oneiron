@@ -389,7 +389,7 @@ IdentityActNow = IdentityActNowSettled | IdentityActNowUnknown | IdentityActNowD
 class InboxListRequest(TypedDict):
     after: NotRequired[str | None]
     limit: NotRequired[int | None]
-NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed"]
+NotificationKind = Literal["job_completed", "job_failed", "job_cancelled", "job_abandoned", "finding", "event_received", "import_finished", "digest", "ask", "world_privacy_changed", "world_privacy_proposed", "weave_digest_settings_changed", "thread_walk_in", "thread_history_opened", "thread_join_requested"]
 class NotificationSource(TypedDict):
     producer: str
     event: str
