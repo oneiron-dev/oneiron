@@ -3,9 +3,10 @@
 //! landing receipt under the NOTE its record names; each review bundle under
 //! its members' NOTE ([`bundle`]); each pin index row under its citing
 //! document ([`pins`]); each operation receipt under the NOTE its key leads
-//! with; and each title row ([`super::title_index::checkpoint`]). Every actor
-//! a row names is split out; a fork no one decided whose opener stays erased
-//! goes on restore, as the erase deletes it.
+//! with; and each title row, its key split from its author
+//! ([`super::title_index::checkpoint`]). Every actor a row names is split
+//! out; a fork no one decided whose opener stays erased goes on restore, as
+//! the erase deletes it.
 //!
 //! A proposal head's Loro snapshot names its actors in its commit messages,
 //! which no split takes out, so it stays under the vault-wide seal, named
@@ -240,16 +241,33 @@ fn join(
     Err(rows::bad_part())
 }
 
+/// A no-one-form row with its opened actors back, at the key it restores
+/// to: a title row's key and value are spelled back from its NOTE half and
+/// its author's part ([`title_index::checkpoint::join`]), and every other
+/// row keeps its part's key ([`join`]).
+fn join_row(
+    dbs: &impl ManifestDbs,
+    view: &RoTxn<'_>,
+    at: &RowLocator,
+    value: &[u8],
+    parts: &[&ActorPart],
+) -> Result<Option<(RowLocator, Vec<u8>)>> {
+    if title_index::checkpoint::owns(at) {
+        return title_index::checkpoint::join(at, value, parts);
+    }
+    Ok(join(dbs, view, at, value, parts)?.map(|value| (at.clone(), value)))
+}
+
 /// Puts `opened`'s NOTE rows back: exact rows as they are, each actor that
 /// opened back in its row, each bundle fragment and explainer copy merged
 /// into the bundle the owners restored so far hold, and each title row whose
-/// author opened.
+/// author opened, its key spelled back.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, |view, at, value, parts| {
-        join(dbs, view, at, value, parts)
+    rows::restore_parts_keyed(dbs, txn, &opened, check, |view, at, value, parts| {
+        join_row(dbs, view, at, value, parts)
     })
 }
