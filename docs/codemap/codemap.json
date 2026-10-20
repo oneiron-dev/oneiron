@@ -12007,7 +12007,7 @@
       "crate-vis": 10,
       "enum": 2,
       "fn": 10,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -12024,13 +12024,27 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/claim/scoped_read/weave_digest/changes/draft.rs",
+     "purpose": "The Coach's model drafts each owner's digest settings step (FIX 5609; ARCH-0026, DEC-0005 policy residence)",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveDigestSettingsDrafter"
+     ],
      "path": "src/claim/scoped_read/weave_digest/coach.rs",
      "purpose": "The Coach's rule for an owner's digest settings (FIX 5495): closed-form, no model call, over the owner's own…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7,
+      "trait": 1
      }
     },
     {
@@ -21889,7 +21903,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 30,
+      "const": 31,
       "crate-vis": 9,
       "fn": 14,
       "trait": 1
@@ -63687,7 +63701,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 75,
+     "files": 76,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -65012,7 +65026,7 @@
    },
    "over_bar": 192,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4034,
+   "source_files": 4035,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76673,6 +76687,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_host/weave_digest_settings.rs",
+     "purpose": "The host's digest settings drafter (FIX 5609, ARCH-0026): the Coach's model, on its own seat or else the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -87796,7 +87820,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -88253,7 +88277,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 877,
+   "source_files": 878,
    "test_files": 182
   },
   "oneiron-spawn": {
