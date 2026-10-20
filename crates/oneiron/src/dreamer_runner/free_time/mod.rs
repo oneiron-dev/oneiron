@@ -22,6 +22,8 @@
 //! five families (`erase`, FIX 5664). A home move carries all five, with
 //! each cycle's spend tree, from the old home to the new one (`handoff`,
 //! FIX 5661); with no carried state the new home opens its cycles as before.
+//! A restore over a live vault keeps the tries those bindings name as the
+//! live vault holds them, as it keeps the bindings (`restore`, FIX 6577).
 
 mod cycle;
 mod doors;
@@ -31,6 +33,8 @@ mod handoff;
 mod items;
 mod policy;
 mod receipt;
+#[cfg(feature = "sync")]
+mod restore;
 
 use serde::{Deserialize, Serialize};
 
@@ -72,6 +76,8 @@ pub use self::policy::{
 pub use self::receipt::{
     FreeTimeCycleSheet, FreeTimeFloor, FreeTimeItemOutcome, FreeTimeItemReceipt, free_time_floor,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::restore::free_time_attempt_restore_keys;
 
 /// The owner's policy per agent definition, with the witness of its sets and
 /// clears.

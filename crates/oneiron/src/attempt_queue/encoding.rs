@@ -432,7 +432,11 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
     Ok(record)
 }
 
-/// Reconstruct disposable queue indexes after a canonical restore.
+/// Reconstruct disposable queue indexes after a canonical restore: the ready,
+/// dedupe and run indexes, from the attempt rows that landed. A restore over
+/// a live vault lands the free-time tries as the live vault holds them beside
+/// the image's other attempts (FIX 6577), so the run index the image carried
+/// is rebuilt with the others, as the open-time backfill builds it.
 pub(crate) fn rebuild_checkpoint_indexes(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -442,6 +446,7 @@ pub(crate) fn rebuild_checkpoint_indexes(
         .iter(txn)?
         .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
         .collect::<std::result::Result<_, _>>()?;
+    store.clear_attempt_run_index_in_txn(txn)?;
     for (key, value) in rows {
         let id = AttemptId::from_bytes(&key)?;
         let record = decode_record(&value, id)?;
@@ -460,6 +465,7 @@ pub(crate) fn rebuild_checkpoint_indexes(
                 id.as_bytes(),
             )?;
         }
+        store.put_attempt_run_index_in_txn(txn, record.run_id.as_deref(), id.as_bytes())?;
     }
     Ok(())
 }
