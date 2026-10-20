@@ -2,6 +2,8 @@
 //! seal a managed vault opens with, its escrow wraps, and the escrow
 //! capsules spooled to the supervisor's outbox.
 
+use std::collections::BTreeSet;
+
 use super::super::args::ManagedArgs;
 
 /// Seals the vault's held data key to the node's managed escrow recipient
@@ -73,23 +75,31 @@ pub(super) fn managed_page_seal(
 /// removes it only after the registry's durable acknowledgement. A capsule
 /// that cannot be spooled waits for the next start; the vault still serves,
 /// since the node holds the key it runs on.
-pub(super) fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedArgs) {
-    let Some(outbox) = &managed.escrow_outbox else {
-        return;
-    };
-    let spool = || -> anyhow::Result<()> {
+///
+/// Returns the report ids the outbox holds once this pass ends, spooled now
+/// or before (a cold restore's receipt names each added recipient's), or
+/// `None` without an outbox.
+pub(super) fn spool_vault_key_escrow(
+    vault: &oneiron::Vault,
+    managed: &ManagedArgs,
+) -> Option<BTreeSet<String>> {
+    let outbox = managed.escrow_outbox.as_ref()?;
+    let mut spooled = BTreeSet::new();
+    let mut spool = || -> anyhow::Result<()> {
         for capsule in vault.vault_key_escrow_capsules()? {
             let Some((role @ ("managed" | "break-glass"), _)) = capsule.label.split_once('.')
             else {
                 continue;
             };
+            let report_id = blake3::hash(&capsule.capsule).to_hex().to_string();
             if capsule.spooled {
+                spooled.insert(report_id);
                 continue;
             }
             let report = oneiron_vault_contract::escrow::EscrowCapsuleReport {
                 schema_version: oneiron_vault_contract::escrow::ESCROW_REPORT_SCHEMA_VERSION,
                 report_type: oneiron_vault_contract::escrow::ESCROW_REPORT_TYPE.to_owned(),
-                report_id: blake3::hash(&capsule.capsule).to_hex().to_string(),
+                report_id: report_id.clone(),
                 vault_name: managed.vault_name.clone(),
                 vault_id: oneiron_vault_contract::hex(&capsule.vault_id),
                 role: role.to_owned(),
@@ -101,10 +111,12 @@ pub(super) fn spool_vault_key_escrow(vault: &oneiron::Vault, managed: &ManagedAr
             };
             oneiron_vault_contract::escrow::spool_escrow_report(outbox, &report)?;
             vault.mark_vault_key_escrow_spooled(&capsule.wrap_id, &capsule.capsule)?;
+            spooled.insert(report_id);
         }
         Ok(())
     };
     if let Err(error) = spool() {
         tracing::warn!(%error, "an escrow capsule was not spooled; the next start spools it");
     }
+    Some(spooled)
 }

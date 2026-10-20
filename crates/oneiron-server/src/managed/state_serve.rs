@@ -165,6 +165,9 @@ pub struct ManagedState {
     /// row (b)): set once at boot, before ctl serves. `None` until set, which
     /// a supervisor reads as unknown.
     backup_facts: Option<ManagedBackupFacts>,
+    /// The cold restore this process kept, which `restore_status` answers
+    /// for: set once at boot, before ctl serves; `None` for an open.
+    restore: Option<Arc<super::restore::RestoreOutcome>>,
 }
 
 /// A supervisor-signed account action, not the child process's host-root slip.
@@ -402,6 +405,7 @@ impl ManagedState {
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
             backup_facts: None,
+            restore: None,
         }
     }
 
@@ -418,6 +422,17 @@ impl ManagedState {
     #[must_use]
     pub fn with_backup_facts(mut self, facts: ManagedBackupFacts) -> Self {
         self.backup_facts = Some(facts);
+        self
+    }
+
+    /// This state with `restore`, the cold restore this start kept, for
+    /// `restore_status` to answer for.
+    #[must_use]
+    pub(super) fn with_restore(
+        mut self,
+        restore: Option<Arc<super::restore::RestoreOutcome>>,
+    ) -> Self {
+        self.restore = restore;
         self
     }
 
@@ -981,6 +996,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let mut host =
         super::host::ManagedHost::new(&managed, HostLimits::unbounded(), shutdown.clone())?;
     let http = host.listener()?;
+    // A cold restore's plan, on its own pipe before the credential frame: no
+    // socket below listens until the restore is verified and kept.
+    let mut restore = super::restore::ManagedRestore::begin(&managed, &mut config)?;
 
     // The contract requires the credential frame to be read before the data
     // directory is opened, so a refused frame never touches storage.
@@ -997,19 +1015,33 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // takes the managed default, and unset training follows the export.
     vault_config.failure_signals.deployment =
         oneiron::config::failure_signals::DeploymentTier::Managed;
-    // Set before the open: LMDB takes the page key with the environment.
-    vault_config.page_seal = managed_page_seal(&managed, config.maximum_tier, &credentials.dek)?;
-    // The live seal opens the live vault and creates none: a rehearsal's
-    // scratch takes a fresh incarnation of it (`owner::backup`).
-    let mut rehearsal_config = vault_config.clone();
-    rehearsal_config.page_seal = None;
-    let vault = Arc::new(open_managed_vault(
-        &managed.data_dir,
-        vault_config,
-        &managed.vault_name,
-        &credentials,
-        managed.derivation_owner,
-    )?);
+    let (vault, rehearsal_config) = match restore.as_mut() {
+        // The restored vault, verified and kept, in place of the open.
+        Some(restore) => {
+            let anchor = anchor.clone();
+            restore
+                .land(&managed, &config, vault_config, &credentials.dek, anchor)
+                .await?
+        }
+        None => {
+            // Set before the open: LMDB takes the page key with the environment.
+            vault_config.page_seal =
+                managed_page_seal(&managed, config.maximum_tier, &credentials.dek)?;
+            // The live seal opens the live vault and creates none: a rehearsal's
+            // scratch takes a fresh incarnation of it (`owner::backup`).
+            let mut rehearsal_config = vault_config.clone();
+            rehearsal_config.page_seal = None;
+            let vault = open_managed_vault(
+                &managed.data_dir,
+                vault_config,
+                &managed.vault_name,
+                &credentials,
+                managed.derivation_owner,
+            )?;
+            (vault, rehearsal_config)
+        }
+    };
+    let vault = Arc::new(vault);
 
     let mut server_config = config.sync_server_config();
     server_config.lease_vault_id = super::vault_gates::managed_lease_scope(&vault)?;
@@ -1042,7 +1074,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // recipient the node's operator installed keeps a copy of it.
     vault.admit_vault_key(&credentials.dek)?;
     escrow_vault_key(&vault, &managed)?;
-    spool_vault_key_escrow(&vault, &managed);
+    let spooled = spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
     // The owner's embedding spaces and kind slots, as plain serve applies them.
@@ -1158,10 +1190,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // rest of the process lifetime.
     drop(credentials);
     host.clear_secrets();
+    // A kept restore's receipt, sealed once its escrow reports are spooled.
+    let restored = restore
+        .as_mut()
+        .map(|restore| restore.seal_receipt(spooled.as_ref()))
+        .transpose()?;
     let state = Arc::new(
         ManagedState::new(managed.vault_name.clone(), Arc::clone(&sync_server), ledger)
             .with_readiness(readiness.clone())
-            .with_backup_facts(backup_facts),
+            .with_backup_facts(backup_facts)
+            .with_restore(restored),
     );
     let _ = reap_gate.set(Arc::clone(&state));
     // A public live voice session (`ai.voice.start`) holds an admission like
@@ -1213,6 +1251,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         state.background_admission(),
     )
     .await?;
+    // Every fallible step is done: a cold restore's receipt and `verified`
+    // go out before ctl serves or ready is said.
+    if let Some(restore) = restore {
+        restore.verified(&vault)?;
+    }
 
     let ctl_task = tokio::spawn({
         let state = Arc::clone(&state);
