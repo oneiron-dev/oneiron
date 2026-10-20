@@ -17,6 +17,15 @@ impl Memory<'_> {
         Ok(self.secret_sight()? == SecretSight::Masked)
     }
 
+    /// [`Self::reads_lifted_keys_masked`] in `txn`, a snapshot its caller
+    /// holds (FIX 6992): a projection never opens a second reader.
+    pub(crate) fn reads_lifted_keys_masked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<bool> {
+        Ok(self.secret_sight_in_txn(txn)? == SecretSight::Masked)
+    }
+
     /// `view` as the bound actor reads it: for a reader other than the
     /// owner, each value the lifted texts `keys` reads hold as its handle,
     /// wherever the view holds it.
@@ -25,20 +34,39 @@ impl Memory<'_> {
         view: T,
         keys: impl FnOnce() -> crate::Result<LiftedKeys>,
     ) -> MemoryResult<T> {
-        if !self.reads_lifted_keys_masked()? {
-            return Ok(view);
-        }
-        let keys = keys()?;
-        if keys.is_empty() {
-            return Ok(view);
-        }
-        let mut value = serde_json::to_value(&view)
-            .map_err(|_| Error::InvariantViolation("a lifted carrier's view did not encode"))?;
-        if !keys.mask_json(&mut value) {
-            return Ok(view);
-        }
-        Ok(serde_json::from_value(value).map_err(|_| {
-            Error::InvariantViolation("a lifted carrier's masked view did not decode")
-        })?)
+        masked_view(self.reads_lifted_keys_masked()?, view, keys)
     }
+
+    /// [`Self::lifted_view`] inside a projection that holds `txn` (FIX 6992).
+    pub(crate) fn lifted_view_in_txn<T: Serialize + DeserializeOwned>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        view: T,
+        keys: impl FnOnce() -> crate::Result<LiftedKeys>,
+    ) -> MemoryResult<T> {
+        masked_view(self.reads_lifted_keys_masked_in_txn(txn)?, view, keys)
+    }
+}
+
+/// `view` with each value `keys` reads held as its handle when `masked`.
+fn masked_view<T: Serialize + DeserializeOwned>(
+    masked: bool,
+    view: T,
+    keys: impl FnOnce() -> crate::Result<LiftedKeys>,
+) -> MemoryResult<T> {
+    if !masked {
+        return Ok(view);
+    }
+    let keys = keys()?;
+    if keys.is_empty() {
+        return Ok(view);
+    }
+    let mut value = serde_json::to_value(&view)
+        .map_err(|_| Error::InvariantViolation("a lifted carrier's view did not encode"))?;
+    if !keys.mask_json(&mut value) {
+        return Ok(view);
+    }
+    Ok(serde_json::from_value(value).map_err(|_| {
+        Error::InvariantViolation("a lifted carrier's masked view did not decode")
+    })?)
 }
