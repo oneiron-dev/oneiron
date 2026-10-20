@@ -1058,10 +1058,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.served
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .extend(listed.iter().copied());
+            .extend(listed.iter().flatten().copied());
         Ok(Ok(AgentVerbAnswer {
             output,
-            rows: Some(listed),
+            rows: listed,
         }))
     }
 
@@ -1241,7 +1241,7 @@ async fn execute_code_mode_verb(
     verb: &str,
     input: Value,
     run: McpCodeRun,
-) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
+) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
     run_code_mode_verb(server, actor, verb, input, run, mcp_admit_scoped_verb).await
 }
 
@@ -1254,7 +1254,10 @@ async fn execute_step_verdict(
     input: Value,
     run: McpCodeRun,
 ) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
-    run_code_mode_verb(server, actor, "ai.verdict", input, run, mcp_admit_step_verb).await
+    // Only the verdict is read; its rows are not.
+    run_code_mode_verb(server, actor, "ai.verdict", input, run, mcp_admit_step_verb)
+        .await
+        .map(|(output, rows)| (output, rows.unwrap_or_default()))
 }
 
 /// How one verb call's tool binding and scope are admitted.
@@ -1272,7 +1275,7 @@ async fn run_code_mode_verb(
     input: Value,
     run: McpCodeRun,
     admit: VerbAdmission,
-) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
+) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
     let Some(McpEndpointTool::Verb(tool)) =
         registered_surface(McpSurfaceMode::ToolFirst).resolve(verb)
     else {
@@ -1291,8 +1294,9 @@ async fn run_code_mode_verb(
         .map_err(mcp_tool_validation_error)?;
     admit(server, tool, &arguments, actor)?;
     mcp_verb_gate(server, tool, &arguments, actor)?;
-    // A run's call is answered once and never continued.
-    let mut served = Vec::new();
+    // A run's call is answered once and never continued; its rows are
+    // unknown once a producer's path lists none (FIX 5988).
+    let mut served = super::McpServed::default();
     let mut board_hooks = None;
     let origin = run.origin.clone();
     let (output, ..) = crate::api::facade::host_doors::with_calling_origin(
@@ -1314,5 +1318,7 @@ async fn run_code_mode_verb(
         hooks.record_receipt(server).await?;
         hooks.spend(server);
     }
-    Ok((output, served))
+    // An act whose rows are unknown answers off this device only that it
+    // ran (FIX 5988); a read's stay unknown for the run's release.
+    super::served_rows::unknown_act_answer(tool.name, actor, output, served.into_rows())
 }

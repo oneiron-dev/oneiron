@@ -13,18 +13,22 @@ use std::sync::Arc;
 
 /// Whether a page its producer retained may leave again: none of the rows
 /// it was derived from, nor any row its output or keyframe names, is one a
-/// device-local world keeps from the caller now.
+/// device-local world keeps from the caller now. One whose rows are unknown
+/// leaves only on this device (FIX 5988).
 pub(super) fn mcp_snapshot_releases(
     server: &SyncServer,
     actor: &McpCallContext,
     snapshot: &crate::mcp::McpPageSnapshot,
 ) -> Result<bool, McpGatewayError> {
+    let Some(rows) = snapshot.rows.as_deref() else {
+        return Ok(!actor.destination().is_off_device());
+    };
     let retained = serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe))
         .map_err(|_| mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch))?;
     crate::device_local::withholds_retained(
         &server.vault,
         actor.destination(),
-        &snapshot.rows,
+        rows,
         &retained,
     )
     .map(|withheld| !withheld)
@@ -269,9 +273,25 @@ pub(super) fn mcp_release_run_result(
     rows: Option<&[oneiron::EntityId]>,
     result: Value,
 ) -> Result<Value, McpGatewayError> {
+    mcp_release_listed(server, actor, rows, false, result)
+}
+
+/// [`mcp_release_result`] for a result whose rows may be unknown (`None`,
+/// FIX 5988): on this device it leaves as it is; off it, it is withheld as
+/// `ProducersUnknown`, and a continuation's caller starts over from page one.
+pub(super) fn mcp_release_listed(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    rows: Option<&[oneiron::EntityId]>,
+    continued: bool,
+    result: Value,
+) -> Result<Value, McpGatewayError> {
     match rows {
-        Some(rows) => mcp_release_result(server, actor, rows, false, result),
+        Some(rows) => mcp_release_result(server, actor, rows, continued, result),
         None if !actor.destination().is_off_device() => Ok(result),
+        None if continued => Err(mcp_page_cursor_error(
+            crate::mcp::McpPageCursorError::SnapshotMismatch,
+        )),
         None => Err(mcp_result_withheld(ReleaseHold::ProducersUnknown)),
     }
 }
