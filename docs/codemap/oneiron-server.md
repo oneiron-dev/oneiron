@@ -20,6 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/coach_host/attribution_audits.rs` | src | s | 1 crate-vis | — | The attribution judge's held-out audits on the host's ladder (ARCH-0053, OF-542) |
 | `src/ai_host/coach_host/fork_promote.rs` | src | s | 1 crate-vis | — | The host side of the project tree fork (ARCH-0079 #task-type, OF-420): the engine forks a project's… |
 | `src/ai_host/coach_host/judge_label_rechecks.rs` | src | s | 1 crate-vis | — | The host's judge-label re-checker (ARCH-0042 judge re-pin, OF-420): after an edit of the judge's rubric, the… |
+| `src/ai_host/coach_host/research_oracle.rs` | src | s | 1 crate-vis | — | The research tick's goal oracle (FIX 1331) |
 | `src/ai_host/coach_host/seal_checks.rs` | src | s | 1 crate-vis | — | The host's seal checker (ARCH-0079 #stuck-confession-and-the-seal, OF-544): for each pending confession… |
 | `src/ai_host/coach_host/type_tree_upkeep.rs` | src | s | 1 crate-vis | — | The host side of type-tree upkeep (ARCH-0079 #task-type, OF-541): the engine recounts, splits and merges the… |
 | `src/ai_host/coach_host/weave_digest_settings.rs` | src | s | 1 crate-vis | — | The host's digest settings drafter (FIX 5609, ARCH-0026): the Coach's model, on its own seat or else the… |
