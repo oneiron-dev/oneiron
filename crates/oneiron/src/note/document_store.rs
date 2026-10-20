@@ -72,19 +72,6 @@ pub(super) fn persist_recovered_document(
     persist_structural(vault, txn, doc, false)
 }
 
-/// A delete's citation scrub (C050), in both feature graphs: the document and
-/// its pin rows only. Its text, title and history were admitted before and
-/// stay as they are, so nothing is masked, scanned or bounded again, and no
-/// StateOnly copy drops the history.
-pub(super) fn persist_scrubbed(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    doc: &NoteDocument,
-) -> Result<()> {
-    super::storage::snapshot(vault, txn, doc.id, &doc.doc, false)?;
-    write_pin_rows(vault, txn, doc)
-}
-
 /// `masks`: this host's own write, whose live text a mask on write may
 /// rewrite. A replica's or a recovered document's text keeps the plain door.
 fn persist_structural(
@@ -128,11 +115,6 @@ fn persist_structural(
         .apply(txn)?;
     // Reverse pins preserve every cited source frontier, including when the
     // citation is in a different document. They are written with the body.
-    write_pin_rows(vault, txn, doc)
-}
-
-/// Replaces the reverse pin rows of `doc` with its live pins.
-fn write_pin_rows(vault: &Vault, txn: &mut heed::RwTxn<'_>, doc: &NoteDocument) -> Result<()> {
     super::pin_index::remove_citing(&vault.store, txn, doc.id)?;
     for pin in doc.pins()? {
         let value = NOTE_PIN_SOURCE.encode_value(&pin)?;
