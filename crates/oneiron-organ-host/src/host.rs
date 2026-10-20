@@ -7,31 +7,29 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron::Vault;
+use oneiron::limit_ask::EngineLimit;
 use oneiron_organ_protocol::{
-    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, MAX_FDS_PER_FRAME, MappedRegion,
-    Outcome, Output, Payload, Proposal, SharedRegion,
+    ByteBuf, Call, CancelReason, Hash32, INLINE_MAX_BYTES, Input, MAX_FDS_PER_FRAME, Outcome,
+    Payload, SharedRegion,
 };
 
-use crate::asks::CallAsks;
-use crate::budget::{Budget, Permit};
+use crate::asks::{AskContext, CallAsks};
+use crate::budget::{Budget, CallRoom, Lease};
 use crate::error::{HostError, Unavailable};
 use crate::handlers::{AskHandlers, in_handler};
-use crate::outcome::{OrganOutcome, OrganOutput, OutputBytes};
+use crate::measure::install_row;
+use crate::outcome::OrganOutcome;
 use crate::process::{CallFailure, Grant, OrganProcess, Revocations, Wait};
-use crate::receipt::{
-    AskReceipt, CallReceipt, ReceiptInput, ReceiptOutput, bound_notes, bound_text, digest,
-};
 use crate::regions::RegionCache;
 use crate::slot::{OrganStatus, Slot};
 use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec};
 
+mod outputs;
 mod sized;
 
+use outputs::{Called, Replied, finish};
 pub use sized::{CallMeasure, CallSize};
 use sized::{OneCall, Run};
-
-const MAX_DETAIL_BYTES: usize = 512;
-const MAX_NAME_BYTES: usize = 256;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -179,7 +177,11 @@ impl OrganHost {
     /// # Errors
     /// The organ is not installed, unavailable, backing off, or fails to start.
     pub fn warm(&self, organ: &str) -> Result<Duration, HostError> {
-        Ok(self.slot(organ)?.process(&self.config, None)?.spawn_time)
+        let room = self.budget.room();
+        Ok(self
+            .slot(organ)?
+            .process(&self.config, &room, None)?
+            .spawn_time)
     }
 
     /// Stops the organ's process now, as an idle unload does.
@@ -291,8 +293,9 @@ impl OrganHost {
     ///
     /// # Errors
     /// As [`Self::call`], plus [`HostError::Reentrant`] from inside a
-    /// handler and [`HostError::AskBudget`] for an organ that keeps asking
-    /// past its caps.
+    /// handler. No count or size of the organ's asks refuses one: each is
+    /// measured against its `[limits]` row, and the call's booking grows to
+    /// hold every answer.
     pub fn call_with(
         &self,
         vault: &Vault,
@@ -370,7 +373,9 @@ impl OrganHost {
             return Err(HostError::TooManyInputs);
         }
         let booking = how.booking(&slot.spec);
-        let mut permit = self.budget.admit(call.class, 1, booking, deadline)?;
+        // The call's room: its booking, grown as its answers and outputs
+        // need (FIX 5284).
+        let room = CallRoom::new(self.budget.admit(call.class, 1, booking, deadline)?);
         let mut inputs = call
             .inputs
             .iter()
@@ -379,11 +384,12 @@ impl OrganHost {
         for (of, input) in lent {
             inputs.push(self.lend(&slot.spec, input, of)?);
         }
+        let frames = self.budget.room();
         let process = if how.fresh() {
             let memory = how.process_memory(&slot.spec);
-            slot.fresh_process(&self.config, Some(deadline), memory)?
+            slot.fresh_process(&self.config, &frames, Some(deadline), memory)?
         } else {
-            slot.process(&self.config, Some(deadline))?
+            slot.process(&self.config, &frames, Some(deadline))?
         };
         let _one_call = how.fresh().then(|| OneCall {
             slot: slot.as_ref(),
@@ -400,9 +406,16 @@ impl OrganHost {
         let queued = begun.elapsed();
         let sent_at = Instant::now();
         let inline_max = self.config.inline_max_bytes.min(INLINE_MAX_BYTES);
+        let revoked = || self.grant_revoked(&call.grant);
+        let context = AskContext {
+            vault,
+            room: &room,
+            revoked: &revoked,
+        };
         let mut asked = CallAsks::new(
             &slot.spec,
             asks,
+            context,
             &call.verb,
             &call.grant,
             deadline,
@@ -410,32 +423,42 @@ impl OrganHost {
         );
         let exchanged = self.exchange(&slot, &process, &call, &inputs, &mut asked, deadline);
         how.measured(&process);
-        let (reply, fds) = exchanged?;
-        let lent = asked.lent_bytes();
+        let (reply, fds, frame) = exchanged?;
+        asked.frame_received(frame.bytes());
+        measure_frames(vault, &slot.spec, asked.frames());
         // The lines also reach `asks` when `asked` drops, on every path.
         let asks = asked.receipts.clone();
         // A grant withdrawn while the organ worked voids its answer too.
-        if self.grant_revoked(&call.grant) {
+        if revoked() {
             return Err(HostError::Revoked);
         }
         let proposal = match reply {
             Outcome::Proposal(proposal) => proposal,
-            Outcome::Error(mut error) => {
-                error.detail = bound_text(&error.detail, MAX_DETAIL_BYTES);
+            Outcome::Error(error) => {
+                vault.measure_limit(EngineLimit::OrganDetailBytes, error.detail.len() as u64);
                 return Err(HostError::Organ(error));
             }
         };
         let reply = Replied {
             proposal,
             fds,
+            frame,
             queued,
             sent_at,
             deadline,
-            // Answers and outputs draw on the one booking.
-            max_output_bytes: slot.spec.max_output_bytes.min(booking.saturating_sub(lent)),
             asks,
+            budget: self.budget.memory_bytes(),
         };
-        finish(&call, &process, &inputs, reply, &mut permit)
+        let called = Called {
+            vault,
+            call: &call,
+            spec: &slot.spec,
+            process: &process,
+            inputs: &inputs,
+            room: &room,
+            revoked: &revoked,
+        };
+        finish(&called, reply)
     }
 
     fn exchange(
@@ -446,7 +469,7 @@ impl OrganHost {
         inputs: &[Resolved],
         asked: &mut CallAsks<'_>,
         deadline: Instant,
-    ) -> Result<(Outcome, Vec<OwnedFd>), HostError> {
+    ) -> Result<(Outcome, Vec<OwnedFd>, Lease), HostError> {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let (wire_inputs, fds) = wire_inputs(inputs);
         let wire = Call {
@@ -470,7 +493,7 @@ impl OrganHost {
             grace,
         };
         match process.call(wire, &fds, wait) {
-            Ok((reply, fds)) => Ok((reply.outcome, fds)),
+            Ok((reply, fds, frame)) => Ok((reply.outcome, fds, frame)),
             Err(CallFailure::Deadline { stopped }) => {
                 // An organ that took the cancel lives on, still tracked;
                 // only a killed one leaves its slot.
@@ -624,153 +647,19 @@ fn wire_inputs(inputs: &[Resolved]) -> (Vec<Input>, Vec<BorrowedFd<'_>>) {
     (wire, fds)
 }
 
-/// A reply as it came back, with what `finish` needs to check it.
-struct Replied {
-    proposal: Proposal,
-    fds: Vec<OwnedFd>,
-    queued: Duration,
-    sent_at: Instant,
-    deadline: Instant,
-    max_output_bytes: u64,
-    asks: Vec<AskReceipt>,
-}
-
-/// Checks a proposal, hashes its outputs and writes the receipt.
-fn finish(
-    call: &OrganCall,
-    process: &OrganProcess,
-    inputs: &[Resolved],
-    reply: Replied,
-    permit: &mut Permit,
-) -> Result<OrganOutcome, HostError> {
-    let Replied {
-        proposal,
-        fds,
-        queued,
-        sent_at,
-        deadline,
-        max_output_bytes,
-        asks,
-    } = reply;
-    if let (Some(base), Some(next)) = (&call.body, &proposal.body)
-        && base.kind != next.kind
-    {
-        return Err(HostError::ReplyInvalid(format!(
-            "a {} body came back as {}",
-            base.kind, next.kind
-        )));
+/// Measures the largest frames a call's process carried for it against
+/// the install grant's own frame sizes: thresholds, never refusals, under
+/// the wire's own `u32` length (Rule 5).
+fn measure_frames(vault: &Vault, spec: &OrganSpec, (sent, received): (u64, u64)) {
+    let rows = [
+        (EngineLimit::OrganCallFrameBytes, spec.max_call_frame, sent),
+        (
+            EngineLimit::OrganReplyFrameBytes,
+            spec.max_reply_frame,
+            received,
+        ),
+    ];
+    for (row, install, measured) in rows {
+        install_row(vault, row, u64::from(install), measured);
     }
-    let outputs = take_outputs(proposal.outputs, fds, max_output_bytes, deadline, permit)?;
-    let receipt = CallReceipt {
-        organ: process.hello.organ.clone(),
-        protocol: process.session,
-        verb: call.verb.clone(),
-        schema: call.schema,
-        args_digest: digest(&call.args),
-        inputs: inputs
-            .iter()
-            .map(|resolved| ReceiptInput {
-                artifact: resolved
-                    .input
-                    .map(|input| input.artifact.to_hex())
-                    .unwrap_or_default(),
-                version: resolved.input.map_or(0, |input| input.version),
-                content_hash: resolved.hash,
-                len: resolved.len,
-                lent: resolved.input.is_none(),
-            })
-            .collect(),
-        base_body: call.body.as_ref().map(digest),
-        result_body: proposal.body.as_ref().map(digest),
-        outputs: outputs
-            .iter()
-            .map(|output| ReceiptOutput {
-                name: output.name.clone(),
-                media_type: output.media_type.clone(),
-                content_hash: output.content_hash,
-                len: output.len() as u64,
-            })
-            .collect(),
-        notes: bound_notes(proposal.notes),
-        class: call.class,
-        grant: call.grant.clone(),
-        queue_us: u64::try_from(queued.as_micros()).unwrap_or(u64::MAX),
-        run_us: u64::try_from(sent_at.elapsed().as_micros()).unwrap_or(u64::MAX),
-        asks,
-    };
-    Ok(OrganOutcome {
-        body: proposal.body,
-        outputs,
-        report: proposal.report,
-        receipt,
-    })
-}
-
-/// Hashes in pieces, so a large output cannot run the call past its deadline.
-fn hash_until(bytes: &[u8], deadline: Instant) -> Result<Hash32, HostError> {
-    const PIECE: usize = 32 * 1024 * 1024;
-    let mut hasher = blake3::Hasher::new();
-    for piece in bytes.chunks(PIECE) {
-        if Instant::now() >= deadline {
-            return Err(HostError::DeadlineExceeded);
-        }
-        hasher.update(piece);
-    }
-    Ok(Hash32(*hasher.finalize().as_bytes()))
-}
-
-/// Maps and hashes the outputs. Region outputs must be sealed, and all
-/// outputs together stay within `max_output_bytes`, checked before each
-/// map. Their bytes keep that much of the call's booked memory until they
-/// drop, so outputs a caller holds on to stay counted.
-fn take_outputs(
-    outputs: Vec<Output>,
-    fds: Vec<OwnedFd>,
-    max_output_bytes: u64,
-    deadline: Instant,
-    permit: &mut Permit,
-) -> Result<Vec<OrganOutput>, HostError> {
-    if outputs.len() > MAX_FDS_PER_FRAME {
-        return Err(HostError::ReplyInvalid("more than 16 outputs".into()));
-    }
-    let mut slots: Vec<Option<OwnedFd>> = fds.into_iter().map(Some).collect();
-    let mut left = max_output_bytes;
-    outputs
-        .into_iter()
-        .map(|output| {
-            let bytes = match output.data {
-                Payload::Inline(bytes) => {
-                    left = left.checked_sub(bytes.len() as u64).ok_or_else(|| {
-                        HostError::ReplyInvalid("outputs past the output limit".into())
-                    })?;
-                    OutputBytes::Inline(bytes.into_vec())
-                }
-                Payload::Slot(slot) => {
-                    let fd = slots
-                        .get_mut(usize::from(slot))
-                        .and_then(Option::take)
-                        .ok_or_else(|| HostError::ReplyInvalid("output slot".into()))?;
-                    let region = MappedRegion::map_sealed(fd, left)
-                        .map_err(|err| HostError::ReplyInvalid(format!("output region: {err}")))?;
-                    left -= region.len() as u64;
-                    OutputBytes::Mapped(region)
-                }
-            };
-            let content_hash = match &bytes {
-                OutputBytes::Inline(inline) => hash_until(inline, deadline)?,
-                OutputBytes::Mapped(region) => hash_until(region, deadline)?,
-            };
-            let len = match &bytes {
-                OutputBytes::Inline(inline) => inline.len(),
-                OutputBytes::Mapped(region) => region.len(),
-            };
-            Ok(OrganOutput {
-                name: bound_text(&output.name, MAX_NAME_BYTES),
-                media_type: bound_text(&output.media_type, MAX_NAME_BYTES),
-                content_hash,
-                bytes,
-                _kept: Some(permit.keep(len as u64)),
-            })
-        })
-        .collect()
 }
