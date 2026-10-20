@@ -4087,6 +4087,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_consent_failure_signals_held(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.failure_signals_held", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_consent_revoke(
         &self,
         input: serde_json::Value,

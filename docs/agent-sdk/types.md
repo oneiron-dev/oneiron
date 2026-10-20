@@ -2464,6 +2464,8 @@ class Oneiron:
             """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
         def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
             """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
+        def failure_signals_held(self, spec: Facade.EmptyRequest | None = None) -> Facade.HeldFailureSignalBatchView | None:
+            """Read the carried failure-signal batch's exact content and approval digest as the owner."""
         def revoke(self, spec: Facade.RevokeGrantRequest) -> Facade.ConsentActReceipt:
             """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
         def bypass_grant_warning(self, spec: Facade.BypassGrantWarningRequest) -> Facade.BypassGrantWarningView:
