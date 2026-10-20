@@ -19698,7 +19698,7 @@
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2
      }
     },
@@ -43133,7 +43133,7 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 9,
       "struct": 3
@@ -54992,7 +54992,17 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/row_birth/actor_erase.rs",
+     "purpose": "An erased actor's births leave the window carriers (FIX 6279)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -65495,7 +65505,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 212,
+     "files": 213,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -65693,7 +65703,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4091,
+   "source_files": 4092,
    "test_files": 902
   },
   "oneiron-android": {
