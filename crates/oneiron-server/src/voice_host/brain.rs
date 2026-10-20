@@ -274,6 +274,10 @@ impl ChatBrain {
             payer.clone(),
         )?;
         let run = ai.model_runtime().funded_run(line, meter, funding.clone());
+        // Its permits and metered settlement carry the rows the input was
+        // read from (FIX 6935); unknown stays unknown.
+        let read = oneiron::skill_optimize::union_source_rows([said_from.as_deref()]);
+        let run = run.sourced(read);
         let stream = admitted
             .ladder
             .stream(&run, admitted.request, None)

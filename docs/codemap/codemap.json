@@ -36758,7 +36758,7 @@
      "path": "src/memory/lifted_view.rs",
      "purpose": "A lifted carrier's view as the bound actor reads it (OF-067, Engine ruling G2 = b)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -37106,7 +37106,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 4
      }
     },
@@ -79699,7 +79699,7 @@
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -80268,7 +80268,7 @@
      "path": "src/api/ai/chat/compaction.rs",
      "purpose": "A self agent's chat turn on its own live fork (FIX 4465 D)",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -80299,6 +80299,16 @@
      "purpose": "Whether a chat turn signals its caller's durable sitting (FIX 5564; Engine #1968: an anonymous off-record…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/ai/chat/sources.rs",
+     "purpose": "The rows a live chat turn's call is read from (FIX 6935), ids only, for its run's permits and metered…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -90758,7 +90768,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/server/recall_rerank.rs",
@@ -91706,7 +91716,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 482,
+     "files": 483,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -92156,7 +92166,7 @@
    },
    "over_bar": 53,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 964,
+   "source_files": 965,
    "test_files": 182
   },
   "oneiron-spawn": {
