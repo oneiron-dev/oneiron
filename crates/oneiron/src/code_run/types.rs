@@ -124,6 +124,10 @@ pub enum SelfCall {
     /// into a subproject, signed by the host's issuer. The lease, the skills,
     /// the TASK and the key are the host's.
     Leader(SelfLeaderCall),
+    /// `self.code.*` (FIX 6867): a leased agent run's own repo reads, import
+    /// and work, under its owner's Grant. The actor, lease, TASK and run come
+    /// from the host binding.
+    Repo(super::repo_calls::RepoRunCall),
 }
 
 impl SelfCall {
@@ -166,6 +170,7 @@ impl SelfCall {
             Self::Leader(_) => SelfEffect::Leader,
             Self::Team(_) | Self::TeamSubmit(_) => SelfEffect::Team,
             Self::WorkflowDispatch(_) => SelfEffect::WorkflowDispatch,
+            Self::Repo(call) => call.effect(),
         }
     }
 
@@ -261,6 +266,17 @@ pub enum SelfEffect {
     /// A saved workflow's run the leased agent binds to a TASK it owns,
     /// under its own lease (FIX 5316).
     WorkflowDispatch,
+    /// The run repo rows (FIX 6867), one effect a row: the leased run's
+    /// snapshot manifest, file and definitions reads, its own work's reads
+    /// and queue, its import and its work's open.
+    RepoSnapshotsGet,
+    RepoSnapshotsRead,
+    RepoSymbolsDefinitions,
+    RepoViewsGet,
+    RepoViewsRead,
+    RepoMergeQueueObserve,
+    RepoSnapshotsIngest,
+    RepoWorkOpen,
 }
 
 impl SelfEffect {
@@ -304,6 +320,14 @@ impl SelfEffect {
             Self::LeaderSplit => "self.leader.split",
             Self::Team => "self.team",
             Self::WorkflowDispatch => "self.workflows.dispatch_bound",
+            Self::RepoSnapshotsGet => "self.code.snapshots.get",
+            Self::RepoSnapshotsRead => "self.code.snapshots.read",
+            Self::RepoSymbolsDefinitions => "self.code.symbols.definitions",
+            Self::RepoViewsGet => "self.code.views.get",
+            Self::RepoViewsRead => "self.code.views.read",
+            Self::RepoMergeQueueObserve => "self.code.merge_queue.observe",
+            Self::RepoSnapshotsIngest => "self.code.snapshots.ingest",
+            Self::RepoWorkOpen => "self.code.work.open",
         }
     }
 
@@ -347,6 +371,14 @@ impl SelfEffect {
             Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
             Self::Leader | Self::LeaderSplit => None,
             Self::Team | Self::WorkflowDispatch => None,
+            Self::RepoSnapshotsGet
+            | Self::RepoSnapshotsRead
+            | Self::RepoSymbolsDefinitions
+            | Self::RepoViewsGet
+            | Self::RepoViewsRead
+            | Self::RepoMergeQueueObserve
+            | Self::RepoSnapshotsIngest
+            | Self::RepoWorkOpen => None,
         }
     }
 

@@ -136,6 +136,10 @@ fn config_digest(args: &RunArgs, models: &Models) -> Result<String, String> {
     if let Some(depth) = args.draft_depth {
         config["draft_depth"] = json!(depth);
     }
+    // So a resume never mixes solo and batched rows.
+    if args.solo {
+        config["solo"] = json!(true);
+    }
     let bytes = serde_json_canonicalizer::to_vec(&config)
         .map_err(|e| format!("encode the run config: {e}"))?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
@@ -408,6 +412,7 @@ impl Run<'_> {
             schema: args.schema,
             cache_bust: args.cache_bust,
             reasoning: arm.reasoning,
+            solo: args.solo,
         };
         let budget = BudgetGuard::new(
             "infer-bench-caller",
