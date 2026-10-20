@@ -512,8 +512,13 @@ impl GmailDelegatedAdapter {
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<DoorInjectionReceipt> {
         self.require_read_grant()?;
-        self.require_active_row_matches_adapter(vault, &identity_id)?;
-        vault.inject_secret_at_door(
+        // The row check and the token copy share one write transaction, so a
+        // release cannot commit between them (FIX 6011); the door drops it
+        // before `apply` runs.
+        let wtxn = vault.store.env.write_txn()?;
+        self.require_active_row_matches_adapter_in_txn(vault, &wtxn, &identity_id)?;
+        vault.inject_secret_at_door_in_txn(
+            wtxn,
             &self.config.custody_record_ref,
             GMAIL_CONNECTOR_EFFECTOR,
             apply,
@@ -632,20 +637,27 @@ impl GmailDelegatedAdapter {
         vault: &Vault,
         identity_id: &EntityId,
     ) -> Result<()> {
+        let txn = vault.store.env.read_txn()?;
+        self.require_active_row_matches_adapter_in_txn(vault, &txn, identity_id)
+    }
+
+    /// [`Self::require_active_row_matches_adapter`] in the caller's
+    /// transaction: the token door runs it under the write it copies in.
+    fn require_active_row_matches_adapter_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        identity_id: &EntityId,
+    ) -> Result<()> {
         // Channel, mailbox and state are the identity's facts, read from its
         // `channel_identity.*` heads (OF-272); the grant, its custody record
         // and its scopes are custody, held on the local row alone.
-        let txn = vault.store.env.read_txn()?;
         let identity = vault
-            .get_channel_identity_in_txn(&txn, identity_id)?
+            .get_channel_identity_in_txn(txn, identity_id)?
             .ok_or(Error::EntityNotFound)?;
-        let facts = crate::channel_identity::channel_identity_facts_in_txn(
-            &vault.store,
-            &txn,
-            identity_id,
-        )?
-        .ok_or(Error::EntityNotFound)?;
-        drop(txn);
+        let facts =
+            crate::channel_identity::channel_identity_facts_in_txn(&vault.store, txn, identity_id)?
+                .ok_or(Error::EntityNotFound)?;
         let Some(grant) = identity.grant() else {
             return Err(Error::InvalidConfig(
                 "gmail inbox poll requires a delegated_grant identity row".to_owned(),
