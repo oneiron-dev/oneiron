@@ -40,6 +40,15 @@ pub struct MintedT2 {
     pub positive_events: Vec<EntityId>,
     pub negative_events: Vec<EntityId>,
 }
+impl MintedT2 {
+    /// The seed's wording and the exact corpus, as a registration is keyed:
+    /// a pass that grades a configured `t2` with this T2 keys its windows by
+    /// it, so a new label grades them afresh.
+    #[must_use]
+    pub fn revision(&self) -> [u8; 32] {
+        minted_revision(self)
+    }
+}
 
 /// One family's registered T2: the exact reviewed corpus the host's pass asks
 /// with, and the closed-form T1 that retired it, if one reproduces every label.
@@ -65,6 +74,24 @@ pub struct MintedExample {
     pub event_id: EntityId,
     pub positive: bool,
     pub runs: Vec<RetrievalRunRecord>,
+}
+
+/// The entities a T2a centroid is labeled with (FIX 2078): every distinct
+/// one the live reviewed-positive examples' runs retrieved, never the
+/// diagnostics themselves. A window's label is a heuristic for its hits, not
+/// proof of one; the negatives stay T2b's examples. An id no entity can hold
+/// has no vector and labels nothing.
+pub(super) fn centroid_labels(examples: &[MintedExample]) -> Vec<EntityId> {
+    let mut labels: Vec<EntityId> = examples
+        .iter()
+        .filter(|example| example.positive)
+        .flat_map(|example| &example.runs)
+        .flat_map(|run| &run.result_ids)
+        .filter_map(|id| EntityId::from_bytes(*id).ok())
+        .collect();
+    labels.sort();
+    labels.dedup();
+    labels
 }
 
 /// Proof that a closed-form implementation reproduces the reviewed labels.
@@ -162,6 +189,24 @@ impl Vault {
         }
         stored_diagnostic_event(id, row.occurred, &row.body)
     }
+    /// A labeled diagnostic as corpus eligibility reads it (FIX 2482): `None`
+    /// when it is retired, missing, deleted, stale or archived, and its
+    /// immutable label stays for the audit. A row of another type, or a body
+    /// that does not decode, is still an error, never a retirement.
+    fn live_reviewed_diagnostic(&self, id: &EntityId) -> Result<Option<DiagnosticEvent>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(row) = self.store.port_entity_record(&txn, id)? else {
+            return Ok(None);
+        };
+        if row.entity_type != ENTITY_TYPE_DIAGNOSTIC {
+            return Err(Error::InvalidConfig("not a live diagnostic entity".into()));
+        }
+        let visibility = self.store.port_deletion_state(&txn, id)?;
+        if visibility.deleted || visibility.stale || visibility.archived {
+            return Ok(None);
+        }
+        stored_diagnostic_event(id, row.occurred, &row.body).map(Some)
+    }
     /// A model cannot label its own findings. The owner proof is rechecked in
     /// the transaction that writes the label, and the cited event must be a
     /// stored T3 telemetry diagnostic.
@@ -236,6 +281,8 @@ impl Vault {
     /// Mint a T2 classifier after N distinct owner-reviewed T3 positives and
     /// at least one negative; an unlabeled recurring model opinion is not training.
     /// An N past `limits.detector_consecutive` asks, and the mint waits for N.
+    /// A label whose diagnostic is retired leaves the corpus and keeps its
+    /// row (FIX 2482); a live one of another class still fails the mint.
     pub fn mint_t2(&self, policy: DetectorPolicy) -> Result<Option<MintedT2>> {
         policy.validate()?;
         let _ = self.measure_limit(EngineLimit::DetectorConsecutive, policy.consecutive as u64);
@@ -243,7 +290,9 @@ impl Vault {
         let mut positive_events = Vec::new();
         let mut negative_events = Vec::new();
         for label in labels {
-            let event = self.reviewed_diagnostic(&label.event_id)?;
+            let Some(event) = self.live_reviewed_diagnostic(&label.event_id)? else {
+                continue;
+            };
             if event.event_class != policy.class
                 || event.detector_id != format!("t3.{}", policy.family)
             {

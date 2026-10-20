@@ -56,7 +56,7 @@ pub(crate) mod blocked_reports;
 mod centroid_evidence;
 mod consent_detector;
 pub mod tripwires;
-pub use centroid_evidence::CentroidReplay;
+pub use centroid_evidence::{CentroidCorpus, CentroidReplay, DETECTOR_CENTROID_MIN_SIMILARITY};
 pub use consent_detector::ConsentDeniedDetector;
 
 pub mod detector_pass;
@@ -67,6 +67,8 @@ mod event;
 mod invariant_canonical;
 pub mod scheduled;
 pub mod served_signals;
+mod session_text;
+pub use session_text::{SessionLine, SessionText};
 mod sweep;
 pub use sweep::{TIER1_SWEEP_SCOPE, Tier1Sweep};
 pub(crate) mod tier1_source;
