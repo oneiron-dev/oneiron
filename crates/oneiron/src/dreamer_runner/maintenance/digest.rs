@@ -2,6 +2,9 @@
 //! A regular digest also carries the cleanup cron's after-notice (OF-449),
 //! the NOTE tombstone review's open proposals (OF-073) and the Dreamer's
 //! applied-maintenance after-notice (FIX 3226).
+//! Each digest is stored once, under a stable locator with a content hash
+//! (FIX 2332), and every read, answer and delivery of it is its viewer's
+//! own view, screened of private thread words they do not read (FIX 6411).
 use super::applied::{MaintenanceInverse, MaintenanceRevert};
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -11,7 +14,11 @@ use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Re
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod after_notice;
+mod private_sources;
+mod view;
 pub use after_notice::{APPLIED_GROUP, APPLIED_VIEW, DigestApplied, DigestAppliedItem};
+pub use private_sources::DigestPrivateSource;
+pub use view::ProactivityDigestView;
 const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
 const STATE: SideTable<(), DigestState, LegacyJson> =
@@ -143,6 +150,16 @@ pub struct DigestProposal {
     pub claim_ref: EntityId,
     pub revision: [u8; 32],
     pub summary: String,
+    /// The private thread turns its words were drawn from when its digest
+    /// was assembled (FIX 6411): a viewer reads it only while it reads each
+    /// one, whatever its claim's ancestry says later. Empty for words off
+    /// every private thread.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub private_sources: Vec<DigestPrivateSource>,
+    /// A private source its ancestry declared did not resolve when its
+    /// digest was assembled: no view carries it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unverified: bool,
 }
 /// One pending training offer the digest carries to the owner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,7 +225,15 @@ impl DigestNoteTombstones {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProactivityDigest {
+    /// The stable locator the digest is stored under, and that its
+    /// notifications and the board pointer name (FIX 2332): the hash of the
+    /// digest as assembled, chosen once. It is not a hash of what the digest
+    /// shows; [`Self::content_hash`] checks that.
     pub id: [u8; 32],
+    /// BLAKE3 of the digest as stored, after the side-row wall masked it:
+    /// its locator and every other field but this one (FIX 2332). Every read
+    /// checks it.
+    pub content_hash: [u8; 32],
     pub created_at: u64,
     /// The authenticated reader the asks are addressed to; `None` for the
     /// ownerless timer projection, which carries no asks.
@@ -238,6 +263,9 @@ pub struct ProactivityDigest {
     pub health_cards: Vec<super::agent_health::ConcernCardSummary>,
     pub rendered: String,
     pub voice_style: String,
+    /// The presentation the digest was rendered under, which a viewer's
+    /// view rebuilds its text with (FIX 6411).
+    pub presentation: ProactivityPresentation,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -452,13 +480,19 @@ impl Vault {
     /// Builds a display projection only. Pending decisions remain pending.
     /// The urgent assessment comes from the host, but must name a live,
     /// approved intent whose deadline is before the next cadence boundary.
+    /// The answer is the recipient's own view of the digest (FIX 6411).
     pub fn proactivity_digest(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         now: u64,
         urgent: Option<&UrgentDigestWake>,
-    ) -> Result<Option<ProactivityDigest>> {
-        self.assemble_proactivity_digest(Some(owner), now, urgent)
+    ) -> Result<Option<ProactivityDigestView>> {
+        let Some(digest) = self.assemble_proactivity_digest(Some(owner), now, urgent)? else {
+            return Ok(None);
+        };
+        let viewer = digest.recipient.ok_or_else(invalid)?;
+        let txn = self.store.env.read_txn()?;
+        Ok(Some(view::digest_view_for_in(self, &txn, &digest, viewer)))
     }
 
     fn assemble_proactivity_digest(
@@ -517,8 +551,22 @@ impl Vault {
                 return Ok(None);
             }
             let mut groups: BTreeMap<String, Vec<DigestProposal>> = BTreeMap::new();
-            for (group, proposal) in pending_proposals(self, txn, authority, &state, &cadence)? {
+            for (group, mut proposal) in pending_proposals(self, txn, authority, &state, &cadence)?
+            {
                 if !due && (!breakthrough || !presentation.urgent_groups.contains(&group)) {
+                    continue;
+                }
+                // FIX 6411: the private thread turns its words come from are
+                // pinned on it. A recipient's own digest carries only what
+                // they read; the rest stays unseen for the timer digest,
+                // which every owner reads screened.
+                match private_sources::digest_private_sources_in(self, txn, proposal.claim_ref) {
+                    Some(pins) => proposal.private_sources = pins,
+                    None => proposal.unverified = true,
+                }
+                if let Some(actor) = recipient
+                    && !private_sources::digest_item_readable_by_in(self, txn, &proposal, actor)
+                {
                     continue;
                 }
                 let display_group = presentation
@@ -584,98 +632,35 @@ impl Vault {
             {
                 return Ok(None);
             }
-            let mut rendered = String::new();
-            for (group, proposals) in &mut groups {
+            // What this digest carries is marked seen; its text follows,
+            // under the presentation it keeps.
+            for proposals in groups.values_mut() {
                 proposals.sort_by_key(|p| p.claim_ref);
-                rendered.push_str(&presentation.group_template.replace("{group}", group));
-                for proposal in proposals {
-                    rendered.push_str(
-                        &presentation
-                            .item_template
-                            .replace("{summary}", &proposal.summary)
-                            .replace("{ref}", &proposal.claim_ref.to_hex()),
-                    );
+                for proposal in proposals.iter() {
                     state
                         .seen
                         .insert(proposal.claim_ref.to_hex(), proposal.revision);
                 }
             }
-            if !offers.is_empty() {
-                let group = presentation
-                    .group_aliases
-                    .get(TRAINING_OFFER_GROUP)
-                    .map_or(TRAINING_OFFER_GROUP, String::as_str);
-                rendered.push_str(&presentation.group_template.replace("{group}", group));
-                for offer in &offers {
-                    rendered.push_str(
-                        &presentation
-                            .item_template
-                            .replace("{summary}", &offer.summary)
-                            .replace("{ref}", &offer.offer.to_hex()),
-                    );
-                    state.offers_seen.insert(offer.offer.to_hex());
-                }
-            }
+            state
+                .offers_seen
+                .extend(offers.iter().map(|offer| offer.offer.to_hex()));
             if let Some(line) = &cleanup {
-                let group = presentation
-                    .group_aliases
-                    .get(CLEANUP_GROUP)
-                    .map_or(CLEANUP_GROUP, String::as_str);
-                rendered.push_str(&presentation.group_template.replace("{group}", group));
-                for summary in line.summaries() {
-                    rendered.push_str(
-                        &presentation
-                            .item_template
-                            .replace("{summary}", &summary)
-                            .replace("{ref}", &line.view),
-                    );
-                }
                 state.cleanup_seen.extend(line.decisions.iter().cloned());
                 state.cleanup_seen.extend(line.proposals.iter().cloned());
             }
             if let Some(line) = &note_tombstones {
-                let group = presentation
-                    .group_aliases
-                    .get(NOTE_TOMBSTONE_GROUP)
-                    .map_or(NOTE_TOMBSTONE_GROUP, String::as_str);
-                rendered.push_str(&presentation.group_template.replace("{group}", group));
-                rendered.push_str(
-                    &presentation
-                        .item_template
-                        .replace("{summary}", &line.summary())
-                        .replace("{ref}", &line.view),
-                );
                 state
                     .note_tombstones_seen
                     .extend(line.proposals.iter().cloned());
             }
             if let Some(line) = &applied {
-                line.render(&presentation, &mut rendered);
                 line.mark_seen(&mut state.applied_seen);
-            }
-            if !health_cards.is_empty() {
-                let facet = super::agent_health::COACH_AGENT_HEALTH_FACET;
-                let group = presentation
-                    .group_aliases
-                    .get(facet)
-                    .map_or(facet, String::as_str);
-                rendered.push_str(&presentation.group_template.replace("{group}", group));
-                for card in &health_cards {
-                    let summary = format!(
-                        "{facet}: {} {} {} on {}",
-                        card.signal, card.tone, card.outcome, card.agent
-                    );
-                    rendered.push_str(
-                        &presentation
-                            .item_template
-                            .replace("{summary}", &summary)
-                            .replace("{ref}", &card.card),
-                    );
-                }
             }
             let is_urgent = !due && breakthrough && !groups.is_empty();
             let mut digest = ProactivityDigest {
                 id: [0; 32],
+                content_hash: [0; 32],
                 created_at: now,
                 recipient,
                 urgent: is_urgent,
@@ -687,15 +672,22 @@ impl Vault {
                 note_tombstones,
                 applied,
                 health_cards,
-                rendered,
-                voice_style: presentation.voice_style,
+                rendered: String::new(),
+                voice_style: presentation.voice_style.clone(),
+                presentation,
             };
-            // OF-067: the id hashes the digest as the side-row wall stores it, so the wall
-            // reads it first, under the id of the digest as rendered.
-            let rendered_id = digest_id(&digest)?;
-            DIGEST.admit(self, txn, &rendered_id, &mut digest)?;
-            digest.id = digest_id(&digest)?;
-            DIGEST.put(&self.store, txn, &digest.id, &digest)?;
+            let rendered = view::render(&digest, &digest.groups);
+            digest.rendered = rendered;
+            // FIX 2332 (OF-067): the id is the digest's stable locator, the
+            // hash of the digest as assembled. The side-row wall admits it
+            // under that id and the table stores it under the same one, so a
+            // mask's origin names the row it masked; the content hash, over
+            // the digest as admitted, is its integrity check.
+            let locator = view::digest_id(&digest)?;
+            digest.id = locator;
+            DIGEST.admit(self, txn, &locator, &mut digest)?;
+            digest.content_hash = view::content_hash(&digest)?;
+            DIGEST.put(&self.store, txn, &locator, &digest)?;
             // Delivery is the reader's inbox, in this same write: one
             // NOTIFICATION per reader, keyed by digest, whose seen and acked
             // marks are the reader's own and never this digest's `seen`. The
@@ -706,6 +698,12 @@ impl Vault {
                 None => crate::policy_model::owners_in_txn(self, &*txn)?,
             };
             for reader in readers {
+                // FIX 6411: each reader is told of the digest as they read
+                // it, and one whose view carries nothing is not told: a
+                // shared timer digest is no shared authorization.
+                if view::digest_view_for_in(self, txn, &digest, reader).is_empty() {
+                    continue;
+                }
                 self.record_notification_in_txn(
                     txn,
                     &crate::inbox::NotificationEvent {
@@ -766,57 +764,28 @@ impl Vault {
         })
     }
 
-    /// The latest scheduled or urgent output for the host's inbox/board read
-    /// plane (`GET /v1/owner/proactivity/digest`). The ID still verifies the
-    /// persisted digest on every read.
+    /// The latest digest as stored, verified and unscreened: the canonical
+    /// object, for a test. A person reads
+    /// [`Vault::latest_proactivity_digest_view`].
+    #[cfg(any(test, feature = "test-support"))]
     pub fn latest_proactivity_digest(&self) -> Result<Option<ProactivityDigest>> {
-        let id = {
-            let txn = self.store.env.read_txn()?;
-            load_state(self, &txn)?.last_digest_id
+        let txn = self.store.env.read_txn()?;
+        let Some(id) = load_state(self, &txn)?.last_digest_id else {
+            return Ok(None);
         };
-        id.map(|id| self.read_proactivity_digest(id))
-            .transpose()
-            .map(Option::flatten)
+        view::read_digest_in(self, &txn, id)
     }
 
+    /// One digest as stored, verified by its locator and its content hash
+    /// (FIX 2332) and unscreened: the canonical object, for a test. A person
+    /// reads [`Vault::proactivity_digest_view`].
+    #[cfg(any(test, feature = "test-support"))]
     pub fn read_proactivity_digest(&self, id: [u8; 32]) -> Result<Option<ProactivityDigest>> {
         let txn = self.store.env.read_txn()?;
-        DIGEST
-            .get(&self.store, &txn, &id)?
-            .map(|digest| {
-                if digest.id != id || digest_id(&digest)? != id {
-                    return Err(invalid());
-                }
-                Ok(digest)
-            })
-            .transpose()
+        view::read_digest_in(self, &txn, id)
     }
 }
 
-/// The id a digest is stored under: the hash of what it shows. One with no
-/// applied-maintenance line hashes as before it had one, so a digest stored
-/// earlier still verifies.
-fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
-    let shown = (
-        digest.created_at,
-        digest.recipient,
-        &digest.groups,
-        &digest.judge_asks,
-        &digest.eval_label_asks,
-        &digest.offers,
-        &digest.cleanup,
-        &digest.note_tombstones,
-        digest.urgent,
-        &digest.rendered,
-        &digest.voice_style,
-    );
-    let identity = match &digest.applied {
-        None => serde_json::to_vec(&shown),
-        Some(applied) => serde_json::to_vec(&(shown, applied)),
-    }
-    .map_err(|_| invalid())?;
-    Ok(*blake3::hash(&identity).as_bytes())
-}
 #[cfg(test)]
 mod tests;
 
@@ -975,6 +944,8 @@ fn pending_proposals(
                 claim_ref: id,
                 revision,
                 summary: format!("{}: {}", body.predicate, body.value),
+                private_sources: Vec::new(),
+                unverified: false,
             },
         ));
     }

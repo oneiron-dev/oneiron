@@ -38,7 +38,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixSettled, MAX_CODE_FIX_WORK};
-use oneiron::dreamer_runner::maintenance::digest::ProactivityDigest;
+use oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView;
 use oneiron::dreamer_runner::maintenance::identity::{
     IdentityAskView, IdentityCardCopy, IdentitySettled,
 };
@@ -127,15 +127,18 @@ struct DigestQuery {
 
 #[derive(Debug, Serialize)]
 struct DigestView {
+    /// The digest's stable locator (FIX 2332), as 64 hex: what its inbox
+    /// NOTIFICATION names. Not a hash of what this reply shows.
     id: String,
     /// Each of the digest's `judge_asks`, by id as 64 hex and in order: a
     /// pick names one.
     judge_ask_ids: Vec<String>,
-    digest: ProactivityDigest,
+    /// The digest as the caller reads it (FIX 6411).
+    digest: ProactivityDigestView,
 }
 
 impl DigestView {
-    fn new(digest: ProactivityDigest) -> Self {
+    fn new(digest: ProactivityDigestView) -> Self {
         Self {
             id: hex_id(&digest.id),
             judge_ask_ids: digest
@@ -149,22 +152,23 @@ impl DigestView {
 }
 
 /// `GET /v1/owner/proactivity/digest`: one delivered digest, verified
-/// against its id.
+/// against its id, as the caller reads it: less each proposal drawn from
+/// private thread words they do not read (FIX 6411).
 async fn read_digest(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<DigestQuery>, QueryRejection>,
 ) -> OwnerReply<Option<DigestView>> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
     let view = blocking(move || -> OwnerResult<Option<DigestView>> {
         let vault = server.vault();
         let digest = match query.id.as_deref() {
-            None => vault.latest_proactivity_digest()?,
+            None => vault.latest_proactivity_digest_view(&owner)?,
             Some(hex) => {
                 let id = digest_id(hex)
                     .ok_or_else(|| OwnerError::Invalid("id must be a 64-hex digest id".into()))?;
-                vault.read_proactivity_digest(id)?
+                vault.proactivity_digest_view(&owner, id)?
             }
         };
         Ok(digest.map(DigestView::new))
@@ -176,7 +180,8 @@ async fn read_digest(
 /// `POST /v1/owner/proactivity/digest/assemble`: the caller's own digest,
 /// assembled now: what a due regular digest carries, and once a cadence
 /// period the judge calibration asks their funded minutes buy, which no
-/// other digest delivers. `null` when nothing is due.
+/// other digest delivers, as the caller reads it (FIX 6411). `null` when
+/// nothing is due.
 async fn assemble_digest(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

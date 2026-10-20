@@ -88,6 +88,16 @@ impl HostSelfDispatcher<'_> {
             // A bound workflow run queues canonical attempts and takes a
             // canonical TASK.
             | SelfEffect::WorkflowDispatch
+            // The run repo rows read and write canonical repo rows under the
+            // run's lease: none copies a room's content to base (FIX 6867).
+            | SelfEffect::RepoSnapshotsGet
+            | SelfEffect::RepoSnapshotsRead
+            | SelfEffect::RepoSymbolsDefinitions
+            | SelfEffect::RepoViewsGet
+            | SelfEffect::RepoViewsRead
+            | SelfEffect::RepoMergeQueueObserve
+            | SelfEffect::RepoSnapshotsIngest
+            | SelfEffect::RepoWorkOpen
             | SelfEffect::TaskDelegate => {
                 Err(Error::OffRecord(OffRecordError::OffRecordTalkOnly {
                     session_ref: self.storage.session_ref().unwrap_or_default().to_owned(),
