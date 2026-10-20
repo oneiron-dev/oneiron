@@ -295,7 +295,7 @@ fn holds_message_doc_map(doc: &LoroDoc) -> bool {
 /// floor no newer than its own, is passed over before its parts are joined;
 /// one whose parts or message have not landed waits for them.
 fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, Vec<u8>)>) {
-    let mut merged = 0_usize;
+    let mut merged = Vec::new();
     for (map_key, bytes) in heads {
         let (carried, message) = match decode(&bytes) {
             Ok((carried, message)) if message.to_hex() == map_key => (carried, message),
@@ -326,7 +326,7 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             vault.merge_carried_message_document_in_txn(txn, &carried.head, &snapshot)
         });
         match outcome {
-            Ok(DocumentMerge::Written) => merged += 1,
+            Ok(DocumentMerge::Written) => merged.push(message),
             Ok(DocumentMerge::Held) => {}
             Ok(DocumentMerge::Waiting) => {
                 tracing::debug!(window, key = %map_key, "message document waits for its message");
@@ -353,8 +353,11 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             }
         }
     }
-    if merged > 0 {
-        tracing::debug!(window, merged, "message documents merged");
+    if !merged.is_empty() {
+        tracing::debug!(window, merged = merged.len(), "message documents merged");
+        // A ready document can prove a `regenerates` link owed on its
+        // message (FIX 6204).
+        crate::sync::bridge::wake_regenerates_after_document(vault, &merged);
     }
 }
 

@@ -32,7 +32,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
             Written,
             Unchanged,
             Deferred,
-            // Deferred under a replay marker its source still owes (FIX 5972).
+            // Owed in the exact `regenerates` ledger (FIX 6204), not under
+            // its source's replay marker.
             Waiting,
             Quarantined,
         }
@@ -267,15 +268,9 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                     } else if kind == crate::edge::EdgeKind::ChildOf {
                         bridge::defer_child_of(vault, wtxn, window_key.as_str(), &src, &tgt, buf)?;
                     } else if kind == crate::edge::EdgeKind::Regenerates {
-                        // Endpoint arrival wakes no `regenerates` link: a
-                        // later pass replays it. A missing source keeps its
-                        // own entity outcome, which may settle the marker.
-                        quarantine::set_replay_remat_marker_in_txn(
-                            vault,
-                            wtxn,
-                            window_key.as_str(),
-                            &src,
-                        )?;
+                        // Endpoint arrival wakes the owed link (FIX 6204). A
+                        // missing source keeps its own entity outcome.
+                        bridge::owe_regenerates(vault, wtxn, window_key.as_str(), &src, &tgt, buf)?;
                         if src_exists {
                             return Ok(EdgeRematOutcome::Waiting);
                         }
@@ -407,6 +402,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 {
                     if kind == crate::edge::EdgeKind::ChildOf {
                         bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                    } else if kind == crate::edge::EdgeKind::Regenerates {
+                        bridge::settle_regenerates(vault, wtxn, window_key.as_str(), &src, &tgt)?;
                     }
                     return Ok(EdgeRematOutcome::Unchanged);
                 }
@@ -430,13 +427,24 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                                         && edge.value == buf
                                 })
                             }) => {}
-                        crate::edge::Regeneration::Erased => return Ok(EdgeRematOutcome::Deferred),
-                        crate::edge::Regeneration::Pending => {
-                            quarantine::set_replay_remat_marker_in_txn(
+                        crate::edge::Regeneration::Erased => {
+                            bridge::settle_regenerates(
                                 vault,
                                 wtxn,
                                 window_key.as_str(),
                                 &src,
+                                &tgt,
+                            )?;
+                            return Ok(EdgeRematOutcome::Deferred);
+                        }
+                        crate::edge::Regeneration::Pending => {
+                            bridge::owe_regenerates(
+                                vault,
+                                wtxn,
+                                window_key.as_str(),
+                                &src,
+                                &tgt,
+                                buf,
                             )?;
                             return Ok(EdgeRematOutcome::Waiting);
                         }
@@ -449,6 +457,13 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                                 key,
                                 &crate::edge::reserved_regenerates(),
                                 buf,
+                            )?;
+                            bridge::settle_regenerates(
+                                vault,
+                                wtxn,
+                                window_key.as_str(),
+                                &src,
+                                &tgt,
                             )?;
                             return Ok(EdgeRematOutcome::Quarantined);
                         }
@@ -471,6 +486,8 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                 }
                 if kind == crate::edge::EdgeKind::ChildOf {
                     bridge::settle_child_of(vault, wtxn, window_key.as_str(), &src, &tgt)?;
+                } else if kind == crate::edge::EdgeKind::Regenerates {
+                    bridge::settle_regenerates(vault, wtxn, window_key.as_str(), &src, &tgt)?;
                 }
                 Ok(EdgeRematOutcome::Written)
             });
@@ -494,11 +511,10 @@ pub(super) fn run(ctx: &RematCtx<'_>, ledger: &mut RematLedger) -> Result<()> {
                         "forward remat: edge deferred — endpoint absent"
                     );
                 }
-                // No other outcome at its source in this pass may discharge
-                // the marker it waits under.
-                Ok(EdgeRematOutcome::Waiting) => {
-                    ledger.pending_entity_dependencies.insert(src);
-                }
+                // Its wait moved into the ledger, so a replay-origin marker
+                // its source holds clears as a terminal quarantine's does:
+                // only with no other work of the source pending (FIX 6204).
+                Ok(EdgeRematOutcome::Waiting) => terminal_quarantines.push(src),
                 Ok(EdgeRematOutcome::Quarantined) => {
                     // The reserved-kind rejection and its durable evidence
                     // committed in the edge txn above. Keep iterating: one
