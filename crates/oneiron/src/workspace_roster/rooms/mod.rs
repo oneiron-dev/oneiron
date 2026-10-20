@@ -372,6 +372,26 @@ fn project_room_of(
     Ok(None)
 }
 
+/// The windows `actor`'s own seat in `room` reads by, in the caller's
+/// snapshot (FIX 5861): `None` when `actor` is not on the room's roster, or
+/// when the room's ledger keeps no window for it (a derived roster), which
+/// reads the room whole as a person's own does. Never another actor's.
+pub(crate) fn own_room_windows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    actor: EntityId,
+) -> Result<Option<Vec<crate::conversation::MembershipWindow>>> {
+    if !vault
+        .room_audience_members_in_txn(txn, room)?
+        .contains(&actor)
+    {
+        return Ok(None);
+    }
+    let windows = vault.windows_in_txn(txn, room, actor)?;
+    Ok((!windows.is_empty()).then_some(windows))
+}
+
 impl Vault {
     /// Resolve the audience of a room from its owning substrate. Project home
     /// rooms derive membership from the PROJECT roster, not from the ordinary
