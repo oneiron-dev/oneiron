@@ -228,6 +228,21 @@ impl Vault {
         self.custody_status_of(self.store.custody_publication()?)
     }
 
+    /// What an activation reports about the custody it forked (FIX 6033),
+    /// from its publication status, as a restore reports its landing's:
+    /// rollback is not proven while no anchor is configured. A status that
+    /// cannot be read is logged and left out; it never fails the
+    /// activation it rides on.
+    pub(super) fn activation_custody_note(&self) -> Option<String> {
+        match self.store.custody_publication() {
+            Ok(publication) => status::rollback_note(&publication).map(str::to_owned),
+            Err(error) => {
+                tracing::warn!(kind = ?error.kind(), "an activation's custody note could not be read");
+                None
+            }
+        }
+    }
+
     fn custody_status_of(&self, publication: Publication) -> Result<CustodyStatus> {
         let standing = standing_retirements_in_txn(&self.store, &self.store.env.read_txn()?)?;
         let retirement =

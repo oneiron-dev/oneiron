@@ -189,6 +189,12 @@ impl Vault {
             databases.insert(entry.name.into(), rows);
         }
         drop(txn);
+        // A response binding whose row holds no response now names nothing
+        // the image carries: it stays out (KS-2B1).
+        let stale = census.stale();
+        if let Some(rows) = databases.get_mut("vault_meta") {
+            rows.retain(|(key, _)| !stale.contains(key));
+        }
         // Two rows may name one file: it is carried once. Body files are
         // immutable once named, so the ones the snapshot's rows name read the
         // same after its transaction. Each is sealed into the artifact after

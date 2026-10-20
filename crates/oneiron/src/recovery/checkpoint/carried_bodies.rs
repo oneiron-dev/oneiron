@@ -30,6 +30,7 @@ use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
 use super::artifact::{ArtifactBody, SealedBodies};
+use super::response_rows::{self, Noted, ResponseCensus};
 use super::write_budget::{RestoreRoom, landing_len};
 use super::{CheckpointImage, codec_error};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -63,6 +64,13 @@ pub(super) struct CarriedInline {
     pub(super) digest: [u8; 32],
     pub(super) len: u64,
     pub(super) stored_len: u64,
+    /// A row-held response's (KS-2B1): its row travels as its family's
+    /// stub, whose first `keep` bytes the body follows under a live
+    /// instance, and of which a retired instance's row keeps this many, its
+    /// erased disposition. `None` for an inline body, whose row travels as
+    /// its first `keep` bytes alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) retired: Option<u32>,
 }
 
 /// Whether the bodies `image` names are the streams its artifact's manifest
@@ -107,6 +115,9 @@ pub(super) enum Unbound {
     Result([u8; 32], u64),
     /// A plain vault's body file, `len` bytes long.
     File([u8; 32], u64),
+    /// A row-held response with no instance bound to its bytes, by its
+    /// carrier (KS-2B1).
+    Response(Vec<u8>),
 }
 
 /// What a snapshot's rows name of the bodies beside and inside them,
@@ -118,6 +129,9 @@ pub(super) struct BodyCensus {
     inline: Vec<(CarriedInline, Vec<u8>)>,
     /// Inline bodies with no instance bound yet.
     unbound: Vec<Unbound>,
+    /// The row-held responses the rows hold, and the bindings read
+    /// (KS-2B1).
+    responses: ResponseCensus,
 }
 
 impl BodyCensus {
@@ -137,6 +151,20 @@ impl BodyCensus {
         key: &[u8],
         value: &[u8],
     ) -> Result<Option<Vec<u8>>> {
+        match self.responses.note(store, txn, database, key, value)? {
+            Noted::Not => {}
+            Noted::Unbound => return Ok(None),
+            Noted::Bound {
+                carriage,
+                instance,
+                digest,
+            } => {
+                let (carried, body, stub) =
+                    response_rows::carry(database, key, value, (carriage, instance, digest))?;
+                self.inline.push((carried, body));
+                return Ok(Some(stub));
+            }
+        }
         match database {
             "vault_meta" => {
                 if let Some(body) = crate::code_run::code_run_body_file_of_row(key, value) {
@@ -208,6 +236,7 @@ impl BodyCensus {
                 digest: *blake3::hash(body).as_bytes(),
                 len: body.len() as u64,
                 stored_len: 0,
+                retired: None,
             },
             body.to_vec(),
         ));
@@ -224,6 +253,13 @@ impl BodyCensus {
     /// row.
     pub(super) fn unbound(&self, store: &Store) -> Result<Vec<Unbound>> {
         let mut unbound = self.unbound.clone();
+        unbound.extend(
+            self.responses
+                .unbound()
+                .iter()
+                .cloned()
+                .map(Unbound::Response),
+        );
         let sealed = store.dir_seal(crate::store::KeyScope::Vault).is_some();
         for (digest, len) in &self.bodies {
             if self.keys.get(digest).is_none_or(|row| row.inline) {
@@ -234,6 +270,12 @@ impl BodyCensus {
             }
         }
         Ok(unbound)
+    }
+
+    /// The full key of each response binding whose row holds no response
+    /// now (KS-2B1): the image leaves it out, the binding pass drops it.
+    pub(super) fn stale(&self) -> BTreeSet<Vec<u8>> {
+        self.responses.stale()
     }
 
     /// The bodies to carry, each once, with its envelope's facts; `None`
@@ -430,6 +472,8 @@ pub(super) fn require(
     }
     let retired = require_body_instances(&named, plan)?;
     prune_retired_bodies_in_rows(rows, &retired)?;
+    // A retired response's row keeps its erased disposition (KS-2B1).
+    response_rows::retire_carried(image, &retired)?;
     Ok(retired)
 }
 
@@ -509,13 +553,14 @@ pub(super) fn restore(
             .databases
             .get_mut(&carried.database)
             .ok_or_else(codec_error)?;
-        let at = rows
-            .binary_search_by(|(key, _)| key.as_slice().cmp(&carried.key))
-            .map_err(|_| codec_error())?;
-        let value = &mut rows[at].1;
-        if value.len() != carried.keep as usize {
+        let value = response_rows::row_mut(rows, &carried.key)?;
+        let keep = carried.keep as usize;
+        // An inline body's row is its first bytes alone; a response's is its
+        // stub, whose first bytes the exact body follows (KS-2B1).
+        if value.len() < keep || (carried.retired.is_none() && value.len() != keep) {
             return Err(codec_error());
         }
+        value.truncate(keep);
         value.extend_from_slice(&body);
     }
     Ok(())

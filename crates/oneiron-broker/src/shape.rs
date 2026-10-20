@@ -362,8 +362,8 @@ impl Shape {
 
     /// Whether the reply streams back in chunks, up to [`crate::MAX_STREAM`]
     /// bytes, instead of one buffered body up to [`crate::MAX_BODY`]. A
-    /// streamed body is a binary one: it is checked for the key and passed
-    /// unchanged, or cut, never stripped.
+    /// streamed body is a binary one: each form of the key in it is redacted
+    /// at its bytes as the chunks pass, and it is never cut for one (FIX 6103).
     #[must_use]
     pub const fn streams(self) -> bool {
         self.row().streams

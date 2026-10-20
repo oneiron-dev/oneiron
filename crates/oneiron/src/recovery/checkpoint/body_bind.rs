@@ -3,19 +3,24 @@
 //!
 //! An inline body (an ASSET entity's row body, an inline result) takes its
 //! instance the first time a checkpoint carries it, and a plain vault's file
-//! written before it had one takes it the same way. The pass reads the rows
-//! in one read transaction, mints each missing instance outside any writer
-//! (a Mint is a synced journal frame), then binds them in one short write
-//! transaction that only writes rows, each rechecked there: one bound since,
-//! or whose body has gone, is left as debris. So no image ever holds a body
-//! sealed under an instance its owner's erase cannot find: the binding
+//! written before it had one takes it the same way; so does a row-held
+//! response, each time its bytes change (KS-2B1), with an obligation for
+//! each owner its stamps name. The pass reads the rows in one read
+//! transaction, mints each missing instance outside any writer (a Mint is a
+//! synced journal frame), then binds them in one short write transaction
+//! that only writes rows, each rechecked there: one bound since, or whose
+//! body has gone, is left as debris. A response binding whose row holds no
+//! response now is dropped there, every key kept. So no image ever holds a
+//! body sealed under an instance its owner's erase cannot find: the binding
 //! commits before any snapshot that carries it opens.
+
+use std::collections::BTreeSet;
 
 use heed::RoTxn;
 use heed::types::Bytes;
 
 use super::carried_bodies::{BodyCensus, Unbound, inline_asset};
-use super::{StorageTier, storage_tier};
+use super::{StorageTier, response_rows, storage_tier};
 use crate::store::{BODY_KEYS, BodyKeyRow, INLINE_ASSETS, Store, pin_body_custody_in_txn};
 use crate::{Error, Result, Vault};
 
@@ -30,32 +35,37 @@ impl Vault {
     ///
     /// Storage and custody errors; an archived vault, which mints nothing.
     pub(super) fn bind_carried_bodies(&self) -> Result<()> {
-        let unbound = {
+        let (unbound, stale) = {
             let txn = self.store.env.read_txn()?;
             unbound_in_txn(&self.store, &txn)?
         };
-        if unbound.is_empty() {
+        if unbound.is_empty() && stale.is_empty() {
             return Ok(());
         }
-        let mint = self.store.body_mint()?;
         let mut minted = Vec::with_capacity(unbound.len());
-        for body in unbound {
-            let instance = *mint.mint()?.instance();
-            minted.push((body, instance));
+        if !unbound.is_empty() {
+            let mint = self.store.body_mint()?;
+            for body in unbound {
+                let instance = *mint.mint()?.instance();
+                minted.push((body, instance));
+            }
         }
         self.with_write_txn(|txn| {
-            pin_body_custody_in_txn(&self.store, txn)?;
+            if !minted.is_empty() {
+                pin_body_custody_in_txn(&self.store, txn)?;
+            }
             for (body, instance) in &minted {
                 bind_in_txn(self, txn, body, *instance)?;
             }
-            Ok(())
+            response_rows::release_stale_in_txn(&self.store, txn, &stale)
         })
     }
 }
 
 /// Every body the rows in `txn` name that a checkpoint carries with no
-/// instance bound: the census a snapshot takes, read here first.
-fn unbound_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<Unbound>> {
+/// instance bound, and every response binding whose row holds no response:
+/// the census a snapshot takes, read here first.
+fn unbound_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<(Vec<Unbound>, BTreeSet<Vec<u8>>)> {
     let mut census = BodyCensus::default();
     for name in BODY_DATABASES {
         let db = store
@@ -69,7 +79,7 @@ fn unbound_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<Unbound>> {
             }
         }
     }
-    census.unbound(store)
+    Ok((census.unbound(store)?, census.stale()))
 }
 
 /// Binds `instance` to `body` in `txn`, unless one was bound since or the
@@ -121,6 +131,7 @@ fn bind_in_txn(
                 )?;
             }
         }
+        Unbound::Response(carrier) => response_rows::bind_in_txn(store, txn, carrier, instance)?,
     }
     Ok(())
 }

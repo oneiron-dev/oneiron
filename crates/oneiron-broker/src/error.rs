@@ -83,8 +83,9 @@ pub enum Failure {
     /// after the one redirect it follows.
     #[error("reply redirected where the shape does not follow")]
     Redirect,
-    /// A streamed reply holds a form of the key, or a run too long to rule
-    /// one out. A binary body is cut, never rewritten.
+    /// A streamed reply held a form of the key. The stream now redacts each
+    /// form at its bytes and goes on (FIX 6103), so this build never sends
+    /// it.
     #[error("streamed reply holds the key")]
     ReplyHoldsKey,
 }

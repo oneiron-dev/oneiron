@@ -5,8 +5,8 @@
 //! hands over the key on a private channel. The broker re-checks the request
 //! against its digest and its shape row, adds the auth header, sends once over
 //! verified TLS, strips every form of the key from the reply and answers. A
-//! binary reply ([`Shape::streams`]) streams back in chunks instead, checked
-//! for the key and passed unchanged, or cut.
+//! binary reply ([`Shape::streams`]) streams back in chunks instead, each form
+//! of the key in it redacted as the chunks pass (FIX 6103).
 //!
 //! It runs no model and no generated code, and it does not link the engine.
 //! The daemon side ([`BrokerClient`]) and the broker side ([`serve`]) share the

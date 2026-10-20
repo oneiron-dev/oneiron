@@ -383,6 +383,18 @@ pub(crate) struct Activated {
     /// Set when another user could change a directory on that vault's path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) shared_path: Option<SharedPathWarning>,
+    /// Claim-bound decisions dropped because their keys stayed on another
+    /// host, by id, as a restore names them (FIX 6033).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) dropped_gate_decisions: Vec<String>,
+    /// What the activation says about the custody it forked: rollback is
+    /// not proven when no anchor is configured (FIX 6033).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) custody_note: Option<String>,
+    /// What the activation costs the vault's publisher training: set when
+    /// its training link key did not come with it (FIX 5892, FIX 6033).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) training_note: Option<String>,
 }
 
 /// Activates the archived vault a restore over `vault_path` set aside at
@@ -399,12 +411,15 @@ pub(crate) fn activate(
 ) -> anyhow::Result<Activated> {
     let source = SideRestoreSource::read(vault_path, live_seal)
         .map_err(|error| anyhow::anyhow!("read vault {}: {error}", vault_path.display()))?;
-    oneiron::Vault::activate_archived(previous, config, &source)
+    let report = oneiron::Vault::activate_archived(previous, config, &source)
         .map_err(|error| anyhow::anyhow!("activate {}: {error}", previous.display()))?;
     Ok(Activated {
         vault: previous.to_path_buf(),
         replaced_by: vault_path.to_path_buf(),
         shared_path: shared_path_warning(&source),
+        dropped_gate_decisions: report.dropped_gate_decisions,
+        custody_note: report.custody_note,
+        training_note: report.training_note,
     })
 }
 

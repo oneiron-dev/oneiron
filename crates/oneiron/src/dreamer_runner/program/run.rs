@@ -46,11 +46,11 @@ const STEP_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-step:v1";
 const STEP_BODY_PLACE: &str = "side:DREAMER_TURN_PROGRAM_STEP:result";
 
 /// One program's code run, keyed by the code run.
-const RUN: SideTable<EntityId, TurnProgramRun, Named> =
+pub(super) const RUN: SideTable<EntityId, TurnProgramRun, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_RUN);
 /// One step of a program's run, keyed by the code run, then the step. A
-/// send's inline body is a KS-2 body-instance client (FIX 5710): until KS-2
-/// holds it, the actor's erase clears it here.
+/// send's inline body is a body instance (FIX 5710, FIX 5719): the actor's
+/// erase clears it here, and its custody retires every image's (`bodies`).
 pub(super) const STEP: SideTable<(EntityId, EntityId), TurnProgramStep, Named> =
     SideTable::new(&side_table::DREAMER_TURN_PROGRAM_STEP);
 

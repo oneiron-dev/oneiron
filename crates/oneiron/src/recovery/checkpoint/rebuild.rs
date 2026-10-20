@@ -98,6 +98,9 @@ pub(super) fn rebuild(vault: &Vault) -> Result<(usize, usize, usize)> {
             )?;
             let body = &raw[ENTITY_METADATA_HEADER_LEN..];
             match header.entity_type {
+                // An erase's shell, a soft-erased claim's or one a restore
+                // left a retired response's (KS-2B1), indexes nothing.
+                crate::registry::ENTITY_TYPE_CLAIM if body.is_empty() => {}
                 crate::registry::ENTITY_TYPE_CLAIM => {
                     let claim = crate::claim::decode_claim_body(body, true)?;
                     crate::dreamer_runner::index_dreamer_milestone_claim_for_put(

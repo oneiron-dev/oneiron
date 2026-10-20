@@ -96,6 +96,19 @@ the retirement. A restore needs each instance live (landed and read back) or ret
 pruned as the erase pruned them); one custody holds neither refuses as
 `body_key_custody_unavailable`.
 
+Row-held responses are body instances too: a turn program's kept send body, an LLM step's saved
+payload, a terminal `dreamer.step` claim's inline response and a code run's replay outcomes. Each
+takes its instance the first time a checkpoint carries its row, and again whenever its bytes
+change; no live read or write touches custody. The image row holds a stub, never the response.
+Each instance is kept against every owner the row was stamped with (its actor, subject and source
+rows), past the row's own life: an erase of any owner retires every instance an image of the row
+was carried under. A restore under a live instance lands the exact bytes (a signed claim exactly
+as it was signed); under a retired one the row keeps its erased form: a step its evidence, a saved
+payload an erased state that is never asked or paid for again, a replay its terminal evidence with
+each outcome failed, and a claim the erase's shell. Activating an archived vault prunes the same
+way and reads every body it keeps back under its own custody before the archive lifts; its report
+carries `custody_note` and `training_note` as a restore's does.
+
 ## Restore
 
 A restore on a host without the image's custody reads the head beside the backup. With an

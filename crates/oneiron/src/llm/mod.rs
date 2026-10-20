@@ -65,6 +65,11 @@ pub(crate) use step::{
     signal_step_wait_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
+// KS-2B1: row-held step responses under body custody.
+pub(crate) use step::{
+    erase_step_state_owner_in_txn, retire_step_claim_in_rows, retire_step_claim_in_txn,
+    step_claim_carriage, step_state_carriage, step_state_owners,
+};
 
 pub use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,

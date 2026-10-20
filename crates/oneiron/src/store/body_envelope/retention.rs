@@ -50,7 +50,7 @@ const STORED_INLINE: u8 = 0;
 
 /// Stages the erase of `instance` in `wtxn` and notes it for `owner`'s
 /// receipt.
-fn stage_erase<D: ManifestDbs + SideTableDbs>(
+pub(super) fn stage_erase<D: ManifestDbs + SideTableDbs>(
     dbs: &D,
     wtxn: &mut RwTxn<'_>,
     owner: Option<&EntityId>,
@@ -173,15 +173,18 @@ fn drop_inline_result_in_txn<D: ManifestDbs + SideTableDbs>(
     Ok(())
 }
 
-/// The body client's readiness for one retirement: no instance row and no
-/// inline binding names the instance any longer, so no live ciphertext,
-/// refcount or row needs its key, and the collector has taken its file past
-/// every reader's pin. A retirement still waiting on a holder defers.
+/// The body client's readiness for one retirement: no instance row, no
+/// inline binding and no row-held response's binding names the instance any
+/// longer, so no live ciphertext, refcount or row needs its key, and the
+/// collector has taken its file past every reader's pin. A retirement still
+/// waiting on a holder defers.
 fn ready_in_txn(store: &Store, txn: &RoTxn<'_>, intent: &RetirementIntent) -> Result<bool> {
     let Some(instance) = instance_of(&intent.subject.at(0)) else {
         return Ok(false);
     };
-    if ERASE_PENDING.contains(store, txn, &instance)? {
+    if ERASE_PENDING.contains(store, txn, &instance)?
+        || super::response::response_names_instance_in_txn(store, txn, &instance)?
+    {
         return Ok(false);
     }
     for row in BODY_KEYS.iter_from(store, txn, &[])? {

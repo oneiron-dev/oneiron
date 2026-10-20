@@ -64,6 +64,7 @@ impl From<oneiron::recovery::checkpoint::RestoreEpoch> for RestoreRecord {
                 RestoreReason::Restore => "restore",
                 RestoreReason::Wake => "wake",
                 RestoreReason::Migrate => "migrate",
+                RestoreReason::Activate => "activate",
             },
         }
     }
