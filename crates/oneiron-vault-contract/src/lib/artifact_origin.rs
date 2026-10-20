@@ -14,17 +14,60 @@
 //! authority alone and never reads a forwarded-host header, so nothing a
 //! client sends can steer a request to another vault. A name that serves
 //! nothing answers as a forbidden artifact does.
+//!
+//! A managed vault's name here is its public slug, the label the
+//! supervisor's slug map names it by and passes as `--artifact-public-slug`
+//! (FIX 5389), never its local vault id: the vault id names no public host.
+//! Each name is one DNS label of at most [`MAX_ARTIFACT_LABEL`] bytes,
+//! `<app>--<slug>` whole, with no fixed share for either part
+//! ([`ArtifactHost::label`]).
+
+use serde::{Deserialize, Serialize};
 
 use crate::valid_vault_name;
 
 /// Joins an app to its vault in one label: `<app>--<vault>`.
 pub const APP_SEPARATOR: &str = "--";
 
+/// The bytes one DNS label holds: a name under an artifact domain, the
+/// vault's own or `<app>--<vault>` whole.
+pub const MAX_ARTIFACT_LABEL: usize = 63;
+
+/// The revision of the managed public slug binding (`--artifact-public-slug`)
+/// a vault built with it reports on `Ping` (`artifact_public_slug_revision`).
+pub const ARTIFACT_PUBLIC_SLUG_REVISION: u32 = 1;
+
 /// One name under an artifact domain: a vault, and an app of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactHost {
     pub vault: String,
     pub app: Option<String>,
+}
+
+/// Why a vault and an app make no name under an artifact domain, in closed
+/// names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactLabelRefusal {
+    /// The vault (a managed vault's public slug) is not a DNS label free of
+    /// [`APP_SEPARATOR`].
+    InvalidVault,
+    /// The app is not an app label.
+    InvalidApp,
+    /// The joined label passes [`MAX_ARTIFACT_LABEL`] bytes.
+    ArtifactLabelTooLong,
+}
+
+impl ArtifactLabelRefusal {
+    /// The wire spelling, for a log field.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidVault => "invalid_vault",
+            Self::InvalidApp => "invalid_app",
+            Self::ArtifactLabelTooLong => "artifact_label_too_long",
+        }
+    }
 }
 
 /// Where a host falls among the artifact domains.
@@ -62,25 +105,41 @@ impl ArtifactHost {
         }
     }
 
-    /// The host name under `domain`. `None` when the vault is not a DNS label
-    /// free of [`APP_SEPARATOR`], the app is not an app label, or the joined
-    /// label passes 63 bytes.
-    #[must_use]
-    pub fn name(&self, domain: &str) -> Option<String> {
-        let domain = normalize_artifact_domain(domain);
-        if domain.is_empty() || !valid_app_label(&self.vault) {
-            return None;
+    /// The one label this host is under an artifact domain: the vault, or
+    /// `<app>--<vault>`. Refused when the vault is not a DNS label free of
+    /// [`APP_SEPARATOR`], the app is not an app label, or the joined label
+    /// passes [`MAX_ARTIFACT_LABEL`] bytes. A supervisor checks a public
+    /// slug against each of the vault's apps with it before it sets one.
+    pub fn label(&self) -> Result<String, ArtifactLabelRefusal> {
+        if !valid_app_label(&self.vault) {
+            return Err(ArtifactLabelRefusal::InvalidVault);
         }
         let label = match &self.app {
             None => self.vault.clone(),
             Some(app) if valid_app_label(app) => format!("{app}{APP_SEPARATOR}{}", self.vault),
-            Some(_) => return None,
+            Some(_) => return Err(ArtifactLabelRefusal::InvalidApp),
         };
-        (label.len() <= 63).then(|| format!("{label}.{domain}"))
+        if label.len() > MAX_ARTIFACT_LABEL {
+            return Err(ArtifactLabelRefusal::ArtifactLabelTooLong);
+        }
+        Ok(label)
+    }
+
+    /// The host name under `domain`. `None` when the domain is empty or
+    /// [`ArtifactHost::label`] refuses.
+    #[must_use]
+    pub fn name(&self, domain: &str) -> Option<String> {
+        let domain = normalize_artifact_domain(domain);
+        if domain.is_empty() {
+            return None;
+        }
+        let label = self.label().ok()?;
+        Some(format!("{label}.{domain}"))
     }
 
     /// Reads `host` (a port and a trailing dot are dropped, case is ignored)
-    /// against `domains`.
+    /// against `domains`. A label past [`MAX_ARTIFACT_LABEL`] bytes names
+    /// nothing, though each half of `<app>--<vault>` reads as a label.
     #[must_use]
     pub fn read(host: &str, domains: &[String]) -> ArtifactHostRead {
         let host = normalize_host(host);
@@ -100,7 +159,7 @@ impl ArtifactHost {
             else {
                 continue;
             };
-            if label.contains('.') {
+            if label.contains('.') || label.len() > MAX_ARTIFACT_LABEL {
                 return ArtifactHostRead::Unnamed;
             }
             let named = match label.split_once(APP_SEPARATOR) {

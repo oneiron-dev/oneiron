@@ -71,7 +71,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/10";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/11";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -1417,7 +1417,7 @@ fn native_frame(
             if held::chart(&work.package, &chart)
                 .is_none_or(|read| !reshape::same_data(&read, payload))
             {
-                let changed = reshape::chart(work.next_mut(), &chart, payload, &mut Vec::new())?;
+                let changed = reshape::reseed(work.next_mut(), &chart, payload)?;
                 work.changed.extend(changed);
             }
             return Ok(id);

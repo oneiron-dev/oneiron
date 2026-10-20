@@ -147,11 +147,20 @@ pub struct ServeArgs {
     pub maximum_tier: Option<bool>,
 
     /// Managed mode: the unix socket the vault's artifact origin listens on,
-    /// an absolute path the supervisor chose and routes `<vault>.<domain>` to
+    /// an absolute path the supervisor chose and routes `<slug>.<domain>` to
     /// (`oneiron_vault_contract::artifact_origin`). Without it a managed vault
     /// serves `/a/` on its API socket alone.
     #[arg(long = "artifact-http-socket")]
     pub artifact_http_socket: Option<PathBuf>,
+
+    /// Managed mode: the vault's public slug, the DNS label free of `--` its
+    /// artifact origin answers to under every artifact domain
+    /// (`<slug>.<domain>`, `<app>--<slug>.<domain>`), as the supervisor's
+    /// slug map names it (FIX 5389). The vault name, its local id, never
+    /// names a public host: without a slug the origin answers no vault host
+    /// and serves `/a/` alone.
+    #[arg(long = "artifact-public-slug", requires = "managed_by_hypnos")]
+    pub artifact_public_slug: Option<String>,
 
     /// The vault's owner settings, one TOML file in the server's own config
     /// schema, `[models]`, `[embedder]` and `[gpu]` included. Flags stand
@@ -519,6 +528,7 @@ impl fmt::Debug for ServeArgs {
             .field("escrow_outbox_dir", &self.escrow_outbox_dir)
             .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
+            .field("artifact_public_slug", &self.artifact_public_slug)
             .field("settings_file", &self.settings_file)
             .field("voice_socket", &self.voice_socket)
             .field("seal_key_file", &self.seal_key_file)

@@ -89,6 +89,60 @@ pub enum Conversion {
     /// This many data labels that showed a range of the former workbook's
     /// cells now carry that text themselves.
     LabelRangesUnlinked { labels: u32 },
+    /// The chart's embedded workbook could not be edited in place, so the
+    /// chart's data went into one rebuilt from the live chart data: what
+    /// else the original held (other sheets, formulas, formats, names,
+    /// tables) is not in it.
+    WorkbookRebuilt { part: String, reason: RebuildReason },
+    /// The edited workbook holds formulas that may read the cells the edit
+    /// wrote: they keep their expressions and their stale results, and the
+    /// opening application recalculates them.
+    WorkbookRecalcDeferred { part: String },
+}
+
+/// Why a rewritten chart's embedded workbook was rebuilt rather than
+/// edited in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RebuildReason {
+    /// The chart reader cannot read it: a cell type, a reference or a part
+    /// it does not take.
+    Unreadable,
+    /// Another part reads it too.
+    Shared,
+    /// The chart reads none of its cells.
+    NoCells,
+    /// A cell the edit changes holds a formula.
+    FormulaCell,
+    /// A cell the edit changes is read-only: in an array formula or a data
+    /// table, a table's header or totals row, or a rich value.
+    ReadOnlyCell,
+    /// Two of the chart's sequences would write different values into one
+    /// cell.
+    Overlap,
+    /// A range cannot grow, or a new series' cells find no room: the cells
+    /// hold other data, or the sheet ends.
+    NoRoom,
+    /// The workbook editor refused the workbook or the edit.
+    Projection,
+    /// The edited workbook did not read back as the live data.
+    ReadBack,
+}
+
+impl RebuildReason {
+    fn describe(self) -> &'static str {
+        match self {
+            Self::Unreadable => "the chart reader cannot read it",
+            Self::Shared => "another part reads it too",
+            Self::NoCells => "the chart reads none of its cells",
+            Self::FormulaCell => "a cell to change holds a formula",
+            Self::ReadOnlyCell => "a cell to change is read-only",
+            Self::Overlap => "two sequences would write one cell differently",
+            Self::NoRoom => "a range has no room to grow or to be placed",
+            Self::Projection => "the workbook editor refused the edit",
+            Self::ReadBack => "the edited workbook did not read back as the live data",
+        }
+    }
 }
 
 fn family_name(kind: ChartKind) -> &'static str {
@@ -197,6 +251,13 @@ impl Conversion {
             Self::LabelRangesUnlinked { labels } => {
                 format!("{labels} data label(s) keep their cell-range text, unlinked")
             }
+            Self::WorkbookRebuilt { part, reason } => format!(
+                "chart workbook {part} not edited in place ({}): rebuilt from the live chart data, without its other sheets, formulas and formats",
+                reason.describe()
+            ),
+            Self::WorkbookRecalcDeferred { part } => format!(
+                "chart workbook {part} keeps its formulas; the opening application recalculates them"
+            ),
         }
     }
 }
