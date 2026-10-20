@@ -37,18 +37,35 @@ pub enum NoteChange {
 
 /// Durable provenance authored only by the admission door. Commit messages
 /// remain diagnostic text; neither grants nor actor classes are read from them.
+/// Its actor reads and writes as the actor's hex id, or `"erased"` once that
+/// actor was erased: the record stays, naming no one (FIX 6072, Engine R2).
+/// Only a stored record reads as no one; every new record names the live,
+/// authenticated writer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteAuthorship {
     #[serde(with = "super::id_codec")]
     #[schemars(with = "String")]
     pub operation: EntityId,
-    #[serde(with = "super::id_codec")]
     #[schemars(with = "String")]
-    pub actor: EntityId,
+    pub actor: super::NoteActor,
     pub actor_class: String,
     pub grant: Option<String>,
     pub command_hash: [u8; 32],
+}
+
+impl NoteAuthorship {
+    /// Whether `other` keeps this record (ErasedWins, FIX 6072): the same
+    /// record, or its erased twin, the same in every field but an actor that
+    /// names no one. A live actor never keeps an erased record.
+    #[cfg(feature = "sync")]
+    pub(crate) fn kept_by(&self, other: &Self) -> bool {
+        let erased = Self {
+            actor: super::NoteActor::Erased,
+            ..self.clone()
+        };
+        self == other || *other == erased
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,7 +122,7 @@ pub(super) fn record_authorship(doc: &NoteDocument, record: &NoteAuthorship) -> 
         .map_err(|_| invalid("NOTE authorship insert"))?;
     doc.doc.commit_with(
         loro::CommitOptions::new()
-            .commit_msg(&format!("oneiron.note/v1 actor={}", record.actor.to_hex())),
+            .commit_msg(&format!("oneiron.note/v1 actor={}", record.actor.to_wire())),
     );
     Ok(())
 }
@@ -302,7 +319,7 @@ impl Memory<'_> {
                     &doc,
                     &NoteAuthorship {
                         operation: operation.request_id,
-                        actor: self.actor(),
+                        actor: super::NoteActor::Actor(self.actor()),
                         actor_class: self.actor_class().gate_actor_class().to_owned(),
                         grant: grant.map(|id| id.to_hex()),
                         command_hash: hash,
