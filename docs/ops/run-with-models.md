@@ -351,6 +351,44 @@ on the ctl socket: the vault records one purge per scope and answers
 `not_needed`, `pending` (with `purge_unsent`, `receipt_pending` or
 `purge_rejected`) or `done`, and the erase waits for `done`.
 
+A self-hosted vault (plain `oneiron-server serve`) shares through the anonymous
+training window instead, and only with two argv flags together:
+`--publisher-training-outbox-dir <absolute path>` and
+`--publisher-training-self-host-shipper` (off by default; managed serve reads it
+but never runs it, and the shipper flag alone warns once and does nothing). The
+vault then fetches the intake's public keys from
+`https://oneiron.dev/feedback/training/v1/keys`
+(`--publisher-training-intake-origin` names another HTTPS origin) at start and
+hourly, and writes `intake-recipient.v1` and `intake-receipt-key.v1` from them.
+Every 30 s it sends the uploads and withdrawals that are due over HTTPS, and at
+most every 15 minutes it asks for receipts; a pass with nothing due sends
+nothing. Uploads carry each released offer's sealed text, its chunk files as
+written (only the intake's key opens them), in byte ranges, with its code-only
+facts: the month's scope, the month's codes for the conversation, the people and
+the worlds, the filter, the sizes and the digests. Each offer goes under its own
+code, a 64-hex handle the vault made once and keeps, which is the only way to
+withdraw it. Withdrawals carry those codes alone: every offer a deleted
+conversation or message, a world turned private, a person's erasure, a newer
+offer of the same conversation or the vault's erase withdraws, sent until the
+intake signs it `removal_pending`. Receipt asks carry the codes whose next state
+is owed, those pending removal among them, until they read `removed`. No request
+carries an account, a bearer, a cookie, a user agent, an install key, a vault id
+or an IP address of the vault's; the intake sees the connection, as any HTTPS
+server does. Every receipt is checked against the intake's receipt keys (the
+current one or the one before it) and kept in the vault: `uploading`, `accepted`
+(held whole in quarantine, not yet trainable), `eligible` or `refused` after the
+intake's own filter, `rejected`, `conflict` or `invalid_submission` (sent again
+later), `removal_pending`, then `removed`. The offer's files go once it reads
+`eligible`, `refused` or `removed`, or once the vault withholds or withdraws it;
+its code stays in the vault after them, and the vault's training key is
+destroyed only after every offer of an erase reads `removed`. Requests start at
+19 MiB; a `413` or a request that runs out of time (30 s, plus a second for each
+64 KiB) makes them smaller for the rest of the process, a `429` or `503` waits
+what the intake names, and no reply waits 30 s doubling to 15 minutes, without
+end. Nothing is dropped or cut short, and a restart starts the waits afresh.
+Turning "Learn from my conversations" off pauses uploads; withdrawals and
+receipts go on.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range
