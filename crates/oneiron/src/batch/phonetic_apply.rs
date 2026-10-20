@@ -7,6 +7,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result, StoreError};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
+pub(crate) mod checkpoint;
 
 /// Published supplied and generated phonetic codes retained for delete/reindex
 /// reconciliation. Key: id16.

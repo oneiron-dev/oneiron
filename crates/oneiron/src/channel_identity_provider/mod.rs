@@ -11,6 +11,7 @@ mod inbound_types;
 mod line_adapter;
 pub mod mail_placement;
 pub mod mailbox_cursor;
+pub mod mailbox_skipped;
 pub(crate) mod member_mail;
 mod shared_validate;
 mod slack_adapter;

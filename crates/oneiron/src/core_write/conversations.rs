@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::shape::{
-    CoreWriteTextField, core_body_for_write, core_text_pairs, core_write_times, entity_id,
-    stage_core_put, text_pairs, write_id,
+    AnnouncementAuthority, CoreWriteTextField, core_body_for_write, core_text_pairs,
+    core_write_times, entity_id, stage_core_put, text_pairs, write_id,
 };
 use crate::conversation::ConversationBody;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -120,12 +120,14 @@ impl Vault {
                 input.body.clone(),
             ));
         }
+        // A container body is never a TURN, so no announcement shapes it.
         stage_core_put(
             self.batch(),
             &id,
             ENTITY_TYPE_CONVERSATION,
             times,
             &input.body,
+            AnnouncementAuthority::Writer,
             input.text.as_deref().map(text_pairs),
         )?
         .commit()?;
@@ -139,13 +141,15 @@ impl Vault {
 
     /// Puts one TURN, its text index and its checked ChildOf edge to the
     /// conversation, in one batch. It wakes nothing: the served door that
-    /// calls it lands the turn.
+    /// calls it lands the turn. `announcement` is the writer's, which its
+    /// caller resolved: only the owner's TURN may be a platform announcement.
     /// # Errors
     /// A target that is no conversation, a bad id, interval or body, or
     /// the batch's ChildOf refusal.
     pub fn write_core_conversation_turn(
         &self,
         input: &ConversationTurnCreateInput,
+        announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
         let conversation = entity_id(&input.conversation, "conversation")?;
         match self.get_entity_type(&conversation)? {
@@ -178,6 +182,7 @@ impl Vault {
             ENTITY_TYPE_TURN,
             times,
             &input.body,
+            announcement,
             input.text.as_deref().map(text_pairs),
         )?
         .edge_checked(&id, &conversation, 1.0)
@@ -186,7 +191,7 @@ impl Vault {
             id,
             ENTITY_TYPE_TURN,
             times.learned_at,
-            core_body_for_write(ENTITY_TYPE_TURN, &input.body).into_owned(),
+            core_body_for_write(ENTITY_TYPE_TURN, &input.body, announcement).into_owned(),
         ))
     }
 }
@@ -204,13 +209,16 @@ impl Memory<'_> {
         self.vault().write_core_conversation(input, Some(actor))
     }
 
-    /// `vault.conversations.turns.create`: one TURN under a conversation.
+    /// `vault.conversations.turns.create`: one TURN under a conversation,
+    /// a platform announcement only while the bound actor is a live owner.
     /// # Errors
     /// As [`Vault::write_core_conversation_turn`].
     pub fn conversations_turns_create(
         &self,
         input: &ConversationTurnCreateInput,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
-        self.vault().write_core_conversation_turn(input)
+        let announcement = AnnouncementAuthority::of_actor(self.vault(), &self.actor())?;
+        self.vault()
+            .write_core_conversation_turn(input, announcement)
     }
 }
