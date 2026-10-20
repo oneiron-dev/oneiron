@@ -2946,7 +2946,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/sync_tests.rs` | test | L | — | — | NOTE admission and canonical cursor/provenance replication boundaries |
 | `src/note/tests.rs` | test | m | — | — | NOTE body ABI: the pinned four keys, the closed kind, and the negative set the decoder must fail closed on |
 | `src/note/title_index.rs` | src | s | 7 crate-vis | — | Atomic title-reservation replacement for authoritative NOTE document sets |
-| `src/note/title_index/checkpoint.rs` | src | s | 3 crate-vis | — | The NOTE title rows (KS7-2), under the NOTE each names |
+| `src/note/title_index/checkpoint.rs` | src | s | 4 crate-vis | — | The NOTE title rows (KS7-2, FIX 6075), under the NOTE each names |
 | `src/note/tombstone_review.rs` | src | s | 1 struct · 5 crate-vis | NoteTombstoneProposal | The NOTE tombstone review (ARCH-0032 stage 3, OF-073; CALLS "FIX 2419 NOTE tombstone review") |
 | `src/note/verbs.rs` | src | m | 6 fn · 2 crate-vis | — | Actor-bound NOTE creation, edit and source-entity bridge |
 | `src/note/write_gate.rs` | src | s | 4 crate-vis | — | Stage 1 of the NOTE write gate (ARCH-0032 #write-gate): the cheap checks a NOTE write meets before it lands… |
@@ -4012,7 +4012,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/checkpoint_payload/mod.rs` | src | m | 24 crate-vis | — | Checkpoint payload custody (KS-7, FIX 5688): the ordinary payload a checkpoint copies is sealed one owner at… |
 | `src/store/checkpoint_payload/rows.rs` | src | m | 33 crate-vis | — | The rows a per-owner checkpoint getter hands a capture (KS7-2), and the one sink a restore writes them back… |
 | `src/store/checkpoint_payload/rows/frame.rs` | src | s | 6 crate-vis | — | The bundle framing of an owner's content and of an actor's parts: a version byte, then fixed fields and… |
-| `src/store/checkpoint_payload/rows/restore.rs` | src | s | 6 crate-vis | — | Putting an opened compartment's rows back, through the one restore-only raw-row sink |
+| `src/store/checkpoint_payload/rows/restore.rs` | src | s | 7 crate-vis | — | Putting an opened compartment's rows back, through the one restore-only raw-row sink |
 | `src/store/checkpoint_payload/rows/typed.rs` | src | s | 9 crate-vis | — | Reading a declared table's rows with its own codec, and splitting the actors a row names out of an owner's… |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
 | `src/store/deadline_jobs.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | DeadlineJob | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |

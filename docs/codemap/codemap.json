@@ -38369,9 +38369,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/note/title_index/checkpoint.rs",
-     "purpose": "The NOTE title rows (KS7-2), under the NOTE each names",
+     "purpose": "The NOTE title rows (KS7-2, FIX 6075), under the NOTE each names",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -51708,7 +51708,7 @@
      "path": "src/store/checkpoint_payload/rows/restore.rs",
      "purpose": "Putting an opened compartment's rows back, through the one restore-only raw-row sink",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -71224,12 +71224,13 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "Conversion"
+      "Conversion",
+      "RebuildReason"
      ],
      "path": "src/live/conversion.rs",
      "purpose": "What a deck edit or export did PowerPoint's way, named on its receipt (OF-510; the Office ruling of 10-18)",
      "surface": {
-      "enum": 1,
+      "enum": 2,
       "fn": 2
      }
     },
@@ -71509,13 +71510,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/live/reshape.rs",
      "purpose": "Shape changes to a written table or chart at export (OF-510)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/series.rs",
+     "purpose": "A new series' format (OF-510, FIX 3493)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/workbook.rs",
+     "purpose": "A rewritten chart's own embedded workbook, edited in place (OF-510, FIX 3493)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -71976,7 +71997,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 25,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -72041,7 +72062,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 98,
+   "source_files": 100,
    "test_files": 14
   },
   "oneiron-driver": {
