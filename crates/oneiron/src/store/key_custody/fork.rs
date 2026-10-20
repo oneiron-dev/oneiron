@@ -13,7 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::path::PathBuf;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
 
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
 use super::identity::{CustodyBinding, CustodyId, CustodySubject, custody_corrupt};
@@ -74,7 +75,19 @@ impl CustodyPlan {
     /// supplies a binding, never a key, so lost custody is never papered
     /// over.
     pub(crate) fn require(&mut self, id: &CustodyId) -> Result<Requirement> {
-        let source = self.source.as_ref().ok_or_else(|| id.kind().corrupt())?;
+        self.require_rejected(id).map_err(Error::from)
+    }
+
+    /// [`Self::require`] with the reason a restore names its refusal by
+    /// (FIX 6474): no custody to hold `id`, or none of its entry there, is
+    /// `custody_key_missing` beside the same error; a failed read of its
+    /// state is typed by its kind.
+    pub(crate) fn require_rejected(
+        &mut self,
+        id: &CustodyId,
+    ) -> std::result::Result<Requirement, Rejected> {
+        let missing = || Rejected::new(R::CustodyKeyMissing, id.kind().corrupt());
+        let source = self.source.as_ref().ok_or_else(missing)?;
         let (through, committed) = self
             .subjects
             .entry(id.subject().clone())
@@ -86,7 +99,7 @@ impl CustodyPlan {
         match LocalCustody::at(source).state(id)? {
             EntryState::Retired => Ok(Requirement::Retired),
             EntryState::Live => Ok(Requirement::Live),
-            EntryState::Missing => Err(id.kind().corrupt()),
+            EntryState::Missing => Err(missing()),
         }
     }
 

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::claim::{PointRead, ScopedRead};
-use crate::codebase::{read_asset_blob_in_txn, snapshot_asset_entity_id};
+use crate::codebase::{read_asset_blob_sighted_in_txn, snapshot_asset_entity_id};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
@@ -255,10 +255,12 @@ impl GraphFsResolver<'_, '_> {
                 Ok(Some(GraphFsFile {
                     path: path.to_owned(),
                     mount: self.options.mount,
-                    bytes: crate::secret_custody::sighted_bytes_in_txn(
-                        &self.scoped_read.vault().store,
+                    // A body kept in its ASSET's file is masked as it is
+                    // read, as the hosted door reads it (FIX 6557).
+                    bytes: read_asset_blob_sighted_in_txn(
+                        self.scoped_read.vault(),
                         txn,
-                        read_asset_blob_in_txn(self.scoped_read.vault(), txn, &file.content_hash)?,
+                        &file.content_hash,
                         if self.scoped_read.actor_key().reads_as_vault_owner() {
                             crate::secret_custody::SecretSight::Owner
                         } else {

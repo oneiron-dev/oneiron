@@ -10,6 +10,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, secret_scan
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{CodeError, Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
+use crate::secret_custody::SecretSight;
 use gix::bstr::ByteSlice;
 use gix::object::tree::EntryKind;
 use std::fmt;
@@ -293,13 +294,51 @@ pub(super) fn read_asset_blob(
     read_asset_blob_in_txn(vault, &txn, content_hash)
 }
 
+/// The stored bytes of the snapshot ASSET named `content_hash`, checked
+/// against it. A body kept in its ASSET's file is read once through the
+/// checked reader, which verifies its length and BLAKE3, against the hash
+/// the manifest names (FIX 6557); an inline body is its row's, as before.
 pub(crate) fn read_asset_blob_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<Vec<u8>> {
     let asset_id = codebase_asset_entity_id(content_hash)?;
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &asset_id)?
+    // The stored bytes: the sight that reads them unmasked.
+    if let Some(bytes) =
+        vault.sighted_body_file_in_txn(txn, &asset_id, content_hash, SecretSight::Owner)?
+    {
+        return Ok(bytes);
+    }
+    inline_asset_blob_in_txn(vault, txn, &asset_id, content_hash)
+}
+
+/// [`read_asset_blob_in_txn`] as `sight` reads it, as the hosted door reads
+/// a snapshot file (FIX 6557): a body kept in its ASSET's file is masked as
+/// it passes the checked reader, never held whole beside its copy; an inline
+/// body is read whole, checked and masked by its mark.
+pub(crate) fn read_asset_blob_sighted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+    sight: SecretSight,
+) -> Result<Vec<u8>> {
+    let asset_id = codebase_asset_entity_id(content_hash)?;
+    if let Some(bytes) = vault.sighted_body_file_in_txn(txn, &asset_id, content_hash, sight)? {
+        return Ok(bytes);
+    }
+    let bytes = inline_asset_blob_in_txn(vault, txn, &asset_id, content_hash)?;
+    crate::secret_custody::sighted_bytes_in_txn(&vault.store, txn, bytes, sight)
+}
+
+/// The body ASSET `asset_id`'s row holds, checked against `content_hash`.
+fn inline_asset_blob_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    asset_id: &EntityId,
+    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+) -> Result<Vec<u8>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, asset_id)?
     else {
         return Err(Error::EntityNotFound);
     };

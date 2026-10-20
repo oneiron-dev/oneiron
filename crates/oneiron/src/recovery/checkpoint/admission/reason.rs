@@ -169,6 +169,47 @@ impl Rejected {
             self.error,
         )
     }
+
+    /// A body landing's error (FIX 6474): a frame its envelope reader
+    /// refused, which reaches here inside the I/O error that reader's `Read`
+    /// returns, is `codec_invalid`; any other is typed by its kind, raw I/O
+    /// `storage_io`. The error stays as it came.
+    pub(crate) fn landing(error: Error) -> Self {
+        let reason = if frame_refused(&error) {
+            RestoreAdmissionReason::CodecInvalid
+        } else {
+            by_kind(&error)
+        };
+        Self::new(reason, error)
+    }
+
+    /// A claim-bound receipt's read (FIX 6474): one that does not decode or
+    /// open under its key is `claim_receipt_invalid`; a storage failure, or
+    /// any other, is typed by its kind.
+    pub(crate) fn receipt(error: Error) -> Self {
+        match error {
+            Error::CorruptedIndex(_) | Error::InvalidKey => {
+                Self::new(RestoreAdmissionReason::ClaimReceiptInvalid, error)
+            }
+            error => Self::from(error),
+        }
+    }
+}
+
+/// Whether `error` is, or carries inside the I/O errors a `Read` wraps it
+/// in, an undecodable record: a frame that failed its check.
+fn frame_refused(error: &Error) -> bool {
+    let mut at = error;
+    loop {
+        match at {
+            Error::CorruptedIndex(_) | Error::InvalidKey => return true,
+            Error::Io(io) => match io.get_ref().and_then(|inner| inner.downcast_ref::<Error>()) {
+                Some(inner) => at = inner,
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
 }
 
 /// Names `reason` on an error of a branch that refused for it.

@@ -296,6 +296,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::Fatal(FatalLlmError::EmptyResponse) => "empty_response",
         LlmError::Fatal(FatalLlmError::Unsupported(_)) => "unsupported",
         LlmError::Fatal(FatalLlmError::LabelRead(_)) => "label_read",
+        LlmError::Fatal(FatalLlmError::ResponseErased) => "response_erased",
         LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
         LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
@@ -312,7 +313,8 @@ pub(super) fn provider_down(error: &LlmError) -> bool {
 /// A failure that ends the call as it came: the request itself failed (a
 /// 400, filtered content, a capability it needs), so the next offer would
 /// fail it too, or the run refused it, so the next rung's admission meets the
-/// same line. Every other failure hands the call on.
+/// same line, or an erase took its answer (FIX 6296). Every other failure
+/// hands the call on.
 pub(super) fn ends_call(error: &LlmError) -> bool {
     matches!(
         error,
@@ -320,6 +322,7 @@ pub(super) fn ends_call(error: &LlmError) -> bool {
             FatalLlmError::InvalidRequest
                 | FatalLlmError::ContentFiltered
                 | FatalLlmError::Unsupported(_)
+                | FatalLlmError::ResponseErased
         ) | LlmError::BudgetDenied(_)
     )
 }

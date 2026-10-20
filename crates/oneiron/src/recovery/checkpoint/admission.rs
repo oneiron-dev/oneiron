@@ -171,7 +171,7 @@ impl Vault {
             &BTreeSet::new(),
             &write_budget::Unfloored,
         )
-        .map_err(|error| Rejected::from(error).at(P::RowsLanding))?;
+        .map_err(|rejected| rejected.at(P::RowsLanding))?;
         finish(&vault)?;
         let landed = match &landing {
             Some(landing) => {

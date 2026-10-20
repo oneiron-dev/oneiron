@@ -41323,6 +41323,8 @@ pub enum FatalLlmError {
     Unsupported(UnsupportedCapability),
     #[serde(rename = "LabelRead")]
     LabelRead(LabelReadFailure),
+    #[serde(rename = "ResponseErased")]
+    ResponseErased,
 }
 
 /// `oneiron::llm::step::public::ModelStepFailureClass`.

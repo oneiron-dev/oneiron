@@ -59,6 +59,13 @@ impl FallbackRegistry {
         request: &LlmRequest,
         failure: &FatalLlmError,
     ) -> Result<LlmResponse, FallbackError> {
+        // An erased answer is terminal: no runner stands in for it (FIX 6296).
+        if matches!(failure, FatalLlmError::ResponseErased) {
+            return Err(FallbackError::Failed {
+                name: declared.name.clone(),
+                reason: "response erased".into(),
+            });
+        }
         let runner = self
             .runners
             .get(&declared.name)
@@ -168,6 +175,8 @@ impl DeterministicRunner for JsonRules {
             FatalLlmError::EmptyResponse => "empty_response",
             FatalLlmError::Unsupported(_) => "unsupported",
             FatalLlmError::LabelRead(_) => "label_read",
+            // Terminal, never a rule's trigger, the "fatal" row's included.
+            FatalLlmError::ResponseErased => return Err("response erased".into()),
         };
         let row = rules
             .rows

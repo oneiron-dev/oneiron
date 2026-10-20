@@ -144,6 +144,11 @@ pub enum FatalLlmError {
     Unsupported(UnsupportedCapability),
     #[error("label read failed: {0}")]
     LabelRead(LabelReadFailure),
+    /// An erase of an owner took the answer (KS-2B2, FIX 6296): a poll of
+    /// an erased media job reads this. Terminal: never retried, never a
+    /// fallback's trigger, never handed to another offer.
+    #[error("response erased")]
+    ResponseErased,
 }
 
 /// Why a decision read's answer cannot be read as its label probabilities. Each is checked on

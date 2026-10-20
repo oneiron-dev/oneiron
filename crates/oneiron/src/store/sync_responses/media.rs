@@ -31,12 +31,12 @@ const STAMPS: &str = "stamps";
 const ERASED: &str = "erased";
 
 /// What every poll of an erased job answers: it ended, and nothing of it is
-/// left to give.
+/// left to give. The wire says so, typed (FIX 6296).
 #[doc(hidden)]
 #[must_use]
 pub fn media_job_erased_state() -> MediaJobState {
     MediaJobState::Failed {
-        error: LlmError::Fatal(FatalLlmError::InvalidRequest),
+        error: LlmError::Fatal(FatalLlmError::ResponseErased),
     }
 }
 

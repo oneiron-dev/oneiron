@@ -24,6 +24,7 @@ use heed::types::Bytes;
 use heed::{Env, RoTxn, RwTxn};
 
 use crate::error::{Error, Result, StoreError};
+use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::key_custody::{
     self, CustodyBinding, CustodyPlan, ForkedCustodyDir, LocalCustody, Requirement,
@@ -383,20 +384,19 @@ pub(crate) const CUSTODY_NO_HEAD_GATE_ROWS: bool = true;
 /// missing there is lost, dropped and named, not refused
 /// ([`CUSTODY_NO_HEAD_GATE_ROWS`]); one a committed retirement covers is
 /// erased as before. A missing key anywhere else still refuses.
+///
+/// Each refusal carries the reason its branch names (FIX 6474), beside the
+/// error it always returned.
 pub(crate) fn preflight_absent_custody_rows(
     rows: &[(Vec<u8>, Vec<u8>)],
-) -> Result<CheckpointCustody> {
+) -> std::result::Result<CheckpointCustody, Rejected> {
     let bound = key_custody::binding_in_rows(rows)?;
     let mut plan = CustodyPlan::new(bound.clone(), checkpoint_retirements(rows)?);
     let mut erased = Vec::new();
     let mut lost = Vec::new();
     for (key, value) in rows {
         if key.starts_with(GATE_DECISION_KEY_PREFIX) && orcb::is_orcb(value) {
-            let id = key
-                .strip_prefix(GATE_DECISION_KEY_PREFIX)
-                .and_then(GateDecisionId::decode_key)
-                .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
-            let (claim, generation) = orcb::raw_claim_generation(value).ok_or_else(corrupt)?;
+            let (id, claim, generation) = receipt_header(key, value)?;
             // An image that binds no typed custody (the legacy untyped
             // marker, its keys elsewhere) holds no key here: lost.
             let custody = match bound.as_ref() {
@@ -405,13 +405,13 @@ pub(crate) fn preflight_absent_custody_rows(
                     lost.push((id, claim));
                     continue;
                 }
-                None => return Err(corrupt()),
+                None => return Err(Rejected::new(R::CustodyLineageMismatch, corrupt())),
             };
             let needed = orcb::claim_subject(custody, &claim)?.at(generation);
-            match plan.require(&needed) {
+            match plan.require_rejected(&needed) {
                 Ok(Requirement::Retired) => erased.push((id, claim)),
                 Ok(Requirement::Live) => {
-                    orcb::decode_hot(custody, id, value)?;
+                    orcb::decode_hot(custody, id, value).map_err(Rejected::receipt)?;
                 }
                 Err(_)
                     if CUSTODY_NO_HEAD_GATE_ROWS
@@ -419,11 +419,28 @@ pub(crate) fn preflight_absent_custody_rows(
                 {
                     lost.push((id, claim));
                 }
-                Err(error) => return Err(error),
+                Err(rejected) => return Err(rejected),
             }
         }
     }
     Ok(CheckpointCustody { plan, erased, lost })
+}
+
+/// A claim-bound receipt row's decision id, claim and key generation, read
+/// without a key: a row that does not spell them is `claim_receipt_invalid`
+/// (FIX 6474).
+fn receipt_header(
+    key: &[u8],
+    value: &[u8],
+) -> std::result::Result<(GateDecisionId, [u8; 16], u64), Rejected> {
+    let invalid = |error: Error| Rejected::new(R::ClaimReceiptInvalid, error);
+    let id = key
+        .strip_prefix(GATE_DECISION_KEY_PREFIX)
+        .and_then(GateDecisionId::decode_key)
+        .ok_or_else(|| invalid(Error::CorruptedIndex("gate decision ledger key")))?;
+    let (claim, generation) =
+        orcb::raw_claim_generation(value).ok_or_else(|| invalid(corrupt()))?;
+    Ok((id, claim, generation))
 }
 
 /// Authenticate encrypted canonical rows against CURRENT exterior keys before
@@ -442,13 +459,29 @@ pub(crate) fn preflight_checkpoint_rows(
     rows: &[(Vec<u8>, Vec<u8>)],
     source: Option<&LiveCustody>,
 ) -> Result<CheckpointCustody> {
+    preflight_checkpoint_rows_rejected(rows, source).map_err(Error::from)
+}
+
+/// [`preflight_checkpoint_rows`] with the reason each refusal's branch
+/// names (FIX 6474): a binding that is not the source's, or none where a
+/// receipt needs one, is `custody_lineage_mismatch`; a receipt that does not
+/// spell its header, or does not open under its live key, is
+/// `claim_receipt_invalid`; a key custody does not hold is
+/// `custody_key_missing`. The errors are the wrapper's.
+pub(crate) fn preflight_checkpoint_rows_rejected(
+    rows: &[(Vec<u8>, Vec<u8>)],
+    source: Option<&LiveCustody>,
+) -> std::result::Result<CheckpointCustody, Rejected> {
     let bound = key_custody::binding_in_rows(rows)?;
     let mut retirements = checkpoint_retirements(rows)?;
     if let Some(source) = source {
         // The source's intents say nothing about another vault's keys.
         if bound.as_ref().is_some_and(|bound| !source.binds(bound)) {
-            return Err(Error::InvalidConfig(
-                "this checkpoint's key custody is not its source vault's".into(),
+            return Err(Rejected::new(
+                R::CustodyLineageMismatch,
+                Error::InvalidConfig(
+                    "this checkpoint's key custody is not its source vault's".into(),
+                ),
             ));
         }
         retirements.extend(checkpoint_retirements(&source.rows)?);
@@ -462,16 +495,15 @@ pub(crate) fn preflight_checkpoint_rows(
     let mut erased = Vec::new();
     for (key, value) in rows {
         if key.starts_with(GATE_DECISION_KEY_PREFIX) && orcb::is_orcb(value) {
-            let id = key
-                .strip_prefix(GATE_DECISION_KEY_PREFIX)
-                .and_then(GateDecisionId::decode_key)
-                .ok_or(Error::CorruptedIndex("gate decision ledger key"))?;
-            let (claim, generation) = orcb::raw_claim_generation(value).ok_or_else(corrupt)?;
-            let custody = LocalCustody::at(bound.as_ref().ok_or_else(corrupt)?);
-            match plan.require(&orcb::claim_subject(custody, &claim)?.at(generation))? {
+            let (id, claim, generation) = receipt_header(key, value)?;
+            let binding = bound
+                .as_ref()
+                .ok_or_else(|| Rejected::new(R::CustodyLineageMismatch, corrupt()))?;
+            let custody = LocalCustody::at(binding);
+            match plan.require_rejected(&orcb::claim_subject(custody, &claim)?.at(generation))? {
                 Requirement::Retired => erased.push((id, claim)),
                 Requirement::Live => {
-                    orcb::decode_hot(custody, id, value)?;
+                    orcb::decode_hot(custody, id, value).map_err(Rejected::receipt)?;
                 }
             }
         }
