@@ -39,7 +39,8 @@ pub use weave_digest::{
     StoredWeaveDigest, WEAVE_DIGEST_NOTIFICATION_PRODUCER,
     WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestCadence, WeaveDigestFeedback,
     WeaveDigestReader, WeaveDigestSchedule, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
-    WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings, WeaveScheduleHold,
+    WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings,
+    WeaveDigestSettingsDrafter, WeaveScheduleHold,
 };
 mod weave_correction;
 mod weave_lens;

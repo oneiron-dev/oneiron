@@ -16,6 +16,13 @@
 //! its other base writes do. An off-record room's run stages the claim in the
 //! room's overlay, where it drops at close; a room keeps no artifact
 //! versions, so there the answer stays inline whatever its size.
+//!
+//! Each step carries the summary's own lineage (FIX 5977): its claim, and
+//! a response artifact when it has one, derive from every record the call's
+//! words were read from, in the write that files them, so withdrawing one
+//! withdraws the step as it withdraws the summary. A record already gone or
+//! withdrawn when the step files refuses the filing, which the pass's
+//! receipt names as unfiled; the compaction itself still answers.
 
 use rmpv::Value;
 
@@ -33,10 +40,12 @@ use crate::attempt_queue::AttemptId;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::code_run::ExecutorStorage;
-use crate::compaction::{CompactionCall, CompactionStepRef};
+use crate::compaction::{COMPACTION_STEP_RESPONSE_NAME, CompactionCall, CompactionStepRef};
+use crate::edge::EdgeKind;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::off_record::OffRecordSession;
+use crate::ports::EntityStoreRead as _;
 use crate::registry::ENTITY_TYPE_BLOB_ARTIFACT;
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 use crate::store::ManifestDbs;
@@ -47,10 +56,13 @@ use crate::{Vault, WriteActor};
 /// The provenance surface a compaction step is stamped with.
 const COMPACTION_STEP_SURFACE: &str = "code-run-compaction";
 
-/// The media label of an oversize compaction step's answer.
-const COMPACTION_STEP_RESPONSE_LABEL: &str = "compaction.step.response";
+/// The refusal a step filing takes when a record its call was read from is
+/// already gone or withdrawn (FIX 5977): its words may not land past that
+/// record's withdrawal. The pass's receipt names the calls as unfiled.
+const COMPACTION_STEP_SOURCE_WITHDRAWN: &str = "compaction_step_source_withdrawn";
 
-/// One decoded call: its request identity and the bytes of its answer.
+/// One decoded call: its request identity, the bytes of its answer and the
+/// records its words were read from.
 struct FiledCall {
     step_hash: [u8; 32],
     model_id: String,
@@ -59,6 +71,7 @@ struct FiledCall {
     usage_in: u64,
     usage_out: u64,
     payload: Vec<u8>,
+    sources: Vec<EntityId>,
 }
 
 impl FiledCall {
@@ -78,7 +91,21 @@ impl FiledCall {
             usage_in: response.usage.input.total,
             usage_out: response.usage.output.total,
             payload: call.response.clone(),
+            sources: call.sources.clone(),
         })
+    }
+
+    /// Refuses the filing when a record this call read is gone or withdrawn
+    /// as `dbs` reads it in `txn`.
+    fn sources_stand_in(&self, dbs: &impl ManifestDbs, txn: &heed::RoTxn<'_>) -> Result<()> {
+        for source in &self.sources {
+            if dbs.port_entity_record(txn, source)?.is_none()
+                || crate::ports::withdrawn_in_txn(dbs, txn, source)?
+            {
+                return Err(Error::InvalidClaimBody(COMPACTION_STEP_SOURCE_WITHDRAWN));
+            }
+        }
+        Ok(())
     }
 
     fn claim_value(
@@ -197,7 +224,8 @@ impl StepFiling<'_> {
     }
 
     /// Base: an answer over the inline bound lives in a response artifact,
-    /// the exact version its claim pins, as every step's does.
+    /// the exact version its claim pins, as every step's does. The claim and
+    /// the artifact derive from each of the call's sources in this write.
     fn file_in_base(
         &self,
         vault: &Vault,
@@ -207,24 +235,25 @@ impl StepFiling<'_> {
         let occurred = self.occurred();
         let mut filed = Vec::with_capacity(calls.len());
         for call in calls {
+            call.sources_stand_in(&vault.store, wtxn)?;
             let claim_id = vault.store.clock.entity_id()?;
             let response_ref = if call.payload.len() <= DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES {
                 None
             } else {
                 let artifact_id = vault.store.clock.entity_id()?;
-                let body =
-                    BlobArtifactBody::new(COMPACTION_STEP_RESPONSE_LABEL, "application/json");
+                let body = BlobArtifactBody::new(COMPACTION_STEP_RESPONSE_NAME, "application/json");
                 let encoded = encode_blob_artifact_body(&body)?;
-                vault
-                    .batch_in()
-                    .put(
-                        &artifact_id,
-                        ENTITY_TYPE_BLOB_ARTIFACT,
-                        occurred,
-                        self.now_ms,
-                        &encoded,
-                    )
-                    .apply(wtxn)?;
+                let mut batch = vault.batch_in().put(
+                    &artifact_id,
+                    ENTITY_TYPE_BLOB_ARTIFACT,
+                    occurred,
+                    self.now_ms,
+                    &encoded,
+                );
+                for source in &call.sources {
+                    batch = batch.edge(&artifact_id, EdgeKind::DerivedFrom, source, 1.0);
+                }
+                batch.apply(wtxn)?;
                 let appended = vault.append_blob_artifact_version_in_txn(
                     wtxn,
                     &artifact_id,
@@ -250,17 +279,25 @@ impl StepFiling<'_> {
                 &candidate,
                 &mut envelope,
             )?;
-            vault
-                .batch_in()
-                .claim_candidate(&claim_id, candidate, &envelope, occurred, self.now_ms)
-                .apply(wtxn)?;
+            let mut batch = vault.batch_in().claim_candidate(
+                &claim_id,
+                candidate,
+                &envelope,
+                occurred,
+                self.now_ms,
+            );
+            for source in &call.sources {
+                batch = batch.edge(&claim_id, EdgeKind::DerivedFrom, source, 1.0);
+            }
+            batch.apply(wtxn)?;
             filed.push(call.filed(claim_id));
         }
         Ok(filed)
     }
 
     /// An off-record room: each claim stages in the room's overlay through
-    /// its gate, its answer inline, and drops with the room at close.
+    /// its gate, its answer inline, derived from each of the call's sources
+    /// in the same staged write, and drops with the room at close.
     fn stage_in_room(
         &self,
         session: &OffRecordSession<'_>,
@@ -269,14 +306,20 @@ impl StepFiling<'_> {
     ) -> Result<Vec<CompactionStepRef>> {
         let mut filed = Vec::with_capacity(calls.len());
         for call in calls {
-            let claim_id = session.read_view()?.clock().entity_id()?;
-            session.stage_session_claim(
+            let claim_id = {
+                let view = session.read_view()?;
+                let txn = view.read().base().env.read_txn()?;
+                call.sources_stand_in(&view, &txn)?;
+                view.clock().entity_id()?
+            };
+            session.stage_session_derived_claim(
                 route,
                 claim_id,
                 self.candidate(call, None)?,
                 self.envelope,
                 self.occurred(),
                 self.now_ms,
+                &call.sources,
             )?;
             filed.push(call.filed(claim_id));
         }

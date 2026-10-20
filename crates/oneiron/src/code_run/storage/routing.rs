@@ -119,18 +119,19 @@ impl SessionBinding<'_> {
     }
 
     /// [`Self::search_text`] on `reader`'s lane over one view of the room
-    /// (WILL L11-01): the hits that key reads, its run registered through
-    /// the run's captured route.
+    /// (WILL L11-01): the hits that key reads, claims of the `claims`
+    /// statuses, its run registered through the run's captured route.
     fn search_text_as(
         &self,
         query: &str,
         limit: usize,
         reader: ScopedReadActorKey,
+        claims: ClaimReadStatus,
     ) -> Result<Vec<ScoredEntity>> {
         self.answered(|| {
             self.session
                 .read_context(&self.route, reader)?
-                .search_text(query, limit)
+                .search_text(query, limit, claims)
         })
     }
 
@@ -376,23 +377,25 @@ impl<'a> ExecutorStorage<'a> {
     }
 
     /// [`Self::search_text`] on `reader`'s lane: the hits its grants admit,
-    /// surfaceable claims only, as the memory surface's own BM25 channel
-    /// serves them.
+    /// claims of the `claims` statuses. `Surfaceable` serves them as the
+    /// memory surface's own BM25 channel does; `Recorded` filters by the
+    /// key's authorization alone (FIX 5976).
     pub(crate) fn search_text_as(
         &self,
         query: &str,
         limit: usize,
         reader: ScopedReadActorKey,
+        claims: ClaimReadStatus,
     ) -> Result<Vec<ScoredEntity>> {
         match self {
             Self::Canonical(vault) => Ok(vault
                 .scoped_read(reader)
-                .with_claim_status(ClaimReadStatus::Surfaceable)
+                .with_claim_status(claims)
                 .filter_scored_entities(vault.search_text(query, limit)?)?
                 .value),
             // A room's narrowed search reads the room's view on the key's
             // lane, each posting admitted in the scan (WILL L11-01).
-            Self::Session(binding) => binding.search_text_as(query, limit, reader),
+            Self::Session(binding) => binding.search_text_as(query, limit, reader, claims),
         }
     }
 

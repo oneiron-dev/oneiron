@@ -2,7 +2,7 @@
 
 use rmpv::Value;
 
-use crate::claim::ScopedReadActorKey;
+use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::code_run::consent;
 use crate::code_run::storage::{ExecutorStorage, require_facet_placement_in, unplaceable};
 use crate::code_run::types::{
@@ -147,7 +147,16 @@ impl HostSelfDispatcher<'_> {
     ) -> Result<SelfDispatchOutcome> {
         let limit = call.limit.min(SELF_MEMORY_SEARCH_MAX_RESULTS);
         let results = match read_as {
-            Some(reader) => self.storage.search_text_as(&call.query, limit, reader)?,
+            Some(reader) => {
+                let claims = match &self.agent_verbs {
+                    Some(door) if !door.keyed_search_surfaceable_only() => {
+                        ClaimReadStatus::Recorded
+                    }
+                    _ => ClaimReadStatus::Surfaceable,
+                };
+                self.storage
+                    .search_text_as(&call.query, limit, reader, claims)?
+            }
             None => self.storage.search_text(&call.query, limit)?,
         };
         Ok(SelfDispatchOutcome::MemorySearch(SelfMemorySearchResult {
