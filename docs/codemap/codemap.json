@@ -70202,7 +70202,7 @@
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "mod": 15,
       "re-export": 5,
       "struct": 1
