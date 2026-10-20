@@ -309,6 +309,9 @@ pub enum ErrorCode {
     /// A set_format expect anchor matched multiple target spans.
     AmbiguousFormatTarget,
     InvalidDocx,
+    /// The package's XML exceeded one parse's node or expanded-byte budget
+    /// (`DocxError::ParseLimitExceeded`); the message names the bound.
+    ParseLimitExceeded,
     InvalidSnapshot,
     InternalError,
     ValidationFailed,
@@ -11066,6 +11069,11 @@ pub(crate) fn invalid_snapshot(message: &str) -> RuntimeError {
 }
 
 pub fn map_docx_error(err: DocxError) -> RuntimeError {
+    let code = if matches!(err, DocxError::ParseLimitExceeded { .. }) {
+        ErrorCode::ParseLimitExceeded
+    } else {
+        ErrorCode::InvalidDocx
+    };
     let message = match err {
         DocxError::ZipRead(source) => format!("docx read failed: {source}"),
         DocxError::ZipWrite(source) => format!("docx write failed: {source}"),
@@ -11079,9 +11087,12 @@ pub fn map_docx_error(err: DocxError) -> RuntimeError {
         DocxError::InvalidWrittenZip(detail) => {
             format!("docx write produced an invalid ZIP central directory: {detail}")
         }
+        DocxError::ParseLimitExceeded { bound, limit } => {
+            crate::parse_budget::refusal(bound, limit)
+        }
     };
     RuntimeError {
-        code: ErrorCode::InvalidDocx,
+        code,
         message,
         details: ErrorDetails::default(),
     }

@@ -41,10 +41,14 @@ pub(super) fn run_docx_revision_with_limits(
             "run_ref must be non-empty",
         )));
     }
-    oneiron_docedit::preflight_with_limits(input_bytes, limits).map_err(|_| {
-        Error::Artifact(ArtifactError::EditRoundtripFailed(
-            "docx input exceeds effective archive limits",
-        ))
+    oneiron_docedit::preflight_with_limits(input_bytes, limits).map_err(|error| {
+        // A parse-budget refusal keeps the bound it names.
+        match oneiron_docedit::parse_limit_refusal(&error) {
+            Some(refusal) => Error::Refused(refusal.to_owned()),
+            None => Error::Artifact(ArtifactError::EditRoundtripFailed(
+                "docx input exceeds effective archive limits",
+            )),
+        }
     })?;
     let before = opc::read_with_limits(input_bytes, limits)?;
     let inspection = inspect(&before, OfficeFormat::Docx);
@@ -55,10 +59,11 @@ pub(super) fn run_docx_revision_with_limits(
             ))
         })?;
     let (current, notes) = oneiron_docedit::revise_with_notes(input_bytes, &transaction, limits)
-        .map_err(|_| {
-            Error::Artifact(ArtifactError::EditRoundtripFailed(
+        .map_err(|error| match error.parse_limit_refusal() {
+            Some(refusal) => Error::Refused(refusal.to_owned()),
+            None => Error::Artifact(ArtifactError::EditRoundtripFailed(
                 "native docx revision failed validation or could not be written",
-            ))
+            )),
         })?;
     let after = match opc::read_with_limits(&current, limits) {
         Ok(package) => package,
