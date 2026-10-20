@@ -9,10 +9,15 @@
 //! A guest's command names its engine and the largest CDP message its
 //! browser takes, derived from the egress door's largest answer body, so
 //! one setting moves both (FIX 6815).
+//!
+//! A browser verb the guest refuses answers its stable code; a host caller
+//! is worded the code, and for `browser_unsupported` the engine's own words,
+//! which name the verb that serves it (FIX 6862).
 
 use std::ffi::OsString;
 use std::sync::Arc;
 
+use oneiron::code_run::AgentVerbRefusalWords;
 use oneiron::code_sandbox::egress::EgressConfig;
 use oneiron::{EntityId, Vault};
 use oneiron_browser::{
@@ -82,4 +87,29 @@ pub(super) fn start_run_browser(
 fn guest_argv(engine: BrowserEngine) -> Result<[OsString; 3], BrowserError> {
     let egress = EgressConfig::from_env().map_err(|e| BrowserError::Unavailable(e.to_string()))?;
     Ok(engine.guest_argv(egress.max_response_bytes))
+}
+
+/// A browser verb's refusal as the run door words it (FIX 6862): its code,
+/// and for `browser_unsupported` alone the error's own words, which name
+/// the verb that serves what was refused (`self.browser.switch_engine` to
+/// the other engine). They are engine text, never page content. Every other
+/// code is worded by its code, as before.
+pub(super) fn refusal_words(error: &BrowserError) -> AgentVerbRefusalWords {
+    match error {
+        BrowserError::Unsupported(_) => AgentVerbRefusalWords {
+            code: error.code().to_owned(),
+            message: error.to_string(),
+            suggestions: Vec::new(),
+        },
+        _ => code_words(error.code().to_owned()),
+    }
+}
+
+/// A refusal worded by its code alone.
+pub(super) fn code_words(code: String) -> AgentVerbRefusalWords {
+    AgentVerbRefusalWords {
+        message: code.clone(),
+        code,
+        suggestions: Vec::new(),
+    }
 }

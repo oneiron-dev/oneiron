@@ -1,14 +1,18 @@
-//! An engine switch (FIX 6680, BROWSER-SPLIT PR3): the model moves the run's
-//! browser to the other engine, Lightpanda or Chromium, with the page it is
-//! on. The switch carries the page's URL, its cookies, the local and session
-//! storage of its current top-level origin, and its scroll; nothing switches
-//! by itself, never as a fallback and never on an act's fact.
+//! An engine switch (FIX 6680, BROWSER-SPLIT PR3, PR3b): the model moves the
+//! run's browser to the other engine, Lightpanda or Chromium, with the page
+//! it is on. The switch carries the page's URL, its cookies, the local and
+//! session storage of every top-level origin its tab visited, and its
+//! scroll; nothing switches by itself, never as a fallback and never on an
+//! act's fact. The current origin's stores are read fresh at the switch;
+//! every other origin's come from the session's last read of them, named
+//! by its [`StoragePhase`] and the receipt it followed.
 //!
 //! Every switch the session admits is recorded, as one receipt with verb
 //! `switch_engine` that carries its [`EngineSwitchRecord`]: what was carried,
 //! what was not carried exactly and why, and whether the browser switched.
 //! A record names components, origins, cookie names and domains, attributes,
-//! counts and reasons; never a cookie's or a stored item's value.
+//! counts, phases, receipt numbers and reasons; never a cookie's or a stored
+//! item's value.
 
 use crate::{BrowserEngine, EffectReceipt, ObservationPage};
 use schemars::JsonSchema;
@@ -99,6 +103,13 @@ pub struct SwitchCarried {
     /// How many cookies or stored items it holds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u64>,
+    /// When a store's items were read: the new engine holds them as they
+    /// stood then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<StoragePhase>,
+    /// The last receipt the session had landed when a store was read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_receipt: Option<u64>,
 }
 
 /// One part of the page the new engine does not hold exactly as the source
@@ -118,7 +129,30 @@ pub struct SwitchNotCarried {
     /// How many items, cookies or origins it covers, when it counts them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u64>,
+    /// When the store was last read, or tried, for a store's loss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<StoragePhase>,
+    /// The last receipt the session had landed then: for
+    /// `departure_tail_unobserved`, writes after it are not carried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_receipt: Option<u64>,
     pub reason: SwitchLoss,
+}
+
+/// When the session read an origin's stores: right before an act's input,
+/// with the change check's mark, or before a person's input in a takeover
+/// (`pre_input`); once an act's page settled (`post_act`); as the document
+/// was left, on Chromium only (`exit`); when a person handed the browser
+/// back (`hand_back`); or at the switch itself, the current origin only
+/// (`switch_export`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StoragePhase {
+    PreInput,
+    PostAct,
+    Exit,
+    HandBack,
+    SwitchExport,
 }
 
 /// What a carried or not carried part of the page is.
@@ -147,9 +181,32 @@ pub enum SwitchComponent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SwitchLoss {
-    /// The storage of an origin the tab visited before the current one:
-    /// this switch carries the current top-level origin's only.
-    NotCollected,
+    /// An origin the tab visited whose stores no read caught while one of
+    /// its documents stood.
+    NeverSampled,
+    /// The page gave no answer to the store's read: its document or its
+    /// context was gone, or it stood at another origin by then.
+    ContextLost,
+    /// The page threw reading the store: its storage is denied.
+    ReadException,
+    /// The origin's stores are carried as last read, and the page may have
+    /// written them after that receipt, before its document was left: the
+    /// engine caught no read as it was left (Lightpanda 1.0.0 fires no
+    /// `pagehide`).
+    DepartureTailUnobserved,
+    /// The session's snapshots gave this origin's up to keep within their
+    /// bounds, oldest read first.
+    EvictedOldest,
+    /// An origin the tab showed only in an in-page frame of another origin:
+    /// its storage is that frame's, not carried.
+    CrossOriginFrame,
+    /// A document with an opaque origin (a sandboxed page): it has no
+    /// storage another document can hold.
+    OpaqueOrigin,
+    /// The page relaxed `document.domain`, so the store read is the bucket
+    /// of its effective domain; the new engine holds it under the page's
+    /// origin.
+    EffectiveOriginMismatch,
     /// The new engine refuses this cookie attribute, so the cookie went in
     /// without it (Lightpanda 1.0.0: a priority other than Medium,
     /// `sameParty`, `sourceScheme`, `sourcePort`).
@@ -158,11 +215,13 @@ pub enum SwitchLoss {
     /// (Lightpanda 1.0.0: `partitionKey`, so a partitioned cookie is no
     /// longer partitioned).
     EngineIgnores,
-    /// Past the switch's bounds on cookies, stored items or origins.
+    /// Past the switch's bounds on cookies, stored items, origins or
+    /// recorded losses.
     Limit,
     /// The host's retained memory would not hold it while the switch ran.
     HostCapacity,
-    /// The source page did not answer its read, or threw.
+    /// The source page did not answer the read of its URL, its scroll or
+    /// its cookies.
     ReadFailed,
     /// The new engine did not load the origin's seed document, or it loaded
     /// under another origin.
@@ -171,7 +230,8 @@ pub enum SwitchLoss {
     ReadbackMismatch,
     /// The carried URL landed on another origin.
     Redirected,
-    /// The page is no http or https page, so it has no web origin to carry.
+    /// The page is no http or https page (a file, data or other non-web
+    /// document), so it has no web origin to carry.
     NotWebPage,
     /// Another tab: a switch carries the tab in front only.
     OtherTab,

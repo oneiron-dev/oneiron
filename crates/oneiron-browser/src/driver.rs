@@ -24,12 +24,18 @@
 //! An act whose page shows no change at all within about a second of its
 //! input answers at once, unsettled, with a typed fact saying so (`change`,
 //! FIX 6680); one whose page moved settles as above.
+//!
+//! Where the session keeps storage snapshots, the driver reads the page's
+//! stores right before each act's input, with the change check's mark, and
+//! once its page settled; a Chromium tab reads itself as it is left
+//! (`storage`).
 
 mod change;
 mod handles;
 mod lightpanda;
 pub(crate) mod pages;
 pub(crate) mod state;
+pub(crate) mod storage;
 
 use crate::capture::{self, Capture, Captures};
 use crate::cdp::Pipe;
@@ -40,8 +46,8 @@ use crate::{
     BrowserDriver, BrowserEngine, BrowserError, BrowserPersonInput, BrowserTab, ClickInput,
     CropInput, ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation,
     ObservationPage, ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput,
-    SelectInput, TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput, WaitForOutput,
-    ZoomInput,
+    SelectInput, StoragePhase, TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput,
+    WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
 use change::Watch;
@@ -192,7 +198,7 @@ impl CdpDriver {
             Instant::now() + CALL,
         )?;
         let target = str_field(&created, "targetId")?;
-        let session = attach_tab(&pipe, &target)?;
+        let session = attach_tab(&pipe, &target, engine)?;
         let token = session_token();
         let driver = Self {
             pipe,
@@ -257,7 +263,7 @@ impl CdpDriver {
                 continue;
             }
             self.chromium_only("a second tab")?;
-            let session = attach_tab(&self.pipe, &id)?;
+            let session = attach_tab(&self.pipe, &id, self.engine)?;
             let opener = info
                 .get("openerId")
                 .and_then(Value::as_str)
@@ -394,7 +400,7 @@ impl CdpDriver {
             Instant::now() + CALL,
         )?;
         let target = str_field(&created, "targetId")?;
-        let session = attach_tab(&self.pipe, &target)?;
+        let session = attach_tab(&self.pipe, &target, self.engine)?;
         self.tabs.push(Tab {
             target: target.clone(),
             session,
@@ -885,6 +891,7 @@ impl CdpDriver {
                 let _ = self.settle(before, Instant::now());
             }
         }
+        self.checkpoint(StoragePhase::PostAct);
         let mut observation = self
             .observation(base)
             .map_err(|error| refused.unwrap_or(error))?;
@@ -1203,8 +1210,9 @@ fn target_id(info: &Value) -> String {
 }
 
 /// Attaches a session to page `target` and readies it as every tab the
-/// driver drives: its outline and DOM read, its viewport the driver's.
-fn attach_tab(pipe: &Pipe, target: &str) -> Result<String, BrowserError> {
+/// driver drives: its outline and DOM read, its viewport the driver's, and
+/// on `engine` Chromium its stores read as each document is left.
+fn attach_tab(pipe: &Pipe, target: &str, engine: BrowserEngine) -> Result<String, BrowserError> {
     let deadline = Instant::now() + CALL;
     let attached = pipe.call(
         None,
@@ -1229,6 +1237,7 @@ fn attach_tab(pipe: &Pipe, target: &str) -> Result<String, BrowserError> {
     let enabled = pipe.call(Some(&session), "Page.enable", json!({}), by);
     if enabled.is_ok() {
         pipe.watch_navigations(&session, target);
+        storage::hook_exits(pipe, &session, engine);
     }
     Ok(session)
 }
@@ -1256,6 +1265,7 @@ impl BrowserDriver for CdpDriver {
             let before = self.fingerprint()?;
             self.settle(before, Instant::now())?;
         }
+        self.checkpoint(StoragePhase::PostAct);
         let mut observation = self.observation(&Base::Whole)?;
         observation.fact = fact;
         Ok(observation)

@@ -58,7 +58,8 @@ use oneiron::browser_library::{
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
-    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, RunCall, SelfAgentVerbCall, SelfEffect,
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, AgentVerbRefusalWords, RunCall,
+    SelfAgentVerbCall, SelfEffect,
 };
 use oneiron::consent::{BoundClass, BoundEnvelope, StandingConsentGrant};
 use oneiron::llm::decision::{AnswerContract, DecisionRung, RoutineOutcome};
@@ -733,7 +734,7 @@ impl RunGuests {
         let answer =
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
-                Err(refusal) => return Ok(Err(refusal)),
+                Err(refused) => return Ok(Err(AgentVerbRefusal { code: refused.code })),
             };
         match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         {
@@ -747,6 +748,8 @@ impl RunGuests {
 
     /// The facade and MCP host doors already crossed the row's hooks. They
     /// take this same guest admission and driver without firing hooks twice.
+    /// A refusal carries its code, and for `browser_unsupported` the
+    /// engine's words naming the verb that serves it (FIX 6862).
     #[expect(
         clippy::too_many_arguments,
         reason = "the admitted caller and run are separate axes"
@@ -760,9 +763,9 @@ impl RunGuests {
         memory: &Memory<'_>,
         asker: VerdictAsker,
         by: oneiron::EntityId,
-    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+    ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusalWords>> {
         if let Err(refusal) = self.admits(call.verb, server) {
-            return Ok(Err(refusal));
+            return Ok(Err(browser_guest::code_words(refusal.code)));
         }
         let verb = call.verb.as_str();
         let desktop = verb.starts_with("self.desktop.");
@@ -774,9 +777,6 @@ impl RunGuests {
         .ok_or(oneiron::Error::InvariantViolation(
             "admitted guest has no run",
         ))?;
-        let browser_refused = |error: BrowserError| AgentVerbRefusal {
-            code: error.code().to_owned(),
-        };
         let writer = ReceiptWriter::new(server, asker.clone(), origin, memory.invocation(), run_id);
         let decider = LadderDecider {
             server: Arc::clone(server),
@@ -798,7 +798,7 @@ impl RunGuests {
         };
         let output = match called {
             Ok(output) => output,
-            Err(error) => return Ok(Err(browser_refused(error))),
+            Err(error) => return Ok(Err(browser_guest::refusal_words(&error))),
         };
         // An effect's answer carries its receipt, naming the page it acted on.
         if let Some(receipt) = output.get("receipt") {

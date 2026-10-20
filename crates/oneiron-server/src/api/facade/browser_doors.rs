@@ -77,8 +77,10 @@ where
                 )
             })?;
             drop(held);
+            // A refusal keeps its words: the code, and for an engine that
+            // does not serve the verb, the verb that does (FIX 6862).
             let answer =
-                answer.map_err(|refusal| MemoryError::new(&refusal.code, &refusal.code, &[]))?;
+                answer.map_err(|refused| MemoryError::new(&refused.code, refused.message, &[]))?;
             serde_json::from_value(answer.output).map_err(|_| internal(verb.as_str()))
         })
         .await
