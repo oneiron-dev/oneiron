@@ -132,7 +132,7 @@ impl ManagedState {
         match self.server.expire_leases_once().await {
             Ok(report) => !report.skipped,
             Err(error) => {
-                tracing::error!(kind = ?error.kind(), "lease table drain failed during prepare_reap");
+                tracing::error!(kind = ?error.kind(), "lease table drain failed during a reap or export freeze");
                 false
             }
         }
