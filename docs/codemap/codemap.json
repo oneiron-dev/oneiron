@@ -47562,7 +47562,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/secret_custody/reveal/owner.rs",
