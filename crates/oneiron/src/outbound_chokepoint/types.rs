@@ -64,6 +64,21 @@ impl OutboundEffectResult {
         }
         self
     }
+
+    /// [`Self::held_by`], unless a code consent wait's own code-bound press
+    /// decided this hold (DOOR-079 1a): its owner's answer is that press, so
+    /// the hold names no generic digest (FIX 6424 part 3).
+    pub(super) fn held_by_outside_code_wait(
+        self,
+        effect: &ExternalEffectGateInput,
+        code_wait: bool,
+    ) -> Self {
+        if code_wait {
+            self
+        } else {
+            self.held_by(effect)
+        }
+    }
 }
 
 /// The only two commands accepted by the effectful entry.

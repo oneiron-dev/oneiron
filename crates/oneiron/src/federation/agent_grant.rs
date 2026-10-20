@@ -10,6 +10,11 @@
 //! its delegator; and it stands until he revokes it, or until the expiry he
 //! set, with no maximum (ARCH-0040, OF-453 L8: approved grants are durable
 //! and revocable). A second mint for the same agent adds a second grant.
+//! A mint may also give the agent repo bounds (FIX 6867): one CODE anchor
+//! in one PROJECT, full refs, and separate read and edit globs, stored on
+//! the grant and signed in the act; the repo admission seams
+//! (`federation::repo_access`) read them. A mint without them is a general
+//! grant exactly as before.
 //!
 //! Mint and revoke land the owner's signed act ([`AgentGrantAct`]) and the
 //! grant row's Put or Delete in one write transaction. The vault's existing
@@ -42,8 +47,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{TimeRange, Vault};
 
 use super::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope, Scope,
-    ScopeAxis, decode_federation_grant_body, encode_federation_grant_body,
+    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    RepoAccessBounds, Scope, ScopeAxis, decode_federation_grant_body, encode_federation_grant_body,
     own_device_residence_scope,
 };
 
@@ -98,10 +103,12 @@ impl Vault {
     /// act (`surface` says where he said so, for its audit only) before it
     /// puts the grant. On a shared vault the grant is under the vault's
     /// recorded scope; on a personal vault under the home's residence scope.
+    /// `repo_bounds`, when he gives them, ride the grant and his signed act.
     ///
     /// # Errors
     /// An owner refusal; `InvalidConfig` for an empty or unlisted verb set,
-    /// a member that is no live agent principal or an expiry already passed;
+    /// a member that is no live agent principal, an expiry already passed or
+    /// repo bounds that break their grammar or name no repo of their PROJECT;
     /// [`crate::error::RecordError::AuthorityRefused`] when this install
     /// cannot carry the owner's act.
     pub(crate) fn mint_agent_grant(
@@ -111,6 +118,7 @@ impl Vault {
         agent: EntityId,
         authority_scope: Scope,
         expires_at: Option<u64>,
+        repo_bounds: Option<RepoAccessBounds>,
     ) -> Result<AgentGrantMintOutcome> {
         self.with_write_txn_grouped(|txn| {
             let delegated_by = owner.revalidate_in_txn(self, txn)?;
@@ -123,6 +131,9 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             if expires_at.is_some_and(|expires_at| expires_at <= now) {
                 return Err(Error::InvalidConfig(ALREADY_EXPIRED.into()));
+            }
+            if let Some(bounds) = &repo_bounds {
+                self.check_repo_bounds_mint_in_txn(txn, &authority_scope, bounds)?;
             }
             let scope = self
                 .shared_vault_creation_in_txn(txn)?
@@ -139,6 +150,7 @@ impl Vault {
                 delegated_by: Some(delegated_by),
                 guest: None,
                 owner_agent: true,
+                repo_bounds,
             };
             // Encoding validates: nothing is signed for a grant that cannot stand.
             let data = encode_federation_grant_body(&grant)?;
@@ -152,6 +164,7 @@ impl Vault {
                     member: agent,
                     scope: grant.authority_scope.clone(),
                     expires_at,
+                    repo_bounds: grant.repo_bounds.clone(),
                 },
             )?;
             self.apply_agent_grant_op_in_txn(

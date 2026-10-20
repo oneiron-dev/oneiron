@@ -36,9 +36,28 @@ pub struct ScopedMcpDispatchResult {
     gate_decision_ref: Option<String>,
     gate_outcome: Option<String>,
     gate_reasons: Vec<String>,
+    /// FIX 6424 part 3: the prepared request a Gate hold of this call named
+    /// its approve-once digest for.
+    held_ask: Option<super::approval::HeldConnectorAsk>,
 }
 
 impl ScopedMcpDispatchResult {
+    /// FIX 6424 part 3: the approve-once digest (64 lower-hex) the Gate
+    /// decision that held this call names, copied from it: the owner's press
+    /// on it releases exactly this prepared call. `None` for any other
+    /// result.
+    #[must_use]
+    pub fn approval_digest(&self) -> Option<&str> {
+        self.held_ask
+            .as_ref()
+            .map(|ask| ask.approval_digest.as_str())
+    }
+
+    /// The prepared request a Gate hold of this call asked about.
+    pub(super) fn held_ask(&self) -> Option<&super::approval::HeldConnectorAsk> {
+        self.held_ask.as_ref()
+    }
+
     /// The gate decision this dispatch recorded (`gate:<hex>`), when the
     /// gate ran on this call; a ledger replay records none.
     #[must_use]
@@ -77,6 +96,7 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("gate_decision_ref", &self.gate_decision_ref)
             .field("gate_outcome", &self.gate_outcome)
             .field("gate_reasons", &self.gate_reasons)
+            .field("held_ask", &self.held_ask)
             .finish()
     }
 }
@@ -102,7 +122,14 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     let freeze_event_baseline = ();
     let _ = grant;
     let call = prepared_call.call().clone();
-    let gate = scoped_mcp_gate_input(principal_ref, grant_id, &call);
+    // FIX 6424 part 3: the gate input pins this prepared call.
+    let gate = super::approval::scoped_mcp_pinned_gate_input(
+        principal_ref,
+        grant_id,
+        &prepared_call,
+        attempt_id,
+        call_seq,
+    );
     let idempotency_supported = prepared_call.idempotency_supported();
     // The Send class follows the catalog entry (ONE-1794): only a
     // counterparty-communication connector's calls debit `Sends` rows.
@@ -151,12 +178,19 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
     let decision =
         scoped_decision_after_effect(vault, grant_id, principal_ref, &prepared_call, &effect)?;
     let freeze_events = observed_freeze_events_since(freeze_event_baseline);
-    Ok(dispatch_result(effect, decision, transport, freeze_events))
+    let held_ask =
+        super::approval::HeldConnectorAsk::of(effect.approval_digest.clone(), &prepared_call);
+    let mut result = dispatch_result(effect, decision, transport, freeze_events);
+    result.held_ask = held_ask;
+    Ok(result)
 }
 
 /// The Gate input of one scoped call by `principal_ref` under `grant_id`:
 /// the one place it is built, so a code consent wait's approval digest
-/// (DOOR-079 1a) composes over the very input its effect's gate reads.
+/// (DOOR-079 1a) composes over the very input its effect's gate reads. FIX
+/// 6424 part 3 pins the call's target beside it
+/// (`approval::scoped_mcp_pinned_gate_input`), which the code-wait composer
+/// never reads.
 pub(super) fn scoped_mcp_gate_input(
     principal_ref: &str,
     grant_id: EntityId,
@@ -248,6 +282,7 @@ fn dispatch_result<S>(
         gate_decision_ref: effect.gate_decision_id,
         gate_outcome: effect.gate_outcome,
         gate_reasons,
+        held_ask: None,
     }
 }
 
