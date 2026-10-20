@@ -172,6 +172,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/core/widen.rs` | src | s | 6 crate-vis | — | Host-only landing or decline of a frozen widen proposal |
 | `src/api/core/write_shape.rs` | src | s | 13 crate-vis | — | Create-entity DTOs, and the HTTP face of the core write shape the engine owns… |
 | `src/api/discover.rs` | src | m | 26 crate-vis | — | — |
+| `src/api/discover/capabilities.rs` | src | s | 5 crate-vis | — | The capabilities discovery and health advertise, sorted (FIX 6692) |
 | `src/api/entity.rs` | src | m | 3 crate-vis | — | — |
 | `src/api/error_map.rs` | src | s | 3 crate-vis | — | Engine-to-ApiError mapping plus query/JSON rejection translators |
 | `src/api/esign.rs` | src | m | 6 crate-vis | — | Session-less signing ceremony |

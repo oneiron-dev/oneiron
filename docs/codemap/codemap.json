@@ -80335,6 +80335,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/discover/capabilities.rs",
+     "purpose": "The capabilities discovery and health advertise, sorted (FIX 6692)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -90562,7 +90572,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 478,
+     "files": 479,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91012,7 +91022,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 935,
+   "source_files": 936,
    "test_files": 182
   },
   "oneiron-spawn": {
