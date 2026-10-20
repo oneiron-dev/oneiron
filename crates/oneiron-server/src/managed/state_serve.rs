@@ -35,6 +35,7 @@ use admission::WriteKind;
 use boot_keys::{escrow_vault_key, managed_page_seal, spool_vault_key_escrow};
 use oneiron_vault_contract::host::{Host, HostLimits};
 use read_only::is_read_only;
+use refusal::writes_frozen_body;
 
 /// The reap freeze's write admission, held until a write's last write.
 mod admission;
@@ -48,6 +49,8 @@ mod idle_backup;
 mod read_only;
 /// The reap freeze and `prepare_reap`'s freeze, drain and export.
 mod reap;
+/// The body a frozen engine's refusal is served with.
+mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
 
@@ -805,23 +808,6 @@ fn writes_frozen_response(error: &ManagedError) -> Response {
         Json(writes_frozen_body(error)),
     )
         .into_response()
-}
-
-/// [`writes_frozen_response`]'s body.
-fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
-    let refusal = REAP_PAUSE_REFUSAL;
-    serde_json::json!({
-        "error": refusal.error,
-        "message": error.to_string(),
-        "bound": refusal.bound,
-        "temporary": refusal.temporary,
-        "affected": ["effects", "non_safe_method_requests", "upgrades", "background_passes"],
-        "resumes_on": refusal.resumes_on,
-        "self_hosted": {
-            "supported": refusal.self_hosted_supported,
-            "condition": "no_service_reap_limit",
-        },
-    })
 }
 
 /// Boots the engine as a supervised child process.
