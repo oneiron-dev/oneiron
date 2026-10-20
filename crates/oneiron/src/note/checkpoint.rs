@@ -8,20 +8,31 @@
 //! out; a fork no one decided whose opener stays erased goes on restore, as
 //! the erase deletes it.
 //!
-//! A proposal head's Loro snapshot names its actors in its commit messages,
-//! which no split takes out, so it stays under the vault-wide seal, named
-//! with its NOTE (the live documents' rows are named by the entity-document
-//! getter). Nothing calls this until KS7-5, and only once
-//! CHECKPOINT_PAYLOADS_ENABLED is on.
+//! A proposal head's Loro snapshot splits through the shared Loro projection
+//! under its NOTE ([`loro`], FIX 6072): its stamps' and authorship records'
+//! actors out, and the join writing the same history back with every actor
+//! that did not open erased. One whose fork no one decided, a shallow one and
+//! one that is no value-only proposal stay under the vault-wide seal, named
+//! with the NOTE. The live documents' rows are split by the entity-document
+//! getter through the same NOTE codec, and a NOTE core's author by the
+//! entity-row getter ([`body`]). Nothing calls this until KS7-5, and only
+//! once CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
     reason = "KS7-2b and KS7-5 call the getters; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
+mod body;
 mod bundle;
+mod loro;
 mod pins;
 
+use std::collections::BTreeSet;
+
 use heed::{RoTxn, RwTxn};
+
+pub(crate) use self::body::{CORE_RAW_REFS, join_core_row, reads_core_row, split_core_row};
+pub(crate) use self::loro::{check_live_snapshot, frames_live, join_live, snapshot_note, split_live};
 
 use super::documents::{NOTE_HEAD, NOTE_HEAD_DOC, NOTE_PROPOSAL_DOC};
 use super::lifecycle::NOTE_SEAL;
@@ -42,9 +53,6 @@ use crate::store::checkpoint_payload::rows::{
 
 /// The field a row's one actor fills.
 const ACTOR: &str = "actor";
-
-/// The carrier a NOTE proposal head's Loro snapshot is.
-const NOTE_DOC_ACTORS: &str = "NOTE document commit messages name actors";
 
 /// Moves a row's actor out, leaving no one.
 fn take_actor(slot: &mut NoteActor) -> Vec<(String, EntityId)> {
@@ -87,10 +95,6 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
     for row in rows::typed_rows(dbs, txn, NOTE_HEAD_DOC, &mut out)? {
         out.exact(OwnerRef::entity(&row.key.0), row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, NOTE_PROPOSAL_DOC, &mut out)? {
-        let owner = OwnerRef::entity(&row.key.0.0);
-        out.unclassified(row.at, Some(owner), Unresolved::ActorSplit(NOTE_DOC_ACTORS));
-    }
     for row in rows::typed_rows(dbs, txn, NOTE_OVERRIDE, &mut out)? {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
@@ -100,11 +104,22 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             take_actor(&mut seal.sealed_by)
         })?;
     }
+    // Each fork no one decided, by its NOTE and head: its proposal document
+    // goes with it when its opener does not open.
+    let mut undecided = BTreeSet::new();
     for row in rows::typed_rows(dbs, txn, NOTE_FORK, &mut out)? {
+        if !row.value.decided {
+            undecided.insert((row.value.note, row.value.fork));
+        }
         let owner = OwnerRef::entity(&row.value.note);
         rows::split_actors(&mut out, owner, NOTE_FORK, row, |fork| {
             take_actor(&mut fork.actor)
         })?;
+    }
+    for row in rows::typed_rows(dbs, txn, NOTE_PROPOSAL_DOC, &mut out)? {
+        let note = row.key.0.0;
+        let pending = undecided.contains(&(note, row.key.1.0));
+        loro::capture_proposal(&mut out, note, pending, row);
     }
     for row in rows::typed_rows(dbs, txn, NOTE_RECEIPT, &mut out)? {
         let owner = OwnerRef::entity(&row.value.note);
@@ -150,6 +165,7 @@ fn owns(at: &RowLocator) -> bool {
         NOTE_FORK.decl(),
         NOTE_RECEIPT.decl(),
         NOTE_PROPOSAL_BUNDLE.decl(),
+        NOTE_PROPOSAL_DOC.decl(),
         SYNC_NC_E.decl(),
         NOTE_RECEIPT_BY_REQUEST.decl(),
     ]
@@ -179,6 +195,9 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
         rows::check_row(NOTE_RECEIPT, at, value)
     } else if at.in_table(NOTE_PROPOSAL_BUNDLE.decl()) {
         rows::check_row(NOTE_PROPOSAL_BUNDLE, at, value)
+    } else if at.in_table(NOTE_PROPOSAL_DOC.decl()) {
+        rows::check_row(NOTE_PROPOSAL_DOC, at, value)?;
+        loro::check_proposal(at, value)
     } else if at.in_table(SYNC_NC_E.decl()) {
         rows::check_row(SYNC_NC_E, at, value)
     } else if at.in_table(NOTE_RECEIPT_BY_REQUEST.decl()) {
@@ -194,7 +213,8 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 
 /// A no-one-form row with its opened actors back. A fork no one decided
 /// whose opener did not open goes, as the erase deletes it; every other row
-/// stays, naming no one where its actor did not open.
+/// stays, naming no one where its actor did not open. A proposal document's
+/// history is rebuilt the same, a document of the NOTE its key leads with.
 fn join(
     dbs: &impl ManifestDbs,
     view: &RoTxn<'_>,
@@ -237,6 +257,9 @@ fn join(
     }
     if at.in_table(NOTE_PROPOSAL_BUNDLE.decl()) {
         return bundle::join(dbs, view, at, value, parts);
+    }
+    if at.in_table(NOTE_PROPOSAL_DOC.decl()) {
+        return loro::join_proposal(at, value, parts).map(Some);
     }
     Err(rows::bad_part())
 }

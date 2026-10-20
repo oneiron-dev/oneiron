@@ -8,7 +8,11 @@
 //! dreamer step's CLAIM, which holds a model response, to KS-2B. An
 //! `authored_by` edge names its actor, so it is the authored entity's
 //! actor-keyed row; every other edge is structure that holds while both its
-//! ends do. Nothing calls this until KS7-5, and only once
+//! ends do. A NOTE core names its author (FIX 6072): one that names no one
+//! is its tree's as it stands, and one with a live author stays under the
+//! vault-wide seal until a restore derives its raw-derived refs again
+//! (`crate::note::checkpoint::CORE_RAW_REFS`); the join that puts an opened
+//! author back is NOTE's own. Nothing calls this until KS7-5, and only once
 //! CHECKPOINT_PAYLOADS_ENABLED is on.
 #![allow(
     dead_code,
@@ -22,15 +26,16 @@ use crate::claim::decode_claim_body;
 use crate::edge::{EdgeKind, parse_strict_edge_record};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::note::checkpoint::{CORE_RAW_REFS, join_core_row, reads_core_row, split_core_row};
 use crate::origin::actor_erase::OriginClaimKind;
 use crate::registry::{
-    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
+    ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT, ENTITY_TYPE_NOTE,
     ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_WORLD_KEY_PAD, entity_type_registry_entry,
 };
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowDb, RowLocator,
-    Unresolved,
+    self, ActorPart, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowDb,
+    RowLocator, Unresolved,
 };
 
 /// The carrier an identity op's row is: its body names the actors it
@@ -67,8 +72,31 @@ fn placement(value: &[u8]) -> Placement {
             Placement::Unclassified(Unresolved::ActorSplit(IDENTITY_OP_ACTORS))
         }
         ENTITY_TYPE_CLAIM => claim_placement(&value[ENTITY_METADATA_HEADER_LEN..]),
+        ENTITY_TYPE_NOTE => note_placement(value),
         _ => Placement::Owner,
     }
+}
+
+/// A NOTE core's place, by its author (FIX 6072): an erased NOTE's empty
+/// shell and a core that names no one are their tree's as they stand. A
+/// live author's erase would change the raw bytes the revision refs, the
+/// short id and the citation views are derived from, which no restore
+/// derives again yet, so that core stays under the vault-wide seal.
+fn note_placement(value: &[u8]) -> Placement {
+    if value.len() == ENTITY_METADATA_HEADER_LEN {
+        return Placement::Owner;
+    }
+    match split_core_row(value) {
+        Ok(split) if split.actors.is_empty() => Placement::Owner,
+        Ok(_) => Placement::Unclassified(Unresolved::ActorSplit(CORE_RAW_REFS)),
+        Err(reason) => Placement::Unclassified(Unresolved::ActorSplit(reason)),
+    }
+}
+
+/// Whether `value` is a NOTE's entity row.
+fn is_note(value: &[u8]) -> bool {
+    EntityMetadataHeader::parse(value)
+        .is_some_and(|header| header.entity_type == ENTITY_TYPE_NOTE)
 }
 
 /// A CLAIM's place, by its predicate: a dreamer step's holds a model
@@ -156,11 +184,13 @@ pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
 }
 
 /// An entity row an entity tree holds (an ordinary kind, never another
-/// client's), or an `authored_by` edge.
+/// client's; a NOTE core the split reads, whichever author its join put
+/// back), or an `authored_by` edge.
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     match at.db {
         RowDb::Entities if entity_key(&at.key).is_some() => match placement(value) {
             Placement::Owner => Ok(()),
+            _ if is_note(value) && reads_core_row(value) => Ok(()),
             _ => Err(rows::bad_part()),
         },
         RowDb::EdgesOut | RowDb::EdgesIn => {
@@ -175,12 +205,26 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     }
 }
 
-/// Puts `opened`'s entity rows back exactly, and each `authored_by` edge
-/// whose actor opened.
+/// A no-one-form part: only a NOTE core is one, its opened author put back
+/// by NOTE's own join; every other part is no split of this getter's.
+fn join(
+    view: &RoTxn<'_>,
+    at: &RowLocator,
+    value: &[u8],
+    parts: &[&ActorPart],
+) -> Result<Option<Vec<u8>>> {
+    if at.db == RowDb::Entities && is_note(value) {
+        return join_core_row(value, parts).map(Some);
+    }
+    rows::no_join(view, at, value, parts)
+}
+
+/// Puts `opened`'s entity rows back exactly, each `authored_by` edge whose
+/// actor opened, and each NOTE core split with its opened author back.
 pub(crate) fn restore_in_txn(
     dbs: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,
     opened: OpenedOwnerRows,
 ) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
+    rows::restore_parts(dbs, txn, &opened, check, join)
 }

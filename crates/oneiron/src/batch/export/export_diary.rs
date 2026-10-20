@@ -14,13 +14,22 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{DiaryEntryAdmission, DiaryReadGate, DiaryReadHold};
+use crate::note::NoteActor;
 use crate::write_envelope::WriteActor;
 
 /// The reason every export's diary read states.
 pub const EXPORT_DIARY_READ_REASON: &str = "export";
 
-/// The author of the NOTE `body` when it is a diary.
-pub(crate) fn diary_author(body: &[u8]) -> Option<EntityId> {
+/// CALLS ERASED_DIARY_EXPORT_HOLD (FIX 6072): a diary whose author was
+/// erased is no agent's, so no Grant covers it. Its entry is held as not
+/// covered, named in the manifest under the erased marker, and the rest of
+/// the export goes on.
+const ERASED_AUTHOR_HOLD: ExportDiaryHoldReason = ExportDiaryHoldReason::NotCoveredByGrant;
+
+/// The author of the NOTE `body` when it is a diary: a live agent, or no
+/// one once erased. `None` is a body that is no diary, never a diary whose
+/// author is unknown.
+pub(crate) fn diary_author(body: &[u8]) -> Option<NoteActor> {
     crate::note::decode_note_body_using(body, crate::note::NoteKind::wire)
         .ok()
         .filter(|note| note.kind == crate::note::NoteKind::Diary)
@@ -28,11 +37,11 @@ pub(crate) fn diary_author(body: &[u8]) -> Option<EntityId> {
 }
 
 /// One export's diary reads: the gate, the entries it admitted, and the
-/// entries it held, by agent.
+/// entries it held, by agent (`None` for an erased author).
 pub(crate) struct ExportDiaryLedger {
     gate: DiaryReadGate,
     read: BTreeMap<EntityId, BTreeSet<EntityId>>,
-    held: BTreeMap<(EntityId, ExportDiaryHoldReason), u64>,
+    held: BTreeMap<(Option<EntityId>, ExportDiaryHoldReason), u64>,
 }
 
 impl ExportDiaryLedger {
@@ -46,14 +55,20 @@ impl ExportDiaryLedger {
         })
     }
 
-    /// Admits `entry`, a diary entry by `agent`: true when it is read.
+    /// Admits `entry`, a diary entry by `author`: true when it is read. An
+    /// erased author's entry is held ([`ERASED_AUTHOR_HOLD`]), never read
+    /// through a stand-in agent.
     pub(crate) fn admit(
         &mut self,
         vault: &Vault,
         rtxn: &heed::RoTxn<'_>,
-        agent: EntityId,
+        author: NoteActor,
         entry: EntityId,
     ) -> Result<bool> {
+        let Some(agent) = author.id() else {
+            *self.held.entry((None, ERASED_AUTHOR_HOLD)).or_default() += 1;
+            return Ok(false);
+        };
         match self.gate.admit(vault, rtxn, agent, entry)? {
             DiaryEntryAdmission::Read => {
                 self.read.entry(agent).or_default().insert(entry);
@@ -65,7 +80,7 @@ impl ExportDiaryLedger {
                     DiaryReadHold::Declined => ExportDiaryHoldReason::Declined,
                     DiaryReadHold::NotCovered => ExportDiaryHoldReason::NotCoveredByGrant,
                 };
-                *self.held.entry((agent, reason)).or_default() += 1;
+                *self.held.entry((Some(agent), reason)).or_default() += 1;
                 Ok(false)
             }
         }
@@ -103,7 +118,7 @@ impl ExportDiaryLedger {
                 for (agent, entries) in std::mem::take(&mut self.read) {
                     *self
                         .held
-                        .entry((agent, ExportDiaryHoldReason::ReadLogUnavailable))
+                        .entry((Some(agent), ExportDiaryHoldReason::ReadLogUnavailable))
                         .or_default() += entries.len() as u64;
                     unlogged.extend(entries);
                 }
@@ -114,7 +129,7 @@ impl ExportDiaryLedger {
             .held
             .into_iter()
             .map(|((agent, reason), diaries)| ExportDiaryHold {
-                agent: agent.to_hex(),
+                agent: agent.map_or(NoteActor::Erased, NoteActor::Actor).to_wire(),
                 diaries,
                 reason,
             })

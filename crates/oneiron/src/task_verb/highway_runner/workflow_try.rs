@@ -583,7 +583,7 @@ fn land_report_note(
         kind: NoteKind::parse(REPORT_NOTE_KIND).ok_or(Error::InvariantViolation(
             "the research NOTE kind is not shipped",
         ))?,
-        author_ref: end.bound_by.entity_ref(),
+        author_ref: crate::note::NoteActor::Actor(end.bound_by.entity_ref()),
         markdown: report_markdown(end, ended),
         source_revision_ref: *note.as_bytes(),
     })?;

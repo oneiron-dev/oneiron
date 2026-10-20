@@ -62,15 +62,18 @@ pub struct CanonicalDocument {
     pub head: [u8; 16],
     pub text: String,
     pub title: Option<String>,
-    pub birth_actor: [u8; 16],
+    /// None once the NOTE's author was erased (FIX 6072): it stays no one.
+    pub birth_actor: Option<[u8; 16]>,
     pub birth_at: u64,
     pub authorship: Vec<crate::note::NoteAuthorship>,
 }
 impl CanonicalDocument {
-    /// The bytes this document holds: its ids, text, title and authorship.
+    /// The bytes this document holds: its ids, text, title and authorship,
+    /// each record's actor only while it names one.
     fn held(&self) -> usize {
         let authorship = self.authorship.iter().map(|record| {
-            2 * 16
+            16
+                + record.actor.id().map_or(0, |_| 16)
                 + record.command_hash.len()
                 + record.actor_class.len()
                 + record.grant.as_ref().map_or(0, String::len)
@@ -160,7 +163,7 @@ pub(super) fn capture(
             *live_head.as_bytes(),
             &live,
             true,
-            *core.author_ref.as_bytes(),
+            core.author_ref.id().map(|author| *author.as_bytes()),
             header.learned_at,
         )?;
         budget.take(row.held())?;
@@ -182,7 +185,7 @@ pub(super) fn capture(
                 head,
                 &doc,
                 false,
-                *core.author_ref.as_bytes(),
+                core.author_ref.id().map(|author| *author.as_bytes()),
                 header.learned_at,
             )?;
             budget.take(row.held())?;
@@ -220,7 +223,7 @@ pub(super) fn from_doc(
     head: [u8; 16],
     doc: &LoroDoc,
     live: bool,
-    birth_actor: [u8; 16],
+    birth_actor: Option<[u8; 16]>,
     birth_at: u64,
 ) -> Result<CanonicalDocument> {
     let (text, title, authorship) = crate::note::recovery::values(id(entity_id)?, doc.fork())?;
