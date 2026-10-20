@@ -3822,7 +3822,9 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.rooms.messages",
-                crate::code_run::vault_read::request_schema::<RoomRequest>(),
+                crate::code_run::vault_read::request_schema::<
+                    crate::workspace_roster::RoomMessagesRequest,
+                >(),
             ),
             (
                 "vault.rooms.participants",
@@ -13882,6 +13884,10 @@ pub fn mcp_arguments_schema_from_input(
                 "turn_ref".to_owned(),
                 schema.pointer("/properties/after")?.clone(),
             );
+            properties.insert(
+                "thread_ref".to_owned(),
+                schema.pointer("/properties/thread_ref")?.clone(),
+            );
             &["room_ref"]
         }
         "vault.rooms.participants" => {
@@ -18886,7 +18892,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: EmptyRequest = decode(value.clone())?;
         }
         "vault.rooms.messages" => {
-            let _input: RoomRequest = decode(value.clone())?;
+            let _input: crate::workspace_roster::RoomMessagesRequest = decode(value.clone())?;
         }
         "vault.rooms.participants" => {
             let _input: crate::workspace_roster::ParticipantsRequest = decode(value.clone())?;
@@ -28360,17 +28366,9 @@ pub fn vault_rooms_list(
 }
 pub fn vault_rooms_messages(
     memory: &Memory<'_>,
-    input: RoomRequest,
+    input: crate::workspace_roster::RoomMessagesRequest,
 ) -> MemoryResult<crate::workspace_roster::RoomPage> {
-    memory.rooms_messages_page(
-        crate::EntityId::from_hex(&input.room_ref)?,
-        input
-            .after
-            .as_deref()
-            .map(crate::EntityId::from_hex)
-            .transpose()?,
-        input.limit.unwrap_or(256),
-    )
+    memory.rooms_messages_selected(&input)
 }
 pub fn vault_rooms_participants(
     memory: &Memory<'_>,

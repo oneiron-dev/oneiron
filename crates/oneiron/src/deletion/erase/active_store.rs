@@ -99,6 +99,8 @@ impl Vault {
         // Saved tags read the turn's messages through their PartOf edges, so
         // they go before the graph is torn down.
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
+        // What a kept turn lacks goes too: the id leaves every list (FIX 3859).
+        let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
         // The content-hash index row is dropped by `deindex_entity` below;
         // ONE-1741 removed the verdict relocation that this hook also carried.
         //
@@ -149,7 +151,12 @@ impl Vault {
             crate::ports::DependentWalkDoor::Purge,
         )?;
         Ok((
-            existed || note_removed || had_refinement || had_merge_receipt || had_tags,
+            existed
+                || note_removed
+                || had_refinement
+                || had_merge_receipt
+                || had_tags
+                || had_missing,
             citing,
         ))
     }
@@ -182,6 +189,7 @@ impl Vault {
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
+        let had_missing = crate::store::turn_missing::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
         // the same words go here, not at the physical tear.
         crate::dreamer_wake::erase_in_txn(&self.store, wtxn, id)?;
@@ -259,7 +267,7 @@ impl Vault {
                 ppr::increment_graph_version(&self.store, wtxn)?;
             }
             return Ok((
-                had_refinement || had_merge_receipt || had_tags,
+                had_refinement || had_merge_receipt || had_tags || had_missing,
                 had_vector,
                 ledger_changed,
             ));

@@ -16,7 +16,8 @@ use crate::{EntityId, Vault};
 /// opens that thread's reads alone, never the room's or another thread's,
 /// and takes no seat. A private thread (FIX 2951) is read by its audience
 /// alone, before any of these, and one hidden from `caller` reads as a
-/// missing one.
+/// missing one. Last, the vault's Owner or an Admin in a private thread's
+/// audience reads that thread with no standing in the room (FIX 5638).
 pub(crate) fn thread_reader_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -33,24 +34,24 @@ pub(crate) fn thread_reader_in(
     if room_reader_in(vault, txn, room, members, caller)? {
         return Ok(true);
     }
-    if vault.get_entity_type_in_txn(txn, &caller)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
-        return Ok(false);
-    }
-    let agent = crate::workspace_roster::JoinSubject::Agent(caller);
-    match crate::workspace_roster::require_join_for_branch_in_txn(
-        vault,
-        txn,
-        room,
-        Some(thread),
-        &agent,
-        None,
-    ) {
-        Ok(_) => Ok(true),
-        Err(crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. })) => {
-            Ok(false)
+    if vault.get_entity_type_in_txn(txn, &caller)? == Some(crate::registry::ENTITY_TYPE_AGENT_DEF) {
+        let agent = crate::workspace_roster::JoinSubject::Agent(caller);
+        match crate::workspace_roster::require_join_for_branch_in_txn(
+            vault,
+            txn,
+            room,
+            Some(thread),
+            &agent,
+            None,
+        ) {
+            Ok(_) => return Ok(true),
+            Err(crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority {
+                ..
+            })) => {}
+            Err(error) => return Err(error),
         }
-        Err(error) => Err(error),
     }
+    crate::workspace_roster::privileged_private_thread_reader_in(vault, txn, room, thread, caller)
 }
 
 /// [`room_ceiling_in`](super::room_ceiling_in) for a reader of thread `thread` of `room`

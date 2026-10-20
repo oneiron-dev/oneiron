@@ -25,6 +25,7 @@ mod participation;
 mod replica;
 #[cfg(test)]
 mod tests;
+mod thread_history;
 mod thread_projection;
 mod thread_reads;
 mod upkeep;
@@ -37,9 +38,10 @@ use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::workspace_roster::RoomThreadFill;
 use crate::{EntityId, Vault};
 pub(crate) use audience::{
-    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in, record_thread_admits_in,
-    require_thread_audience_in, stamp_thread, thread_audience_allows_in, thread_audience_in,
-    thread_audience_now_in, thread_binding, thread_members_in, thread_root_readable_with_read_in,
+    ROOM_THREAD_KEY, ThreadBinding, ThreadPlace, names_actor_in,
+    privileged_private_thread_reader_in, record_thread_admits_in, require_thread_audience_in,
+    stamp_thread, thread_audience_allows_in, thread_audience_in, thread_audience_now_in,
+    thread_binding, thread_members_in, thread_root_readable_with_read_in,
     thread_turn_readable_with_read_in, validate_private_audience_in,
 };
 #[cfg(feature = "sync")]
@@ -98,7 +100,9 @@ pub(super) use participation::record_bound_task_in_txn;
 pub(crate) use participation::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
 };
-use participation::{Claimant, agent_off_room_in_txn, require_reader, require_thread_reader};
+use participation::{
+    Claimant, agent_off_room_in_txn, require_reader, require_thread_reader, require_thread_standing,
+};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
     merge_replicated_responses_in_txn, merge_replicated_shared_row_in_txn,
@@ -108,6 +112,7 @@ pub(crate) use replica::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
+pub use thread_history::RoomMessagesRequest;
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
