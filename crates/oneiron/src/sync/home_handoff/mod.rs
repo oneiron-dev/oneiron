@@ -16,16 +16,20 @@
 //! Rows travel as each table's own typed DTO, never as raw rows, and land
 //! through the table's own typed writes. The carrier knows no domain.
 //!
-//! Dormant: no table registers yet and no live path calls the carrier, so
-//! every behaviour is unchanged. Delivery over the residence RPC lane and
-//! restore integration are C2; the free-time and spend-scope adapters and
-//! the election's drain seam are L07-A's.
+//! Dormant: the election records its move request and L07-A's six tables
+//! register ([`home_tables`]), but nothing freezes or delivers yet. C2a adds
+//! the delivery foundation ([`delivery`]): the target's engine doors on the
+//! residence RPC lane (`sync::residence::home_handoff`) and the source's
+//! connection worker (`sync::connection::home_handoff`), which stays off
+//! until C2b turns delivery on. Target ordering, the old home's drain and
+//! restore integration are C2b's.
 #![allow(
     dead_code,
     unused_imports,
-    reason = "FIX 5661 C1 is dormant until C2 delivers it and L07-A registers tables"
+    reason = "FIX 5661 is dormant until C2b turns delivery on"
 )]
 
+mod delivery;
 mod envelope;
 mod lineage;
 mod registry;
@@ -38,6 +42,12 @@ use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
 use crate::error::Error;
 
+pub(crate) use delivery::{
+    DeliveryPlan, ElectionMark, FrozenHandoff, cancel_frozen, capture_route, decode_ack,
+    delivery_plan, drop_staged, election_mark, encode_ack, frozen_part, record_ack,
+    record_unresolved, stage_part, staged_position, staged_sealed, supersede_export,
+    target_receipt,
+};
 pub(crate) use envelope::{
     HomeAck, SealedHandoff, VerifiedHandoff, VerifiedHomeAck, open_handoff, verify_ack,
 };
@@ -135,6 +145,9 @@ pub(crate) enum HandoffStatus {
     Adopted,
     /// No carrier moved the state (CALLS: no carrier).
     Incomplete(IncompleteReason),
+    /// The source froze it, its target provably never adopted it, and the
+    /// source took its state back (FIX 5931). Kept as history.
+    Cancelled,
 }
 
 /// Why a home move carried nothing. The new home keeps today's local
@@ -147,6 +160,11 @@ pub(crate) enum IncompleteReason {
     UnknownLineage,
     /// Rows or a handoff here conflict with the move.
     Conflict,
+    /// The move's target has no machine or endpoint known here.
+    NoRoute,
+    /// The target's persisted answer could not be read: out of reach,
+    /// refused, or another machine on its socket. Not a proof either way.
+    Unresolved,
 }
 
 fn refused(reason: &'static str) -> Error {
