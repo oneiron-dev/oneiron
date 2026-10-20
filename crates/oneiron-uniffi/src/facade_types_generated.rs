@@ -707,6 +707,12 @@ pub struct FeedbackSubjectSent {
     pub approval_receipt_ref: String,
     #[serde(rename = "logical_send_ref")]
     pub logical_send_ref: String,
+    #[serde(
+        rename = "approval_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_digest: Option<String>,
 }
 
 /// `oneiron::feedback::report::routing::ReportDisclosureChoice`.
@@ -19448,6 +19454,12 @@ pub struct TrustedContactDeliveryReceipt {
     pub provider_ref: Option<String>,
     #[serde(rename = "delivery_may_have_occurred")]
     pub delivery_may_have_occurred: bool,
+    #[serde(
+        rename = "approval_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_digest: Option<String>,
 }
 
 /// `oneiron::task_verb::sdk_guest_document::GuestDocumentShareRequest`.
@@ -47337,6 +47349,12 @@ pub struct MemoryGateDenial {
     pub reason_codes: Vec<String>,
     #[serde(rename = "ask_ref", default, skip_serializing_if = "Option::is_none")]
     pub ask_ref: Option<String>,
+    #[serde(
+        rename = "approval_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_digest: Option<String>,
 }
 
 /// `oneiron_contracts::memory::error::MemoryPolicyExceptionProposal`.
@@ -47578,6 +47596,12 @@ pub struct EsignDispatchView {
     pub gate_decision_ref: Option<String>,
     #[serde(rename = "gate_reason_codes")]
     pub gate_reason_codes: Vec<String>,
+    #[serde(
+        rename = "approval_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub approval_digest: Option<String>,
 }
 
 /// `oneiron::blob_artifact::esign::notice_door::EsignNoticesDispatchRequest`.

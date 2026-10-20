@@ -38,14 +38,16 @@ pub use self::connector_reply::{ConnectorReply, ConnectorReplyDispatch, connecto
 pub use self::connector_task::{
     CONNECTOR_SEND_TASK_SUBKIND, ConnectorSendTask, ConnectorSendTaskOutcome, connector_actor_id,
 };
-pub(crate) use self::dispatch_attempt_id::outbound_dispatch_attempt_id;
+pub(crate) use self::dispatch_attempt_id::{
+    connector_logical_send_ref, outbound_dispatch_attempt_id,
+};
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
-pub use self::dispatch_pipeline::OutboundDispatchPipeline;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::dispatch_pipeline::{
     EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn,
 };
+pub use self::dispatch_pipeline::{OutboundDispatchPipeline, outbound_approve_once_digest};
 pub use self::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,
@@ -63,6 +65,7 @@ pub use self::served_sink::{OwnedServedChannelSink, ServedChannelSink};
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
+pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has

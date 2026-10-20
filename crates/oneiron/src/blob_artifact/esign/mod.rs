@@ -1,4 +1,5 @@
 //! Native signing requests on versioned blob artifacts; claims are the state machine.
+mod dispatch_key;
 mod field_admission;
 mod fold;
 mod ledger;
@@ -9,7 +10,9 @@ mod notice_door;
 mod notice_scope;
 mod notice_send_act;
 mod notice_unattended;
-pub use lifecycle::{EsignLifecycleRules, EsignNoticeSwitches};
+pub use lifecycle::{
+    EsignLifecycleRules, EsignNoticeSwitches, EsignReminderSweep, HeldEsignReminder,
+};
 pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
 pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;

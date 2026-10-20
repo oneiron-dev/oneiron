@@ -34,7 +34,9 @@ mod types;
 pub use self::authorization::{
     booking_page_grant_covers_recipient, booking_page_invites_authorizes,
 };
-pub use self::dispatch::enqueue_confirm_invite;
+pub use self::dispatch::{
+    ConfirmInviteOutcome, enqueue_confirm_invite, enqueue_confirm_invite_outcome,
+};
 pub use self::mint::mint_publish_page_invite_grant;
 pub use self::types::{
     BookingPageInviteContext, ConfirmedBookingInvite, PublishBookingPageGrantRequest,
@@ -44,8 +46,10 @@ pub(crate) use self::authorization::{
     BookingInviteCoverage, booker_identity, booker_identity_in_txn, normalize_identity,
     page_grant_covers_booking_in_txn,
 };
+#[cfg(test)]
+pub(super) use self::dispatch::dispatch_confirm_booking_invite;
 pub(super) use self::dispatch::{
-    NoConfirmInviteSink, dispatch_confirm_booking_invite, sending_address,
+    NoConfirmInviteSink, dispatch_confirm_booking_invite_outcome, sending_address,
 };
 
 #[cfg(test)]

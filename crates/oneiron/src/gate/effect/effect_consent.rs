@@ -19,7 +19,12 @@ use crate::gate::input::{ConsentGateContext, ExternalEffectGateInput};
 pub(in crate::gate) fn external_effect_composed_effect(
     effect: &ExternalEffectGateInput,
 ) -> Option<crate::consent::ComposedEffect> {
-    let facts = external_effect_facts(effect);
+    let mut facts = external_effect_facts(effect);
+    // FIX 6424: a press on a non-mail send approves that one send. The
+    // action requirement below, which every Grant is matched on, is unchanged.
+    if let Some(target) = effect.provenance.approval_target.as_ref() {
+        facts.operation_kind = target.pin(&facts.operation_kind);
+    }
     let requirement = external_effect_action_requirement(effect)?;
     crate::consent::ComposedEffect::new(facts)
         .with_action_requirement(requirement)
