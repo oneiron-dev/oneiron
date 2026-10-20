@@ -104,6 +104,17 @@ pub struct ServeArgs {
     #[arg(long = "credentials-fd")]
     pub credentials_fd: Option<i32>,
 
+    /// Inherited file descriptor, the read end of a pipe, carrying the owner
+    /// credential the custody anchor door (`[backup] custody_anchor_url`)
+    /// admits: one JSON object, `{"bearer": "<token>", "binding_seed":
+    /// null}` or with a capability slip's 32-byte binding seed as an array of
+    /// 32 numbers, then EOF. Read once, before the vault opens, by managed and
+    /// plain serve, `oneiron backup` and a restore where no vault is yet;
+    /// never argv, the environment or a file. Without it the door is not
+    /// called.
+    #[arg(long = "custody-anchor-credentials-fd")]
+    pub custody_anchor_credentials_fd: Option<i32>,
+
     /// Managed mode as a Firecracker vault VM's only process. The credential
     /// frame and the ready byte ride the vsock boot channel instead of
     /// `--credentials-fd` and `--ready-fd`, and the host reaches the HTTP and
@@ -518,6 +529,10 @@ impl fmt::Debug for ServeArgs {
             .field("hypnos_socket", &self.hypnos_socket)
             .field("ready_fd", &self.ready_fd)
             .field("credentials_fd", &self.credentials_fd)
+            .field(
+                "custody_anchor_credentials_fd",
+                &self.custody_anchor_credentials_fd,
+            )
             .field("vsock_guest", &self.vsock_guest)
             .field("keystore_dir", &self.keystore_dir)
             .field("escrow_recipient_file", &self.escrow_recipient_file)

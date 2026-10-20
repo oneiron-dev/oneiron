@@ -12,7 +12,13 @@ use crate::build_app;
 use crate::build_artifact_app;
 use crate::config::ServeConfig;
 use crate::managed;
+use crate::owner::backup::CustodyAnchorCredentials;
 use crate::server::SyncServer;
+
+mod hooks;
+pub(crate) use self::hooks::hook_sandbox;
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(crate) use self::hooks::spawn_fact_hooks;
 
 /// How long open connections get to finish after a stop is requested.
 pub(crate) const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
@@ -22,11 +28,22 @@ pub(crate) const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_se
 const LAUNCHD_SOCKET: &str = "Listeners";
 const KEYCHAIN_SERVICE: &str = "com.oneiron.server";
 
-/// `files` are the files `config` was read from, which the server's runtime
-/// file names for a client that queues imports to it.
+/// [`serve_anchored`] handed no custody anchor credential.
+#[cfg(test)]
 pub(super) async fn serve_with_config(
+    config: ServeConfig,
+    files: Option<super::ConfigFiles>,
+) -> anyhow::Result<()> {
+    serve_anchored(config, files, None).await
+}
+
+/// `files` are the files `config` was read from, which the server's runtime
+/// file names for a client that queues imports to it. `anchor` is the custody
+/// anchor door's owner credential the operator handed on its pipe.
+pub(super) async fn serve_anchored(
     mut config: ServeConfig,
     files: Option<super::ConfigFiles>,
+    anchor: Option<Arc<CustodyAnchorCredentials>>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         config.privacy_posture != oneiron::HostingPrivacyPosture::Relay,
@@ -54,7 +71,8 @@ pub(super) async fn serve_with_config(
     }
     refuse_unauthenticated_public_bind(&config, addr)?;
 
-    let OpenedServedVault { vault, owner_host } = open_served_vault(&mut host, &config)?;
+    let OpenedServedVault { vault, owner_host } =
+        open_served_vault_anchored(&mut host, &config, anchor)?;
 
     let server_config = config.sync_server_config();
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
@@ -224,10 +242,21 @@ pub struct OpenedServedVault {
 /// server: dictionary paths resolved, the page seal prepared (a sealed vault
 /// unlocks with `host`'s `vault_password` when it holds one), this device's
 /// keys installed, embedding slots applied and result bodies collected. An
-/// app's embedded engine opens its vault here too.
+/// app's embedded engine opens its vault here too, handed no custody anchor
+/// credential: a door its config names is not called.
 pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
     host: &mut H,
     config: &ServeConfig,
+) -> anyhow::Result<OpenedServedVault> {
+    open_served_vault_anchored(host, config, None)
+}
+
+/// [`open_served_vault`], its custody anchor door called with `anchor`, the
+/// owner credential plain serve was handed on its pipe.
+fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
+    host: &mut H,
+    config: &ServeConfig,
+    anchor: Option<Arc<CustodyAnchorCredentials>>,
 ) -> anyhow::Result<OpenedServedVault> {
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     if let Some(warning) = dicts.warning {
@@ -260,7 +289,7 @@ pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
     let mut rehearsal_config = vault_config.clone();
     rehearsal_config.page_seal = None;
     let owner_host = crate::owner::schedule::OwnerHost::from_config(config, rehearsal_config)
-        .anchored_at(&config.backup);
+        .anchored_at(&config.backup, anchor);
     let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
         .map_err(reembed::with_model_change_remedy)?;
     managed::warn_if_reader_table_short(&vault);
@@ -657,68 +686,6 @@ impl DesktopWorkers {
             let _ = handle.await;
         }
         Ok(())
-    }
-}
-
-/// The vault's one hook sandbox, kept on `server`, so verb hooks, the
-/// fact-hook runner and an explicit replay (`vault.hooks.replay`, a pack's
-/// hook qualification) run on the same one. Taking it starts no runner:
-/// `--no-hooks` stops only the automatic fact-hook runner, and an explicit
-/// replay takes the sandbox here all the same (FIX 1122). Building it
-/// compiles and probes the component, once per process, so a caller on the
-/// async runtime calls this off it.
-///
-/// # Errors
-/// Why the sandbox did not build, or that this build has none.
-pub(crate) fn hook_sandbox(
-    server: &SyncServer,
-) -> Result<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>, String> {
-    if let Some(runtime) = server.hook_runtime.get() {
-        return Ok(Arc::clone(runtime));
-    }
-    let runtime = server.vault().hook_runtime()?;
-    Ok(Arc::clone(server.hook_runtime.get_or_init(|| runtime)))
-}
-
-/// Takes the vault's one hook sandbox off the runtime ([`hook_sandbox`]) and
-/// starts the fact-hook runner on it, each pass under `admit`. A sandbox
-/// that fails to load starts no runner. Managed serve starts it too.
-#[cfg(feature = "code-sandbox-wasmtime")]
-pub(crate) async fn spawn_fact_hooks(
-    server: &Arc<SyncServer>,
-    admit: crate::server::HousekeepingAdmission,
-    stop: tokio::sync::watch::Receiver<bool>,
-) -> Option<tokio::task::JoinHandle<()>> {
-    use oneiron::runtime_hooks::FactHookRunner;
-    let held = Arc::clone(server);
-    let built = crate::logging::off_runtime("hook sandbox", move || hook_sandbox(&held))
-        .await
-        .and_then(|built| built.map_err(anyhow::Error::msg));
-    match built {
-        Ok(runtime) => {
-            // A credential caller's settled verb-hook ask runs again through
-            // the door it came in by, checked before the runner's first pass.
-            server.vault().install_verb_ask_credential_check(Arc::new(
-                crate::credential_resume::ServerVerbAskCredentialCheck::new(
-                    server,
-                    tokio::runtime::Handle::current(),
-                ),
-            ));
-            // Generative fact hooks ask `ai.verdict` on serve's own ladder.
-            let verdict: Arc<dyn oneiron::runtime_hooks::HookVerdict> =
-                Arc::new(crate::hook_verdict::ServerHookVerdict::new(server));
-            Some(FactHookRunner::spawn(
-                Arc::clone(server.vault()),
-                runtime,
-                Some(verdict),
-                admit,
-                stop,
-            ))
-        }
-        Err(error) => {
-            tracing::warn!(%error, "hook sandbox did not load; fact hooks are off");
-            None
-        }
     }
 }
 
