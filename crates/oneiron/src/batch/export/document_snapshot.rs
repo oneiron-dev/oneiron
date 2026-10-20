@@ -77,20 +77,25 @@ impl Vault {
     /// [`Self::export_whole_vault`] written to `sink` as it is built (FIX
     /// 2766): the rows are spooled under the vault's staging directory and
     /// copied into the ZIP one member and one file at a time, so a vault
-    /// larger than memory exports.
+    /// larger than memory exports. The copy is the owner's, in the vault's
+    /// export audit, and each private thread it carries that he is not in is
+    /// told of it (FIX 6427).
     pub fn export_whole_vault_to<W: Write + Seek>(
         &self,
         include_secrets: bool,
         sink: W,
     ) -> Result<WholeVaultExportReceipt> {
-        self.export_whole_vault_with_admission(
+        let reader = owner_reader()?;
+        let (_, mut receipt) = self.export_whole_vault_with_admission(
             CallerLocality::OnDevice,
             include_secrets,
-            owner_reader()?,
-            |_| Ok(()),
+            reader,
+            |_| Ok::<_, Error>(()),
             sink,
-        )
-        .map(|(_, receipt)| receipt)
+        )?;
+        let format = crate::memory::EXPORT_TARGET_ARCHIVE;
+        crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
+        Ok(receipt)
     }
 
     /// The archive of exactly `records` and the graph between them, for a
@@ -129,10 +134,19 @@ impl Vault {
         self.export_in_memory(|vault, spool| vault.export_okf_to(spool))
     }
 
-    /// [`Self::export_okf`] written to `sink` as it is built (FIX 2766).
+    /// [`Self::export_okf`] written to `sink` as it is built (FIX 2766), in
+    /// the vault's export audit as the archive is (FIX 6427).
     pub fn export_okf_to<W: Write + Seek>(&self, sink: W) -> Result<WholeVaultExportReceipt> {
-        self.export_okf_with_admission(CallerLocality::OnDevice, owner_reader()?, |_| Ok(()), sink)
-            .map(|(_, receipt)| receipt)
+        let reader = owner_reader()?;
+        let (_, mut receipt) = self.export_okf_with_admission(
+            CallerLocality::OnDevice,
+            reader,
+            |_| Ok::<_, Error>(()),
+            sink,
+        )?;
+        let format = crate::memory::EXPORT_TARGET_OKF;
+        crate::memory::record_raw_export(self, reader.entity_ref(), format, &mut receipt);
+        Ok(receipt)
     }
 
     pub(crate) fn export_okf_with_admission<W: Write + Seek, E: From<Error>>(
@@ -256,6 +270,8 @@ impl Vault {
         }
         let device_only = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
         let mut included = BTreeSet::new();
+        // The root of each thread a carried TURN is of (FIX 6427).
+        let mut thread_roots = BTreeSet::new();
         let mut agent_fork_hashes = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::new(reader)?;
         for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
@@ -451,6 +467,7 @@ impl Vault {
             } else {
                 std::borrow::Cow::Borrowed(body)
             };
+            thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, &body));
             writer.entity(ExportSnapshotEntity {
                 id,
                 short_ref,
@@ -558,6 +575,10 @@ impl Vault {
                 },
                 sink,
             )
+            .map(|(sink, mut receipt)| {
+                receipt.thread_roots = thread_roots;
+                (sink, receipt)
+            })
             .map_err(E::from)
     }
 
