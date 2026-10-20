@@ -128,20 +128,34 @@ impl UnfacetedSelection {
     pub(super) fn worlds(&self) -> Option<&WorldAuthoritySet> {
         self.0.worlds.as_ref()
     }
+
+    /// The selection with no facet, for a reader its policy denies
+    /// everything: it reads nothing, so its facet ref is never looked up
+    /// (FIX 5008, 6694).
+    pub(super) fn denied(self) -> RecallSelection {
+        self.0
+    }
 }
 
-/// A paid recall's one selection (FIX 5006). Its first pass resolves it,
+/// A recall's one selection (FIX 5006, 6693). Its first pass resolves it,
 /// and its later passes, its retries and its rerank text read reuse it,
 /// never the scope again, so a default that changes mid-recall cannot read
-/// differently between them. Only relevance is pinned: each pass still
-/// reads under a fresh read of its credential, and meets the worlds the
-/// scope asked for with a bound room turn's as they are then.
+/// differently between them. A recall door's cut pack and hyde ready pack
+/// share it with the recall (FIX 6693): the cut pack, which runs before any
+/// pass, pins the worlds the scope asks for, and the first pass the rest.
+/// Only relevance is pinned: each pass still reads under a fresh read of its
+/// credential, and meets the worlds the scope asked for with a bound room
+/// turn's as they are then.
 #[derive(Default)]
-pub(super) struct RecallPin(OnceLock<RecallSelection>);
+pub(crate) struct RecallPin {
+    /// The worlds the scope asks for, before a bound room turn's are met in.
+    asked: OnceLock<Option<WorldAuthoritySet>>,
+    selection: OnceLock<RecallSelection>,
+}
 
 impl RecallPin {
     fn get(&self) -> Option<&RecallSelection> {
-        self.0.get()
+        self.selection.get()
     }
 }
 
@@ -163,7 +177,7 @@ impl Memory<'_> {
                 ..pinned.clone()
             }));
         }
-        let asked = self.selected_worlds(scope)?;
+        let asked = self.asked_worlds(scope, pin)?;
         Ok(UnfacetedSelection(RecallSelection {
             worlds: self.room_met(asked.clone())?,
             asked,
@@ -192,9 +206,79 @@ impl Memory<'_> {
             .map(|facet| self.resolve_ref(facet))
             .transpose()?;
         if let Some(pin) = pin {
-            let _ = pin.0.set(selection.clone());
+            let _ = pin.selection.set(selection.clone());
         }
         Ok(selection)
+    }
+
+    /// The worlds `scope` asks for, before a bound room turn's are met in:
+    /// `pin`'s when it holds them, or else resolved now and pinned there.
+    fn asked_worlds(
+        &self,
+        scope: &RecallScope,
+        pin: Option<&RecallPin>,
+    ) -> MemoryResult<Option<WorldAuthoritySet>> {
+        if let Some(asked) = pin.and_then(|pin| pin.asked.get()) {
+            return Ok(asked.clone());
+        }
+        let asked = self.selected_worlds(scope)?;
+        if let Some(pin) = pin {
+            let _ = pin.asked.set(asked.clone());
+        }
+        Ok(asked)
+    }
+
+    /// A fresh pin for one recall door's cut pack, hyde ready pack and
+    /// recall, which share the one selection the first of them resolves
+    /// (FIX 6693).
+    pub(crate) fn recall_door_pin(&self) -> RecallPin {
+        RecallPin::default()
+    }
+
+    /// The worlds a recall door's cut pack reads (FIX 6693): `pin`'s asked
+    /// worlds, resolved and pinned now when nothing has, met with a bound
+    /// room turn's now.
+    pub(super) fn recall_door_worlds(
+        &self,
+        scope: &RecallScope,
+        pin: &RecallPin,
+    ) -> MemoryResult<Option<WorldAuthoritySet>> {
+        let asked = match pin.get() {
+            Some(pinned) => pinned.asked.clone(),
+            None => self.asked_worlds(scope, Some(pin))?,
+        };
+        self.room_met(asked)
+    }
+
+    /// [`Self::recall_with_execution`] as one pass of a recall door that
+    /// shares `pin` (FIX 6693).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "recall_with_execution's parameter list and the door's pin"
+    )]
+    pub(crate) fn recall_with_execution_pinned(
+        &self,
+        query: &str,
+        effort: super::Effort,
+        scope: &RecallScope,
+        limit: usize,
+        format: Option<&str>,
+        lease: Option<&crate::llm::BudgetLease>,
+        execution: &crate::retrieval_depth::RecallExecution<'_>,
+        pin: &RecallPin,
+    ) -> MemoryResult<super::MemoryPack> {
+        self.recall_routed(
+            None,
+            query,
+            effort,
+            scope,
+            limit,
+            format,
+            lease,
+            None,
+            execution,
+            Some(pin),
+        )
     }
 
     /// The worlds a read beside a paid recall's passes reads: its pinned
@@ -205,9 +289,10 @@ impl Memory<'_> {
         scope: &RecallScope,
         pin: &RecallPin,
     ) -> MemoryResult<Option<WorldAuthoritySet>> {
-        match pin.get() {
-            Some(pinned) => self.room_met(pinned.asked.clone()),
-            None => self.recall_worlds(scope),
+        match (pin.get(), pin.asked.get()) {
+            (Some(pinned), _) => self.room_met(pinned.asked.clone()),
+            (None, Some(asked)) => self.room_met(asked.clone()),
+            (None, None) => self.recall_worlds(scope),
         }
     }
 }

@@ -14,23 +14,29 @@
 //! go, so the vault tries again with the next model version. Too few probe families, or an
 //! interval across the margin, reads unknown, and unknown never swaps automatically: the
 //! incumbent keeps serving and the move stays open for a later check or the owner's yes
-//! ([`Vault::approve_space_move`]). A swap, a keep and an undo each leave a short result note.
+//! ([`Vault::approve_space_move`]). So does a kind whose sufficiency card reads unknown for a
+//! probe set or answer key that moved during its runs, or a diverged canary
+//! ([`super::space_card`], FIX 1638). A swap, a keep and an undo each leave a short result note.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;
 use serde::{Deserialize, Serialize};
 
+use super::media::{MediaEmbeddingInput, PendingMedia};
 use super::space::{
-    EmbeddingSpace, InputKind, KindSlotBindings, drop_space_rows_in_txn, embedding_space_in_txn,
-    kind_slot_bindings_in_txn, search_media_space_in_txn, set_kind_slot_in_txn,
+    EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, drop_space_rows_in_txn,
+    embedding_space_in_txn, kind_slot_bindings_in_txn, search_media_space_in_txn,
+    set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
-use super::space_probe::{SpaceProbe, space_probes_in_txn};
+use super::space_card::{ProbeRetest, probe_versions, read_cards, record_space_retests};
+use super::space_probe::{SpaceProbe, media_query_in, space_probes_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::skill_optimize::SufficiencyCard;
 
 /// Ranks a probe reads: a target found below this depth scores as missed.
 pub const SPACE_PROBE_DEPTH: usize = 10;
@@ -124,6 +130,22 @@ pub struct KindProbeCheck {
     /// owner's stricter margin.
     pub tolerance: Option<f32>,
     pub verdict: NotWorse,
+    /// The unrewarded canary: candidate minus incumbent of whether each probe finds a target
+    /// within [`SPACE_PROBE_DEPTH`] at all, grouped by family as the difference is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary: Option<PairedInterval>,
+    /// The canary's reading, by the same rule against its own retest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary_verdict: Option<NotWorse>,
+    /// The version of the kind's probe set the runs read, 32 hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_version: Option<String>,
+    /// The version of its answer key and scoring the runs read, 32 hex.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rubric: Option<String>,
+    /// The sufficiency card the reading was read on as the move concluded (FIX 1638).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<SufficiencyCard>,
 }
 
 /// One paired probe run over every kind a move carries.
@@ -184,6 +206,20 @@ pub trait SpaceProbeEncoder {
     /// One probe query encoded into `space` through its text tower. Called afresh for every
     /// run, so two calls for the incumbent are its retest; a caching encoder reads no noise.
     fn encode_probe(&self, space: &SpaceRef, query: &str) -> Result<Vec<f32>>;
+
+    /// One media query, a stored image or audio document's bytes, encoded into `space` through
+    /// its tower of that kind (FIX 1637), afresh for every run as [`Self::encode_probe`].
+    /// `None` when the host encodes no media query, and that probe does not run. A host whose
+    /// model is off this device sends the bytes only as its media egress admits them, as the
+    /// backfill does. The default encodes none.
+    fn encode_media_probe(
+        &self,
+        space: &SpaceRef,
+        query: &MediaEmbeddingInput<'_>,
+    ) -> Result<Option<Vec<f32>>> {
+        let _ = (space, query);
+        Ok(None)
+    }
 }
 
 /// The kinds a backfill fills `space` for: those whose slot binds it, and those an open move
@@ -264,6 +300,7 @@ fn check_bindings(moving: &SpaceMove, bindings: &KindSlotBindings) -> Result<()>
 
 /// One probe's three runs: the incumbent, its retest, and the candidate.
 struct ProbeRun {
+    probe: [u8; 16],
     kind: InputKind,
     family: EntityId,
     incumbent: f32,
@@ -315,26 +352,30 @@ fn paired_interval(values: &[f64]) -> Option<PairedInterval> {
     })
 }
 
-/// One kind's reading from its probes' runs.
-fn judge_kind(kind: InputKind, runs: &[&ProbeRun], margin: Option<f32>) -> KindProbeCheck {
+/// One axis of a kind's runs, each run scored by `score` of its reciprocal rank.
+struct AxisReading {
+    difference: PairedInterval,
+    retest: PairedInterval,
+    tolerance: f32,
+    verdict: NotWorse,
+}
+
+/// `runs` read on one axis: the family-grouped paired difference, the incumbent's retest, the
+/// tolerance and the reading; `None` under [`SPACE_PROBE_MIN_FAMILIES`].
+fn read_axis(
+    runs: &[&ProbeRun],
+    margin: Option<f32>,
+    score: impl Fn(f32) -> f32,
+) -> Option<AxisReading> {
     let mut families: BTreeMap<EntityId, (f64, f64, usize)> = BTreeMap::new();
     for run in runs {
         let family = families.entry(run.family).or_default();
-        family.0 += f64::from(run.candidate - run.incumbent);
-        family.1 += f64::from(run.retest - run.incumbent);
+        family.0 += f64::from(score(run.candidate) - score(run.incumbent));
+        family.1 += f64::from(score(run.retest) - score(run.incumbent));
         family.2 += 1;
     }
-    let mut check = KindProbeCheck {
-        kind,
-        probes: runs.len(),
-        families: families.len(),
-        difference: None,
-        retest: None,
-        tolerance: None,
-        verdict: NotWorse::Unknown,
-    };
     if families.len() < SPACE_PROBE_MIN_FAMILIES {
-        return check;
+        return None;
     }
     let (differences, retests): (Vec<f64>, Vec<f64>) = families
         .values()
@@ -343,21 +384,67 @@ fn judge_kind(kind: InputKind, runs: &[&ProbeRun], margin: Option<f32>) -> KindP
     let (Some(difference), Some(retest)) =
         (paired_interval(&differences), paired_interval(&retests))
     else {
-        return check;
+        return None;
     };
     let noise = retest.low.abs().max(retest.high.abs());
     let tolerance = margin.map_or(noise, |margin| margin.min(noise));
-    check.verdict = if difference.low >= -tolerance {
+    let verdict = if difference.low >= -tolerance {
         NotWorse::NotWorse
     } else if difference.high < -tolerance {
         NotWorse::Worse
     } else {
         NotWorse::Unknown
     };
-    check.difference = Some(difference);
-    check.retest = Some(retest);
-    check.tolerance = Some(tolerance);
+    Some(AxisReading {
+        difference,
+        retest,
+        tolerance,
+        verdict,
+    })
+}
+
+/// One kind's reading from its probes' runs: the reciprocal rank, and beside it the canary,
+/// whether each run found a target at all.
+fn judge_kind(kind: InputKind, runs: &[&ProbeRun], margin: Option<f32>) -> KindProbeCheck {
+    let families: BTreeSet<EntityId> = runs.iter().map(|run| run.family).collect();
+    let mut check = KindProbeCheck {
+        kind,
+        probes: runs.len(),
+        families: families.len(),
+        difference: None,
+        retest: None,
+        tolerance: None,
+        verdict: NotWorse::Unknown,
+        canary: None,
+        canary_verdict: None,
+        set_version: None,
+        rubric: None,
+        card: None,
+    };
+    if let Some(scored) = read_axis(runs, margin, |rank| rank) {
+        check.verdict = scored.verdict;
+        check.difference = Some(scored.difference);
+        check.retest = Some(scored.retest);
+        check.tolerance = Some(scored.tolerance);
+    }
+    let found = |rank: f32| if rank > 0.0 { 1.0 } else { 0.0 };
+    if let Some(canary) = read_axis(runs, margin, found) {
+        check.canary = Some(canary.difference);
+        check.canary_verdict = Some(canary.verdict);
+    }
     check
+}
+
+/// A move's reading from its kinds': not worse when every kind is; worse when any kind is;
+/// unknown otherwise.
+pub(super) fn move_verdict(kinds: &[KindProbeCheck]) -> NotWorse {
+    if kinds.iter().all(|kind| kind.verdict == NotWorse::NotWorse) {
+        NotWorse::NotWorse
+    } else if kinds.iter().any(|kind| kind.verdict == NotWorse::Worse) {
+        NotWorse::Worse
+    } else {
+        NotWorse::Unknown
+    }
 }
 
 /// The result note's one line: what moved where, and each kind's reading.
@@ -557,13 +644,15 @@ impl Vault {
     }
 
     /// Ends an open move without a swap: the incumbent keeps serving, and the candidate's rows
-    /// of the moving kinds go (its declaration too, when no slot binds it).
+    /// of the moving kinds go (its declaration too, when no slot binds it). The owner's door:
+    /// a retirement of the candidate names the owner (FIX 6697).
     pub fn abandon_space_move(&self, candidate: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
         let moving = open_move_in_txn(&self.store, &wtxn, candidate)?;
         EMBEDDING_MOVE.delete(&self.store, &mut wtxn, &moving.candidate)?;
         drop_space_rows_in_txn(&self.store, &mut wtxn, candidate, &moving.kinds)?;
-        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
+        let owned = BTreeSet::from([space_setup_id(candidate)?]);
+        let setup = self.publish_embedding_setup_as_in_txn(&mut wtxn, &owned)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         self.embedding_move_ended();
@@ -575,7 +664,11 @@ impl Vault {
     /// the incumbent and closes the move; a kind unknown keeps the incumbent and the move open.
     /// While the candidate lacks a vector of some moving document no probe runs
     /// ([`SpaceMoveOutcome::Filling`]). Each probe is encoded outside any transaction: twice
-    /// into the incumbent, once into the candidate.
+    /// into the incumbent, once into the candidate; a text query through each space's text
+    /// tower, a media query through its kind's ([`SpaceProbeEncoder::encode_media_probe`]),
+    /// its own document left out of the hits. Each kind's reading is read on its sufficiency
+    /// card as the move concludes, and the incumbent's retests are then recorded as
+    /// `learning.retest_noise` (FIX 1638).
     ///
     /// # Errors
     ///
@@ -591,9 +684,9 @@ impl Vault {
     }
 
     /// [`Self::check_space_move`], beside the rows its reading stands on: each live probe's
-    /// family and targets, and every hit up to and including the first target in each run (the
-    /// documents a reciprocal rank stands on). While the candidate is still filling, the
-    /// pending document its backlog scan found.
+    /// family, media query and targets, and every hit up to and including the first target in
+    /// each run (the documents a reciprocal rank stands on). While the candidate is still
+    /// filling, the pending document its backlog scan found.
     ///
     /// # Errors
     ///
@@ -603,7 +696,7 @@ impl Vault {
         candidate: &str,
         encoder: &dyn SpaceProbeEncoder,
     ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
-        let (moving, candidate_space, incumbent_space, probes) = {
+        let (moving, candidate_space, incumbent_space, probes, versions) = {
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
             check_bindings(&moving, &kind_slot_bindings_in_txn(&self.store, &rtxn)?)?;
@@ -626,8 +719,9 @@ impl Vault {
                         Error::InvalidConfig(format!("embedding space {id} is not declared"))
                     })?,
             };
-            let mut probes = Vec::new();
-            for (_, probe) in space_probes_in_txn(&self.store, &rtxn)? {
+            let stored = space_probes_in_txn(&self.store, &rtxn)?;
+            let mut probes: Vec<([u8; 16], SpaceProbe, Option<PendingMedia>)> = Vec::new();
+            for (id, probe) in &stored {
                 if !moving.kinds.contains(&probe.kind) {
                     continue;
                 }
@@ -640,70 +734,122 @@ impl Vault {
                     )?
                     .is_some();
                 }
-                if live {
-                    probes.push(probe);
+                if !live {
+                    continue;
                 }
+                // A media query runs on its document as stored now; one gone does not run.
+                let query = match probe.query_media {
+                    None => None,
+                    Some(media) => match media_query_in(&self.store, &rtxn, media)? {
+                        Some(document) => Some(document),
+                        None => continue,
+                    },
+                };
+                probes.push((*id, probe.clone(), query));
             }
-            (moving, candidate_space, incumbent_space, probes)
+            let versions: BTreeMap<InputKind, (String, String)> = moving
+                .kinds
+                .iter()
+                .map(|kind| (*kind, probe_versions(&stored, *kind)))
+                .collect();
+            (moving, candidate_space, incumbent_space, probes, versions)
         };
         let mut rows: Vec<EntityId> = probes
             .iter()
-            .flat_map(|probe| std::iter::once(probe.family).chain(probe.targets.iter().copied()))
+            .flat_map(|(_, probe, _)| {
+                std::iter::once(probe.family)
+                    .chain(probe.query_media)
+                    .chain(probe.targets.iter().copied())
+            })
             .collect();
 
-        // A probe is a text query, so it enters a space only through a text tower; a space
-        // without one runs no probe and its kinds read unknown.
-        let towers = candidate_space.query_towers.contains(&InputKind::Text)
-            && incumbent_space.query_towers.contains(&InputKind::Text);
+        // A text query enters a space only through a text tower, a media query only through
+        // its kind's; a probe either space lacks the tower for, or whose media query the host
+        // encodes none of, does not run, and a kind with too few runs reads unknown.
+        let towers = |kind: InputKind| {
+            candidate_space.query_towers.contains(&kind)
+                && incumbent_space.query_towers.contains(&kind)
+        };
         let candidate_ref = SpaceRef::Declared(candidate.to_owned());
         let mut encoded = Vec::new();
-        if towers {
-            for probe in &probes {
-                let first = encoder.encode_probe(&moving.incumbent, &probe.query)?;
-                let retest = encoder.encode_probe(&moving.incumbent, &probe.query)?;
-                let next = encoder.encode_probe(&candidate_ref, &probe.query)?;
-                incumbent_space.admit_query(InputKind::Text, &first)?;
-                incumbent_space.admit_query(InputKind::Text, &retest)?;
-                candidate_space.admit_query(InputKind::Text, &next)?;
-                encoded.push((probe, first, retest, next));
-            }
+        for (id, probe, query) in &probes {
+            let runs = match query {
+                None if towers(InputKind::Text) => {
+                    let first = encoder.encode_probe(&moving.incumbent, &probe.query)?;
+                    let retest = encoder.encode_probe(&moving.incumbent, &probe.query)?;
+                    let next = encoder.encode_probe(&candidate_ref, &probe.query)?;
+                    Some((InputKind::Text, first, retest, next))
+                }
+                Some(media) if towers(media.kind) => {
+                    let input = media.input();
+                    let mut three = Vec::with_capacity(3);
+                    for space in [&moving.incumbent, &moving.incumbent, &candidate_ref] {
+                        match encoder.encode_media_probe(space, &input)? {
+                            Some(vector) => three.push(vector),
+                            None => break,
+                        }
+                    }
+                    <[Vec<f32>; 3]>::try_from(three)
+                        .ok()
+                        .map(|[first, retest, next]| (media.kind, first, retest, next))
+                }
+                _ => None,
+            };
+            let Some((tower, first, retest, next)) = runs else {
+                continue;
+            };
+            incumbent_space.admit_query(tower, &first)?;
+            incumbent_space.admit_query(tower, &retest)?;
+            candidate_space.admit_query(tower, &next)?;
+            let exclude = query.as_ref().map(|media| media.id);
+            encoded.push((*id, probe, exclude, first, retest, next));
         }
 
         let runs = {
             let rtxn = self.store.env.read_txn()?;
-            let search = |space: &SpaceRef, kind: InputKind, query: &[f32]| match space {
-                SpaceRef::TextIndex => crate::ports::RetrievalIndex::port_retrieval_vector_search(
-                    self,
-                    &rtxn,
-                    query,
-                    SPACE_PROBE_DEPTH,
-                ),
-                SpaceRef::Declared(id) => {
-                    let space = if *id == candidate_space.id {
-                        &candidate_space
-                    } else {
-                        &incumbent_space
-                    };
-                    search_media_space_in_txn(
-                        &self.store,
-                        &rtxn,
-                        space,
-                        query,
-                        &[kind],
-                        SPACE_PROBE_DEPTH,
-                        |_| Ok(true),
-                    )
+            let search = |space: &SpaceRef,
+                          kind: InputKind,
+                          query: &[f32],
+                          exclude: Option<EntityId>|
+             -> Result<Vec<ScoredEntity>> {
+                match space {
+                    SpaceRef::TextIndex => {
+                        let depth = SPACE_PROBE_DEPTH + usize::from(exclude.is_some());
+                        let mut hits = crate::ports::RetrievalIndex::port_retrieval_vector_search(
+                            self, &rtxn, query, depth,
+                        )?;
+                        hits.retain(|hit| Some(hit.id) != exclude);
+                        hits.truncate(SPACE_PROBE_DEPTH);
+                        Ok(hits)
+                    }
+                    SpaceRef::Declared(id) => {
+                        let space = if *id == candidate_space.id {
+                            &candidate_space
+                        } else {
+                            &incumbent_space
+                        };
+                        search_media_space_in_txn(
+                            &self.store,
+                            &rtxn,
+                            space,
+                            query,
+                            &[kind],
+                            SPACE_PROBE_DEPTH,
+                            |hit| Ok(Some(*hit) != exclude),
+                        )
+                    }
                 }
             };
             let mut runs = Vec::with_capacity(encoded.len());
-            for (probe, first, retest, next) in &encoded {
-                let incumbent_hits = search(&moving.incumbent, probe.kind, first)?;
-                let retest_hits = search(&moving.incumbent, probe.kind, retest)?;
-                let candidate_hits = search(&candidate_ref, probe.kind, next)?;
+            for (id, probe, exclude, first, retest, next) in &encoded {
+                let incumbent_hits = search(&moving.incumbent, probe.kind, first, *exclude)?;
+                let retest_hits = search(&moving.incumbent, probe.kind, retest, *exclude)?;
+                let candidate_hits = search(&candidate_ref, probe.kind, next, *exclude)?;
                 for hits in [&incumbent_hits, &retest_hits, &candidate_hits] {
                     rows.extend(ranked_rows(probe, hits));
                 }
                 runs.push(ProbeRun {
+                    probe: *id,
                     kind: probe.kind,
                     family: probe.family,
                     incumbent: reciprocal_rank(probe, &incumbent_hits),
@@ -719,27 +865,34 @@ impl Vault {
             .iter()
             .map(|kind| {
                 let of_kind: Vec<&ProbeRun> = runs.iter().filter(|run| run.kind == *kind).collect();
-                judge_kind(*kind, &of_kind, moving.margin)
+                let mut check = judge_kind(*kind, &of_kind, moving.margin);
+                if let Some((set, rubric)) = versions.get(kind) {
+                    check.set_version = Some(set.clone());
+                    check.rubric = Some(rubric.clone());
+                }
+                check
             })
             .collect();
-        let verdict = if kinds.iter().all(|kind| kind.verdict == NotWorse::NotWorse) {
-            NotWorse::NotWorse
-        } else if kinds.iter().any(|kind| kind.verdict == NotWorse::Worse) {
-            NotWorse::Worse
-        } else {
-            NotWorse::Unknown
-        };
         let check = SpaceMoveCheck {
             checked_at: self.store.clock.now_recorded_at(),
+            verdict: move_verdict(&kinds),
             kinds,
-            verdict,
         };
+        let checked_at = check.checked_at;
         rows.sort_unstable();
         rows.dedup();
-        Ok((
-            self.conclude_space_move(candidate, Some(check), false)?,
-            Some(rows),
-        ))
+        let outcome = self.conclude_space_move(candidate, Some(check), false)?;
+        let retests: Vec<ProbeRetest> = runs
+            .iter()
+            .map(|run| ProbeRetest {
+                probe: run.probe,
+                kind: run.kind,
+                first: run.incumbent,
+                second: run.retest,
+            })
+            .collect();
+        record_space_retests(self, &moving, checked_at, &retests);
+        Ok((outcome, Some(rows)))
     }
 
     /// The owner's yes to an open move whose check did not read not worse: once the candidate
@@ -775,7 +928,8 @@ impl Vault {
 
     /// Binds a swapped-in move's incumbent again for every kind it moved: the one-click undo.
     /// The candidate stays declared, and the backfill fills the incumbent again for what
-    /// arrived since.
+    /// arrived since. Its slot rows are a system move's (FIX 6697): a slot it returns to the
+    /// vault's own text index is bound again from the config at startup.
     ///
     /// # Errors
     ///
@@ -857,7 +1011,8 @@ impl Vault {
         };
         let mut retired = Vec::new();
         for id in due {
-            match self.retire_embedding_space(&id) {
+            // The swap's backfill retires it: a system move's retirement (FIX 6697).
+            match self.retire_embedding_space_as(&id, SetupActor::System) {
                 Ok(()) => retired.push(id),
                 // Bound again, or named by an open move: it still serves.
                 Err(Error::InvalidConfig(_)) => {}
@@ -915,7 +1070,8 @@ impl Vault {
 
     /// Records `check` on the open move to `candidate` and acts on it: a passing check, or the
     /// owner's yes, binds the candidate for every moving kind; a worse one closes the move and
-    /// drops the candidate's rows; an unknown one leaves the move open.
+    /// drops the candidate's rows; an unknown one leaves the move open. The owner's yes names
+    /// the owner on the slot rows it binds; a check's rows are a system move's (FIX 6697).
     fn conclude_space_move(
         &self,
         candidate: &str,
@@ -925,6 +1081,16 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let mut moving = open_move_in_txn(&self.store, &wtxn, candidate)?;
         check_bindings(&moving, &kind_slot_bindings_in_txn(&self.store, &wtxn)?)?;
+        // A check's reading is read again on its card against the probes stored now; the
+        // owner's yes acts on the check it is given, as before.
+        let check = match check {
+            Some(check) if !by_owner => Some(read_cards(
+                check,
+                moving.margin,
+                &space_probes_in_txn(&self.store, &wtxn)?,
+            )),
+            check => check,
+        };
         let verdict = check
             .as_ref()
             .map_or(NotWorse::Unknown, |check| check.verdict);
@@ -957,7 +1123,16 @@ impl Vault {
         if concluded {
             self.note_space_move_in_txn(&mut wtxn, &moving)?;
         }
-        let setup = self.publish_embedding_setup_in_txn(&mut wtxn)?;
+        let owned = if by_owner {
+            moving
+                .kinds
+                .iter()
+                .map(|kind| slot_setup_id(*kind))
+                .collect::<Result<BTreeSet<_>>>()?
+        } else {
+            BTreeSet::new()
+        };
+        let setup = self.publish_embedding_setup_as_in_txn(&mut wtxn, &owned)?;
         wtxn.commit()?;
         self.embedding_setup_committed(setup);
         if concluded {
