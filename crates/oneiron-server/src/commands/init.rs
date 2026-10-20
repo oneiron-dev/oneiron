@@ -383,7 +383,7 @@ fn ask_local_tagger(
         return Ok(());
     }
     let config = local_tagger_config(args)?;
-    let survey = crate::oneironer::engines::survey(&config)?;
+    let survey = crate::oneironer::engines::survey(&config, None)?;
     writeln!(output, "Tagger engines on this machine:")?;
     for (engine, row) in &survey.engines {
         let measured = match row {
