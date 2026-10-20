@@ -1,10 +1,12 @@
 //! Table edits applied by identity; a whole table written over the table a
-//! node holds lowered to the edits that make it, before it is logged; and
-//! the row and column identities a writer names before an edit is logged,
-//! so every replay inserts the same rows and columns.
+//! node holds (or a whole chart over a chart, [`super::chart_ops`]) lowered
+//! to the edits that make it, before it is logged; and the row, column and
+//! series identities a writer names before an edit is logged, so every
+//! replay inserts the same rows, columns and series.
 
+use super::chart_ops::lower_chart;
 use super::table::{TableBody, TableEdit, TableMerge, deactivated, dedupe};
-use super::{DeckOp, LiveDeck, NodeId, NodePayload};
+use super::{ChartEdit, DeckOp, LiveDeck, NodeId, NodePayload};
 use crate::live::LiveError;
 use crate::live::conversion::Conversion;
 use std::collections::{BTreeMap, BTreeSet};
@@ -162,21 +164,31 @@ impl LiveDeck {
     /// so it joins concurrent table work rather than replacing it: a row or
     /// column it names that the held table does not hold is new and takes a
     /// fresh identity from `mint`, never one an export's positions suggest.
-    /// Any other operation is logged as written.
+    /// A whole chart written over the chart a node holds is lowered to the
+    /// chart edits that make it, by series identity, the same way. Any other
+    /// operation is logged as written.
     pub fn lower(&self, op: &DeckOp, mut mint: impl FnMut() -> NodeId) -> DeckOp {
-        if let DeckOp::SetPayload {
-            node,
-            payload: NodePayload::Table(wanted),
-        } = op
-            && let Some(NodePayload::Table(held)) = self
+        if let DeckOp::SetPayload { node, payload } = op
+            && let Some(held) = self
                 .nodes
                 .get(node)
                 .and_then(|found| found.payload.as_ref())
         {
-            return DeckOp::EditTable {
-                node: *node,
-                edits: lower_table(held, wanted, &mut mint),
-            };
+            match (held, payload) {
+                (NodePayload::Table(held), NodePayload::Table(wanted)) => {
+                    return DeckOp::EditTable {
+                        node: *node,
+                        edits: lower_table(held, wanted, &mut mint),
+                    };
+                }
+                (NodePayload::Chart { .. }, NodePayload::Chart { .. }) => {
+                    return DeckOp::EditChart {
+                        node: *node,
+                        edits: lower_chart(held, payload, &mut mint),
+                    };
+                }
+                _ => {}
+            }
         }
         op.clone()
     }
@@ -218,27 +230,23 @@ fn lower_table(
         &held.rows,
         &wanted.rows,
         &mut edits,
-        [
-            |id, _| TableEdit::DeleteRow { row: id },
-            |id, after| TableEdit::MoveRow { row: id, after },
-            |id, after| TableEdit::InsertRow {
-                id: Some(id),
-                after,
-            },
-        ],
+        |id| TableEdit::DeleteRow { row: id },
+        |id, after| TableEdit::MoveRow { row: id, after },
+        |id, after| TableEdit::InsertRow {
+            id: Some(id),
+            after,
+        },
     );
     order(
         &held.columns,
         &wanted.columns,
         &mut edits,
-        [
-            |id, _| TableEdit::DeleteColumn { column: id },
-            |id, after| TableEdit::MoveColumn { column: id, after },
-            |id, after| TableEdit::InsertColumn {
-                id: Some(id),
-                after,
-            },
-        ],
+        |id| TableEdit::DeleteColumn { column: id },
+        |id, after| TableEdit::MoveColumn { column: id, after },
+        |id, after| TableEdit::InsertColumn {
+            id: Some(id),
+            after,
+        },
     );
     for row in &wanted.rows {
         for column in &wanted.columns {
@@ -279,17 +287,17 @@ fn rename(
     renamed
 }
 
-/// One edit-making function per kind: delete, move, insert, each given the
-/// identity and the one it goes after.
-type Makers = [fn(NodeId, Option<NodeId>) -> TableEdit; 3];
-
 /// The deletes, moves and inserts that make the order `held` into
-/// `wanted`, each placed after the identity before it in `wanted`.
-fn order(
+/// `wanted`, each placed after the identity before it in `wanted`: an edit
+/// of each kind made by `delete`, `moved` (given the identity and the one
+/// it goes after) and `inserted` (likewise).
+pub(super) fn order<E>(
     held: &[NodeId],
     wanted: &[NodeId],
-    edits: &mut Vec<TableEdit>,
-    [delete, moved, inserted]: Makers,
+    edits: &mut Vec<E>,
+    delete: impl Fn(NodeId) -> E,
+    moved: impl Fn(NodeId, Option<NodeId>) -> E,
+    inserted: impl Fn(NodeId, Option<NodeId>) -> E,
 ) {
     let keep: BTreeSet<NodeId> = wanted.iter().copied().collect();
     let mut now = Vec::with_capacity(held.len());
@@ -297,7 +305,7 @@ fn order(
         if keep.contains(id) {
             now.push(*id);
         } else {
-            edits.push(delete(*id, None));
+            edits.push(delete(*id));
         }
     }
     for (index, id) in wanted.iter().enumerate() {
@@ -321,28 +329,49 @@ fn order(
 
 impl DeckOp {
     /// How many identities applying this operation mints: an unnamed
-    /// creation's, and each row or column a table edit inserts unnamed.
+    /// creation's, each series a chart it writes carries unnamed, and each
+    /// row, column or series a table or chart edit inserts unnamed.
     #[must_use]
     pub fn unnamed(&self) -> u64 {
         match self {
-            DeckOp::AddSlide { id: None } | DeckOp::AddNode { id: None, .. } => 1,
+            DeckOp::AddSlide { id } => u64::from(id.is_none()),
+            DeckOp::AddNode { id, payload, .. } => {
+                u64::from(id.is_none()) + payload.as_ref().map_or(0, NodePayload::unnamed_series)
+            }
+            DeckOp::SetPayload { payload, .. } => payload.unnamed_series(),
             DeckOp::EditTable { edits, .. } => edits.iter().map(TableEdit::unnamed).sum(),
+            DeckOp::EditChart { edits, .. } => edits.iter().map(ChartEdit::unnamed).sum(),
             _ => 0,
         }
     }
 
     /// Name what this operation leaves unnamed, in order, from `mint`: a
-    /// creation's identity, and each row or column a table edit inserts.
-    /// What a writer records so every replay makes the same node, row and
-    /// column.
+    /// creation's identity, each series a chart it writes carries unnamed,
+    /// and each row, column or series a table or chart edit inserts. What a
+    /// writer records so every replay makes the same node, row, column and
+    /// series.
     pub fn name_creation(&mut self, mut mint: impl FnMut() -> NodeId) {
         match self {
-            DeckOp::AddSlide { id } | DeckOp::AddNode { id, .. } => {
+            DeckOp::AddSlide { id } => {
                 if id.is_none() {
                     *id = Some(mint());
                 }
             }
+            DeckOp::AddNode { id, payload, .. } => {
+                if id.is_none() {
+                    *id = Some(mint());
+                }
+                if let Some(payload) = payload {
+                    payload.name_series(&mut mint);
+                }
+            }
+            DeckOp::SetPayload { payload, .. } => payload.name_series(&mut mint),
             DeckOp::EditTable { edits, .. } => {
+                for edit in edits {
+                    edit.name(&mut mint);
+                }
+            }
+            DeckOp::EditChart { edits, .. } => {
                 for edit in edits {
                     edit.name(&mut mint);
                 }

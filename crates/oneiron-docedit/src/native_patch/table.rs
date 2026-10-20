@@ -1,5 +1,6 @@
 //! Native `a:tbl` tables: creation with merge rectangles, and merge-aware
-//! cell text writes that refuse a continuation cell.
+//! cell text writes; a cell a merge covers keeps its own text under the
+//! merge, as PowerPoint keeps it.
 use super::workbook::{header, number};
 use super::{Frame, Merge, NativeRefusal};
 use crate::deck::Placeholder;
@@ -103,11 +104,6 @@ pub(super) fn frame_xml(
                 if (r, c) == (merge.row, merge.col) {
                     continue;
                 }
-                if grid[r][c].is_some() && grid[r][c] != grid[merge.row][merge.col] {
-                    return Err(NativeRefusal::UnsupportedMergeTopology(
-                        "a merge would hide a value",
-                    ));
-                }
                 role[r][c] = Some((c > merge.col, r > merge.row));
             }
         }
@@ -156,7 +152,7 @@ pub(super) fn frame_xml(
                 .as_deref()
                 .or(dataset.missing.as_deref())
                 .unwrap_or_default();
-            let body = if role[r][c].is_some() || text.is_empty() {
+            let body = if text.is_empty() {
                 "<a:p/>".to_owned()
             } else {
                 format!("<a:p><a:r><a:t>{}</a:t></a:r></a:p>", escape_text(text))
@@ -228,7 +224,8 @@ fn span(node: &Node, name: &str) -> Result<usize, NativeRefusal> {
 }
 
 /// Replace one cell's paragraphs, keeping the first paragraph's and first
-/// run's properties. Continuation cells refuse.
+/// run's properties. A cell a merge covers takes its own text under the
+/// merge.
 pub(super) fn set_cell(
     package: &mut Package,
     slide: &str,
@@ -326,9 +323,6 @@ pub(super) fn set_cell(
         .get(row)
         .and_then(|line| line.get(col))
         .ok_or(NativeRefusal::Stale("no such cell"))?;
-    if owned[row][col] {
-        return Err(NativeRefusal::MergedContinuationCell);
-    }
     let (body, _) = tree
         .child(tc, DML, "txBody")?
         .ok_or(NativeRefusal::Stale("cell has no text body"))?;

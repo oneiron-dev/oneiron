@@ -8,7 +8,9 @@
 
 use heed::RoTxn;
 
+use super::super::RevisionRef;
 use super::PENDING;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{self, Captured, OwnerRef, RowLocator};
@@ -26,4 +28,16 @@ pub(crate) fn owns(at: &RowLocator) -> bool {
 
 pub(crate) fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     rows::check_row(PENDING, at, value)
+}
+
+/// The revision `id`'s staged inputs wait on, for the revision document's
+/// binding check (FIX 6072). A row that does not read names none: its own
+/// capture keeps it unclassified.
+pub(crate) fn staged_revision(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<RevisionRef>> {
+    let pending = PENDING.get_lenient(dbs, txn, id)?;
+    Ok(pending.map(|pending| pending.revision))
 }
