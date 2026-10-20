@@ -87388,7 +87388,7 @@
      "path": "src/managed/mod.rs",
      "purpose": "Managed serve mode: the vault engine as a supervised child process",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "mod": 3,
       "re-export": 10
      }
@@ -87487,8 +87487,29 @@
      "purpose": "A relay room has no engine, vault key, Loro document or inference worker",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/deferred_delete.rs",
+     "purpose": "Locker deletes a host hold guard defers (FIX 1488, Engine 10-20 20:3x)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/relay/hold_guard.rs",
+     "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -88925,17 +88946,7 @@
      "path": "src/owner/backup/relay_hold.rs",
      "purpose": "The relay delete guard over one vault's backup holds (FIX 1488): the adapter L14's relay locker delete takes…",
      "surface": {
-      "crate-vis": 3
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/owner/backup/relay_hold_guard.rs",
-     "purpose": "The relay locker's delete guard (FIX 1488, Engine 10-20 20:3x), staged here because its home…",
-     "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -91117,7 +91128,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 51,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -91152,7 +91163,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 38,
+     "files": 37,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91273,7 +91284,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 941,
+   "source_files": 942,
    "test_files": 182
   },
   "oneiron-spawn": {
