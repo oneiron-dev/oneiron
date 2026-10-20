@@ -85,8 +85,10 @@ enum Custody<'a> {
     /// The restored vault takes its source's place and keeps its custody.
     Keep,
     /// As `Keep`, for the replacement of the vault at `home`: archived until
-    /// a swap puts it there ([`Vault::swap_in_replacement`]).
-    Replace(&'a Path),
+    /// a swap puts it there ([`Vault::swap_in_replacement`]). It re-elects
+    /// its MACRO home over the host's own candidacy the vault it replaces
+    /// kept, when it kept one, before it is returned (FIX 5661 C2b).
+    Replace(&'a Path, Option<&'a [crate::DreamerHomeNodeCandidate]>),
     /// A copy served beside its source gets custody of its own. It never
     /// holds a key the source's live state, when given, says is destroyed or
     /// committed to be.
@@ -618,6 +620,9 @@ impl Vault {
         current: &Self,
         restored_at: u64,
     ) -> Result<(Self, RestoreReport)> {
+        // The host's own home candidacy stays on this host: the replacement
+        // re-elects over it, never over the image's.
+        let candidacy = rebuild::host_candidacy(current);
         Self::restore_with_current_authority(
             path,
             key,
@@ -625,7 +630,7 @@ impl Vault {
             config,
             current,
             restored_at,
-            Custody::Replace(current.store.env.path()),
+            Custody::Replace(current.store.env.path(), candidacy.as_deref()),
         )
     }
     fn restore_with_current_authority(

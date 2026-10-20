@@ -67,7 +67,7 @@ pub(super) fn carry_current_authority(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
 ) -> Result<()> {
-    let classes = Classes::new(current)?;
+    let classes = Classes::new(current, databases)?;
     let live = current_rows(current, &classes)?;
     // A store's random id, minted at its first open, names the vault even
     // before it has an authority log. Every image carries one; a missing or
