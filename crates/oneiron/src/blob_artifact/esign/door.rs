@@ -684,9 +684,17 @@ impl Memory<'_> {
             verb,
             reason: reason.map(str::to_owned),
         };
-        let result = vault
-            .dispatch_esign(request, &command, None, None)
-            .map_err(crate::memory::facade_error_from_outbound_dispatch)?;
+        // The owner's own act carries his proof into the send, so each
+        // delivery it queues mints its signing link (FIX 5238).
+        let embedded = match self.owner_authorship() {
+            Some(_) => None,
+            None => self.embedded_owner(verb.as_str()).ok(),
+        };
+        let result = match self.owner_authorship().or(embedded.as_ref()) {
+            Some(owner) => vault.dispatch_esign_as_owner(request, &command, owner),
+            None => vault.dispatch_esign(request, &command, None, None),
+        }
+        .map_err(crate::memory::facade_error_from_outbound_dispatch)?;
         Ok(EsignDispatchView {
             document_ref: document.to_hex(),
             verb: verb.as_str().to_owned(),

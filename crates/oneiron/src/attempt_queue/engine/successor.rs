@@ -167,5 +167,6 @@ fn failed_successor(source: &AttemptRecord, id: AttemptId, now: u64) -> AttemptR
             }
         }),
         result_ref: None,
+        history: Vec::new(),
     }
 }
