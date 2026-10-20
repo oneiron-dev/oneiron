@@ -6485,6 +6485,26 @@ mdb_env_close_active(MDB_env *env, int excl)
 	env->me_flags &= ~(MDB_ENV_ACTIVE|MDB_ENV_TXKEY);
 }
 
+#if MDB_RPAGE_CACHE
+/** ONEIRON FORK (FIX 1910): wipe, free and forget the env's copy of its
+ *	encryption key. Upstream freed it unwiped. Volatile stores are not
+ *	dead stores, so the wipe stays in front of the free.
+ */
+static void ESECT
+mdb_enckey_clear(MDB_env *env)
+{
+	volatile unsigned char *p = env->me_enckey.mv_data;
+	size_t i;
+
+	if (p)
+		for (i = 0; i < env->me_enckey.mv_size; i++)
+			p[i] = 0;
+	free(env->me_enckey.mv_data);
+	env->me_enckey.mv_data = NULL;
+	env->me_enckey.mv_size = 0;
+}
+#endif
+
 void ESECT
 mdb_env_close(MDB_env *env)
 {
@@ -6503,7 +6523,7 @@ mdb_env_close(MDB_env *env)
 
 	mdb_env_close_active(env, 0);
 #if MDB_RPAGE_CACHE
-	free(env->me_enckey.mv_data);
+	mdb_enckey_clear(env);	/* ONEIRON FORK (FIX 1910) */
 #endif
 	free(env);
 }
@@ -11614,7 +11634,7 @@ mdb_env_set_encrypt(MDB_env *env, MDB_enc_func *func, const MDB_val *key, unsign
 		return ENOMEM;
 
 	memcpy(kdata,  key->mv_data, key->mv_size);
-	free(env->me_enckey.mv_data);
+	mdb_enckey_clear(env);	/* ONEIRON FORK (FIX 1910): wipe the replaced key */
 	env->me_enckey.mv_data = kdata;
 	env->me_enckey.mv_size = key->mv_size;
 	env->me_encfunc = func;

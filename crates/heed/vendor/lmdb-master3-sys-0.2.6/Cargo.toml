@@ -27,6 +27,10 @@ autobenches = false
 description = "Rust bindings for liblmdb on the mdb.master3 branch."
 documentation = "https://docs.rs/lmdb-master3-sys"
 readme = "README.md"
+# ONEIRON VENDOR (FIX 1910; see crates/heed/PROVENANCE.md): as for heed
+# (ONE-1441), keep the upstream archive metadata as provenance but not as
+# package inputs; the VCS file otherwise fails `cargo package --list`.
+exclude = ["/.cargo_vcs_info.json", "/Cargo.toml.orig"]
 keywords = [
     "LMDB",
     "database",
