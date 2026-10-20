@@ -83500,17 +83500,27 @@
      "path": "src/device_sync.rs",
      "purpose": "The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/device_sync/dial.rs",
+     "purpose": "What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/device_sync/enrolment.rs",
      "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -83518,9 +83528,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/device_sync/renewal.rs",
-     "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`…",
+     "purpose": "FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -87901,7 +87911,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -88183,7 +88193,7 @@
    },
    "over_bar": 54,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 873,
+   "source_files": 874,
    "test_files": 182
   },
   "oneiron-spawn": {
