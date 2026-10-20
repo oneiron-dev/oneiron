@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 // A socket's host entry ends with the guest's last hold on it (FIX 5978).
 mod lifetime;
+// Guest-loopback listeners, inside the session only (FIX 6680).
+mod loopback;
 // A relayed datagram's worker holds its room on the host floor (FIX 5979).
 mod relay_workers;
 // A guest's socket() makes its entry and the end the guest receives.
@@ -48,6 +50,7 @@ struct State {
     relay: Arc<dyn EgressRelay>,
     alive: Arc<AtomicBool>,
     inventory: Mutex<lifetime::Inventory>,
+    loopback: Mutex<loopback::Registry>,
 }
 
 pub(crate) struct Guard {
@@ -153,6 +156,7 @@ impl Supervisor {
             relay,
             alive: Arc::clone(&alive),
             inventory: Mutex::default(),
+            loopback: Mutex::default(),
         });
         let directory = self.directory;
         let guard = Guard {
@@ -284,6 +288,12 @@ fn serve(mut reader: UnixStream, listener: Arc<OwnedFd>, state: Arc<State>) -> i
                 continue;
             }
         };
+        // A listen's frame is followed by the listener's guest end.
+        let carried = if request.op.carries_fd() {
+            Some(wire::receive_fd(&reader)?)
+        } else {
+            None
+        };
         if !state.alive.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -309,7 +319,7 @@ fn serve(mut reader: UnixStream, listener: Arc<OwnedFd>, state: Arc<State>) -> i
             if let Ok(mut result) = completion.result.lock() {
                 let reply = result.get_or_insert_with(|| {
                     let outcome = linux::valid(listener.as_raw_fd(), request.notification)
-                        .and_then(|()| operate(&request, &listener, &state));
+                        .and_then(|()| operate(&request, &listener, &state, carried));
                     match outcome {
                         Ok(mut reply) => {
                             reply.id = request.id;
@@ -348,6 +358,7 @@ fn operate(
     request: &wire::Request,
     listener: &OwnedFd,
     state: &Arc<State>,
+    carried: Option<OwnedFd>,
 ) -> io::Result<wire::Reply> {
     use wire::Operation;
     let mut reply = wire::Reply::default();
@@ -362,14 +373,17 @@ fn operate(
             reply.value = socket.kind as i64;
             reply.bytes.push(socket.family as u8);
         }
-        Operation::Connect { socket, target } => {
-            let socket = get(state, *socket)?;
+        Operation::Connect { socket: id, target } => {
+            let socket = get(state, *id)?;
             if socket.kind == libc::SOCK_DGRAM {
                 state.relay.authorize_datagram(*target)?;
                 *socket
                     .target
                     .lock()
                     .map_err(|_| io::Error::other("fence state poisoned"))? = Some(*target);
+            } else if let Some(answer) = loopback::connect(state, *id, &socket, *target) {
+                // A loopback target: this session's listener, or a refusal.
+                reply = answer?;
             } else {
                 let mut peer = socket
                     .stream
@@ -451,9 +465,11 @@ fn operate(
                 .lock()
                 .map_err(|_| io::Error::other("fence state poisoned"))?;
         }
-        Operation::Peer { socket, local } => {
-            let socket = get(state, *socket)?;
-            reply.address = if *local {
+        Operation::Peer { socket: id, local } => {
+            let socket = get(state, *id)?;
+            reply.address = if *local && let Some(bound) = loopback::local(state, *id) {
+                Some(bound)
+            } else if *local {
                 Some(
                     if socket.family == libc::AF_INET6 {
                         "[::]:0"
@@ -473,6 +489,20 @@ fn operate(
                 return Err(io::Error::from_raw_os_error(libc::ENOTCONN));
             }
         }
+        Operation::Bind { socket, address } => return loopback::bind(state, *socket, *address),
+        Operation::Listen { socket, backlog } => {
+            return loopback::listen(state, *socket, *backlog, carried);
+        }
+        Operation::Accept { socket } => {
+            let waiting = || linux::valid(listener.as_raw_fd(), request.notification).is_ok();
+            return loopback::accept(state, *socket, waiting);
+        }
+        Operation::AcceptFinish {
+            socket,
+            ticket,
+            commit,
+            flags,
+        } => return loopback::finish(request, listener, state, *socket, *ticket, *commit, *flags),
     }
     Ok(reply)
 }
@@ -649,6 +679,7 @@ pub fn serve_native(
         relay,
         alive: Arc::clone(&alive),
         inventory: Mutex::default(),
+        loopback: Mutex::default(),
     });
     std::thread::spawn(move || {
         let _ = serve(stream, Arc::new(notify), state);
