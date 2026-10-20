@@ -981,7 +981,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/recovery_kit.rs` | src | s | 5 crate-vis | — | The world kit's public side, shared by `oneiron recovery-kit` and `GET /v1/owner/recovery-kit` (OF-173): the… |
 | `src/owner/runs.rs` | src | m | 11 crate-vis | — | Agent-run batch consent: see what a run is waiting on, then approve or decline the whole run in one act… |
 | `src/owner/schedule.rs` | src | m | 14 crate-vis | — | Scheduled backups for a running `serve` |
-| `src/owner/schedule/managed.rs` | src | s | 9 crate-vis | — | The managed backup duty (Engine 10-20 backup shipper row (a)): a managed vault's host backs it up hourly… |
+| `src/owner/schedule/managed.rs` | src | m | 9 crate-vis | — | The managed backup duty (Engine 10-20 backup shipper row (a)): a managed vault's host backs it up hourly… |
 | `src/owner/secrets.rs` | src | m | 20 crate-vis | — | The owner registers a secret (ARCH-0069 S1–S3) and rotates it (S6) |
 | `src/owner/stamp.rs` | src | s | 5 crate-vis | — | UTC times for backup file names and reports, with no date library: `20261008T123456.789Z` in file names, RFC… |
 | `src/owner/vault_key.rs` | src | m | 18 crate-vis | — | The vault data key's public side, shared by `oneiron vault-key`, `oneiron restore` and `/v1/owner/vault-key`… |
