@@ -1,11 +1,10 @@
 # The browser guest: Lightpanda (the engine agents start on) or headless
 # Chromium, each speaking CDP over the guest's stdio only (entrypoint.sh).
-# Built on a Linux host (`docker build -t <tag> .`) from a context holding
-# this directory's files and the target's builds of oneiron-fence and
-# oneiron-browser-relay (`cargo build --release -p oneiron-container --bins`)
-# and of oneiron-guest; deployments pin the built image by digest. The
-# runtime adds --network none, --read-only, a non-root user, --cap-drop ALL
-# and tmpfs scratch (crates/oneiron-container/src/run.rs).
+# Built on a Linux host by build.sh here, which puts this checkout's builds
+# of oneiron-fence, oneiron-browser-relay and oneiron-guest in the context
+# beside this directory's files; deployments pin the built image's id
+# (README.md). The runtime adds --network none, --read-only, a non-root
+# user, --cap-drop ALL and tmpfs scratch (crates/oneiron-container/src/run.rs).
 FROM debian@sha256:a29215f6a35e51e22adffa17f89e9d2ef06214e64a2bad10d765c46aea49f11f
 
 RUN apt-get update \

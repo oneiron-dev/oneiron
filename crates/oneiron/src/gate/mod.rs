@@ -167,8 +167,9 @@ use self::dreamer_precommit::{
 };
 pub(crate) use self::effect::live_grant_covering_effect_in_txn;
 pub(crate) use self::effect::{
-    ApprovalContext, ApprovalTarget, ExternalEffectGovernance, OutboundSendFacts,
-    check_external_effect_policy, check_external_effect_policy_pair, code_wait_approval_digest,
+    ApprovalContext, ApprovalTarget, CampaignLegFacts, ExternalEffectGovernance, LinearMirrorFacts,
+    OutboundSendFacts, PairAdmission, check_external_effect_policy,
+    check_external_effect_policy_pair, code_wait_approval_digest,
     counterparty_send_override_in_txn, evaluate_external_effect_policy,
     external_effect_approval_digest, hydrate_external_effect_contact,
     native_mail_cold_approval_digest, record_external_effect_policy,

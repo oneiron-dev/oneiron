@@ -24,7 +24,7 @@ pub(crate) use self::admission::execute_outbound_effect;
 #[cfg(any(test, feature = "test-hooks"))]
 pub(crate) use self::types::BEFORE_NEW_ADMISSION;
 pub(crate) use self::types::{
-    AdmissionCeiling, CoActorAdmission, OutboundEffectCommand, OutboundEffectError,
+    AdmissionCeiling, CoActorAdmission, CoActorEffect, OutboundEffectCommand, OutboundEffectError,
     OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
     frozen_call_hygiene_headers,
 };

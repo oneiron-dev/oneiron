@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1119 code-mode rows (1094 host rows, 25 run rows), 3778 declarations.
+// Census: 1119 code-mode rows (1094 host rows, 25 run rows), 3780 declarations.
 // Replies: 999 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
@@ -541,7 +541,9 @@ declare namespace Sdk {
   type CopingAggregateRequest = { affected_person_ref: string; scope?: ClaimScope | null };
   type CopingAggregate = { affected_person_ref: string; outcomes: CopingOutcomeView[]; observed_n: number };
   type StateWindow = { window_secs: number; expected_goal_completions: number; expected_engaged_days: number };
-  type ActionModeRule = { mode: string; min_index: number; max_index: number };
+  type ActionModeCeiling = "proposed" | "auto";
+  type ActionModeEffect = { agent: EntityId; ceiling: ActionModeCeiling };
+  type ActionModeRule = { mode: string; min_index: number; max_index: number; effect?: ActionModeEffect | null };
   type ActionModePolicy = { window: StateWindow; rules: ActionModeRule[] };
   type WellnessPolicyConfigureRequest = { policy?: ActionModePolicy | null };
   type WellnessPersonRequest = { affected_person_ref: string };
