@@ -667,7 +667,7 @@ pub(crate) async fn handle_mcp_request(
                     .toward(peer);
             Ok(json!({
                 "surfaceMode": mode.as_str(),
-                "tools": super::booking_call::tools_listing(server, mode, &actor),
+                "tools": super::booking_call::tools_listing(server, mode, &actor)?,
             }))
         }
         "tools/call" => {

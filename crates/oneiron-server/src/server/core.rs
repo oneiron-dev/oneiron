@@ -612,15 +612,16 @@ impl SyncServer {
             .filter(|host| host.production_runtime_available())
     }
 
+    /// The surface `mode` registers on this server, or the verb row that
+    /// keeps it from registering: callers answer that as a typed error.
     pub(crate) fn mcp_surface(
         &self,
         mode: crate::mcp::McpSurfaceMode,
-    ) -> crate::mcp::McpRegisteredSurface {
+    ) -> Result<crate::mcp::McpRegisteredSurface, crate::mcp::McpSurfaceConstructionError> {
         crate::mcp::McpRegisteredSurface::register_with_execution(
             mode,
             self.code_execution_host().is_some(),
         )
-        .expect("every exported verb projects onto an executable tool")
     }
 
     /// Attaches the ONE-207 deep-retrieval host.

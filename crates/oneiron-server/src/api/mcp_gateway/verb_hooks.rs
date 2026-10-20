@@ -18,7 +18,7 @@ use super::admission::mcp_admit_scoped_verb;
 use super::tasks_response::mcp_agent_verb_arguments;
 use super::{McpCallContext, McpGatewayError, mcp_facade_error};
 use crate::api::facade::RowHookResume;
-use crate::mcp::{McpEndpointTool, McpResolvedActor, McpSurfaceMode, registered_surface};
+use crate::mcp::{McpEndpointTool, McpResolvedActor, McpSurfaceMode, try_registered_surface};
 use crate::server::SyncServer;
 
 /// The pre chain of MCP row `tool` over its `input`, for `actor` calling
@@ -134,7 +134,10 @@ fn mcp_hooks_admitted(
 /// rewritten args for the same actor. A row no generated tool carries
 /// admits no rewrite.
 fn mcp_rewrite_admit(server: &Arc<SyncServer>, tool: &str, actor: &McpCallContext) -> RewriteAdmit {
-    let generated = match registered_surface(McpSurfaceMode::ToolFirst).resolve(tool) {
+    let resolved = try_registered_surface(McpSurfaceMode::ToolFirst)
+        .ok()
+        .and_then(|surface| surface.resolve(tool));
+    let generated = match resolved {
         Some(McpEndpointTool::Verb(generated)) => Some(generated),
         _ => None,
     };
@@ -178,7 +181,9 @@ impl McpCallContext {
         // Only a generated tool-first row is a door a connector's call
         // comes back by.
         if !matches!(
-            registered_surface(McpSurfaceMode::ToolFirst).resolve(&call.verb),
+            try_registered_surface(McpSurfaceMode::ToolFirst)
+                .ok()
+                .and_then(|surface| surface.resolve(&call.verb)),
             Some(McpEndpointTool::Verb(_))
         ) {
             return Err(VerbAskRefusal::ContextUnavailable);

@@ -89,19 +89,23 @@ pub(super) fn tools_listing(
     server: &SyncServer,
     mode: McpSurfaceMode,
     actor: &McpCallContext,
-) -> Value {
-    let listing = server.mcp_surface(mode).listing().clone();
+) -> Result<Value, McpGatewayError> {
+    let listing = server
+        .mcp_surface(mode)
+        .map_err(super::admission::mcp_surface_unavailable)?
+        .listing()
+        .clone();
     if !actor
         .auth
         .as_ref()
         .is_some_and(CoreAuth::is_attested_booking_holder)
     {
-        return listing;
+        return Ok(listing);
     }
     let Value::Array(tools) = listing else {
-        return Value::Array(Vec::new());
+        return Ok(Value::Array(Vec::new()));
     };
-    Value::Array(
+    Ok(Value::Array(
         tools
             .into_iter()
             .filter(|tool| {
@@ -112,7 +116,7 @@ pub(super) fn tools_listing(
                     })
             })
             .collect(),
-    )
+    ))
 }
 
 /// `holder`'s booking caller ([`booking_context`]) while the vault no
@@ -192,7 +196,8 @@ fn uncredentialed_holder(
 /// generated booking verbs. Nothing in its arguments counts.
 fn booking_tool(mode: McpSurfaceMode, params: Option<&Value>) -> Option<&'static str> {
     let name = params?.get("name")?.as_str()?;
-    let McpEndpointTool::Verb(tool) = crate::mcp::registered_surface(mode).resolve(name)? else {
+    let surface = crate::mcp::try_registered_surface(mode).ok()?;
+    let McpEndpointTool::Verb(tool) = surface.resolve(name)? else {
         return None;
     };
     crate::api::booking::booking_payer_verbs().find(|verb| *verb == tool.name)

@@ -12,6 +12,14 @@ use crate::mcp::McpValidatedToolArgs;
 use crate::server::SyncServer;
 use std::sync::Arc;
 
+/// The typed answer of a request on an endpoint whose surface does not
+/// register: it names the verb row at fault, and nothing panics (FIX 6626).
+pub(super) fn mcp_surface_unavailable(
+    error: crate::mcp::McpSurfaceConstructionError,
+) -> McpGatewayError {
+    McpGatewayError::new(-32603, "mcp_surface_unavailable", error.to_string())
+}
+
 /// The IMMUTABLE connector ceiling, applied BEFORE any executor runs.
 ///
 /// Four intersections happen here and nowhere else (ONE-1704 M3):
@@ -497,7 +505,8 @@ pub(super) fn mcp_validated_call_args(
     raw_arguments: Option<&str>,
     actor: &McpResolvedActor,
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
-    let Some(tool) = server.mcp_surface(mode).resolve(&params.name) else {
+    let surface = server.mcp_surface(mode).map_err(mcp_surface_unavailable)?;
+    let Some(tool) = surface.resolve(&params.name) else {
         if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
             return Err(mcp_code_host_unbound());
         }

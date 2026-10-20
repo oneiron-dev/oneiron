@@ -34,6 +34,12 @@ use utoipa::ToSchema;
 /// registration and cannot name a surface or a tool that does not exist.
 pub(crate) const MCP_ENDPOINT_CAPABILITY_PREFIX: &str = "mcp.endpoint.";
 
+/// Capability-token prefix under which discovery states an endpoint whose
+/// surface does not register, and the verb row at fault:
+/// `mcp.surface_unavailable.<mode>.<row>` (FIX 6626). Discovery and health
+/// still answer; that endpoint's requests answer a typed error.
+pub(crate) const MCP_SURFACE_UNAVAILABLE_CAPABILITY_PREFIX: &str = "mcp.surface_unavailable.";
+
 pub(crate) const SUPPORTED_FORMATS: &[&str] = &["json", "yaml", "toon", "markdown", "plaintext"];
 
 pub(crate) const EFFECTIVE_AUTH_SCOPES: &[&str] = &[
@@ -699,7 +705,18 @@ fn mcp_surface_capabilities(server: &SyncServer) -> Vec<String> {
     let mut advertised = BTreeSet::new();
     let mut tokens = Vec::new();
     for mode in crate::mcp::McpSurfaceMode::ALL {
-        let surface = server.mcp_surface(mode);
+        let surface = match server.mcp_surface(mode) {
+            Ok(surface) => surface,
+            Err(error) => {
+                tracing::error!(mode = mode.as_str(), %error, "an MCP surface does not register");
+                tokens.push(format!(
+                    "{MCP_SURFACE_UNAVAILABLE_CAPABILITY_PREFIX}{mode}.{row}",
+                    mode = mode.as_str(),
+                    row = error.row(),
+                ));
+                continue;
+            }
+        };
         for name in surface.tool_names() {
             let tool_token = format!("{MCP_TOOL_CAPABILITY_PREFIX}{name}");
             // One token per NAME even if both endpoints ever register it, so a

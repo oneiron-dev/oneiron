@@ -49,7 +49,7 @@ use super::tasks_response::{McpCodeRun, execute_agent_verb_input, mcp_agent_verb
 use super::{McpCallContext, McpGatewayError};
 use crate::decision_host::PLACEMENT_BUDGET;
 use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
-use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
+use crate::mcp::{McpEndpointTool, McpSurfaceMode, try_registered_surface};
 use crate::server::SyncServer;
 use oneiron::browser_library::{
     Retired, RetiredWorkflow, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow,
@@ -1281,9 +1281,9 @@ async fn run_code_mode_verb(
     run: McpCodeRun,
     admit: VerbAdmission,
 ) -> Result<(Value, Option<Vec<oneiron::EntityId>>), McpGatewayError> {
-    let Some(McpEndpointTool::Verb(tool)) =
-        registered_surface(McpSurfaceMode::ToolFirst).resolve(verb)
-    else {
+    let surface = try_registered_surface(McpSurfaceMode::ToolFirst)
+        .map_err(super::admission::mcp_surface_unavailable)?;
+    let Some(McpEndpointTool::Verb(tool)) = surface.resolve(verb) else {
         if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(verb) {
             return Err(super::mcp_facade_error(refusal));
         }
