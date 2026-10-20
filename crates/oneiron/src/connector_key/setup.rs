@@ -23,6 +23,7 @@ use super::record::ConnectorKeyStatus;
 use super::txn::read_connector_key_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{Error, Result};
+use crate::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use crate::skill_hub::pack_catalog::{
     MAX_SETUP_PERMISSIONS, PackSetupAuth, PackSetupCheckRecord, PackSetupConnection,
     PackSetupGrantRef, PackSetupKeyRef, PackSetupPermission, PackSetupSecret, PackSetupSession,
@@ -698,34 +699,104 @@ impl ProviderConnectionChecks {
     }
 }
 
+impl ProviderConnectionChecks {
+    /// [`PackConnectionVerifier::verify`] for a credential a secret grant
+    /// holds (FIX 4491): the grant is redeemed for `target` at the real send
+    /// ([`Vault::redeem_secret_grant_at_door`], which counts that one send
+    /// and refuses a grant the record rotated past since it was admitted),
+    /// and the reply is read, and every text in the answer or the failure
+    /// cleared by `scrub`, with the SAME value inside the door, before it
+    /// leaves. The outer error is the redemption's own refusal: nothing was
+    /// sent. A connector call redeems its grant at each send the same way.
+    pub(crate) fn verify_granted(
+        &self,
+        vault: &Vault,
+        check: &PackConnectionCheck<'_>,
+        grant: &SecretGrantRef,
+        target: &SecretGrantTarget,
+        scrub: &dyn Fn(&mut String, &[u8]),
+    ) -> Result<std::result::Result<PackConnectionEvidence, String>> {
+        let (method, url) = match provider_call(check.check) {
+            Ok(call) => call,
+            Err(failure) => return Ok(Err(failure)),
+        };
+        let mut answer = None;
+        vault.redeem_secret_grant_at_door(grant, target, &mut |value: &[u8]| {
+            let mut checked = self
+                .send(check.check, &method, url, value)
+                .map_err(|error| error.to_string())
+                .and_then(|reply| evidence_of(check.check, reply));
+            match &mut checked {
+                Ok(evidence) => {
+                    scrub(&mut evidence.account, value);
+                    if let Some(provider_account) = evidence.provider_account.as_mut() {
+                        scrub(provider_account, value);
+                    }
+                    for scope in &mut evidence.scopes {
+                        scrub(scope, value);
+                    }
+                }
+                Err(failure) => scrub(failure, value),
+            }
+            answer = Some(checked);
+            Ok(())
+        })?;
+        Ok(answer.unwrap_or_else(|| Err("the check did not run".to_owned())))
+    }
+
+    /// The one read-only provider call `check` names, with `value` as its
+    /// credential: the reply's status, its reported scopes and its body,
+    /// read within the bound.
+    fn send(
+        &self,
+        check: &str,
+        method: &reqwest::Method,
+        url: &str,
+        value: &[u8],
+    ) -> Result<CheckReply> {
+        let credential =
+            std::str::from_utf8(value).map_err(|_| invalid("the stored credential is not text"))?;
+        let request = self.client.request(method.clone(), url);
+        let request = if check == LINKEDIN_SESSION_CHECK {
+            linkedin_session(request, credential)
+        } else {
+            request.bearer_auth(credential.trim())
+        };
+        let response = request.send().map_err(|error| {
+            Error::InvalidConfig(format!(
+                "connection check could not reach the provider: {}",
+                error.without_url()
+            ))
+        })?;
+        let status = response.status().as_u16();
+        let scopes = response
+            .headers()
+            .get("x-oauth-scopes")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let mut body = Vec::new();
+        response
+            .take(MAX_CHECK_REPLY_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| invalid("connection check reply unreadable"))?;
+        if body.len() as u64 > MAX_CHECK_REPLY_BYTES {
+            return Err(invalid("connection check reply exceeds bound"));
+        }
+        Ok(CheckReply {
+            status,
+            scopes,
+            body,
+        })
+    }
+}
+
 impl PackConnectionVerifier for ProviderConnectionChecks {
     fn verify(
         &self,
         vault: &Vault,
         check: &PackConnectionCheck<'_>,
     ) -> std::result::Result<PackConnectionEvidence, String> {
-        let (method, url) = match check.check {
-            SLACK_AUTH_TEST_CHECK => (reqwest::Method::POST, "https://slack.com/api/auth.test"),
-            LINE_BOT_INFO_CHECK => (reqwest::Method::GET, "https://api.line.me/v2/bot/info"),
-            GMAIL_PROFILE_CHECK => (
-                reqwest::Method::GET,
-                "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-            ),
-            LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
-            BROWSER_SESSION_CHECK => {
-                return Err(
-                    "this host runs no browser guest; a served host with a [browser] guest checks it"
-                        .to_owned(),
-                );
-            }
-            NATIVE_MAIL_JMAP_CHECK => {
-                return Err(
-                    "this host names no mail server; a served host with a [native_mail] server checks it"
-                        .to_owned(),
-                );
-            }
-            other => return Err(format!("this host has no connection check named {other}")),
-        };
+        let (method, url) = provider_call(check.check)?;
         let secret = check
             .secrets
             .first()
@@ -733,117 +804,136 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
         let mut reply = None;
         vault
             .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
-                let credential = std::str::from_utf8(value)
-                    .map_err(|_| invalid("the stored credential is not text"))?;
-                let request = self.client.request(method.clone(), url);
-                let request = if check.check == LINKEDIN_SESSION_CHECK {
-                    linkedin_session(request, credential)
-                } else {
-                    request.bearer_auth(credential.trim())
-                };
-                let response = request.send().map_err(|error| {
-                    Error::InvalidConfig(format!(
-                        "connection check could not reach the provider: {}",
-                        error.without_url()
-                    ))
-                })?;
-                let status = response.status().as_u16();
-                let scopes = response
-                    .headers()
-                    .get("x-oauth-scopes")
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned);
-                let mut body = Vec::new();
-                response
-                    .take(MAX_CHECK_REPLY_BYTES + 1)
-                    .read_to_end(&mut body)
-                    .map_err(|_| invalid("connection check reply unreadable"))?;
-                if body.len() as u64 > MAX_CHECK_REPLY_BYTES {
-                    return Err(invalid("connection check reply exceeds bound"));
-                }
-                reply = Some((status, scopes, body));
+                reply = Some(self.send(check.check, &method, url, value)?);
                 Ok(())
             })
             .map_err(|error| error.to_string())?;
-        let (status, scopes, body) = reply.ok_or_else(|| "the check did not run".to_owned())?;
-        let evidence = blake3::hash(&body).to_hex().to_string();
-        if !(200..300).contains(&status) {
-            return Err(format!(
-                "the provider refused the credential (HTTP {status})"
-            ));
-        }
-        let reply: serde_json::Value = serde_json::from_slice(&body)
-            .map_err(|_| "the provider's reply is not JSON".to_owned())?;
-        let field = |name| reply_field(&reply, name);
-        let account = match check.check {
-            SLACK_AUTH_TEST_CHECK => {
-                if reply.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-                    return Err(format!(
-                        "Slack refused the credential: {}",
-                        field("error").unwrap_or("no reason given")
-                    ));
-                }
-                format!(
-                    "{} ({}) as {}",
-                    field("team").unwrap_or("workspace"),
-                    field("team_id").unwrap_or("unknown"),
-                    field("user").unwrap_or("the app")
-                )
-            }
-            LINE_BOT_INFO_CHECK => format!(
-                "{} ({})",
-                field("displayName").unwrap_or("Official Account"),
-                field("basicId").unwrap_or("unknown")
-            ),
-            LINKEDIN_SESSION_CHECK => {
-                let profile = |name| {
-                    reply
-                        .get("miniProfile")
-                        .and_then(|profile| reply_field(profile, name))
-                };
-                profile("publicIdentifier").map_or_else(String::new, |handle| {
-                    let name = [profile("firstName"), profile("lastName")]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    let name = if name.trim().is_empty() {
-                        "LinkedIn member"
-                    } else {
-                        name.trim()
-                    };
-                    format!("{name} ({handle})")
-                })
-            }
-            _ => field("emailAddress").unwrap_or_default().to_owned(),
-        };
-        // The provider's stable id a served host binds inbound events to:
-        // the workspace a Slack event names, the bot a LINE webhook is for.
-        let provider_account = match check.check {
-            SLACK_AUTH_TEST_CHECK => field("team_id"),
-            LINE_BOT_INFO_CHECK => field("userId"),
-            LINKEDIN_SESSION_CHECK => reply
-                .get("miniProfile")
-                .and_then(|profile| reply_field(profile, "publicIdentifier")),
-            _ => field("emailAddress"),
-        }
-        .map(str::to_owned);
-        Ok(PackConnectionEvidence {
-            account,
-            provider_account,
-            scopes: scopes
-                .map(|header| {
-                    header
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|scope| !scope.is_empty())
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default(),
-            evidence,
-        })
+        let reply = reply.ok_or_else(|| "the check did not run".to_owned())?;
+        evidence_of(check.check, reply)
     }
+}
+
+/// What one provider call answered, before it is read.
+struct CheckReply {
+    status: u16,
+    scopes: Option<String>,
+    body: Vec<u8>,
+}
+
+/// The provider endpoint a check name maps to; why this host runs none for
+/// any other name.
+fn provider_call(check: &str) -> std::result::Result<(reqwest::Method, &'static str), String> {
+    Ok(match check {
+        SLACK_AUTH_TEST_CHECK => (reqwest::Method::POST, "https://slack.com/api/auth.test"),
+        LINE_BOT_INFO_CHECK => (reqwest::Method::GET, "https://api.line.me/v2/bot/info"),
+        GMAIL_PROFILE_CHECK => (
+            reqwest::Method::GET,
+            "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+        ),
+        LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
+        BROWSER_SESSION_CHECK => {
+            return Err(
+                "this host runs no browser guest; a served host with a [browser] guest checks it"
+                    .to_owned(),
+            );
+        }
+        NATIVE_MAIL_JMAP_CHECK => {
+            return Err(
+                "this host names no mail server; a served host with a [native_mail] server checks it"
+                    .to_owned(),
+            );
+        }
+        other => return Err(format!("this host has no connection check named {other}")),
+    })
+}
+
+/// The provider's reply to `check`, read as the evidence a check answers.
+fn evidence_of(
+    check: &str,
+    reply: CheckReply,
+) -> std::result::Result<PackConnectionEvidence, String> {
+    let CheckReply {
+        status,
+        scopes,
+        body,
+    } = reply;
+    let evidence = blake3::hash(&body).to_hex().to_string();
+    if !(200..300).contains(&status) {
+        return Err(format!(
+            "the provider refused the credential (HTTP {status})"
+        ));
+    }
+    let reply: serde_json::Value =
+        serde_json::from_slice(&body).map_err(|_| "the provider's reply is not JSON".to_owned())?;
+    let field = |name| reply_field(&reply, name);
+    let account = match check {
+        SLACK_AUTH_TEST_CHECK => {
+            if reply.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+                return Err(format!(
+                    "Slack refused the credential: {}",
+                    field("error").unwrap_or("no reason given")
+                ));
+            }
+            format!(
+                "{} ({}) as {}",
+                field("team").unwrap_or("workspace"),
+                field("team_id").unwrap_or("unknown"),
+                field("user").unwrap_or("the app")
+            )
+        }
+        LINE_BOT_INFO_CHECK => format!(
+            "{} ({})",
+            field("displayName").unwrap_or("Official Account"),
+            field("basicId").unwrap_or("unknown")
+        ),
+        LINKEDIN_SESSION_CHECK => {
+            let profile = |name| {
+                reply
+                    .get("miniProfile")
+                    .and_then(|profile| reply_field(profile, name))
+            };
+            profile("publicIdentifier").map_or_else(String::new, |handle| {
+                let name = [profile("firstName"), profile("lastName")]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let name = if name.trim().is_empty() {
+                    "LinkedIn member"
+                } else {
+                    name.trim()
+                };
+                format!("{name} ({handle})")
+            })
+        }
+        _ => field("emailAddress").unwrap_or_default().to_owned(),
+    };
+    // The provider's stable id a served host binds inbound events to:
+    // the workspace a Slack event names, the bot a LINE webhook is for.
+    let provider_account = match check {
+        SLACK_AUTH_TEST_CHECK => field("team_id"),
+        LINE_BOT_INFO_CHECK => field("userId"),
+        LINKEDIN_SESSION_CHECK => reply
+            .get("miniProfile")
+            .and_then(|profile| reply_field(profile, "publicIdentifier")),
+        _ => field("emailAddress"),
+    }
+    .map(str::to_owned);
+    Ok(PackConnectionEvidence {
+        account,
+        provider_account,
+        scopes: scopes
+            .map(|header| {
+                header
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|scope| !scope.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        evidence,
+    })
 }
 
 /// One allowed permission's standing bound: the pack, as a pack-connection

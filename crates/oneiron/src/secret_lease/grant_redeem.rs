@@ -89,21 +89,9 @@ impl Vault {
         grant: &SecretGrantRef,
         target: &SecretGrantTarget,
     ) -> Result<SecretLeaseGrant> {
-        self.admit_secret_grant(grant, target, false)
-    }
-
-    /// [`Self::check_secret_grant`], counting one send of a door grant when
-    /// `count`: the redemption a `self.use` operation under a grant makes
-    /// before its consumer reads the value through its own door.
-    pub(crate) fn admit_secret_grant(
-        &self,
-        grant: &SecretGrantRef,
-        target: &SecretGrantTarget,
-        count: bool,
-    ) -> Result<SecretLeaseGrant> {
         let mut wtxn = self.store.env.write_txn()?;
         let now = self.instant_in_write_txn(&mut wtxn)?;
-        let admitted = self.admit_grant_in_txn(&mut wtxn, grant, target, now, count);
+        let admitted = self.admit_grant_in_txn(&mut wtxn, grant, target, now, false);
         wtxn.commit()?;
         admitted
     }
