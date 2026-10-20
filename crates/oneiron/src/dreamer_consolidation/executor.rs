@@ -739,9 +739,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                     conversation: conversation_of(ctx.vault, turn_id)?,
                 });
             }
-            let (gaps, texts) = super::gap::scan_with_texts(ctx.vault, &working_set, ctx.now_ms)?;
-            super::gap::upsert_scanned_gap_queue(ctx.vault, gaps, &texts, ctx.now_ms)?;
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return super::gap::run_gap_scan(ctx.vault, &working_set, ctx.now_ms);
         }
 
         // Direct executor calls and wake-driver calls consume the SAME
@@ -828,7 +826,14 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             ));
         }
         let payload = plan.input().clone();
-        let resources = BranchResources::open_prepared(ctx.vault, self.actor, plan, wake)?;
+        // A turn demoted since the wake prepared it waits for its promotion
+        // (FIX 3861), as one away at preparation does.
+        let resources = match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
+            Err(error) if super::residency::waits_on_residency(&error) => {
+                return Ok(super::residency::residency_deferral(ctx.now_ms, 0));
+            }
+            resources => resources?,
+        };
         let run_id = attempt.status.attempt.run_id.clone();
         let mut charges = StepChargeTally::default();
         match self
