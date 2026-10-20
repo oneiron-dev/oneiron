@@ -7,9 +7,11 @@ use std::path::Path;
 
 use heed::types::Bytes;
 
+use super::watermark::SnapshotMark;
 use super::{
-    ArtifactKind, CheckpointImage, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT, RecoveryWriteBudget,
-    StorageTier, artifact, carried_bodies, codec_error, commitment, rebuild, storage_tier,
+    ArtifactKind, BackupSnapshotReceipt, CheckpointImage, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT,
+    RecoveryWriteBudget, StorageTier, artifact, carried_bodies, codec_error, commitment, rebuild,
+    storage_tier,
 };
 use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::store::DB_MANIFEST;
@@ -24,8 +26,11 @@ impl Vault {
         kind: ArtifactKind,
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
-    ) -> Result<String> {
+    ) -> Result<BackupSnapshotReceipt> {
         self.unlock_vault_key()?;
+        // The store's backup incarnation is minted before its first
+        // snapshot reads it (the backup watermark).
+        self.mint_backup_incarnation()?;
         loop {
             // Every body the image carries has its instance minted and bound
             // first, before the snapshot and its custody guard, the mints
@@ -39,7 +44,8 @@ impl Vault {
     }
 
     /// One snapshot: `None` when a body its rows name has no instance bound
-    /// yet.
+    /// yet. Its receipt covers what its read transaction and the custody
+    /// position under its guard saw, its own chain advance excluded.
     fn snapshot_once(
         &self,
         path: &Path,
@@ -48,11 +54,15 @@ impl Vault {
         kind: ArtifactKind,
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
-    ) -> Result<Option<String>> {
+    ) -> Result<Option<BackupSnapshotReceipt>> {
         let keys = self.checkpoint_signing_keys()?;
         let _custody = self.store.gate_custody_read_guard()?;
         let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
+        // Where the vault stands for the backup watermark: this read
+        // transaction's id and the custody position under the same guard,
+        // after the keys, signer and bodies were prepared.
+        let mark = SnapshotMark::read(self, &txn)?;
         // What the image needs of its custody, read under the same guard
         // once its snapshot is open, so every key a row of it names was
         // journaled first: its position and every live id, never a key
@@ -214,7 +224,7 @@ impl Vault {
             inline_bodies,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
-        let (id, head, _evidence) = artifact::write_artifact(
+        let (id, head, evidence) = artifact::write_artifact(
             path,
             &key,
             kind,
@@ -229,10 +239,17 @@ impl Vault {
             budget,
         )?;
         // A checkpoint the chain does not take is no checkpoint.
-        if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
-            let _ = std::fs::remove_file(path);
-            return Err(error);
-        }
-        Ok(Some(blake3::Hash::from(id).to_hex().to_string()))
+        let own = match self.advance_checkpoint_chain(link.head, head) {
+            Ok(own) => own,
+            Err(error) => {
+                let _ = std::fs::remove_file(path);
+                return Err(error);
+            }
+        };
+        Ok(Some(BackupSnapshotReceipt {
+            image_digest: blake3::Hash::from(id).to_hex().to_string(),
+            covered: mark.covered(own),
+            evidence,
+        }))
     }
 }

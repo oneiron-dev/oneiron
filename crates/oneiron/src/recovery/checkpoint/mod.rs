@@ -31,6 +31,7 @@ mod response_rows;
 mod restore_class;
 mod snapshot;
 mod tiers;
+mod watermark;
 mod write_budget;
 mod write_estimate;
 use crate::side_table::{self, Named, SideTable};
@@ -48,6 +49,10 @@ use std::{
     path::{Path, PathBuf},
 };
 pub use tiers::{StorageTier, storage_tier};
+pub use watermark::{
+    BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupSnapshotReceipt, BackupWatermark,
+    inspect_backup, last_backed_up, verify_with_pins,
+};
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -275,6 +280,7 @@ impl Vault {
             None,
             &write_budget::Unfloored,
         )
+        .map(|receipt| receipt.image_digest)
     }
     /// [`Vault::snapshot_checkpoint`] on an owner's request. The proof is
     /// rechecked in the snapshot's own read transaction, so an owner whose
@@ -299,20 +305,22 @@ impl Vault {
             None,
             &write_budget::Unfloored,
         )
+        .map(|receipt| receipt.image_digest)
     }
     /// An owner's backup: [`Vault::snapshot_checkpoint`] sealed as a backup,
     /// and on `owner`'s request, when given, as
     /// [`Vault::snapshot_checkpoint_as`]. `registry` is the registry's id for
     /// the vault where the host knows one (a managed vault's name): the
     /// artifact binds the vault id to it, or says it knew none (FIX 5826).
-    /// Neither is refused.
+    /// Neither is refused. The receipt names the image, what the backup
+    /// covered for [`Vault::backup_watermark`], and the artifact's evidence.
     pub fn snapshot_backup(
         &self,
         path: &Path,
         created_at: u64,
         owner: Option<&crate::consent::AuthenticatedOwner>,
         registry: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<BackupSnapshotReceipt> {
         self.snapshot_backup_within(path, created_at, owner, registry, &write_budget::Unfloored)
     }
     /// [`Vault::snapshot_backup`] on a disk whose host keeps a free-space
@@ -327,7 +335,7 @@ impl Vault {
         owner: Option<&crate::consent::AuthenticatedOwner>,
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
-    ) -> Result<String> {
+    ) -> Result<BackupSnapshotReceipt> {
         self.snapshot_checkpoint_checked(
             path,
             created_at,

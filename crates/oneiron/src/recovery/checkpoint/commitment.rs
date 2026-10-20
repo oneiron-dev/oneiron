@@ -35,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::side_table::{self, Named, SideTable};
+use crate::store::{Callback, Rows};
 use crate::world_keys::{keystore_error, refused, slot_seed};
 use crate::{Error, Result, Vault};
 
@@ -142,22 +143,38 @@ impl Vault {
         CHAIN_HEAD.get(&self.store, txn, &())
     }
 
-    /// Advances the chain from `from` to the checkpoint just signed. Refused
-    /// when another checkpoint advanced it first.
+    /// Advances the chain from `from` to the checkpoint just signed, in a
+    /// store write of its own that carries no other row, and returns that
+    /// write's transaction id: what the backup watermark excludes as the
+    /// backup's own. Refused when another checkpoint advanced it first.
     pub(super) fn advance_checkpoint_chain(
         &self,
         from: Option<ChainHead>,
         to: ChainHead,
-    ) -> Result<()> {
-        self.with_write_txn(|txn| {
-            if CHAIN_HEAD.get(&self.store, txn, &())? != from {
-                return Err(Error::InvalidConfig(
-                    "another checkpoint was taken at the same time; take this one again".into(),
-                ));
+    ) -> Result<u64> {
+        self.store.group_write_as(Callback::Opaque, None, |txn| {
+            match advance_in_txn(&self.store, txn, from, to) {
+                Ok(own) => Rows::Commit(own),
+                Err(error) => Rows::Discard(Err(error)),
             }
-            CHAIN_HEAD.put(&self.store, txn, &(), &to)
         })
     }
+}
+
+/// The chain's move from `from` to `to` in `txn`, and `txn`'s id.
+fn advance_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    from: Option<ChainHead>,
+    to: ChainHead,
+) -> Result<u64> {
+    if CHAIN_HEAD.get(store, txn, &())? != from {
+        return Err(Error::InvalidConfig(
+            "another checkpoint was taken at the same time; take this one again".into(),
+        ));
+    }
+    CHAIN_HEAD.put(store, txn, &(), &to)?;
+    Ok(txn.id() as u64)
 }
 
 /// The link a new checkpoint takes in its vault's chain.

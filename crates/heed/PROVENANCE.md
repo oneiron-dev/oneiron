@@ -128,6 +128,13 @@ before, with no hook and the single read-only map. A sealed one is opened with
   feature forwards to it, and `chacha20poly1305` 0.11, `getrandom` 0.4 and
   `zeroize` 1.9 are added (all already in the lock).
 
+LC backup shipper rows (FIX 5826 batch) add one read accessor:
+
+- `src/txn.rs`: `RoTxn::id` returns `mdb_txn_id` of the live transaction (a
+  write transaction reaches it through `Deref`), the id the backup watermark
+  records; `src/mdb/lmdb_ffi.rs` re-exports `mdb_txn_id`, which
+  `lmdb-master3-sys` already binds. No other behaviour changes.
+
 The descriptor seam's audit holds for mdb.master3: `me_path` is still only
 declared, assigned, null-checked, freed and returned by `mdb_env_get_path`
 (mdb.master3 `mdb.c:1659, 6248, 6252, 6362, 11646`), and every file open goes

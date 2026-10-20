@@ -18,6 +18,11 @@
 //! A backup holds every record its image carries, so while any legal hold
 //! stands none expires (ARCH-0038 #legal-hold).
 //!
+//! Once a backup lands, what it covered is recorded beside it
+//! (`.<label>.backup-watermark.json`), so a host can tell whether the vault
+//! changed since ([`oneiron::recovery::checkpoint::last_backed_up`]). A
+//! backup asked for is always taken, changed or not.
+//!
 //! A restored vault is created sealed (OF-570 maximum tier) by one rule,
 //! [`restore_target_seal`]: over a vault or beside it, at that vault's tier;
 //! where no vault is, at the tier the config asks for. Re-sealing is a new
@@ -190,13 +195,14 @@ pub(crate) fn take_as(
             &room,
         )
     });
-    let checkpoint_id = match snapshot {
-        Ok(id) => id,
+    let receipt = match snapshot {
+        Ok(receipt) => receipt,
         Err(error) => {
             let _ = std::fs::remove_file(&partial);
             return Err(anyhow::Error::new(error).context("backup failed"));
         }
     };
+    let checkpoint_id = receipt.image_digest.clone();
     let id8 = checkpoint_id.get(..8).unwrap_or(&checkpoint_id);
     let file = format!(
         "{}-{sequence:0SEQUENCE_WIDTH$}-{stamp}-{id8}{FILE_SUFFIX}",
@@ -205,6 +211,15 @@ pub(crate) fn take_as(
     let path = plan.dir.join(&file);
     std::fs::rename(&partial, &path)?;
     sync_dir(&plan.dir)?;
+    // What it covered, beside it now that it landed. A marker that fails
+    // leaves the one before, which only reads as changed.
+    if let Err(error) = receipt.persist_marker(&plan.dir, &plan.label, &file) {
+        tracing::warn!(
+            reason = "backup_watermark_marker_failed",
+            error = %error,
+            "the backup landed; what it covered was not recorded, so the next check reads changed"
+        );
+    }
     custody::publish_after_take(vault, plan);
     let bytes = std::fs::metadata(&path)?.len();
     let pruned = if vault.legal_hold_keeps_backups()? {
