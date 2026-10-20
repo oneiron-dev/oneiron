@@ -6,19 +6,30 @@
 //! and live probe policy; `export` binds the packed student the model project
 //! produced to that exact job; `publish` pins the student, its provenance and
 //! the candidate manifest in a stopped vault. Each student is its own job,
-//! and which tier serves is the manifest's binding. Nothing here trains
+//! and which tier serves is the manifest's binding. None of these trains
 //! weights, opens the source checkpoints or calls a model.
+//!
+//! `qualify` is the one that runs a model: a native bundle on this machine,
+//! over qualification cases, through the local tagger the slot serves. It is
+//! a development tool and opens no vault and no network.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 use oneiron::llm::manifest::{
     EncoderDistillationRequest, EncoderExport, ModelManifest, ModelRole, SharedBaseFork,
 };
+use oneiron::memory::extraction::{
+    EncoderInput, EncoderMessage, EncoderTurn, ExtractionEncoder, SpeakerRole,
+};
+use serde::Deserialize;
 
 use super::{ensure_existing_vault_for_revoke, init_tracing};
-use crate::config::{ServeArgs, ServeConfig, resolve_serve_config};
+use crate::config::{
+    EmbedderDevice, OneironerConfig, OneironerProvider, ServeArgs, ServeConfig,
+    resolve_serve_config,
+};
 
 #[derive(Subcommand)]
 pub enum OneironerCommand {
@@ -31,6 +42,10 @@ pub enum OneironerCommand {
     /// Pin the candidate manifest and its distilled encoder in a stopped
     /// vault, after checking the checkpoint against its receipt.
     Publish(Box<PublishArgs>),
+    /// Run a native bundle over JSONL cases and append each answer, in
+    /// input order: qualification against the model project's decode. Needs
+    /// no vault; prints counts only.
+    Qualify(QualifyArgs),
 }
 
 #[derive(Args, Clone)]
@@ -84,11 +99,51 @@ pub struct PublishArgs {
     pub serve: ServeArgs,
 }
 
+#[derive(Args, Clone)]
+pub struct QualifyArgs {
+    /// The bundle directory holding `oneironer.json`.
+    #[arg(long)]
+    pub model_dir: PathBuf,
+    /// The engine's device.
+    #[arg(long, value_enum)]
+    pub device: QualifyDevice,
+    /// One case a line: `{"id": <string>, "input": <EncoderInput>}`, the
+    /// input as contract version 2 sends it.
+    #[arg(long)]
+    pub inputs: PathBuf,
+    /// Where each case's `{"id", "output"}` line is appended, or
+    /// `{"id", "error"}` for a case the tagger failed.
+    #[arg(long)]
+    pub out: PathBuf,
+    /// The decode layers: `e4` (E4's baseline, with no DATE snap after
+    /// refinement) or `served` (the slot's).
+    #[arg(long, value_enum, default_value_t = QualifyLayers::E4)]
+    pub layers: QualifyLayers,
+}
+
+/// The engine device a qualification runs on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum QualifyDevice {
+    Cpu,
+    Cuda,
+    Metal,
+}
+
+/// The decode layers a qualification runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum QualifyLayers {
+    /// E4's frozen baseline: no DATE snap after refinement.
+    E4,
+    /// What the slot serves.
+    Served,
+}
+
 pub fn oneironer(command: OneironerCommand) -> anyhow::Result<()> {
     match command {
         OneironerCommand::Distill(args) => distill(*args),
         OneironerCommand::Export(args) => export(args),
         OneironerCommand::Publish(args) => publish(*args),
+        OneironerCommand::Qualify(args) => qualify(args),
     }
 }
 
@@ -142,6 +197,143 @@ fn publish(args: PublishArgs) -> anyhow::Result<()> {
         "published": encoder.as_str(),
         "served_by_tier": tier,
     }))
+}
+
+/// Loads the bundle once on the named engine and answers every case in
+/// order, flushing each line as it lands. The answers carry offsets and
+/// labels, never text; stdout carries counts.
+fn qualify(args: QualifyArgs) -> anyhow::Result<()> {
+    // The section names what the bundle declares; the tagger checks both
+    // against the bundle again as it loads.
+    let bytes = std::fs::read(args.model_dir.join("oneironer.json"))?;
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let checkpoint = manifest["trunk"]["sha256"]
+        .as_str()
+        .and_then(|sha| sha.get(..16))
+        .unwrap_or_default();
+    let labels = manifest["ner_labels"].as_array().map_or(0, Vec::len);
+    let device = match args.device {
+        QualifyDevice::Cpu => EmbedderDevice::Cpu,
+        QualifyDevice::Cuda => EmbedderDevice::Cuda,
+        QualifyDevice::Metal => EmbedderDevice::Metal,
+    };
+    let layers = match args.layers {
+        QualifyLayers::E4 => "e4",
+        QualifyLayers::Served => "served",
+    };
+    let config = OneironerConfig {
+        provider: OneironerProvider::Local,
+        model_dir: Some(args.model_dir),
+        device,
+        checkpoint_sha16: Some(checkpoint.to_owned()),
+        label_count: Some(u32::try_from(labels)?),
+        ..OneironerConfig::default()
+    };
+    let (mut tagger, _) = crate::oneironer::engines::load(&config)?;
+    if args.layers == QualifyLayers::E4 {
+        tagger.decode_as_e4();
+    }
+    let inputs = BufReader::new(std::fs::File::open(&args.inputs)?);
+    let mut out = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&args.out)?;
+    let (mut answered, mut failed) = (0_usize, 0_usize);
+    for (number, line) in (1_usize..).zip(inputs.lines()) {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        // A parse error can quote the line, so the refusal names its number.
+        let case: Case = serde_json::from_str(&line)
+            .map_err(|_| anyhow::anyhow!("qualify input line {number} is not a case"))?;
+        let row = match tagger.infer(&case.input.into()) {
+            Ok(output) => {
+                answered += 1;
+                serde_json::json!({ "id": case.id, "output": output })
+            }
+            Err(error) => {
+                failed += 1;
+                serde_json::json!({ "id": case.id, "error": error.to_string() })
+            }
+        };
+        writeln!(out, "{row}")?;
+        out.flush()?;
+    }
+    print(serde_json::json!({
+        "answered": answered,
+        "failed": failed,
+        "device": device.as_str(),
+        "layers": layers,
+        "stack_sha16": tagger.card().stack_sha16,
+    }))
+}
+
+/// One qualification case.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Case {
+    id: String,
+    input: CaseInput,
+}
+
+/// An [`EncoderInput`] as contract version 2 sends it.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaseInput {
+    turn: String,
+    messages: Vec<CaseMessage>,
+    #[serde(default)]
+    context: Vec<CaseTurn>,
+    #[serde(default)]
+    language: Option<String>,
+    #[serde(default)]
+    speaker: Option<SpeakerRole>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaseMessage {
+    id: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaseTurn {
+    turn: String,
+    messages: Vec<CaseMessage>,
+    #[serde(default)]
+    speaker: Option<SpeakerRole>,
+}
+
+fn messages(wire: Vec<CaseMessage>) -> Vec<EncoderMessage> {
+    wire.into_iter()
+        .map(|message| EncoderMessage {
+            id: message.id,
+            text: message.text,
+        })
+        .collect()
+}
+
+impl From<CaseInput> for EncoderInput {
+    fn from(wire: CaseInput) -> Self {
+        Self {
+            turn: wire.turn,
+            messages: messages(wire.messages),
+            context: wire
+                .context
+                .into_iter()
+                .map(|turn| EncoderTurn {
+                    turn: turn.turn,
+                    messages: messages(turn.messages),
+                    speaker: turn.speaker,
+                })
+                .collect(),
+            language: wire.language,
+            speaker: wire.speaker,
+        }
+    }
 }
 
 /// Opens a stopped vault as `dreamer grant` does: the writer lease refuses a
