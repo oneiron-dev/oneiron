@@ -193,12 +193,15 @@ fn recall_within_ceiling(
             reason: RerankSkip::NoReranker,
         })
     };
+    // The cut pack, the hyde ready pack and the recall narrow by one
+    // selection, the first of them to read resolving it (FIX 6693).
+    let pin = memory.recall_door_pin();
     // Before the query embeds: a door whose deadline comes due during the
     // embedding still answers.
     let mut fallback = door
         .on_cut
         .map(|on_cut| {
-            let mut pack = memory.recall_cut_pack(&scope)?;
+            let mut pack = memory.recall_cut_pack(&scope, &pin)?;
             pack.retrieval_meta.rerank.clone_from(&cut_report);
             on_cut(pack.clone());
             Ok::<_, crate::memory::MemoryError>(pack)
@@ -228,7 +231,7 @@ fn recall_within_ceiling(
             .as_ref()
             .is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
     {
-        let mut ready = memory.recall_with_execution(
+        let mut ready = memory.recall_with_execution_pinned(
             &input.query,
             effort,
             &scope,
@@ -245,6 +248,7 @@ fn recall_within_ceiling(
                 rerank_unavailable: true,
                 ..Default::default()
             },
+            &pin,
         )?;
         ready.mark_cut();
         ready.retrieval_meta.rerank.clone_from(&cut_report);
@@ -281,6 +285,7 @@ fn recall_within_ceiling(
             door,
             fallback.as_ref(),
             host,
+            &pin,
         ));
     }
     // A host with no reranker runs the paid expansion unreranked, and every
@@ -297,7 +302,7 @@ fn recall_within_ceiling(
         }
     });
     let mut pack = at_deadline(
-        memory.recall_with_execution(
+        memory.recall_with_execution_pinned(
             &input.query,
             effort,
             &scope,
@@ -319,6 +324,7 @@ fn recall_within_ceiling(
                 rerank_unavailable: unreranked,
                 ..Default::default()
             },
+            &pin,
         ),
     )?;
     skipped(&mut pack);

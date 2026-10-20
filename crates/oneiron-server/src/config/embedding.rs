@@ -5,9 +5,11 @@
 //! vault does not hold yet, then binds every listed slot the vault binds to
 //! nothing yet. The vault's own rows win after that: a space the owner door
 //! changed, or a slot a version move swapped, is left as it is, and so is a
-//! space the vault retired or a slot it returned to its default, as its
-//! EMBEDDING_SETUP rows read (FIX 1960): only a declaration or a binding
-//! through a door brings one back. A listed space the vault holds at another
+//! space the owner retired or a slot the owner returned to its default
+//! through a door, as its EMBEDDING_SETUP rows read (FIX 1960): only a
+//! declaration or a binding through a door brings one back. A system move's
+//! retirement or return to a default seeds again (FIX 6697), so nothing the
+//! config declares is lost to a timeout. A listed space the vault holds at another
 //! width stops serve, since a new width is a new space. A replica of a vault
 //! another machine started seeds nothing: its setup is that vault's rows,
 //! even none.
@@ -92,10 +94,12 @@ impl EmbeddingConfig {
         Ok(())
     }
 
-    /// Declares the listed spaces the vault does not hold and never retired,
-    /// then binds the listed slots it binds to nothing, never returned to
-    /// their default, and no open move carries (FIX 1960). Runs before the
-    /// listener binds. On a replica
+    /// Declares the listed spaces the vault does not hold and the owner never
+    /// retired, then binds the listed slots it binds to nothing, the owner
+    /// never returned to their default, and no open move carries (FIX 1960).
+    /// A system move's retirement or return to a default (a timed-out move's
+    /// dropped candidate, an undo back to the vault's own text index) seeds
+    /// again (FIX 6697). Runs before the listener binds. On a replica
     /// ([`oneiron::sync::residence::synced_as_replica`]) it only checks the
     /// listed widths: rows it seeded would contend with the home's.
     pub fn apply_to(&self, vault: &Vault) -> anyhow::Result<()> {
@@ -111,7 +115,7 @@ impl EmbeddingConfig {
                 ),
                 Some(_) => {}
                 None if replica => {}
-                None if vault.embedding_space_retired(&space.id)? => tracing::info!(
+                None if vault.embedding_space_retired_by_owner(&space.id)? => tracing::info!(
                     space = %space.id,
                     "embedding space stays retired over [embedding]"
                 ),
@@ -134,7 +138,7 @@ impl EmbeddingConfig {
             .collect();
         let mut unbound = BTreeSet::new();
         for kind in InputKind::ALL {
-            if vault.kind_slot_unbound(kind)? {
+            if vault.kind_slot_unbound_by_owner(kind)? {
                 unbound.insert(kind);
             }
         }

@@ -3307,7 +3307,7 @@ export type PairedInterval = { mean: number; low: number; high: number }
 /** `oneiron::embed::space_move::NotWorse` */
 export type NotWorse = "not_worse" | "worse" | "unknown"
 /** `oneiron::embed::space_move::KindProbeCheck` */
-export type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse }
+export type KindProbeCheck = { kind: InputKind; probes: number; families: number; difference?: PairedInterval | null; retest?: PairedInterval | null; tolerance?: number | null; verdict: NotWorse; canary?: PairedInterval | null; canary_verdict?: NotWorse | null; set_version?: string | null; rubric?: string | null; card?: SufficiencyCard | null }
 /** `oneiron::embed::space_move::SpaceMoveCheck` */
 export type SpaceMoveCheck = { checked_at: number; kinds: KindProbeCheck[]; verdict: NotWorse }
 /** `oneiron::embed::space_move::SpaceMove` */
@@ -3329,13 +3329,13 @@ export type EmbeddingSpaceMoveOutcome = "filling" | "swapped_in" | "kept" | "und
 /** `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceMoveChecked` */
 export type EmbeddingSpaceMoveChecked = { outcome: EmbeddingSpaceMoveOutcome; check?: SpaceMoveCheck | null }
 /** `oneiron::embed::space_probe::SpaceProbe` */
-export type SpaceProbe = { kind: InputKind; query: string; family: EntityId; targets: EntityId[]; author: string; written_at: number }
+export type SpaceProbe = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets: EntityId[]; author: string; written_at: number; cohort?: number | null }
 /** `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbe` */
 export type EmbeddingSpaceProbe = SpaceProbe & { id: string }
 /** `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbes` */
 export type EmbeddingSpaceProbes = { probes: EmbeddingSpaceProbe[] }
 /** `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbePutRequest` */
-export type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; family: EntityId; targets?: EntityId[]; author: string }
+export type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets?: EntityId[]; author: string }
 /** `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbeDeleteRequest` */
 export type EmbeddingSpaceProbeDeleteRequest = { id: string }
 /** `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbeDeleted` */

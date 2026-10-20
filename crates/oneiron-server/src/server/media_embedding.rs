@@ -13,18 +13,22 @@
 //! A context pack's media query awaits it on its own runtime
 //! ([`RuntimeMediaEmbedder::embed_query`]). The backfill worker hands the
 //! engine its synchronous [`MediaEmbedder`] door on a blocking thread, and
-//! each call there is driven on the server's runtime; the engine refuses a
-//! third-party rung for stored media.
+//! each call there is driven on the server's runtime. A third-party rung
+//! reads stored media only on the owner's `[models] extraction_egress`
+//! opt-in ([`MediaEgress`], FIX 382), and then only what no device-local
+//! world keeps; without it the engine refuses the rung as before. Each pass
+//! also embeds what live off-record rooms stage, into the room (FIX 2345).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::embed::{
-    EmbedderLocality, EmbeddingSpace, InputKind, MediaEmbedReport, MediaEmbedder,
-    MediaEmbeddingInput,
+    EgressDecision, EgressPredicate, EmbedderLocality, EmbeddingSpace, InputKind, MediaEmbedReport,
+    MediaEmbedder, MediaEmbeddingInput, PendingEmbeddingInput, SessionMediaRefusals,
 };
+use oneiron::llm::ExtractionEgressPredicate;
 use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::{
@@ -40,8 +44,34 @@ use crate::ai_host::AiHandle;
 const BACKFILL_IDLE: Duration = Duration::from_secs(30);
 /// Ceiling on the backfill's wait while a space keeps failing.
 const BACKFILL_MAX_BACKOFF: Duration = Duration::from_secs(15 * 60);
-/// ASSETs one backfill pass embeds per space.
+/// ASSETs one backfill pass embeds per space, and per live room in it.
 const BACKFILL_BATCH: usize = 16;
+
+/// The host's media egress gate (FIX 382): built only on the owner's
+/// `[models] extraction_egress` opt-in, read for the rung
+/// ([`RuntimeMediaEmbedder::media_egress`]), it lets each stored document
+/// go; the engine still keeps home every row a device-local world holds. It
+/// judges no row of the text rung's.
+pub(crate) struct MediaEgress;
+
+impl EgressPredicate for MediaEgress {
+    fn decide(&self, _input: &PendingEmbeddingInput) -> EgressDecision {
+        EgressDecision::NoVerdict
+    }
+
+    fn decide_media(&self, _input: &MediaEmbeddingInput<'_>) -> EgressDecision {
+        EgressDecision::Allow
+    }
+}
+
+/// What the live-room pass keeps between rounds (FIX 2345): each room's
+/// refusals, in RAM for the room's life, and the spaces whose room pass last
+/// failed, each logged once until its reason changes.
+#[derive(Default)]
+struct RoomPasses {
+    refusals: SessionMediaRefusals,
+    failing: BTreeMap<String, String>,
+}
 
 /// Why a media embed was refused or failed.
 #[derive(Debug, thiserror::Error)]
@@ -148,7 +178,7 @@ pub(crate) struct RuntimeMediaEmbedder {
     inputs: BTreeSet<Modality>,
     ai: AiHandle,
     vault: Arc<oneiron::Vault>,
-    egress: Option<Arc<dyn oneiron::llm::ExtractionEgressPredicate>>,
+    egress: Option<Arc<dyn ExtractionEgressPredicate>>,
     /// Whether each call names the space's width as `dimensions`: set once
     /// the rung answers wider than the space, as a matryoshka rung answers
     /// its native width unless asked.
@@ -249,6 +279,7 @@ impl SyncServer {
     async fn backfill_media_forever(self: Arc<Self>, admit: HousekeepingAdmission) {
         let mut wait = BACKFILL_IDLE;
         let mut failing: BTreeMap<String, String> = BTreeMap::new();
+        let rooms = Arc::new(Mutex::new(RoomPasses::default()));
         let mut recoveries = self.ai.model_runtime().recoveries();
         // Subscribed before the first pass, so a commit between that pass and
         // the first wait still wakes the loop.
@@ -263,9 +294,11 @@ impl SyncServer {
             };
             let server = Arc::clone(&self);
             let runtime = tokio::runtime::Handle::current();
-            let passes = tokio::task::spawn_blocking(move || {
+            let room_passes = Arc::clone(&rooms);
+            let (passes, mut embedded) = tokio::task::spawn_blocking(move || {
                 let _admission = admission;
-                server.backfill_media_pass(&runtime)
+                let mut rooms = room_passes.lock().unwrap_or_else(PoisonError::into_inner);
+                server.backfill_media_pass(&runtime, &mut rooms)
             })
             .await
             .unwrap_or_else(|error| {
@@ -273,9 +306,8 @@ impl SyncServer {
                     panicked = error.is_panic(),
                     "media backfill task failed to join"
                 );
-                Vec::new()
+                (Vec::new(), 0)
             });
-            let mut embedded = 0;
             let mut failed = false;
             for (space, pass) in passes {
                 match pass {
@@ -328,16 +360,23 @@ impl SyncServer {
     }
 
     /// One pass over each space a kind slot binds to, the text slot's on the
-    /// one-space preset included, and each open version move's candidate;
-    /// then the moves' probes are topped up ([`Self::author_space_probes`])
-    /// and each full candidate is checked ([`Self::check_space_moves`]).
-    /// First, each swapped-in incumbent past its undo window retires, and each
-    /// open move past its fill deadline with no check closes kept
-    /// ([`oneiron::Vault::expire_unfilled_space_moves`]). Blocking.
+    /// one-space preset included, and each open version move's candidate,
+    /// each followed by its pass over live off-record rooms
+    /// ([`Self::backfill_room_media`]); then the moves' probes are topped up
+    /// ([`Self::author_space_probes`]) and each full candidate is checked
+    /// ([`Self::check_space_moves`]). First, each swapped-in incumbent past
+    /// its undo window retires, and each open move past its fill deadline
+    /// with no check closes kept
+    /// ([`oneiron::Vault::expire_unfilled_space_moves`]). Returns each
+    /// space's own pass and the vectors the rooms stored. Blocking.
     fn backfill_media_pass(
         &self,
         runtime: &tokio::runtime::Handle,
-    ) -> Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)> {
+        rooms: &mut RoomPasses,
+    ) -> (
+        Vec<(String, Result<MediaEmbedReport, MediaEmbedRefusal>)>,
+        usize,
+    ) {
         match self.vault.retire_swapped_incumbents() {
             Ok(retired) => {
                 for space in retired {
@@ -356,7 +395,9 @@ impl SyncServer {
         }
         let (bindings, moves) = match (self.vault.kind_slot_bindings(), self.vault.space_moves()) {
             (Ok(bindings), Ok(moves)) => (bindings, moves),
-            (Err(error), _) | (_, Err(error)) => return vec![(String::new(), Err(error.into()))],
+            (Err(error), _) | (_, Err(error)) => {
+                return (vec![(String::new(), Err(error.into()))], 0);
+            }
         };
         let mut spaces: BTreeSet<&str> = InputKind::ALL
             .into_iter()
@@ -368,21 +409,64 @@ impl SyncServer {
                 .filter(|moving| moving.state == oneiron::embed::SpaceMoveState::Open)
                 .map(|moving| moving.candidate.as_str()),
         );
+        let mut room_embedded = 0;
         let mut passes: Vec<_> = spaces
             .into_iter()
             .map(|space| {
                 let pass = self.media_embedder(space).and_then(|embedder| {
                     let embedder = embedder.on_runtime(runtime.clone());
-                    Ok(self
-                        .vault
-                        .reconcile_media_embeddings(&embedder, BACKFILL_BATCH)?)
+                    let egress = embedder.media_egress();
+                    let gate = egress.as_ref().map(|gate| gate as &dyn EgressPredicate);
+                    let report = self.vault.reconcile_media_embeddings_admitted(
+                        &embedder,
+                        BACKFILL_BATCH,
+                        gate,
+                    )?;
+                    // Only a space whose model just served base is asked for the rooms.
+                    room_embedded += self.backfill_room_media(space, &embedder, gate, rooms);
+                    Ok(report)
                 });
                 (space.to_owned(), pass)
             })
             .collect();
         self.author_space_probes(runtime, &moves);
         self.check_space_moves(runtime, &moves, &mut passes);
-        passes
+        (passes, room_embedded)
+    }
+
+    /// `space`'s pass over the records live off-record rooms stage
+    /// ([`oneiron::Vault::reconcile_session_media_embeddings`], FIX 2345),
+    /// through the same model and egress gate as its base pass. A failure
+    /// is logged once until its reason changes, and never fails a room's
+    /// own write. Returns the vectors stored. Blocking.
+    fn backfill_room_media(
+        &self,
+        space: &str,
+        embedder: &RuntimeMediaEmbedder,
+        gate: Option<&dyn EgressPredicate>,
+        rooms: &mut RoomPasses,
+    ) -> usize {
+        match self.vault.reconcile_session_media_embeddings(
+            embedder,
+            BACKFILL_BATCH,
+            gate,
+            &mut rooms.refusals,
+        ) {
+            Ok(report) => {
+                if rooms.failing.remove(space).is_some() {
+                    tracing::info!(%space, "media embedding in live rooms fills the space again");
+                }
+                report.embedded
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                if rooms.failing.get(space) != Some(&reason) {
+                    tracing::warn!(%space, %reason, "media embedding in live rooms cannot fill the space; it retries, and no room's own write is touched");
+                    rooms.failing.insert(space.to_owned(), reason);
+                }
+                0
+            }
+        }
     }
 }
 
@@ -472,40 +556,23 @@ impl RuntimeMediaEmbedder {
         Ok(vector)
     }
 
+    /// The host's media egress gate for this rung (FIX 382): there only
+    /// while the owner's `[models] extraction_egress` opt-in permits this
+    /// rung's call, so a third-party rung reads stored media; `None`
+    /// otherwise, which the engine refuses for a third-party rung as before.
+    pub(crate) fn media_egress(&self) -> Option<MediaEgress> {
+        let request = self.request(Vec::new(), false).admission_request();
+        self.egress
+            .as_deref()
+            .is_some_and(|egress| egress.permits(&request))
+            .then_some(MediaEgress)
+    }
+
     /// The call as `/v1/ai/embed` admits it: the vault's inference policy
     /// for this rung, and no world the call vouches for. `name_width` asks
     /// for the space's width as the call's `dimensions`.
     fn admit(&self, part: MediaPart, name_width: bool) -> Result<MediaRequest, MediaEmbedRefusal> {
-        let purpose = CallPurpose::Other {
-            name: format!("ai.{}", AiOperation::Embed.as_str()),
-        };
-        let mut request = MediaRequest {
-            model: self.model.clone(),
-            envelope: CallEnvelope {
-                scope: Default::default(),
-                tier: TierPrecedence::for_purpose(
-                    &purpose,
-                    ModelTierRef(format!("media-{}", AiOperation::Embed.as_str())),
-                ),
-                purpose,
-                class: CallClass::BestEffort,
-                response_format: ResponseFormat::Text,
-                locality: self.locality,
-                seat_effort: None,
-            },
-            operation: AiOperation::Embed,
-            parts: vec![part],
-            references: Vec::new(),
-            params: if name_width {
-                BTreeMap::from([(
-                    "dimensions".to_owned(),
-                    serde_json::json!(self.space.dimensions),
-                )])
-            } else {
-                BTreeMap::new()
-            },
-            voice: None,
-        };
+        let mut request = self.request(vec![part], name_width);
         let context = oneiron::llm::HostInferenceContext {
             binding: oneiron::llm::HostInferenceBinding::Advertised {
                 model: self.model.clone(),
@@ -520,6 +587,41 @@ impl RuntimeMediaEmbedder {
         request.envelope = authorized.into_request().envelope;
         request.envelope.scope.world = None;
         Ok(request)
+    }
+
+    /// The `ai.embed` call of `parts` on this rung, before the vault's
+    /// inference policy admits it.
+    fn request(&self, parts: Vec<MediaPart>, name_width: bool) -> MediaRequest {
+        let purpose = CallPurpose::Other {
+            name: format!("ai.{}", AiOperation::Embed.as_str()),
+        };
+        MediaRequest {
+            model: self.model.clone(),
+            envelope: CallEnvelope {
+                scope: Default::default(),
+                tier: TierPrecedence::for_purpose(
+                    &purpose,
+                    ModelTierRef(format!("media-{}", AiOperation::Embed.as_str())),
+                ),
+                purpose,
+                class: CallClass::BestEffort,
+                response_format: ResponseFormat::Text,
+                locality: self.locality,
+                seat_effort: None,
+            },
+            operation: AiOperation::Embed,
+            parts,
+            references: Vec::new(),
+            params: if name_width {
+                BTreeMap::from([(
+                    "dimensions".to_owned(),
+                    serde_json::json!(self.space.dimensions),
+                )])
+            } else {
+                BTreeMap::new()
+            },
+            voice: None,
+        }
     }
 }
 
@@ -557,16 +659,41 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     ) -> oneiron::Result<Vec<Result<Vec<f32>, String>>> {
         inputs
             .iter()
-            .map(|input| match self.embed_input(input) {
-                Ok(vector) => Ok(Ok(vector)),
-                Err(refusal) if refusal.is_document_refusal() => Ok(Err(refusal.to_string())),
-                Err(refusal) => Err(refusal.into()),
+            .map(|input| self.embed_outcome(input))
+            .collect()
+    }
+
+    /// [`Self::embed_each`], one call per input: each input's documents are
+    /// released right before its own call goes, never for a later one.
+    fn embed_each_released(
+        &self,
+        inputs: &[MediaEmbeddingInput<'_>],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+    ) -> oneiron::Result<Vec<Result<Vec<f32>, String>>> {
+        inputs
+            .iter()
+            .map(|input| {
+                release(&[input.entity_id])?;
+                self.embed_outcome(input)
             })
             .collect()
     }
 }
 
 impl RuntimeMediaEmbedder {
+    /// One stored input's outcome: its vector, or a refusal of that one
+    /// document by its content ([`MediaEmbedRefusal::is_document_refusal`]).
+    fn embed_outcome(
+        &self,
+        input: &MediaEmbeddingInput<'_>,
+    ) -> oneiron::Result<Result<Vec<f32>, String>> {
+        match self.embed_input(input) {
+            Ok(vector) => Ok(Ok(vector)),
+            Err(refusal) if refusal.is_document_refusal() => Ok(Err(refusal.to_string())),
+            Err(refusal) => Err(refusal.into()),
+        }
+    }
+
     /// One stored input to its vector, driven on the embedder's runtime.
     fn embed_input(&self, input: &MediaEmbeddingInput<'_>) -> Result<Vec<f32>, MediaEmbedRefusal> {
         let runtime = self

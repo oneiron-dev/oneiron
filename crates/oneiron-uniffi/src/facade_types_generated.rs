@@ -25010,6 +25010,24 @@ pub struct KindProbeCheck {
     pub tolerance: Option<f64>,
     #[serde(rename = "verdict")]
     pub verdict: NotWorse,
+    #[serde(rename = "canary", default, skip_serializing_if = "Option::is_none")]
+    pub canary: Option<PairedInterval>,
+    #[serde(
+        rename = "canary_verdict",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub canary_verdict: Option<NotWorse>,
+    #[serde(
+        rename = "set_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub set_version: Option<String>,
+    #[serde(rename = "rubric", default, skip_serializing_if = "Option::is_none")]
+    pub rubric: Option<String>,
+    #[serde(rename = "card", default, skip_serializing_if = "Option::is_none")]
+    pub card: Option<SufficiencyCard>,
 }
 
 /// `oneiron::embed::space_move::SpaceMoveCheck`.
@@ -25128,6 +25146,12 @@ pub struct SpaceProbe {
     pub kind: InputKind,
     #[serde(rename = "query")]
     pub query: String,
+    #[serde(
+        rename = "query_media",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_media: Option<String>,
     #[serde(rename = "family")]
     pub family: String,
     #[serde(rename = "targets")]
@@ -25136,6 +25160,8 @@ pub struct SpaceProbe {
     pub author: String,
     #[serde(rename = "written_at")]
     pub written_at: u64,
+    #[serde(rename = "cohort", default, skip_serializing_if = "Option::is_none")]
+    pub cohort: Option<u64>,
 }
 
 /// `oneiron::task_verb::sdk_embedding_space::EmbeddingSpaceProbe`.
@@ -25162,6 +25188,12 @@ pub struct EmbeddingSpaceProbePutRequest {
     pub kind: InputKind,
     #[serde(rename = "query")]
     pub query: String,
+    #[serde(
+        rename = "query_media",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_media: Option<String>,
     #[serde(rename = "family")]
     pub family: String,
     #[serde(rename = "targets", default, skip_serializing_if = "Option::is_none")]

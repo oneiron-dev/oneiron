@@ -1459,6 +1459,7 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
                 sdk::EmbeddingSpaceProbePutRequest {
                     kind: input_kind(args.kind),
                     query: args.query,
+                    query_media: None,
                     family,
                     targets,
                     author: args.author,

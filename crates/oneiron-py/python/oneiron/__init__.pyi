@@ -1920,7 +1920,7 @@ class Oneiron:
         def list(self, spec: Facade.EmptyRequest | None = None) -> Facade.EmbeddingSpaceProbes:
             """Every stored embedding space probe with its id."""
         def put(self, spec: Facade.EmbeddingSpaceProbePutRequest) -> Facade.EmbeddingSpaceProbe:
-            """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
+            """Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author."""
         def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
             """Removes one stored embedding space probe by its id."""
     class _VaultPolicyVerbs:

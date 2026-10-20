@@ -2865,7 +2865,7 @@ class Oneiron:
             """Every stored embedding space probe with its id."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_list(json.dumps({} if spec is None else spec))))
         def put(self, spec):
-            """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
+            """Stores one retrieval probe the owner or another model wrote: kind, a text query or a stored image or audio document as its query, family, targets and author."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_put(json.dumps(spec))))
         def delete(self, spec):
             """Removes one stored embedding space probe by its id."""

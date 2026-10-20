@@ -102,12 +102,14 @@ impl crate::memory::Memory<'_> {
 
     /// The pack a recall with `scope` answers with when its door stops
     /// waiting before retrieval ran: no items, marked partial, under the
-    /// receipt the recall reads with.
+    /// receipt the recall reads with. Its worlds are the recall's own,
+    /// pinned in the door's `pin` (FIX 6693); the credential is read now.
     pub(crate) fn recall_cut_pack(
         &self,
         scope: &super::RecallScope,
+        pin: &super::selection::RecallPin,
     ) -> MemoryResult<super::MemoryPack> {
-        let worlds = self.recall_worlds(scope)?;
+        let worlds = self.recall_door_worlds(scope, pin)?;
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
         let lane = match worlds {
             Some(worlds) => lane.within_worlds(worlds),
