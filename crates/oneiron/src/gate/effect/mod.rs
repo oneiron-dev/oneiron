@@ -252,10 +252,10 @@ pub(crate) fn evaluate_external_effect_policy(
             .is_some_and(|effect| effect.digest() == proof.effect_digest()),
         _ => false,
     };
-    // FIX 6362: an e-sign retry on its recorded owner press (L12-B seam).
-    let esign_retry_authorized =
-        admitted_approval::esign_retry_authorized(&hydrated_effect, approval_context);
-    if (mail_retry_authorized || esign_retry_authorized)
+    // FIX 6362/6679: an e-sign or failure-signal retry on its recorded press.
+    let press_retry_authorized =
+        admitted_approval::press_retry_authorized(&hydrated_effect, approval_context);
+    if (mail_retry_authorized || press_retry_authorized)
         && let Some(bound) = requirement.as_ref()
         && let Ok(grant) = crate::consent::ActionGrant::new(bound.clone())
     {
@@ -367,7 +367,7 @@ pub(crate) fn evaluate_external_effect_policy(
     } else {
         external_effect_composed_effect(&hydrated_effect)
     };
-    let approve_once = if mail_retry_authorized || esign_retry_authorized {
+    let approve_once = if mail_retry_authorized || press_retry_authorized {
         None // The first admission spent it; this exact Pending retry reuses it.
     } else {
         composed

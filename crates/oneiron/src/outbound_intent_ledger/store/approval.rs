@@ -3,7 +3,10 @@
 //! native-mail cold send's proof binds its canonical mail digest, exactly as
 //! before. An e-sign send for signature or reminder's proof binds the digest
 //! the gate's approve-once lookup composed for that send, recomposed from its
-//! frozen actor, act, channel and brief. Any other row carries none.
+//! frozen actor, act, channel and brief. A failure-signal batch's proof binds
+//! the digest its lookup composed for that batch, recomposed the same way
+//! from its frozen endpoint, content ref and send ref (FIX 6679). Any other
+//! row carries none.
 
 use super::super::types::{IntentLedgerError, IntentLedgerRecord, IntentLedgerResult};
 
@@ -23,6 +26,9 @@ pub(super) fn validate_admitted_approval(record: &IntentLedgerRecord) -> IntentL
         ("esign", tool @ ("send_for_signature" | "remind")) => {
             crate::outbound::esign_approval_digest_from_frozen_payload(record.payload(), tool)
         }
+        ("failure_signals", "send") => {
+            crate::outbound::failure_signals_approval_digest_from_frozen_payload(record.payload())
+        }
         _ => None,
     };
     if approval.intent_id() != record.id
@@ -31,7 +37,7 @@ pub(super) fn validate_admitted_approval(record: &IntentLedgerRecord) -> IntentL
         || digest != Some(approval.effect_digest())
     {
         return Err(IntentLedgerError::InvalidRecord(
-            "admitted mail approval binding mismatch",
+            "admitted approval binding mismatch",
         ));
     }
     Ok(())
