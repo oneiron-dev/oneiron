@@ -274,7 +274,7 @@ pub(super) fn retire_carried(
 ///
 /// Storage errors reading `current`'s classes.
 pub(super) fn supersede_live(image: &mut CheckpointImage, current: &crate::Vault) -> Result<()> {
-    let classes = Classes::new(current)?;
+    let classes = Classes::new(current, &image.databases)?;
     for carried in &mut image.inline_bodies {
         if carried.retired.is_some()
             && classes.row(&carried.database, &carried.key, &[]).0 == Class::Live

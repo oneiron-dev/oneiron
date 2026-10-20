@@ -106,6 +106,45 @@ impl HomeTable for FreeTimeSpendRows {
             .map(|id| SCOPE.key_bytes(&id.0))
             .collect())
     }
+
+    /// FIX 5661 C2b: a restore keeps live every scope of a free-time tree,
+    /// in the image or here: each whose parents, walked through the image's
+    /// scopes and this node's, lead to a root a free-time cycle names, in the
+    /// image or here. Any other launch's scope stays content. An image row
+    /// that does not decode, or a chain past the depth bound, is content.
+    fn manages(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        image: &crate::sync::home_handoff::ImageRows,
+    ) -> Result<Vec<Vec<u8>>> {
+        let cycles = side_table::DREAMER_FREE_TIME_CYCLE.prefix;
+        let mut roots = crate::dreamer_runner::free_time_root_scopes_in_txn(vault, txn)?;
+        let mut all = SCOPE
+            .iter_from(&vault.store, txn, &[])?
+            .map(|row| row.map(|(_, scope)| (scope.scope.clone(), scope)))
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        for (key, value) in image {
+            if key.starts_with(cycles) {
+                let cycle = <side_table::Named as side_table::SideCodec<
+                    crate::dreamer_runner::FreeTimeCycle,
+                >>::decode(value);
+                if let Ok(cycle) = cycle {
+                    roots.insert(cycle.root_scope);
+                }
+            } else if key.starts_with(SCOPE.decl().prefix)
+                && let Ok(scope) = SCOPE.decode_value(value)
+            {
+                all.entry(scope.scope.clone()).or_insert(scope);
+            }
+        }
+        Ok(all
+            .iter()
+            .filter(
+                |(_, scope)| matches!(root_of(&all, scope), Ok(Some(root)) if roots.contains(root)),
+            )
+            .map(|(id, _)| SCOPE.key_bytes(&id.0))
+            .collect())
+    }
 }
 
 /// Every scope of every free-time tree here, by id: the roots this node's

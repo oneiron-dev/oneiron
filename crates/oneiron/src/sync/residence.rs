@@ -57,7 +57,8 @@ pub(crate) use directives::{
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
 pub use home_handoff::{
-    HomeHandoffStanding, home_handoff_commit, home_handoff_part, home_handoff_status,
+    FreeTimeArming, HomeHandoffCancel, HomeHandoffStanding, free_time_arming, home_handoff_cancel,
+    home_handoff_commit, home_handoff_part, home_handoff_status, prepare_home_handoff,
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,

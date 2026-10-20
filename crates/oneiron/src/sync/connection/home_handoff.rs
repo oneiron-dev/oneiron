@@ -13,9 +13,12 @@
 //! or cadence. A move with no handoff keeps today's local opening; this
 //! worker only records why (Incomplete), never a wait.
 //!
-//! DORMANT: [`HOME_HANDOFF_DELIVERY`] is off, so the worker idles and the
-//! topology captures no route; nothing new runs on a live move until C2b
-//! turns delivery on with its target ordering.
+//! FIX 5661 C2b turns delivery on ([`HOME_HANDOFF_DELIVERY`]), with the new
+//! home's ordering and the old home's drain on the host's driver. The worker
+//! takes this node's state back, or supersedes, only once the target fenced
+//! the handoff in its adopting writer (FIX 5931); the old home's tries run in
+//! the host's own passes, and this worker only rechecks quiescence in the
+//! final writer and freezes.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -25,19 +28,20 @@ use tokio::sync::mpsc;
 use super::SyncConnection;
 use crate::Vault;
 use crate::sync::TransportError;
-use crate::sync::client::{HandoffLane, SyncEvent, TargetStanding};
+use crate::sync::client::{HandoffLane, SyncEvent, TargetCancel, TargetStanding};
 use crate::sync::home_handoff::{
     self, DeliveryPlan, FrozenHandoff, HomeAck, HomeMove, IncompleteReason,
 };
 
-/// The gate C2b flips: whether this build delivers home handoffs. Off, the
-/// worker never runs a round and no move's route is captured.
-const HOME_HANDOFF_DELIVERY: bool = false;
+/// Whether this build delivers home handoffs (on since FIX 5661 C2b). Off,
+/// the worker never runs a round and no move's route is captured.
+const HOME_HANDOFF_DELIVERY: bool = true;
 
-/// Where a target's answer could not be read: no endpoint captured for it,
-/// or no answer on it. Neither proves anything either way.
+/// The target's answer to a cancel, or why it could not be read: no
+/// endpoint captured for it, or no answer on it. An unread answer proves
+/// nothing either way.
 enum Standing {
-    Answered(TargetStanding),
+    Answered(TargetCancel),
     Unread(IncompleteReason),
 }
 
@@ -72,7 +76,7 @@ async fn keep_ack(
 }
 
 /// Captures the route of the move this node's election last recorded, at
-/// the move. Off while delivery is dormant. A capture that fails is logged;
+/// the move. Off while delivery is off. A capture that fails is logged;
 /// the move's delivery then finds no route and records that.
 pub(super) fn capture_move_route(vault: &Vault, endpoint_of: impl FnOnce(u64) -> Option<String>) {
     if !HOME_HANDOFF_DELIVERY {
@@ -162,8 +166,9 @@ impl SyncConnection {
             .ok_or(IncompleteReason::Unresolved))
     }
 
-    /// The target's persisted answer for `frozen`, read on its captured
-    /// route.
+    /// FIX 5931: cancels `frozen` at its target, on its captured route. The
+    /// target answers from its adopting writer: fenced there, it never lands
+    /// after; adopted first, its ack.
     async fn standing(
         &self,
         vault: &Arc<Vault>,
@@ -173,8 +178,8 @@ impl SyncConnection {
             Ok(lane) => lane,
             Err(reason) => return Ok(Standing::Unread(reason)),
         };
-        Ok(match lane.status(&frozen.id, &frozen.digest).await {
-            Ok(Some(standing)) => Standing::Answered(standing),
+        Ok(match lane.cancel(&frozen.id, &frozen.digest).await {
+            Ok(Some(answer)) => Standing::Answered(answer),
             Ok(None) | Err(_) => Standing::Unread(IncompleteReason::Unresolved),
         })
     }
@@ -224,7 +229,7 @@ impl SyncConnection {
 
     /// FIX 5931: this node is home again before its target acked. Adopted
     /// there, it keeps the ack and stays history (its successor holds the
-    /// state and hands it back); provably not, it cancels and holds its
+    /// state and hands it back); fenced there, it cancels and holds its
     /// state again; unread, it records why and stays frozen.
     async fn reclaim(
         &self,
@@ -232,8 +237,8 @@ impl SyncConnection {
         frozen: &FrozenHandoff,
     ) -> Result<(), TransportError> {
         match self.standing(vault, frozen).await? {
-            Standing::Answered(TargetStanding::Adopted(ack)) => keep_ack(vault, frozen, ack).await,
-            Standing::Answered(TargetStanding::Staged(_)) => {
+            Standing::Answered(TargetCancel::Adopted(ack)) => keep_ack(vault, frozen, ack).await,
+            Standing::Answered(TargetCancel::Fenced) => {
                 let cancelling = Arc::clone(vault);
                 let id = frozen.id;
                 blocking(move || home_handoff::cancel_frozen(&cancelling, &id)).await
@@ -243,21 +248,22 @@ impl SyncConnection {
     }
 
     /// A to B to C before B acked: adopted at B, this node keeps the ack and
-    /// B drains its own state onward; provably not, this node supersedes
+    /// B drains its own state onward; fenced at B, this node supersedes
     /// from its frozen state to C; unread, it records why and stays frozen,
-    /// never exporting state it does not hold.
+    /// never exporting state it does not hold. With no machine known for C
+    /// it records that and leaves B unfenced.
     async fn supersede(
         &self,
         vault: &Arc<Vault>,
         frozen: &FrozenHandoff,
         onward: Option<HomeMove>,
     ) -> Result<(), TransportError> {
+        let Some(movement) = onward else {
+            return note(vault, IncompleteReason::NoRoute).await;
+        };
         match self.standing(vault, frozen).await? {
-            Standing::Answered(TargetStanding::Adopted(ack)) => keep_ack(vault, frozen, ack).await,
-            Standing::Answered(TargetStanding::Staged(_)) => {
-                let Some(movement) = onward else {
-                    return note(vault, IncompleteReason::NoRoute).await;
-                };
+            Standing::Answered(TargetCancel::Adopted(ack)) => keep_ack(vault, frozen, ack).await,
+            Standing::Answered(TargetCancel::Fenced) => {
                 let superseding = Arc::clone(vault);
                 let id = frozen.id;
                 let sealed =

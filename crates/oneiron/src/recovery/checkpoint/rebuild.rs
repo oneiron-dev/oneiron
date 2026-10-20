@@ -225,3 +225,53 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     crate::human_task::HumanTaskFollowupDriver::new(vault).rebuild_cursors(checkpoint_time)?;
     Ok(())
 }
+
+/// The host's own MACRO home candidacy `current` keeps, for a restore that
+/// takes its place on this host (FIX 5661 C2b); `None` when it keeps none or
+/// it does not read, and the restore then elects nothing.
+pub(super) fn host_candidacy(current: &Vault) -> Option<Vec<crate::DreamerHomeNodeCandidate>> {
+    let read = || -> Result<_> {
+        let txn = current.store.env.read_txn()?;
+        crate::dreamer_runner::DreamerRunnerStore::new(current).home_candidates_in_txn(&txn)
+    };
+    match read() {
+        Ok(candidacy) => candidacy,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the live vault's home candidacy did not read; the restore elects no home"
+            );
+            None
+        }
+    }
+}
+
+/// FIX 5661 C2b: re-elects the restored vault's MACRO home before it is
+/// returned, over the live authority it carries and `candidacy`, the host's
+/// own candidacy the vault it replaces kept: landing cleared that Runtime
+/// row with the image's. Never the image's candidacy or another machine's;
+/// with none, nothing is elected and the host declares on its next start.
+/// The carrier's head stays the live vault's: moving off the image's
+/// designation is no home move. A failure is logged and the image's
+/// designation stands.
+pub(super) fn reelect_home(
+    vault: &Vault,
+    candidacy: Option<&[crate::DreamerHomeNodeCandidate]>,
+    now: u64,
+) {
+    let Some(candidacy) = candidacy else {
+        return;
+    };
+    let elect =
+        || crate::dreamer_runner::DreamerRunnerStore::new(vault).elect_home_node(candidacy, now);
+    #[cfg(feature = "sync")]
+    let elected = crate::sync::home_handoff::keep_move_through(vault, elect);
+    #[cfg(not(feature = "sync"))]
+    let elected = elect();
+    if let Err(error) = elected {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "the restored vault did not re-elect its home; the image's designation stands"
+        );
+    }
+}

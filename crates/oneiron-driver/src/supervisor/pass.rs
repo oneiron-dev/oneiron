@@ -32,6 +32,12 @@ pub(super) async fn run_one_pass<F: PassExecutorFactory>(
     tick: &Tick,
     cancel: &WakeCancellation,
 ) -> std::result::Result<WakePassReport, PassRunError> {
+    // FIX 5661 C2b (FIX 6211): a new home adopts the handoff its move
+    // carried, or records that none came, before this pass opens a cycle or
+    // admits a free-time item. Best effort: the pass goes on as today.
+    if let Err(error) = oneiron::sync::residence::prepare_home_handoff(vault) {
+        tracing::warn!(kind = ?error.kind(), "home handoff not prepared before the pass");
+    }
     let (scope, trigger) = pass_shape(tick);
     let deadline = WakePassDeadline::new(config.pass_ceiling_ms);
     // ONE wake-budget counter per pass (the LLM-4 guard), shared between

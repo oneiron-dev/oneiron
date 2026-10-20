@@ -475,12 +475,23 @@ pub(super) struct Classes {
     /// GrantRevoke act in its authority log names (FIX 5732). A read that
     /// fails keeps none, so those shells refuse as before.
     revoked_agent_grants: BTreeSet<Vec<u8>>,
+    /// The rows of the tables a home move carries, by database (FIX 5661
+    /// C2b): each table's live keys in `current` and the image's keys it
+    /// manages. They restore live, so an old export never comes back over
+    /// later spend.
+    home_managed: BTreeMap<&'static str, BTreeSet<Vec<u8>>>,
+    /// The home tables whose live rows did not read or decode: each keeps
+    /// its own class, so the image wins where that is content.
+    home_unreadable: Vec<&'static str>,
 }
 
 impl Classes {
-    /// The table, with the kinds `current` registered at run time and its
-    /// own serving machine.
-    pub(super) fn new(current: &crate::Vault) -> crate::Result<Self> {
+    /// The table, with the kinds `current` registered at run time, its own
+    /// serving machine, and the home tables' rows over `image`'s.
+    pub(super) fn new(
+        current: &crate::Vault,
+        image: &BTreeMap<String, Vec<(Vec<u8>, Vec<u8>)>>,
+    ) -> crate::Result<Self> {
         let mut vault_meta = Vec::new();
         let mut sync_state = Vec::new();
         for (decl, class) in SIDE_TABLES.iter().copied().flatten() {
@@ -514,6 +525,16 @@ impl Classes {
             .map(|revoked| revoked.iter().map(|id| id.as_bytes().to_vec()).collect())
             .unwrap_or_default();
         drop(txn);
+        #[cfg(feature = "sync")]
+        let crate::sync::home_handoff::HomeManaged {
+            keys: home_managed,
+            unreadable: home_unreadable,
+        } = crate::sync::home_handoff::restore_managed_keys(current, image)?;
+        #[cfg(not(feature = "sync"))]
+        let (home_managed, home_unreadable) = {
+            let _ = image;
+            (BTreeMap::new(), Vec::new())
+        };
         Ok(Self {
             vault_meta,
             sync_state,
@@ -522,7 +543,20 @@ impl Classes {
                 .unwrap_or_default(),
             serving_machine,
             revoked_agent_grants,
+            home_managed,
+            home_unreadable,
         })
+    }
+
+    /// The restore's note for each home table whose live rows did not read
+    /// (FIX 5661 C2b): it came from the image.
+    pub(super) fn home_notes(&self) -> Vec<super::HomeTableNote> {
+        self.home_unreadable
+            .iter()
+            .map(|table| super::HomeTableNote::Unreadable {
+                table: (*table).to_owned(),
+            })
+            .collect()
     }
 
     /// The class of one canonical row of `database`, and the length of the
@@ -581,6 +615,15 @@ impl Classes {
                             }) =>
                     {
                         (ERASED_ORIGIN_AUTHORITY, prefix.len())
+                    }
+                    Some((prefix, _))
+                        if key.starts_with(prefix)
+                            && self
+                                .home_managed
+                                .get(database)
+                                .is_some_and(|keys| keys.contains(key)) =>
+                    {
+                        (LIVE, prefix.len())
                     }
                     Some((prefix, class)) if key.starts_with(prefix) => {
                         (self.binding_class(database, key, class), prefix.len())
