@@ -146,7 +146,7 @@ impl Vault {
             }
             // D16: SoftErase tombstones the Claim, and "the derived edge
             // flag follows the Claim" — refresh in the SAME transaction.
-            let changed_documents = match &captured {
+            let mut changed_documents = match &captured {
                 Some(captured) if existed => self.refresh_subject_edge_after_claim_delete_in_txn(
                     wtxn,
                     id,
@@ -154,6 +154,12 @@ impl Vault {
                 )?,
                 _ => Vec::new(),
             };
+            // A peer's delete takes its quotes out of the NOTEs here that
+            // cite it, whether or not this replica holds its row (C050).
+            if decoded.reason == Some(super::tombstone::TombstoneReason::UserDelete) {
+                changed_documents
+                    .extend(crate::note::scrub_deleted_citations_in_txn(self, wtxn, id)?);
+            }
             IDENTITY_SOFT_DELETE_MARKER.put(&self.store, wtxn, &HexId(*id), &Vec::new())?;
             // A peer deleted a world: its delete time bounds how long a pin
             // change here still rewraps the world's keys.
