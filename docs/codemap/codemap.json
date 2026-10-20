@@ -26935,6 +26935,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "DerivationBindError",
       "DerivationKey",
       "DerivationKind",
       "DerivationOwner",
@@ -26946,8 +26947,8 @@
      "purpose": "Account-sealed hosted derivations",
      "surface": {
       "crate-vis": 2,
-      "enum": 1,
-      "fn": 12,
+      "enum": 2,
+      "fn": 13,
       "struct": 5
      }
     },
@@ -44592,14 +44593,10 @@
       "CustodyAdmissionFacts",
       "CustodyPositionFact",
       "CustodyRouteFact",
-      "EscrowRole",
-      "FreshRecipient",
       "RecipientAdmissionFacts",
       "RecipientRetirementDisposition",
-      "ReleasedRecipient",
       "RestoreAdmission",
       "RestoreCommitFacts",
-      "RestorePlan",
       "RetiredBy",
       "RetiredRecipient",
       "SourceExpectation",
@@ -44608,9 +44605,9 @@
      "path": "src/recovery/checkpoint/admission/facts.rs",
      "purpose": "What a cold managed restore is asked to do and what it verified (LC FIX 5384/5385): the plan's expected…",
      "surface": {
-      "enum": 5,
-      "fn": 1,
-      "struct": 13
+      "enum": 4,
+      "re-export": 1,
+      "struct": 10
      }
     },
     {
@@ -86545,6 +86542,7 @@
      "notable": [
       "ManagedArgs",
       "ManagedError",
+      "ManagedStartMode",
       "SettingsRefusal"
      ],
      "path": "src/managed/args.rs",
@@ -86552,7 +86550,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "enum": 2,
+      "enum": 3,
       "fn": 3,
       "struct": 1
      }
@@ -86606,13 +86604,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/managed/isolation.rs",
      "purpose": "Fail-closed Linux fscrypt and root-owned UID allocation probes",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 14
      }
     },
     {
@@ -86789,6 +86787,56 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/restore.rs",
+     "purpose": "The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md, its…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/restore/commit_marker.rs",
+     "purpose": "The attempt-bound commit marker, written inside the destination once every keep is done (the restore's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/restore/input.rs",
+     "purpose": "The restore's two pipes and the plan on the input pipe: each descriptor proven the right end of a pipe…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/restore/receipt.rs",
+     "purpose": "The engine's restore facts on the contract's wire: total, field by field projections, never a parse of prose",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/restore/result.rs",
+     "purpose": "The restore's result pipe (`--restore-result-fd`): one frame per line, each written whole",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/settings.rs",
      "purpose": "The vault's settings file (`--settings-file`): the owner's feature settings for a vault our cloud hosts, in…",
      "surface": {
@@ -86817,10 +86865,20 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 21,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/boot_keys.rs",
+     "purpose": "The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -86841,7 +86899,7 @@
      "purpose": "Managed vault open gates: credentials, the canary marker, and the DEK MAC",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 3
      }
     },
@@ -90134,7 +90192,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 28,
+     "files": 34,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -90290,7 +90348,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 906,
+   "source_files": 912,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -94614,7 +94672,7 @@
      "path": "src/lib/mod.rs",
      "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
      "surface": {
-      "mod": 15,
+      "mod": 16,
       "re-export": 9
      }
     },
@@ -94648,6 +94706,105 @@
       "enum": 1,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RestoreCommitMarker"
+     ],
+     "path": "src/lib/restore.rs",
+     "purpose": "The cold managed restore start mode (LC FIX 5384/5385; the contract is lanes/l14/t3/restore-contract.md): a…",
+     "surface": {
+      "const": 1,
+      "fn": 2,
+      "mod": 3,
+      "re-export": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AddedRecipientWire",
+      "AnchorDispositionWire",
+      "CustodyAdmissionWire",
+      "CustodyPositionWire",
+      "CustodyRouteWire",
+      "ManagedRestoreIdentity",
+      "ManagedRestoreReceipt",
+      "RecipientAdmissionWire",
+      "RecipientDispositionWire",
+      "RestoreAdmissionWire",
+      "RestoreReportWire",
+      "RestoreSpoolObservation",
+      "RestoreSpoolState",
+      "RetiredByWire",
+      "RetiredRecipientWire",
+      "RetirementReceiptWire",
+      "VerifiedSourceWire"
+     ],
+     "path": "src/lib/restore/facts.rs",
+     "purpose": "The receipt of a verified cold managed restore: the attempt it answers, the engine's report, and everything…",
+     "surface": {
+      "const": 1,
+      "enum": 5,
+      "fn": 1,
+      "struct": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ManagedRestoreDestination",
+      "ManagedRestorePhase",
+      "ManagedRestoreResultFrame",
+      "RestoreFailureReason",
+      "RestoreStatus"
+     ],
+     "path": "src/lib/restore/framing.rs",
+     "purpose": "The result pipe (`--restore-result-fd`) and the `restore_status` answer",
+     "surface": {
+      "enum": 5,
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/restore/hex.rs",
+     "purpose": "Byte fields on the restore wire, spelled as the rest of the contract spells bytes: lowercase hex strings…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EscrowRole",
+      "FreshRecipient",
+      "ManagedRestoreInput",
+      "ManagedRestorePlan",
+      "ReleasedRecipient",
+      "RestoreArtifactKind",
+      "RestoreCustodyPlan",
+      "RestoreEvidence",
+      "RestorePlan",
+      "RestoreSignerPin",
+      "RestoreSourceExpectation"
+     ],
+     "path": "src/lib/restore/plan.rs",
+     "purpose": "What the supervisor hands a restoring engine on `--restore-input-fd`: one [`ManagedRestoreInput`] JSON…",
+     "surface": {
+      "const": 1,
+      "enum": 3,
+      "fn": 1,
+      "struct": 8
      }
     },
     {
@@ -94796,7 +94953,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 30,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -94805,7 +94962,7 @@
    },
    "over_bar": 0,
    "purpose": "Supervisor ⇄ vault child-process contract: wire types, credential framing, limits",
-   "source_files": 29,
+   "source_files": 34,
    "test_files": 1
   },
   "oneiron-xlsx-formula": {
