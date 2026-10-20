@@ -17,6 +17,7 @@ use super::{
     AEAD, ArtifactKind, CHUNK_LEN, CheckpointKey, EPOCH, IMAGE_STREAM, MANIFEST_STREAM, MAX_FRAME,
     MAX_KEY_HEADER, Manifest, PRELUDE_LEN, StreamEntry, VERSION, ZSTD_LEVEL, codec, custody_ref,
 };
+use crate::recovery::checkpoint::payload::PayloadStreams;
 use crate::recovery::checkpoint::write_budget::{self, RecoveryWriteBudget};
 use crate::world_keys::{CarriedVaultKey, refused};
 use crate::{Error, Result};
@@ -91,8 +92,9 @@ pub(in crate::recovery::checkpoint) struct ArtifactBody {
 }
 
 /// Writes the artifact at `path`, create-new and owner-only: the image, then
-/// each body `open_body` hands back by its place in `bodies`, then the
-/// manifest, then the commitment `link` signs. Its prelude and commitment
+/// each body `open_body` hands back by its place in `bodies`, then each of
+/// `payload`'s streams (KS-7; `None` writes none), then the manifest, then
+/// the commitment `link` signs. Its prelude and commitment
 /// carry the binding of the vault id to `registry`, the registry's id for
 /// the vault, or say none was known (FIX 5826). Returns the image's BLAKE3,
 /// the chain head the signed commitment makes, and the artifact's evidence
@@ -115,6 +117,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     image: &[u8],
     bodies: &[ArtifactBody],
     mut open_body: impl FnMut(usize) -> Result<Box<dyn Read + Send>>,
+    payload: Option<&PayloadStreams>,
     budget: &dyn RecoveryWriteBudget,
 ) -> Result<([u8; 32], ChainHead, BackupEvidence)> {
     let mut options = std::fs::OpenOptions::new();
@@ -157,7 +160,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
             commitment: *carried.commitment(),
             snapshot,
         },
-        room: artifact_room(key_header.len(), image.len(), bodies),
+        room: artifact_room(key_header.len(), image.len(), bodies, payload),
         budget,
     };
     sink.claim_rest()?;
@@ -178,6 +181,20 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         }
         sealed_bodies.push(entry);
     }
+    // Each payload bundle's stream follows the bodies', sealed already
+    // under its compartment's key (KS-7).
+    let mut payload_streams = Vec::new();
+    for (index, bytes) in payload
+        .iter()
+        .flat_map(|payload| payload.streams.iter())
+        .enumerate()
+    {
+        let stream = u32::try_from(bodies.len() + 1 + index)
+            .ok()
+            .filter(|stream| *stream != MANIFEST_STREAM)
+            .ok_or_else(codec)?;
+        payload_streams.push(sink.stream(stream, &mut bytes.as_slice())?);
+    }
     let manifest = Manifest {
         version: VERSION,
         kind: kind.code(),
@@ -189,6 +206,8 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
         image,
         bodies: sealed_bodies,
         custody: custody.cloned(),
+        payload: payload.map(|payload| payload.section.clone()),
+        payload_streams,
     };
     let manifest_at = sink.offset;
     let bytes = rmp_serde::to_vec_named(&manifest).map_err(|_| codec())?;
@@ -215,6 +234,7 @@ pub(in crate::recovery::checkpoint) fn write_artifact(
     sink.put(&manifest_at.to_be_bytes())?;
     let frames = std::iter::once(&manifest.image)
         .chain(&manifest.bodies)
+        .chain(&manifest.payload_streams)
         .map(|stream| stream.chunks.len() as u64)
         .sum::<u64>()
         + 1;
@@ -259,8 +279,14 @@ impl Drop for Partial {
 /// plus the slack [`MAX_FRAME`] leaves an envelope over its plaintext; and
 /// the manifest, commitment and signature at the most a reader takes of
 /// each, with the closing offset. A bound read off the streams' lengths,
-/// never a guess at what they compress to.
-fn artifact_room(key_header: usize, image: usize, bodies: &[ArtifactBody]) -> u64 {
+/// never a guess at what they compress to; a payload's streams count as a
+/// body's (KS-7).
+fn artifact_room(
+    key_header: usize,
+    image: usize,
+    bodies: &[ArtifactBody],
+    payload: Option<&PayloadStreams>,
+) -> u64 {
     let slack = MAX_FRAME.saturating_sub(MAX_PLAINTEXT_LEN as u64);
     let frame = |plain: usize| {
         (zstd::zstd_safe::compress_bound(plain) as u64).saturating_add(slack.saturating_add(4))
@@ -275,12 +301,17 @@ fn artifact_room(key_header: usize, image: usize, bodies: &[ArtifactBody]) -> u6
     let tail = MAX_FRAME
         .saturating_add(commitment::MAX_SIGNED_FRAME.saturating_mul(2))
         .saturating_add(4 * 3 + 8);
-    bodies.iter().fold(
-        ((PRELUDE_LEN + key_header) as u64)
-            .saturating_add(stream(image as u64))
-            .saturating_add(tail),
-        |room, body| room.saturating_add(stream(body.len)),
-    )
+    let payload = payload.iter().flat_map(|payload| payload.streams.iter());
+    bodies
+        .iter()
+        .map(|body| body.len)
+        .chain(payload.map(|bytes| bytes.len() as u64))
+        .fold(
+            ((PRELUDE_LEN + key_header) as u64)
+                .saturating_add(stream(image as u64))
+                .saturating_add(tail),
+            |room, len| room.saturating_add(stream(len)),
+        )
 }
 
 struct Sink<'k> {

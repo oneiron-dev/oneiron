@@ -126,6 +126,8 @@ pub(super) struct RestoreRoom<'b> {
     /// The rows' bytes once they landed: the copy's file holds them, and
     /// what it grows by past them is what the bound has spent.
     landed_rows: u64,
+    /// The opened payload rows' bytes among the rows' (KS-7).
+    payload: u64,
 }
 
 impl<'b> RestoreRoom<'b> {
@@ -153,7 +155,25 @@ impl<'b> RestoreRoom<'b> {
             rows: rows_len(image),
             derived,
             landed_rows: 0,
+            payload: 0,
         }
+    }
+
+    /// Adds, once, the opened payload rows a restore lands besides the
+    /// image's (KS-7), each its key and value lengths: their bytes join the
+    /// rows', and what they write past them the bound. None open while
+    /// CHECKPOINT_PAYLOADS_ENABLED is off.
+    #[allow(dead_code, reason = "KS7-5 lands the opened payload rows")]
+    pub(super) fn with_payload(mut self, rows: &[(u64, u64)]) -> Self {
+        let bytes = rows.iter().map(|(key, value)| key.saturating_add(*value));
+        self.payload = bytes.fold(0_u64, u64::saturating_add);
+        self.rows = self.rows.saturating_add(self.payload);
+        if self.budget.floored() {
+            let past =
+                RestoreWriteEstimate::default().with_payload(rows, PageLayout::for_new_env());
+            self.derived = self.derived.saturating_add(past.total());
+        }
+        self
     }
 
     /// Claims the whole copy before anything of it is made or opened.
@@ -183,7 +203,7 @@ impl<'b> RestoreRoom<'b> {
     /// rows a sealed copy's bodies added among them.
     pub(super) fn landing_rows(&mut self, image: &CheckpointImage) -> Result<()> {
         self.bodies = 0;
-        self.rows = rows_len(image);
+        self.rows = rows_len(image).saturating_add(self.payload);
         hold(self.budget, self.rows.saturating_add(self.derived))
     }
 

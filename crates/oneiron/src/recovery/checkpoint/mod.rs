@@ -26,6 +26,7 @@ mod decisions;
 mod host_holds;
 mod image;
 mod landing;
+mod payload;
 mod rebuild;
 mod response_rows;
 mod restore_class;

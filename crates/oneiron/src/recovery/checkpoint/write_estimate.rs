@@ -58,6 +58,8 @@ pub(super) struct RestoreWriteEstimate {
     projections: u64,
     copies: u64,
     epoch: u64,
+    /// What the opened payload rows write past their bytes (KS-7).
+    payload: u64,
 }
 
 impl RestoreWriteEstimate {
@@ -89,7 +91,28 @@ impl RestoreWriteEstimate {
             projections: landed.saturating_mul(PROJECTION_GENERATIONS),
             copies: staged.saturating_add(vault_meta),
             epoch: layout.page(),
+            payload: 0,
         }
+    }
+
+    /// Adds the opened payload rows a restore lands besides the image's
+    /// (KS-7), each its key and value lengths, counted as the image's own
+    /// rows are: their pages past their bytes, one generation of what is
+    /// derived from them, and one copy of their pages. None open while
+    /// CHECKPOINT_PAYLOADS_ENABLED is off.
+    #[allow(dead_code, reason = "KS7-5 lands the opened payload rows")]
+    pub(super) fn with_payload(mut self, rows: &[(u64, u64)], layout: PageLayout) -> Self {
+        let mut tree = TreeRows::default();
+        for (key, value) in rows {
+            layout.add(&mut tree, *key, *value);
+        }
+        let pages = layout.bytes(&tree);
+        let bytes = rows.iter().map(|(key, value)| key.saturating_add(*value));
+        self.payload = pages
+            .saturating_sub(bytes.fold(0_u64, u64::saturating_add))
+            .saturating_add(pages.saturating_mul(PROJECTION_GENERATIONS))
+            .saturating_add(pages);
+        self
     }
 
     /// The whole bound.
@@ -102,6 +125,7 @@ impl RestoreWriteEstimate {
             self.projections,
             self.copies,
             self.epoch,
+            self.payload,
         ]
         .into_iter()
         .fold(0_u64, u64::saturating_add)
