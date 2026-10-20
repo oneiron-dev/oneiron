@@ -245,19 +245,21 @@ pub(super) fn materialize_entities_with_changes(
     // endpoint and been deferred by the edge observer. Re-present only the
     // now-reachable structural keys through that SAME edge gauntlet; no raw
     // LMDB write or peer-controlled edge bypasses its validators. A pending
-    // Parent then wakes from the accepted membership/anchor fact.
+    // Parent then wakes from the accepted membership/anchor fact. So does a
+    // `regenerates` link this window still owes on an arrived end (FIX 6204).
     if result.is_ok() && !applied_ops.is_empty() {
         let arrived: HashSet<_> = applied_ops.iter().map(|(id, _)| *id).collect();
+        let owed = super::regenerates::owed_in_window(vault, window_key, &arrived);
         let edges = doc.get_map("edges");
         let mut retry = loro::event::MapDelta {
             updated: Default::default(),
         };
         edges.for_each(|key, value| {
             if let Some((src, kind, tgt)) = super::parse_edge_key(key)
-                && matches!(
+                && (matches!(
                     kind,
                     crate::edge::EdgeKind::ChildOf | crate::edge::EdgeKind::SpawnedBy
-                )
+                ) || (kind == crate::edge::EdgeKind::Regenerates && owed.contains(&(src, tgt))))
                 && (arrived.contains(&src) || arrived.contains(&tgt))
                 && matches!(
                     value,
