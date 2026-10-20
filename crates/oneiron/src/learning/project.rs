@@ -145,6 +145,53 @@ pub(crate) fn fold_cell_in_txn(
 ) -> Result<(Estimate, Vec<String>)> {
     let prior = cell_prior_in_txn(vault, txn, row, digest)?;
     let window = window_in_txn(vault, txn)?;
+    let folded = fold_evidence_in_txn(vault, txn, row, digest, window, now)?;
+    let value: EstimateValue = fold_value(&prior, &folded.tally);
+    Ok((
+        Estimate {
+            value,
+            runs: folded.runs,
+            prior,
+            of: row.of.clone(),
+            labels: folded.labels,
+            window,
+            ver: ESTIMATOR_VERSION,
+        },
+        folded.cited,
+    ))
+}
+
+/// The windowed own tally a cell's evidence folds to under `window` at
+/// `now`, the measured mass alone, with no prior: what the projector adds
+/// to the prior when it writes a head at `now`. Nothing is written.
+pub(super) fn measured_tally_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CellRow,
+    digest: &[u8; 32],
+    window: Window,
+    now: u64,
+) -> Result<OwnTally> {
+    Ok(fold_evidence_in_txn(vault, txn, row, digest, window, now)?.tally)
+}
+
+/// One cell's evidence, folded: the own tally, its effective runs, the
+/// labels explaining them and the newest receipts cited.
+struct FoldedEvidence {
+    tally: OwnTally,
+    runs: f64,
+    labels: EstimateLabels,
+    cited: Vec<String>,
+}
+
+fn fold_evidence_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &CellRow,
+    digest: &[u8; 32],
+    window: Window,
+    now: u64,
+) -> Result<FoldedEvidence> {
     let conversions = conversions_in_txn(vault, txn)?;
     let mut evidence = evidence_in_txn(vault, txn, digest)?;
     // Newest first, so the citations are the newest receipts.
@@ -236,19 +283,12 @@ pub(crate) fn fold_cell_in_txn(
     if !outcome_counts.is_empty() {
         labels.outcome_counts = Some(outcome_counts);
     }
-    let value: EstimateValue = fold_value(&prior, &tally);
-    Ok((
-        Estimate {
-            value,
-            runs,
-            prior,
-            of: row.of.clone(),
-            labels,
-            window,
-            ver: ESTIMATOR_VERSION,
-        },
+    Ok(FoldedEvidence {
+        tally,
+        runs,
+        labels,
         cited,
-    ))
+    })
 }
 
 /// Follows a score through the judge-swap maps. Converted binary scores
