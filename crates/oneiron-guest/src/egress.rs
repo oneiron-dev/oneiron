@@ -14,7 +14,15 @@ impl VsockRelay {
         write_relay(&mut stream, request)?;
         let reply: RelayReply = read_relay(&mut stream)?;
         if reply.errno != 0 {
-            return Err(io::Error::from_raw_os_error(reply.errno));
+            // The host floor's back-pressure keeps its name (FIX 5979).
+            return Err(reply
+                .floor
+                .as_deref()
+                .and_then(oneiron_container::known_floor)
+                .map_or_else(
+                    || io::Error::from_raw_os_error(reply.errno),
+                    oneiron_container::floor_saturated,
+                ));
         }
         Ok((stream, reply))
     }
@@ -51,4 +59,10 @@ impl EgressRelay for VsockRelay {
         Ok(())
     }
     fn transferred(&self, _: SocketAddr, _: [u8; 32], _: u64) {}
+    /// The VM's own threads and descriptors are the VM's. The host charges
+    /// each vsock request to its own floor before it starts it and answers
+    /// a full floor with `EAGAIN` naming it (FIX 5979).
+    fn host_net_floor(&self) -> &dyn oneiron_container::HostNetFloor {
+        &oneiron_container::UnmeteredFloor
+    }
 }

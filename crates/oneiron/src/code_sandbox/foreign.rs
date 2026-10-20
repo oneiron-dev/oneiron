@@ -154,6 +154,10 @@ impl oneiron_container::EgressRelay for NoEgress {
         Ok(())
     }
     fn transferred(&self, _: SocketAddr, _: [u8; 32], _: u64) {}
+    /// Every relay is refused at once; no host floor is lent here.
+    fn host_net_floor(&self) -> &dyn oneiron_container::HostNetFloor {
+        &oneiron_container::UnmeteredFloor
+    }
 }
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())

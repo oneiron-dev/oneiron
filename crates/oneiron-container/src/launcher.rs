@@ -582,6 +582,7 @@ fn dispatch(listener: &OwnedFd, bridge: &Bridge, n: linux::Notification) -> io::
                 socket,
                 target,
                 bytes,
+                dontwait: a[3] as i32 & libc::MSG_DONTWAIT != 0,
             },
         )?
     } else if nr == libc::SYS_recvfrom {
@@ -684,6 +685,7 @@ fn message(
                 socket,
                 target,
                 bytes,
+                dontwait: flags & libc::MSG_DONTWAIT != 0,
             },
         )?
     } else {

@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 // A socket's host entry ends with the guest's last hold on it (FIX 5978).
 mod lifetime;
+// A relayed datagram's worker holds its room on the host floor (FIX 5979).
+mod relay_workers;
 
 pub(crate) struct Supervisor {
     listener: UnixListener,
@@ -30,6 +32,8 @@ struct Socket {
     datagram: Option<(UnixDatagram, UnixDatagram)>,
     /// No guest task holds the socket any more: its writer stops.
     closed: AtomicBool,
+    /// Its room on the host floor, given back with its descriptors.
+    _charge: crate::HostNetPermit,
 }
 #[derive(Default)]
 struct Completion {
@@ -309,11 +313,7 @@ fn serve(mut reader: UnixStream, listener: Arc<OwnedFd>, state: Arc<State>) -> i
                             reply.id = request.id;
                             reply
                         }
-                        Err(e) => wire::Reply {
-                            id: request.id,
-                            errno: e.raw_os_error().unwrap_or(libc::EIO),
-                            ..Default::default()
-                        },
+                        Err(e) => relay_workers::failed(request.id, &e),
                     }
                 });
                 if let Ok(mut writer) = writer.lock() {
@@ -362,6 +362,14 @@ fn operate(
             {
                 return Err(io::Error::from_raw_os_error(libc::EAFNOSUPPORT));
             }
+            // The entry's descriptors and writer take their room on the host
+            // floor first; a full floor is EAGAIN (FIX 5978).
+            let (fds, workers) = if base == libc::SOCK_STREAM {
+                lifetime::STREAM_ENTRY
+            } else {
+                lifetime::DATAGRAM_ENTRY
+            };
+            let charge = state.relay.host_net_floor().acquire(fds, workers)?;
             let (socket, id, guest): (Arc<Socket>, u64, OwnedFd) = if base == libc::SOCK_STREAM {
                 let (guest, host) = UnixStream::pair()?;
                 guest.set_nonblocking(kind & libc::SOCK_NONBLOCK != 0)?;
@@ -374,6 +382,7 @@ fn operate(
                         stream: Mutex::new(Some(host)),
                         datagram: None,
                         closed: AtomicBool::new(false),
+                        _charge: charge,
                     }),
                     id,
                     guest.into(),
@@ -391,6 +400,7 @@ fn operate(
                         stream: Mutex::new(None),
                         datagram: Some((copy, host)),
                         closed: AtomicBool::new(false),
+                        _charge: charge,
                     }),
                     id,
                     guest.into(),
@@ -469,6 +479,7 @@ fn operate(
             socket,
             target,
             bytes,
+            dontwait,
         } => {
             let socket = get(state, *socket)?;
             let target = target
@@ -481,18 +492,11 @@ fn operate(
                 .target
                 .lock()
                 .map_err(|_| io::Error::other("fence state poisoned"))? = Some(target);
-            let len = bytes.len();
-            let socket = Arc::clone(&socket);
-            let state = Arc::clone(state);
-            let bytes = bytes.clone();
-            std::thread::spawn(move || {
-                if let Ok(answer) = state.relay.datagram(target, &bytes)
-                    && let Some((_, host)) = &socket.datagram
-                {
-                    let _ = host.send(&answer);
-                }
-            });
-            reply.value = len as i64;
+            // Acknowledged once a worker holding its room relays it (FIX 5979).
+            relay_workers::send(state, &socket, target, bytes, *dontwait, || {
+                linux::valid(listener.as_raw_fd(), request.notification).is_ok()
+            })?;
+            reply.value = bytes.len() as i64;
         }
         Operation::Receive { socket, max, flags } => {
             let socket = get(state, *socket)?;
@@ -557,7 +561,10 @@ fn datagram_writer(socket: Arc<Socket>, state: Arc<State>) {
             match host.recv(&mut bytes) {
                 Ok(n) => {
                     let target = socket.target.lock().ok().and_then(|a| *a);
+                    // The relay's socket waits for room on the host floor;
+                    // the guest's next writes wait in its socket (FIX 5979).
                     if let Some(target) = target
+                        && let Some(_room) = relay_workers::reserve(&state, &socket)
                         && let Ok(answer) = state.relay.datagram(target, &bytes[..n])
                     {
                         let _ = host.send(&answer);

@@ -16,6 +16,10 @@ pub enum RelayRequest {
 pub struct RelayReply {
     pub errno: i32,
     pub bytes: Vec<u8>,
+    /// The host floor that back-pressured the request, when one did: its
+    /// `errno` is then `EAGAIN` (FIX 5979).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floor: Option<String>,
 }
 const MAX_RELAY_FRAME: usize = 2 * 1024 * 1024;
 pub fn write_relay<T: Serialize>(writer: &mut impl Write, value: &T) -> io::Result<()> {

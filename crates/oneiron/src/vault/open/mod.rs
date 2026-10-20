@@ -596,6 +596,7 @@ impl Vault {
             home_search: Default::default(),
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
+            host_net_floor: Default::default(),
             result_body_pins: Default::default(),
             verb_hook_state: Default::default(),
             skill_invocations: Default::default(),

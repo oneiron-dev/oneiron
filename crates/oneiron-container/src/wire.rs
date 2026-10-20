@@ -66,6 +66,10 @@ pub(crate) enum Operation {
         socket: u64,
         target: Option<SocketAddr>,
         bytes: Vec<u8>,
+        /// The call asked not to wait (`MSG_DONTWAIT`): back-pressure fails
+        /// it with `EAGAIN` rather than holding it (FIX 5979). A socket in
+        /// nonblocking mode never waits either.
+        dontwait: bool,
     },
     Receive {
         socket: u64,
@@ -88,6 +92,9 @@ pub(crate) struct Reply {
     pub errno: i32,
     pub bytes: Vec<u8>,
     pub address: Option<SocketAddr>,
+    /// The host floor that back-pressured the call, when one did: `errno`
+    /// is then `EAGAIN` (FIX 5979).
+    pub floor: Option<String>,
 }
 
 pub(crate) fn write<T: Serialize>(stream: &mut impl Write, value: &T) -> io::Result<()> {

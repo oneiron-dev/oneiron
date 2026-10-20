@@ -8,7 +8,9 @@ mod receipt;
 
 use crate::policy_model::{PolicyClassifyDecision, PolicyClassifyRequest, PolicyVerdictCategory};
 use crate::{EntityId, Vault};
-use oneiron_container::{EgressRelay, HttpRequest, HttpResponse};
+use oneiron_container::{
+    EgressRelay, HostNetFloor, HostNetPermit, HttpRequest, HttpResponse, UnmeteredFloor,
+};
 use oneiron_sandbox_contract::network::global_address;
 pub use receipt::EgressReceipt;
 use std::collections::HashMap;
@@ -43,6 +45,15 @@ impl EgressConfig {
             Some(path) => serde_json::from_slice(&std::fs::read(path)?).map_err(io::Error::other),
             None => Ok(Self::default()),
         }
+    }
+}
+
+impl Vault {
+    /// Lends guest network work this host's floor (FIX 5978, FIX 5979):
+    /// every relay a run on this vault opens charges its guest's sockets and
+    /// relayed datagrams to it. The first lend holds.
+    pub fn lend_host_net_floor(&self, floor: Arc<dyn HostNetFloor>) {
+        let _ = self.host_net_floor.set(floor);
     }
 }
 
@@ -208,7 +219,21 @@ impl OpenEgressProxy {
         )
     }
 }
+/// The floor the vault's host lent ([`Vault::lend_host_net_floor`]), looked
+/// up at each charge, so a run opened before the lend is charged once it
+/// lands. A vault no host lent one charges nothing.
+impl HostNetFloor for OpenEgressProxy {
+    fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit> {
+        match self.vault.host_net_floor.get() {
+            Some(floor) => floor.acquire(fds, workers),
+            None => UnmeteredFloor.acquire(fds, workers),
+        }
+    }
+}
 impl EgressRelay for OpenEgressProxy {
+    fn host_net_floor(&self) -> &dyn HostNetFloor {
+        self
+    }
     fn record_abandoned(&self, manifest: &oneiron_container::SessionManifest) -> io::Result<()> {
         self.vault
             .append_sandbox_abandon_receipt(self.run_id, manifest)
