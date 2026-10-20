@@ -4,6 +4,9 @@
 
 use std::sync::Arc;
 
+use oneiron::Error;
+use oneiron::error::SecretError;
+
 use super::super::{owner, reembed, resolve_dict_search_paths};
 use crate::config::ServeConfig;
 use crate::managed;
@@ -50,8 +53,10 @@ pub(super) fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
     // A sealed vault (maximum tier) opens with its page seal, and one the
     // config asks for is created sealed where no vault is yet. One this
     // keystore holds no wrap of unlocks with the vault password the service
-    // manager's credential store holds, when it holds one.
-    if vault_config.page_seal.is_none() {
+    // manager's credential store holds, when it holds one; so does one whose
+    // device wrap is no longer current, once its open says so.
+    let device_seal = vault_config.page_seal.is_some();
+    if !device_seal {
         let password = oneiron::world_keys::vault_is_sealed(&config.vault_path)?
             .then(|| host.secret("vault_password").ok())
             .flatten()
@@ -67,8 +72,7 @@ pub(super) fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
     rehearsal_config.page_seal = None;
     let owner_host = crate::owner::schedule::OwnerHost::from_config(config, rehearsal_config)
         .anchored_at(&config.backup, anchor);
-    let vault = oneiron::Vault::open_owned(&config.vault_path, vault_config)
-        .map_err(reembed::with_model_change_remedy)?;
+    let vault = open_device_first(host, config, vault_config, device_seal)?;
     managed::warn_if_reader_table_short(&vault);
     // A new sealed vault is wrapped to this device, and serve starts only
     // once its mirror opens it.
@@ -89,4 +93,40 @@ pub(super) fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
         vault: Arc::new(vault),
         owner_host,
     })
+}
+
+/// [`oneiron::Vault::open_owned`] under `vault_config`, whose page seal this
+/// device's keystore unlocked when `device_seal`. A device wrap a change
+/// removed or replaced is refused at admission by kind (FIX 2347); then,
+/// once, the vault opens with the vault password `host`'s credential store
+/// holds, and that open admits the password's wrap only while it is current.
+/// Any other failure, or no stored password, is the first open's.
+fn open_device_first<H: oneiron_vault_contract::host::Host>(
+    host: &mut H,
+    config: &ServeConfig,
+    mut vault_config: oneiron::VaultConfig,
+    device_seal: bool,
+) -> anyhow::Result<oneiron::Vault> {
+    let path = &config.vault_path;
+    // The same open with no seal yet, for the one retry.
+    let seal = vault_config.page_seal.take();
+    let mut retry = vault_config.clone();
+    vault_config.page_seal = seal;
+    let error = match oneiron::Vault::open_owned(path, vault_config) {
+        Err(error @ Error::Secret(SecretError::StalePageSealCredential)) if device_seal => error,
+        opened => return opened.map_err(reembed::with_model_change_remedy),
+    };
+    // The failed open dropped its handle and its writer lease; the mirror is
+    // as it was, and the open below repairs it.
+    let Ok(password) = host.secret("vault_password") else {
+        return Err(reembed::with_model_change_remedy(error));
+    };
+    tracing::warn!(
+        %error,
+        "this device's wrap of the vault is no longer current; opening with the stored vault \
+         password"
+    );
+    let unlock = owner::HostUnlock::Password(password);
+    retry.page_seal = owner::prepare_page_seal(config, Some(&unlock))?;
+    oneiron::Vault::open_owned(path, retry).map_err(reembed::with_model_change_remedy)
 }

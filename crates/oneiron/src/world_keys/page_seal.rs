@@ -49,7 +49,7 @@ use zeroize::Zeroizing;
 use super::vault_key::{CarriedVaultKey, VaultDataKey, VaultKeyUnlock, WrapDigest};
 use super::{os_fill, refused};
 use crate::Vault;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 
 mod read_only;
 pub(crate) use self::read_only::{page_seal_open_error, read_sealed, seal_read_only};
@@ -580,13 +580,12 @@ impl Vault {
         }
         // A wrap a change removed or replaced, or one whose change never
         // committed, opens nothing here; the mirror stays as it is, so a
-        // current wrap still opens and repairs it.
+        // current wrap still opens and repairs it. Refused by kind, so a
+        // caller can try a current credential (FIX 2347).
         if let SealOrigin::Unlocked(opened) = &seal.origin
             && !self.holds_any_wrap(opened)?
         {
-            return Err(refused(
-                "this credential is no longer a wrap of this vault; unlock with a current one",
-            ));
+            return Err(Error::Secret(SecretError::StalePageSealCredential));
         }
         self.admit_page_seal_key(&seal.data_key)?;
         OPENED
