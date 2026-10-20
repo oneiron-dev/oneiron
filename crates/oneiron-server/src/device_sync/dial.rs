@@ -4,7 +4,7 @@
 use crate::config::{DeviceSyncConfig, ServeConfig};
 use crate::server::SyncServer;
 
-use super::EnrolmentFiles;
+use super::enrolment::{EnrolmentFiles, EnrolmentSource};
 
 /// What this machine dials: the home `[device_sync]` names by hand, else the
 /// one it enrolled with, and the worlds the section follows.
@@ -27,15 +27,17 @@ pub(super) struct Dial {
 
 impl Dial {
     /// `None` when this machine has no home: no section and no enrolment.
+    /// Its enrolment is looked for where `source` says.
     pub(super) fn resolve(
         server: &SyncServer,
         config: &ServeConfig,
+        source: EnrolmentSource,
     ) -> anyhow::Result<Option<Self>> {
         let section = config.device_sync.as_ref();
         // No directory to look in means `device enrol` wrote nothing either.
-        let enrolment = match EnrolmentFiles::for_vault(&config.keystore, &server.vault) {
-            Ok(files) => files.read()?.map(|record| (files, record)),
-            Err(_) => None,
+        let enrolment = match EnrolmentFiles::for_serve(&config.keystore, &server.vault, source) {
+            Ok(Some(files)) => files.read()?.map(|record| (files, record)),
+            Ok(None) | Err(_) => None,
         };
         let worlds = section
             .map(DeviceSyncConfig::followed_worlds)
