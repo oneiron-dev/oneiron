@@ -139,3 +139,11 @@ fn cache_control_tier(control: &JsonValue) -> Option<AnthropicCacheTier> {
         },
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnthropicThinkingOptions {
+    #[serde(rename = "type")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_tokens: Option<u64>,
+}
