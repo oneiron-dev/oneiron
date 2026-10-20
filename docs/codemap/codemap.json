@@ -12150,7 +12150,7 @@
      "path": "src/claim/source_trust.rs",
      "purpose": "Source-of-truth, taint, sensitivity and demotion state carried in a claim's engine-owned `scope` map, plus…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "enum": 2,
       "struct": 1
      }
@@ -62544,7 +62544,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 24,
       "mod": 1,
       "re-export": 1,
