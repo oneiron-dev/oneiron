@@ -183,6 +183,10 @@ side_tables! {
     AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
     /// One autoresearch selection round's receipt. Key: id16 (root attempt) + u64be (round).
     AUTORESEARCH_ROUND: VaultMeta b"autoresearch:round:v1:" Named;
+    /// This store's backup incarnation: 16 random bytes minted at its first backup, which a
+    /// backup watermark carries so a restored or recreated store never compares equal to an
+    /// older one. Runtime-tier: no image carries it. Key: ().
+    BACKUP_INCARNATION: VaultMeta b"backup:incarnation:v1" Named;
     /// Asset refcount marker. Key: bytes32 + id16.
     BLOB_ARTIFACT_ASSET_REF: VaultMeta b"blob_artifact:asset_ref:v1:" Raw;
     /// Born-from projection: one row per version whose made_by names a trigger (task or ask) or

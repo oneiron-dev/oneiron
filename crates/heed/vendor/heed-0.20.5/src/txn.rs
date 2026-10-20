@@ -120,6 +120,15 @@ impl<'e> RoTxn<'e> {
         self.env.env_mut_ptr()
     }
 
+    /// ONEIRON FORK (LC backup shipper rows): this transaction's id, LMDB's
+    /// `mdb_txn_id`. A read transaction's is the id of the last write
+    /// transaction it sees; a write transaction's is the id it commits as.
+    pub fn id(&self) -> usize {
+        // SAFETY: `self.txn` is the live transaction this value owns: it is
+        // set null only by `commit`, which consumes `self`.
+        unsafe { ffi::mdb_txn_id(self.txn) }
+    }
+
     /// ONEIRON FORK (OF-570): `bytes` LMDB returned in this transaction, made
     /// to last as long as it: unchanged for a plain env, copied for a sealed one.
     ///

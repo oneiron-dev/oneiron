@@ -53179,8 +53179,10 @@ pub struct SummaryScope {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryCreateRequest {
-    #[serde(rename = "scope")]
-    pub scope: SummaryScope,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<SummaryScope>,
+    #[serde(rename = "note_refs", default, skip_serializing_if = "Option::is_none")]
+    pub note_refs: Option<Vec<String>>,
     #[serde(rename = "purpose", default, skip_serializing_if = "Option::is_none")]
     pub purpose: Option<String>,
     #[serde(rename = "land_on", default, skip_serializing_if = "Option::is_none")]

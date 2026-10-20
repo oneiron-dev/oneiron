@@ -118,7 +118,7 @@ impl BodySeal {
     pub(crate) fn new(vault_id: [u8; 32], wrap: &Zeroizing<[u8; 32]>) -> Self {
         Self {
             vault_id,
-            wrap: Kek::from_bytes(**wrap),
+            wrap: Kek::from_bytes_ref(wrap),
         }
     }
 }
