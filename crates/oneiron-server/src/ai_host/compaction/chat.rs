@@ -42,7 +42,10 @@ use crate::models::{OfferLadder, RoleCall, RoleRefusal};
 fn chat_compaction_entry(profile: &MemoryProfile, row: &SelfCompactionDefault) -> bool {
     profile.compaction == CompactionOwnership::Engine
         && profile.writes_as_self()
-        && matches!(row.source, SelfCompactionSource::Auto | SelfCompactionSource::LiveFork)
+        && matches!(
+            row.source,
+            SelfCompactionSource::Auto | SelfCompactionSource::LiveFork
+        )
 }
 
 /// A self agent that compacts its chat as itself.
