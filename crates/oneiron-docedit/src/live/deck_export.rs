@@ -978,7 +978,8 @@ fn crop_born(work: &mut Work, node: &DeckNode, part: &str, native: u32) -> Resul
     if node.kind != NodeKind::Picture {
         return Ok(());
     }
-    let expected = fingerprint_of(&work.view()?, part, native).ok_or(LiveError::UnknownNode)?;
+    let view = work.view()?;
+    let expected = fingerprint_of(&view, part, native).ok_or(LiveError::UnknownNode)?;
     work.value(&ValueEdit::SetPreset {
         target: Target {
             slide: part,
