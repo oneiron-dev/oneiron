@@ -101,7 +101,8 @@ impl DetectorConfig {
         policy.question(self.tier.proposed(), (0, 0)).map_err(|_| {
             anyhow::anyhow!(
                 "self_heal.detectors.{family} needs a token family, a prompt and a rubric \
-                 within the question bound, and consecutive in 1..=64"
+                 within the question bound, and a positive consecutive (crossings past \
+                 limits.detector_consecutive ask the owner)"
             )
         })?;
         Ok(policy)
