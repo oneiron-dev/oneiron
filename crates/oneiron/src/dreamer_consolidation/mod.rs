@@ -59,6 +59,7 @@ mod resident_for_human;
 mod resident_health;
 pub(crate) mod resources;
 mod retained_conflict;
+mod retained_keep;
 mod revert;
 pub(crate) mod reviewed;
 mod roles;
@@ -107,6 +108,8 @@ pub(crate) use resident_dream::{resident_dream_input, resident_dream_progress_in
 pub use resident_for_human::run_free_time_for_human;
 pub use resources::ScopedConsolidationWrite;
 pub use retained_conflict::RetainedAlternative;
+pub(crate) use retained_keep::SettlementApplied;
+pub use retained_keep::{ConflictSettleOutcome, StagedKeep};
 pub use revert::{
     DreamerChange, DreamerChangeKind, DreamerChanges, DreamerRevertReceipt, RevertedDreamerChange,
 };

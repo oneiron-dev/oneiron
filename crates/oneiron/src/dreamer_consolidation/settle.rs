@@ -13,10 +13,13 @@
 //! the ordinary `supersedes` edge and no Conflict entity exists. A candidate
 //! the marker's round dropped is retained on the marker (FIX 496): keeping
 //! it lands it first, in the settlement's transaction and under the current
-//! Gate, and a revert retracts the winner that settlement landed. Holding them
-//! all leaves every member active: the observed-versus-stated answer, where
-//! `observed` never outranks `user_stated`. The open marker is never edited;
-//! it stays as audit evidence beside the claim that answers it.
+//! Gate, and a revert retracts the winner that settlement landed. A Keep
+//! after that revert lands it afresh, and a Keep of imported words stages it
+//! in its import's review and leaves the marker open (`retained_keep.rs`,
+//! FIX 5752, FIX 5754). Holding them all leaves every member active: the
+//! observed-versus-stated answer, where `observed` never outranks
+//! `user_stated`. The open marker is never edited; it stays as audit
+//! evidence beside the claim that answers it.
 //!
 //! The Dreamer asks its host's decision ladder ([`ConflictSettleDecisions`])
 //! and applies the answer at once; the owner reverts it
@@ -30,6 +33,7 @@ use rmpv::Value;
 use serde_json::json;
 
 use super::retained_conflict::RetainedAlternative;
+use super::retained_keep::{ConflictSettleOutcome, KeptAlternative, SettlementApplied, StagedKeep};
 use super::support::invalid_consolidation;
 use super::value_projection::rmpv_to_json;
 use crate::claim::{
@@ -59,7 +63,7 @@ const REPO_CONFLICT_KIND: &str = "repo_branch";
 /// contract's 64 options with hold-both, dismiss and escalate beside them.
 const MAX_KEEP_OPTIONS: usize = 61;
 /// The resolution key naming the retained alternative a Keep landed.
-const MATERIALIZED_KEY: &str = "materialized";
+pub(super) const MATERIALIZED_KEY: &str = "materialized";
 
 /// A responder's answer to one open conflict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,20 +262,29 @@ fn open_conflict_from(
     let ClaimSubject::Entity(subject) = body.subject else {
         return Ok(None);
     };
+    // A landing a reverted settlement made of a retained candidate is no
+    // member: the candidate stays keepable (FIX 5752).
+    let landings = if reverted {
+        super::retained_keep::reverted_landings_in_txn(vault, txn, marker, subject)?
+    } else {
+        Vec::new()
+    };
     let mut members = Vec::new();
     for id in named_ids(&body) {
-        if vault
-            .get_claim_in_txn(txn, &id)?
-            .is_some_and(|member| member.predicate != PREDICATE_CONFLICT_OPEN)
+        if !landings.iter().any(|(_, landed)| *landed == id)
+            && vault
+                .get_claim_in_txn(txn, &id)?
+                .is_some_and(|member| member.predicate != PREDICATE_CONFLICT_OPEN)
         {
             members.push(id);
         }
     }
     // A retained candidate that is now a stored claim reads as a member.
-    let alternatives = super::retained_conflict::retained_alternatives(&body.value)
-        .into_iter()
-        .filter(|alternative| !members.contains(&alternative.id))
-        .collect();
+    let alternatives = super::retained_keep::keepable(
+        super::retained_conflict::retained_alternatives(&body.value),
+        &members,
+        &landings,
+    );
     Ok(Some(OpenConflict {
         marker,
         subject,
@@ -386,7 +399,9 @@ pub(crate) fn open_conflict_in_txn(
 /// caller has checked the responder's authority. `Keep` needs a standing
 /// member on the conflict's own subject, or one of its retained alternatives,
 /// which lands first under the current Gate (FIX 496) and must then stand,
-/// and the answer records it as landed; each other Active member on that
+/// and the answer records it as landed, beside the alternative it was made
+/// of; one from imported words is staged in its import's review instead, and
+/// nothing else is written (FIX 5754). Each other Active member on that
 /// subject is superseded by it (a staged replacement that lost drops its
 /// binding, and a pending review tray closes), under the claim lifecycle's
 /// own guards: a generated claim still never supersedes user-stated truth.
@@ -403,21 +418,31 @@ pub(crate) fn apply_settlement_in_txn(
     close_as: Option<WriteActor>,
     person: bool,
     now: u64,
-) -> Result<SettledConflict> {
+) -> Result<SettlementApplied> {
     let on_subject =
         |body: &ClaimBody| matches!(body.subject, ClaimSubject::Entity(s) if s == conflict.subject);
     let mut superseded = Vec::new();
     let mut materialized = None;
-    if let ConflictSettlement::Keep(winner) = settlement {
+    let mut standing = None;
+    if let ConflictSettlement::Keep(selected) = settlement {
+        let mut winner = selected;
         // A retained alternative lands first, as its round proposed it and
         // under the current Gate (FIX 496); a refusal leaves the marker open.
         if let Some(alternative) = conflict
             .alternatives
             .iter()
-            .find(|alternative| alternative.id == winner)
+            .find(|alternative| alternative.id == selected)
         {
-            super::retained_conflict::land_in_txn(vault, txn, alternative, now)?;
-            materialized = Some(winner);
+            match super::retained_keep::keep_in_txn(vault, txn, conflict.marker, alternative, now)?
+            {
+                KeptAlternative::Landed(landed) => {
+                    winner = landed;
+                    materialized = Some((selected, landed));
+                }
+                KeptAlternative::ImportReview(staged) => {
+                    return Ok(SettlementApplied::ImportReviewPending(staged));
+                }
+            }
         } else if !conflict.members.contains(&winner) {
             return Err(invalid_consolidation(
                 "the kept claim is not a member of the conflict",
@@ -471,9 +496,10 @@ pub(crate) fn apply_settlement_in_txn(
             )?;
             superseded.push(loser);
         }
+        standing = Some(winner);
     }
     let mut resolution = vec![(Value::from("settlement"), Value::from(settlement.label()))];
-    if let ConflictSettlement::Keep(winner) = settlement {
+    if let Some(winner) = standing {
         resolution.push((
             Value::from("kept"),
             Value::Binary(winner.as_bytes().to_vec()),
@@ -488,10 +514,14 @@ pub(crate) fn apply_settlement_in_txn(
             ),
         ));
     }
-    if let Some(born) = materialized {
+    if let Some((selector, born)) = materialized {
         resolution.push((
             Value::from(MATERIALIZED_KEY),
             Value::Binary(born.as_bytes().to_vec()),
+        ));
+        resolution.push((
+            Value::from(super::retained_keep::SELECTOR_KEY),
+            Value::Binary(selector.as_bytes().to_vec()),
         ));
     }
     let candidate = super::persistence::resolved_candidate(
@@ -505,7 +535,7 @@ pub(crate) fn apply_settlement_in_txn(
     let birth = {
         let inputs: Vec<EntityId> = std::iter::once(conflict.marker)
             .chain(conflict.members.iter().copied())
-            .chain(materialized)
+            .chain(materialized.map(|(_, born)| born))
             .collect();
         RowBirth::written(
             envelope.actor(),
@@ -534,10 +564,10 @@ pub(crate) fn apply_settlement_in_txn(
         )
         .made_by(&resolved, birth)
         .apply(txn)?;
-    Ok(SettledConflict {
+    Ok(SettlementApplied::Settled(SettledConflict {
         resolved,
         superseded,
-    })
+    }))
 }
 
 /// The standing settlements, on `subject` alone when one is named, newest
@@ -988,6 +1018,9 @@ impl ConflictSettleDecisions<'_> {
 pub struct ParkedConflictPass {
     pub asked: usize,
     pub settled: Vec<ConflictSettleReceipt>,
+    /// Kept alternatives from imported words, staged in their import's
+    /// review (FIX 5754): each conflict stays open.
+    pub staged: Vec<StagedKeep>,
     /// Abstained, escalated, refused or failed: each stays for the owner.
     pub left_parked: usize,
     /// The last marker asked about: the next pass starts after it.
@@ -1029,7 +1062,10 @@ pub fn settle_parked_conflicts(
             }
         };
         match memory.settle_conflict(None, conflict.marker, settlement, now) {
-            Ok(receipt) => pass.settled.push(receipt),
+            Ok(ConflictSettleOutcome::Settled(receipt)) => pass.settled.push(receipt),
+            Ok(ConflictSettleOutcome::ImportReviewPending { staged, .. }) => {
+                pass.staged.push(staged);
+            }
             Err(_) => {
                 tracing::warn!(target: "oneiron::dreamer", marker = %conflict.marker.to_hex(), "a ruled settlement was refused; the conflict stays parked");
                 pass.left_parked += 1;

@@ -8,7 +8,9 @@
 //! landing that is not Auto as written, refuses the settlement, so its marker
 //! stays open. A responder's choice is the settlement's own answer: it never
 //! turns the alternative's computed source into a stated one. Evidence that
-//! meets at `Imported` lands only through its import's review, never here.
+//! meets at `Imported` lands only through its import's review, never here:
+//! it is staged there instead, as a promotion of the same words is
+//! (`imported_keep.rs`, FIX 5754).
 
 use rmpv::Value;
 
@@ -25,17 +27,26 @@ use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::write_envelope::{SourceLineage, WriteEnvelope, WriteProvenance};
 
+/// Where a kept alternative went: landed Auto, or staged Proposed in the
+/// review of the import its words came from (`None`: its round's run).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum KeptLanding {
+    Landed,
+    ImportReview(Option<String>),
+}
+
 /// Lands `candidate`, the alternative a settlement keeps, with `verified`,
 /// its evidence as bound in this same transaction. Refuses when its id is
-/// already a record, its evidence is no longer admissible or meets at
-/// `Imported`, or the Gate does not grant Auto.
+/// already a record, its evidence is no longer admissible, or the Gate does
+/// not grant Auto. Evidence that meets at `Imported` is staged in its
+/// import's review instead.
 pub(crate) fn land_kept_alternative_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     verified: &VerifiedEvidenceSet,
-) -> Result<()> {
+) -> Result<KeptLanding> {
     if run.run_id.trim().is_empty() {
         return Err(Error::InvalidClaimBody("promotion run id is blank"));
     }
@@ -63,12 +74,18 @@ pub(crate) fn land_kept_alternative_in_txn(
     }
     let cited = verified.cited_messages();
     let source = verified.meet();
-    if source == ClaimSource::Imported
-        || crate::ingest::history::imported_evidence_in_txn(vault, txn, &refs, &cited)?.imported
-    {
-        return Err(Error::InvalidClaimBody(
-            "an alternative from imported words lands only through its import's review",
-        ));
+    let import = crate::ingest::history::imported_evidence_in_txn(vault, txn, &refs, &cited)?;
+    if source == ClaimSource::Imported || import.imported {
+        super::imported_keep::stage_kept_alternative_in_txn(
+            vault,
+            txn,
+            run,
+            candidate,
+            verified,
+            import.review.as_deref(),
+            &public_refs,
+        )?;
+        return Ok(KeptLanding::ImportReview(import.review));
     }
     let lineage = match source {
         ClaimSource::ToolOutput => SourceLineage::of(ClaimSource::Generated).with(source),
@@ -176,5 +193,6 @@ pub(crate) fn land_kept_alternative_in_txn(
         candidate.claim_id,
         verified,
         run.now_ms,
-    )
+    )?;
+    Ok(KeptLanding::Landed)
 }
