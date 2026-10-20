@@ -81,78 +81,97 @@ include!("vault_meta_m_r.rs");
 include!("vault_meta_s.rs");
 include!("vault_meta_t_z.rs");
 
-/// The structural references an inert workflow's record keeps (FIX 6634), read from the top of
-/// the row and of each frozen step its writer admits as a body of the row (FIX 6637). In the
-/// row: the intent's run id, context domains, type node and root launch id, and the launch
-/// statement's scopes. In a step (a dispatch input's pinned-key MessagePack map): its target,
-/// agent, frozen definition (its composition), type stamp, team, launch scopes, origin
-/// conversation and context domains. The two shapes share only `launch`, an object in the row
-/// and JSON text in a step, so neither's paths name anything in the other.
+/// One [`RefPath`], written as a dotted path: each name steps into the member under it, and
+/// `json` into the JSON a string member spells.
+macro_rules! ref_path {
+    ($($step:ident).+) => {
+        &[$(ref_step!($step)),+]
+    };
+}
+
+/// One step of a `ref_path!`.
+macro_rules! ref_step {
+    (json) => {
+        Json
+    };
+    ($name:ident) => {
+        Field(stringify!($name))
+    };
+}
+
+/// The structural references an inert workflow's record keeps (FIX 6634): every id or label the
+/// engine resolves by its exact bytes, read from the top of the row and of each frozen step its
+/// writer admits as a body of the row (FIX 6637). The two shapes share only `launch`, an object
+/// in the row and JSON text in a step, so neither's paths name anything in the other. Free text
+/// (a briefing, objectives, a healer case) stays under the sweep.
 const WORKFLOW_RECORD_REFS: &[RefPath] = &[
-    &[Field("intent"), Field("run_id")],
-    &[
-        Field("intent"),
-        Field("context_spec"),
-        Field("memory"),
-        Field("domains"),
-    ],
-    &[Field("intent"), Field("type_ref"), Field("node_id")],
-    &[Field("intent"), Field("spend")],
-    &[Field("launch"), Field("scope")],
-    &[Field("launch"), Field("parent_scope")],
-    &[Field("target")],
-    &[Field("agent_def")],
-    &[Field("definition")],
-    &[Field("task_type_ref")],
-    &[Field("team"), Json, Field("team_ref")],
-    &[Field("launch"), Json, Field("scope")],
-    &[Field("launch"), Json, Field("parent_scope")],
-    &[Field("origin_conversation")],
-    &[
-        Field("context_spec"),
-        Json,
-        Field("memory"),
-        Field("domains"),
-    ],
+    // The row: its intent, launch statement and step results.
+    ref_path!(intent.workflow_ref),
+    ref_path!(intent.run_id),
+    ref_path!(intent.context_spec.layers),
+    ref_path!(intent.context_spec.memory.domains),
+    ref_path!(intent.context_from),
+    ref_path!(intent.project_ref),
+    ref_path!(intent.type_ref.node_id),
+    ref_path!(intent.spend),
+    ref_path!(intent.room),
+    ref_path!(intent.task.task_ref),
+    ref_path!(intent.task.bound_by),
+    ref_path!(launch.scope),
+    ref_path!(launch.parent_scope),
+    ref_path!(results),
+    // A frozen step: a dispatch input's pinned-key MessagePack map.
+    ref_path!(target),
+    ref_path!(agent_def),
+    ref_path!(definition),
+    ref_path!(context_spec.json.layers),
+    ref_path!(context_spec.json.memory.domains),
+    ref_path!(context_from),
+    ref_path!(project_ref),
+    ref_path!(spawn_intent),
+    ref_path!(scope),
+    ref_path!(task_type_ref),
+    ref_path!(launch.json.scope),
+    ref_path!(launch.json.parent_scope),
+    ref_path!(origin_conversation),
+    ref_path!(room),
+    ref_path!(join),
+    ref_path!(team.json.team_ref),
+    ref_path!(plan.json.asked.type_ref.node_id),
+    ref_path!(plan.json.asked.model),
+    ref_path!(plan.json.plan.agent_def),
+    ref_path!(plan.json.plan.model),
 ];
 
-/// The structural references a context-widen proposal keeps (FIX 6634): its intent's run id,
-/// context domains, type node and team, and the domains of the parent slice and the widened
-/// slice its request names, which approval compares with the parent's live slice and narrows
-/// the board's by.
+/// The structural references a context-widen proposal keeps (FIX 6634): every id or label of its
+/// intent the engine resolves by its exact bytes, the target fingerprint approval compares, the
+/// labels and domains of the parent slice and the widened slice its request names (approval
+/// compares the first with the parent's live slice and narrows the board's by the second), and
+/// the decliner's id. Free text (a briefing, objectives, a healer case) stays under the sweep.
 const WIDEN_INTENT_REFS: &[RefPath] = &[
-    &[Field("request"), Field("intent"), Field("run_id")],
-    &[
-        Field("request"),
-        Field("intent"),
-        Field("spec"),
-        Field("memory"),
-        Field("domains"),
-    ],
-    &[
-        Field("request"),
-        Field("intent"),
-        Field("type_ref"),
-        Field("node_id"),
-    ],
-    &[
-        Field("request"),
-        Field("intent"),
-        Field("team"),
-        Field("team_ref"),
-    ],
-    &[
-        Field("request"),
-        Field("parent_spec"),
-        Field("memory"),
-        Field("domains"),
-    ],
-    &[
-        Field("request"),
-        Field("widened_spec"),
-        Field("memory"),
-        Field("domains"),
-    ],
+    ref_path!(request.intent.target),
+    ref_path!(request.intent.dedupe_key),
+    ref_path!(request.intent.run_id),
+    ref_path!(request.intent.spec.layers),
+    ref_path!(request.intent.spec.memory.domains),
+    ref_path!(request.intent.context_from),
+    ref_path!(request.intent.project_ref),
+    ref_path!(request.intent.scope),
+    ref_path!(request.intent.type_ref.node_id),
+    ref_path!(request.intent.room),
+    ref_path!(request.intent.team.team_ref),
+    ref_path!(request.intent.plan.asked.type_ref.node_id),
+    ref_path!(request.intent.plan.asked.model),
+    ref_path!(request.intent.plan.plan.agent_def),
+    ref_path!(request.intent.plan.plan.model),
+    ref_path!(request.intent.task.task_ref),
+    ref_path!(request.intent.task.bound_by),
+    ref_path!(request.target_fingerprint),
+    ref_path!(request.parent_spec.layers),
+    ref_path!(request.parent_spec.memory.domains),
+    ref_path!(request.widened_spec.layers),
+    ref_path!(request.widened_spec.memory.domains),
+    ref_path!(declined.by),
 ];
 
 /// Every declared table: the restore-class census walks it, and so does a

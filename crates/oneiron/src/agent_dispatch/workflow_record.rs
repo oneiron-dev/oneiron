@@ -365,10 +365,12 @@ impl super::AgentDispatcher<'_> {
     /// One frozen step as [`RECORD`] keeps it (FIX 6637): the dispatch input
     /// `bytes` encodes, read through the side-row wall in `txn` as a body of
     /// the wrapper `root`'s row, under that row's structural references. A
-    /// secret a spawn field carries outside the intent (its scope, healer
-    /// case, team or plan) reads as its custody handle; the step's target,
-    /// frozen definition, type stamp, team and launch ids, origin and context
-    /// domains stay as frozen (FIX 6634). The masked step, with the input it
+    /// secret a spawn field carries outside the intent (its healer case, its
+    /// scope, team or plan) reads as its custody handle where the door's
+    /// rules place one; the ids and labels the engine resolves by their exact
+    /// bytes (target, definition, scope, plan and type refs, team, launch,
+    /// room and origin ids, context labels and domains) never take a known
+    /// value's handle (FIX 6634). The masked step, with the input it
     /// decodes to, when the wall placed a handle. `None` keeps `bytes` as
     /// frozen: nothing placed, a masked copy that no longer decodes as a
     /// dispatch input, or a hit the wall would refuse or could not mask, so
